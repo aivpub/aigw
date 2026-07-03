@@ -117,7 +117,7 @@ where
 // Helper: check admin access
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-fn require_admin(auth: &KeyIdentity) -> Result<(), (StatusCode, Json<Value>)> {
+pub fn require_admin(auth: &KeyIdentity) -> Result<(), (StatusCode, Json<Value>)> {
     if auth.is_master_key {
         Ok(())
     } else {

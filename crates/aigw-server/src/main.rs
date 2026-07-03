@@ -11,6 +11,7 @@
 mod openapi;
 mod routes;
 
+use aigw_core::config::AigwConfig;
 use aigw_core::db::Database;
 use aigw_core::provider::ProviderRegistry;
 use aigw_core::rate_limiter::RateLimiter;
@@ -61,17 +62,50 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
 
+    // Read config.yaml for general_settings (CLI/ENV overrides take precedence)
+    let config: Option<AigwConfig> = match std::fs::read_to_string(&cli.config) {
+        Ok(content) => match serde_yaml::from_str(&content) {
+            Ok(cfg) => Some(cfg),
+            Err(e) => {
+                tracing::warn!("Failed to parse {}: {}, using defaults", cli.config, e);
+                None
+            }
+        },
+        Err(_) => {
+            tracing::info!("{} not found, using CLI args / env vars only", cli.config);
+            None
+        }
+    };
+
     tracing::info!(
         "aigw starting (mode: {}, bind: {})",
         cli.deployment_mode,
         cli.bind
     );
-    tracing::info!("Config: {}", cli.config);
 
-    // Determine database URL (CLI arg overrides env var, env var overrides config default)
+    // Determine master key (CLI/ENV > config.yaml > default)
+    let master_key = cli
+        .master_key
+        .or_else(|| {
+            config
+                .as_ref()
+                .and_then(|c| c.general_settings.as_ref())
+                .and_then(|gs| gs.master_key.clone())
+                .filter(|k| !k.is_empty())
+        })
+        .unwrap_or_else(|| "sk-master-change-me".to_string());
+
+    // Determine database URL (CLI/ENV > config.yaml > default)
     let database_url = cli
         .database_url
         .or_else(|| std::env::var("DATABASE_URL").ok())
+        .or_else(|| {
+            config
+                .as_ref()
+                .and_then(|c| c.general_settings.as_ref())
+                .and_then(|gs| gs.database_url.clone())
+                .filter(|u| !u.is_empty())
+        })
         .unwrap_or_else(|| "sqlite:aigw.db".to_string());
 
     // Initialize database
@@ -95,7 +129,7 @@ async fn main() -> anyhow::Result<()> {
     // Build shared state
     let state: SharedState = Arc::new(AppState {
         db,
-        master_key: cli.master_key.clone(),
+        master_key: Some(master_key.clone()),
         provider_registry,
         router_state,
         rate_limiter,

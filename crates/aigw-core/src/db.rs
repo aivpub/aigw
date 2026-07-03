@@ -24,8 +24,9 @@ use async_trait::async_trait;
 use chrono::Utc;
 use sqlx::mysql::MySqlPoolOptions;
 use sqlx::postgres::PgPoolOptions;
-use sqlx::sqlite::SqlitePoolOptions;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{MySqlPool, PgPool, SqlitePool};
+use std::str::FromStr;
 use thiserror::Error;
 
 use crate::models::*;
@@ -64,10 +65,41 @@ pub enum Database {
 impl Database {
     /// Initialize database from DATABASE_URL and run migrations
     pub async fn init(database_url: &str) -> std::result::Result<Self, DbError> {
-        if database_url.starts_with("sqlite:") || database_url.starts_with("sqlite://") {
+        if database_url.starts_with("sqlite:") {
+            // Normalize to sqlx-compatible formats:
+            //   sqlite::memory:     -> keep as-is
+            //   sqlite:///abs/path  -> keep as-is (3 slashes, absolute)
+            //   sqlite://relative   -> sqlite:relative (2 slashes, relative -> 1 colon)
+            //   sqlite:/abs/path    -> sqlite:///abs/path (1 slash, absolute -> 3 slashes)
+            let url = if database_url.starts_with("sqlite:///") {
+                database_url.to_string()
+            } else if database_url.starts_with("sqlite://") {
+                database_url.replacen("sqlite://", "sqlite:", 1)
+            } else if database_url.starts_with("sqlite:/") {
+                database_url.replacen("sqlite:/", "sqlite:///", 1)
+            } else {
+                database_url.to_string()
+            };
+            let options = if url == "sqlite::memory:" || url == "sqlite:memory:" {
+                SqliteConnectOptions::from_str(&url)?.create_if_missing(true)
+            } else {
+                // Ensure parent directory exists for file-based databases
+                let path = url
+                    .strip_prefix("sqlite:")
+                    .and_then(|p| p.strip_prefix("///"))
+                    .or_else(|| url.strip_prefix("sqlite:///"))
+                    .or_else(|| url.strip_prefix("sqlite://"))
+                    .unwrap_or(&url);
+                if let Some(parent) = std::path::Path::new(path).parent() {
+                    if !parent.as_os_str().is_empty() {
+                        std::fs::create_dir_all(parent).ok();
+                    }
+                }
+                SqliteConnectOptions::from_str(&url)?.create_if_missing(true)
+            };
             let pool = SqlitePoolOptions::new()
                 .max_connections(5)
-                .connect(database_url)
+                .connect_with(options)
                 .await?;
             run_migrations_sqlite(&pool).await?;
             Ok(Database::Sqlite(pool))

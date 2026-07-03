@@ -25,6 +25,8 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use uuid::Uuid;
 
+use super::spend::{require_admin, SpendAuth};
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // AppState
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -203,11 +205,13 @@ fn key_to_response(raw_token: &str, key: &VirtualKey) -> GenerateKeyResponse {
 // Handlers
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/// POST /key/generate — Generate a new virtual API key
+/// POST /key/generate — Generate a new virtual API key (admin only)
 pub async fn generate_key(
     State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
     Json(req): Json<GenerateKeyRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    require_admin(&auth)?;
     let raw_token = req
         .key
         .clone()
@@ -235,11 +239,13 @@ pub async fn generate_key(
     Ok(Json(json!(response)))
 }
 
-/// GET /key/info — Get key info by token
+/// GET /key/info — Get key info by token (admin only)
 pub async fn key_info(
     State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
     Query(query): Query<KeyInfoQuery>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    require_admin(&auth)?;
     let token = query
         .key
         .as_deref()
@@ -272,11 +278,13 @@ pub async fn key_info(
     }
 }
 
-/// GET /key/list — List all keys with optional filters
+/// GET /key/list — List all keys with optional filters (admin only)
 pub async fn key_list(
     State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
     Query(query): Query<KeyListQuery>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    require_admin(&auth)?;
     let keys = state
         .db
         .list_keys(query.team_id.as_deref(), query.user_id.as_deref())
@@ -313,11 +321,13 @@ pub async fn key_list(
     Ok(Json(json!({ "keys": data })))
 }
 
-/// PUT /key/update — Update a key
+/// PUT /key/update — Update a key (admin only)
 pub async fn key_update(
     State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    require_admin(&auth)?;
     let token_param = body
         .get("key")
         .and_then(|v| v.as_str())
@@ -468,11 +478,13 @@ pub async fn key_update(
     ))
 }
 
-/// DELETE /key/delete — Delete (soft-delete) a key
+/// DELETE /key/delete — Delete (soft-delete) a key (admin only)
 pub async fn key_delete(
     State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
     Query(query): Query<KeyDeleteQuery>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    require_admin(&auth)?;
     let token_param = query
         .key
         .as_deref()
@@ -513,11 +525,13 @@ pub async fn key_delete(
     ))
 }
 
-/// POST /key/regenerate — Regenerate a key (new token, copy config)
+/// POST /key/regenerate — Regenerate a key (new token, copy config) (admin only)
 pub async fn key_regenerate(
     State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    require_admin(&auth)?;
     let old_token = body
         .get("key")
         .and_then(|v| v.as_str())
@@ -603,7 +617,7 @@ mod tests {
             .expect("init sqlite");
         let state = Arc::new(AppState {
             db,
-            master_key: None,
+            master_key: Some("sk-master-test".to_string()),
             provider_registry: ProviderRegistry::new(),
             router_state: RouterState::default(),
             rate_limiter: Arc::new(RateLimiter::new()),
@@ -617,6 +631,20 @@ mod tests {
             .route("/key/delete", axum::routing::delete(key_delete))
             .route("/key/regenerate", axum::routing::post(key_regenerate))
             .with_state(state)
+    }
+
+    #[tokio::test]
+    async fn test_key_generate_requires_auth() {
+        let app = test_app().await;
+        let body = json!({"key_alias": "my-test-key", "models": ["gpt-4"]});
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/key/generate")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
@@ -635,6 +663,7 @@ mod tests {
             .method(Method::POST)
             .uri("/key/generate")
             .header(header::CONTENT_TYPE, "application/json")
+            .header(header::AUTHORIZATION, "Bearer sk-master-test")
             .body(Body::from(body.to_string()))
             .unwrap();
 
@@ -679,6 +708,7 @@ mod tests {
             .method(Method::POST)
             .uri("/key/generate")
             .header(header::CONTENT_TYPE, "application/json")
+            .header(header::AUTHORIZATION, "Bearer sk-master-test")
             .body(Body::from(body.to_string()))
             .unwrap();
         let response = app.clone().oneshot(request).await.unwrap();
@@ -696,6 +726,7 @@ mod tests {
         let request = Request::builder()
             .method(Method::GET)
             .uri(format!("/key/info?key={}", raw_key))
+            .header(header::AUTHORIZATION, "Bearer sk-master-test")
             .body(Body::empty())
             .unwrap();
         let response = app.oneshot(request).await.unwrap();
@@ -722,6 +753,7 @@ mod tests {
                 .method(Method::POST)
                 .uri("/key/generate")
                 .header(header::CONTENT_TYPE, "application/json")
+                .header(header::AUTHORIZATION, "Bearer sk-master-test")
                 .body(Body::from(body.to_string()))
                 .unwrap();
             let _ = app.clone().oneshot(request).await.unwrap();
@@ -731,6 +763,7 @@ mod tests {
         let request = Request::builder()
             .method(Method::GET)
             .uri("/key/list")
+            .header(header::AUTHORIZATION, "Bearer sk-master-test")
             .body(Body::empty())
             .unwrap();
         let response = app.oneshot(request).await.unwrap();
@@ -754,6 +787,7 @@ mod tests {
             .method(Method::POST)
             .uri("/key/generate")
             .header(header::CONTENT_TYPE, "application/json")
+            .header(header::AUTHORIZATION, "Bearer sk-master-test")
             .body(Body::from(body.to_string()))
             .unwrap();
         let response = app.clone().oneshot(request).await.unwrap();
@@ -771,6 +805,7 @@ mod tests {
         let request = Request::builder()
             .method(Method::DELETE)
             .uri(format!("/key/delete?key={}", raw_key))
+            .header(header::AUTHORIZATION, "Bearer sk-master-test")
             .body(Body::empty())
             .unwrap();
         let response = app.clone().oneshot(request).await.unwrap();
@@ -780,6 +815,7 @@ mod tests {
         let request = Request::builder()
             .method(Method::GET)
             .uri(format!("/key/info?key={}", raw_key))
+            .header(header::AUTHORIZATION, "Bearer sk-master-test")
             .body(Body::empty())
             .unwrap();
         let response = app.oneshot(request).await.unwrap();
@@ -796,6 +832,7 @@ mod tests {
             .method(Method::POST)
             .uri("/key/generate")
             .header(header::CONTENT_TYPE, "application/json")
+            .header(header::AUTHORIZATION, "Bearer sk-master-test")
             .body(Body::from(body.to_string()))
             .unwrap();
         let response = app.clone().oneshot(request).await.unwrap();
@@ -815,6 +852,7 @@ mod tests {
             .method(Method::POST)
             .uri("/key/regenerate")
             .header(header::CONTENT_TYPE, "application/json")
+            .header(header::AUTHORIZATION, "Bearer sk-master-test")
             .body(Body::from(regen_body.to_string()))
             .unwrap();
         let response = app.clone().oneshot(request).await.unwrap();
@@ -839,6 +877,7 @@ mod tests {
         let request = Request::builder()
             .method(Method::GET)
             .uri(format!("/key/info?key={}", old_key))
+            .header(header::AUTHORIZATION, "Bearer sk-master-test")
             .body(Body::empty())
             .unwrap();
         let response = app.oneshot(request).await.unwrap();
