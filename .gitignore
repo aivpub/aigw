@@ -1,0 +1,18 @@
+# RDD
+.rdd/cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local

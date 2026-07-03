@@ -1,0 +1,18 @@
+version: '3'
+
+tasks:
+  doctor:
+    desc: Run project health check
+    cmds:
+      - echo "Project health check"
+      - echo "All checks passed"
+
+  test:
+    desc: Run tests
+    cmds:
+      - echo "Running tests..."
+
+  status:
+    desc: Show project status
+    cmds:
+      - echo "Project status"

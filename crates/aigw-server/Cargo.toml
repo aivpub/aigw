@@ -1,0 +1,21 @@
+[package]
+name = "aigw-server"
+version = "0.1.0"
+edition = "2021"
+description = "AI Gateway server binary — HTTP server, routes, CLI"
+
+[[bin]]
+name = "aigw"
+path = "src/main.rs"
+
+[dependencies]
+aigw-core = { path = "../aigw-core" }
+tokio = { workspace = true }
+axum = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+dotenvy = { workspace = true }
+clap = { version = "4", features = ["derive", "env"] }
