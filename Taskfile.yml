@@ -2,17 +2,79 @@ version: '3'
 
 tasks:
   doctor:
-    desc: Run project health check
+    desc: "check project health"
     cmds:
-      - echo "Project health check"
-      - echo "All checks passed"
+      - cargo check --workspace
+      - cargo clippy --workspace -- -D warnings 2>/dev/null || true
+      - '[ -f docs/deployment.md ] || echo "WARN: docs/deployment.md missing"'
+      - '[ -f Dockerfile ] || echo "WARN: Dockerfile missing"'
+      - '[ -f docker-compose.yml ] || echo "WARN: docker-compose.yml missing"'
+      - echo "doctor passed"
 
   test:
-    desc: Run tests
+    desc: "run tests"
     cmds:
-      - echo "Running tests..."
+      - cargo test --workspace
+      - echo "test passed"
+
+  test-integration:
+    desc: "run integration tests (needs Docker)"
+    cmds:
+      - cargo test --workspace --features integration
+      - echo "integration test passed"
+
+  build:
+    desc: "build release"
+    cmds:
+      - cargo build --workspace --release
+      - echo "build passed"
+
+  fmt:
+    desc: "code format check"
+    cmds:
+      - cargo fmt --all -- --check
+      - echo "fmt passed"
+
+  lint:
+    desc: "code lint"
+    cmds:
+      - cargo clippy --workspace -- -D warnings
+      - echo "lint passed"
+
+  docker-build:
+    desc: "build Docker image"
+    cmds:
+      - docker build -t aigw:latest .
+
+  docker-up:
+    desc: "start docker-compose"
+    cmds:
+      - docker-compose up -d
+
+  docker-down:
+    desc: "stop docker-compose"
+    cmds:
+      - docker-compose down
+
+  docker-logs:
+    desc: "view docker-compose logs"
+    cmds:
+      - docker-compose logs -f
+
+  docker-test:
+    desc: "build and test Docker image"
+    cmds:
+      - docker build -t aigw:test .
+      - docker run --rm aigw:test aigw --help
+
+  clean:
+    desc: "clean build artifacts"
+    cmds:
+      - cargo clean
+      - docker-compose down -v 2>/dev/null || true
 
   status:
-    desc: Show project status
+    desc: "project status"
     cmds:
-      - echo "Project status"
+      - cargo check --workspace 2>&1 | grep -E "Checking|Finished|error" || true
+      - cargo test --workspace 2>&1 | grep -E "running|test result|FAILED" || true

@@ -1,0 +1,59 @@
+version: "3.8"
+
+services:
+  aigw:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "4000:4000"
+    environment:
+      - DATABASE_URL=sqlite:/app/data/aigw.db
+      - MASTER_KEY=${MASTER_KEY:-sk-master-change-me}
+      - RUST_LOG=info
+      - DEPLOYMENT_MODE=onprem
+    volumes:
+      - aigw_data:/app/data
+      - ./config.yaml:/app/config.yaml:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:4000/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  # PostgreSQL backend (optional — uncomment to use)
+  # postgres:
+  #   image: postgres:16-alpine
+  #   environment:
+  #     POSTGRES_USER: aigw
+  #     POSTGRES_PASSWORD: aigw_secret
+  #     POSTGRES_DB: aigw
+  #   ports:
+  #     - "5432:5432"
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U aigw"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+
+  # MySQL backend (optional — uncomment to use)
+  # mysql:
+  #   image: mysql:8.4
+  #   environment:
+  #     MYSQL_ROOT_PASSWORD: root_secret
+  #     MYSQL_DATABASE: aigw
+  #     MYSQL_USER: aigw
+  #     MYSQL_PASSWORD: aigw_secret
+  #   ports:
+  #     - "3306:3306"
+  #   volumes:
+  #     - mysql_data:/var/lib/mysql
+
+volumes:
+  aigw_data:
+  # postgres_data:
+  # mysql_data:

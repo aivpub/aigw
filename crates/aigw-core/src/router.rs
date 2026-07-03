@@ -45,23 +45,27 @@ pub enum Strategy {
     LatencyBasedRouting,
 }
 
-impl Strategy {
-    pub fn from_str(s: &str) -> Self {
-        match s {
+impl std::str::FromStr for Strategy {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
             "usage-based-routing-v2" | "usage-based-routing" => Self::UsageBasedRoutingV2,
             "latency-based-routing" => Self::LatencyBasedRouting,
             _ => Self::SimpleShuffle,
-        }
+        })
     }
 }
+
+impl Strategy {}
 
 /// Select an instance from the list using the given strategy
 pub async fn select_instance(
     instances: &[String],
     state: &RouterState,
     strategy: Strategy,
-    allowed_fails: u32,
-    cooldown_secs: f64,
+    _allowed_fails: u32,
+    _cooldown_secs: f64,
 ) -> Option<String> {
     let state_map = state.lock().await;
     let now = std::time::Instant::now();
@@ -70,8 +74,8 @@ pub async fn select_instance(
     let available: Vec<&String> = instances
         .iter()
         .filter(|name| {
-            if let Some(s) = state_map.get(*name) {
-                s.cooldown_until.map_or(true, |t| now >= t)
+            if let Some(s) = state_map.get(name.as_str()) {
+                s.cooldown_until.is_none_or(|t| now >= t)
             } else {
                 true
             }
@@ -92,7 +96,10 @@ pub async fn select_instance(
             available
                 .iter()
                 .min_by_key(|name| {
-                    state_map.get(*name).map(|s| s.active_requests).unwrap_or(0)
+                    state_map
+                        .get(name.as_str())
+                        .map(|s| s.active_requests)
+                        .unwrap_or(0)
                 })
                 .map(|s| (*s).clone())
         }
@@ -101,8 +108,14 @@ pub async fn select_instance(
             available
                 .iter()
                 .min_by(|a, b| {
-                    let la = state_map.get(*a).map(|s| s.last_latency_ms).unwrap_or(0.0);
-                    let lb = state_map.get(*b).map(|s| s.last_latency_ms).unwrap_or(0.0);
+                    let la = state_map
+                        .get(a.as_str())
+                        .map(|s| s.last_latency_ms)
+                        .unwrap_or(0.0);
+                    let lb = state_map
+                        .get(b.as_str())
+                        .map(|s| s.last_latency_ms)
+                        .unwrap_or(0.0);
                     la.partial_cmp(&lb).unwrap_or(std::cmp::Ordering::Equal)
                 })
                 .map(|s| (*s).clone())

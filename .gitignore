@@ -17,3 +17,12 @@ Thumbs.db
 # Environment
 .env
 .env.local
+
+# Rust
+target/
+
+# Local config (template: config.example.yaml)
+config.yaml
+
+# MCP tools
+.serena/

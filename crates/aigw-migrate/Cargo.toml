@@ -1,0 +1,21 @@
+[package]
+name = "aigw-migrate"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "aigw-migrate"
+path = "src/main.rs"
+
+[dependencies]
+aigw-core = { path = "../aigw-core" }
+tokio.workspace = true
+sqlx = { workspace = true, features = ["sqlite", "runtime-tokio-rustls"] }
+serde.workspace = true
+serde_json.workspace = true
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+
+[dev-dependencies]
+tempfile = "3"

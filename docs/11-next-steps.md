@@ -1,40 +1,44 @@
-# 下一步计划
+# aigw -- 下一步行动
 
-**项目**: aigw — AI Gateway
-**最后更新**: 2026-07-03
+**上次更新**: 2026-07-03
+**当前阶段**: Stage 6 完成，项目进入长期路线阶段
 
-## 当前状态
+---
 
-**阶段**: Stage 0 — 项目初始化（✅ 完成）
-**下一 Stage**: Stage 1 — Schema 100% 对齐 + aigw-migrate 双向迁移工具
+## 当前状态：所有 Phase 0-4 Stage 完成
 
-## Stage 0 产出总结
+| Stage | 状态 |
+|-------|------|
+| Stage 0 -- RDD 初始化 | ✅ |
+| Stage 1 -- Schema 对齐 + 迁移工具 | ✅ |
+| Stage 2 -- Key API + SpendLog | ✅ |
+| Stage 3 -- Chat Completions + Router | ✅ |
+| Stage 4 -- OpenAPI + Swagger UI | ✅ |
+| Stage 5 -- Docker + Deployment | ✅ |
+| Stage 6 -- SaaS Architecture | ✅ |
 
-- [x] RDD 框架初始化 + `.rdd/config.yml` 配置
-- [x] 项目章程 `docs/01-charter.md` v2.0（多租户最小化兼容、双向迁移、长期路线、OpenAPI/前端、云/自托管）
-- [x] litellm diff 基线 `docs/litellm-diff-baseline.md`（表名映射 §5 + 双向迁移策略 §6）
-- [x] Rust workspace：`crates/aigw-core` + `crates/aigw-server`
-- [x] 数据模型：全部 11 张表（aigw 自有表名，litellm 列兼容）
-- [x] 表名决策：aigw 使用自有表名，`aigw-migrate` 负责双向映射
-- [x] Stage 路线图 `docs/stages/stage-roadmap.md`
+## 长期路线
 
-## Stage 0 关键决策记录
+现在应该关注长期路线跟踪中的任务（参见 `docs/stages/stage-roadmap.md`）：
 
-| 决策 | 结论 | 文档位置 |
-|------|------|---------|
-| 表名 | aigw 自有表名（`virtual_keys` 等），不照搬 litellm 表名 | diff-baseline.md §5 |
-| 迁移 | `aigw-migrate import/export/verify` 双向迁移工具，Stage 1 交付 | diff-baseline.md §6 |
-| 多租户 | 完整保留 Org/Team/User/Project/Budget（9 张表），只读 API | charter.md §6 |
-| 长期 | 7 条长期路线，不在最小化版本做但不阻断演进 | charter.md §8 |
-| OpenAPI | Stage 4 生成，覆盖全部核心端点 | charter.md §7 |
-| 部署 | 企业自托管（Stage 1-5）+ 云服务 SaaS（Stage 6）| charter.md §6 |
+### 立即行动 (P1)
+1. **多租户管理 API** -- `/org/*`, `/team/*`, `/user/*` CRUD 端点
+2. **前端控制台实现** -- 基于 Stage 4 规划实现 Web UI
 
-## 下一步：Stage 1
+### 近期行动 (P2)
+3. **Redis 缓存** -- 性能优化，QPS > 1000 时启用
+4. **PostgreSQL 生产级支持** -- 连接池、读写分离
+5. **Observability** -- Prometheus + OTEL
 
-具体任务：
-1. 编写完整 SQLite migration SQL（9 张表，aigw 自有表名，litellm 列兼容）
-2. 补齐所有 index（startTime, api_key, user_id+team_id, budget_reset_at+expires, session_id）
-3. 实现 `aigw-migrate` 工具（import + export + verify）
-4. Smoke test 完整往返：litellm DB → import → aigw 启动 → 运行 → export → litellm 验证
+### 中期行动 (P3)
+6. **SSO/OAuth** -- 企业客户需求
+7. **Kubernetes Operator** -- 云原生部署
 
-详见 `docs/stages/stage-1.md`（待创建）。
+## 关键技术成果
+
+- **141 个测试** 全覆盖
+- **SQLite / MySQL / PostgreSQL** 三数据库支持
+- **OpenAPI 3.1** 完整规范
+- **Docker Compose** 一键部署
+- **双向迁移工具** litellm ↔ aigw
+- **系统信息端点** `/system/info`

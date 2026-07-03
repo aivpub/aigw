@@ -15,16 +15,21 @@
 //!              (schema)      (sqlite)
 //! ```
 
+pub mod budget;
 pub mod config;
+pub mod crypto;
 pub mod db;
+pub mod instance;
 pub mod middleware;
 pub mod models;
+pub mod provider;
+pub mod rate_limiter;
 pub mod router;
+pub mod tenant;
 
 // Re-export commonly used types
 pub use config::{AigwConfig, GeneralSettings, ModelInfo, RouterSettings};
 pub use models::{
-    SpendLog, VirtualKey,
-    LiteLLM_OrganizationTable, LiteLLM_TeamTable, LiteLLM_UserTable, LiteLLM_ProjectTable,
-    LiteLLM_BudgetTable, LiteLLM_OrganizationMembership, LiteLLM_TeamMembership,
+    Budget, Organization, OrganizationMembership, Project, SpendLog, Team, TeamMembership, User,
+    VirtualKey,
 };

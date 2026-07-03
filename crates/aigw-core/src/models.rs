@@ -18,7 +18,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
-use uuid::Uuid;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // virtual_keys (55 columns, matches LiteLLM_VerificationToken)
@@ -27,35 +26,35 @@ use uuid::Uuid;
 /// Virtual Key — column-compatible with litellm's `LiteLLM_VerificationToken`
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct VirtualKey {
-    pub token: String,                         // SHA256 hex hash, PK
+    pub token: String, // SHA256 hex hash, PK
     pub key_name: Option<String>,
     pub key_alias: Option<String>,
     pub soft_budget_cooldown: bool,
     pub spend: f64,
     pub expires: Option<DateTime<Utc>>,
-    pub models: serde_json::Value,             // String[] → JSON array
-    pub aliases: serde_json::Value,            // Json @default("{}")
-    pub config: serde_json::Value,             // Json @default("{}")
+    pub models: serde_json::Value,  // String[] → JSON array
+    pub aliases: serde_json::Value, // Json @default("{}")
+    pub config: serde_json::Value,  // Json @default("{}")
     pub router_settings: Option<serde_json::Value>,
     pub user_id: Option<String>,
     pub team_id: Option<String>,
     pub agent_id: Option<String>,
     pub project_id: Option<String>,
-    pub permissions: serde_json::Value,        // Json @default("{}")
+    pub permissions: serde_json::Value, // Json @default("{}")
     pub max_parallel_requests: Option<i32>,
-    pub metadata: serde_json::Value,           // Json @default("{}")
+    pub metadata: serde_json::Value, // Json @default("{}")
     pub blocked: Option<bool>,
-    pub tpm_limit: Option<i64>,                // BigInt
+    pub tpm_limit: Option<i64>, // BigInt
     pub rpm_limit: Option<i64>,
     pub max_budget: Option<f64>,
     pub budget_duration: Option<String>,
     pub budget_reset_at: Option<DateTime<Utc>>,
-    pub allowed_cache_controls: serde_json::Value,  // String[] → JSON
-    pub allowed_routes: serde_json::Value,          // String[] → JSON
-    pub policies: serde_json::Value,                // String[] → JSON
-    pub access_group_ids: serde_json::Value,        // String[] → JSON
-    pub model_spend: serde_json::Value,             // Json @default("{}")
-    pub model_max_budget: serde_json::Value,        // Json @default("{}")
+    pub allowed_cache_controls: serde_json::Value, // String[] → JSON
+    pub allowed_routes: serde_json::Value,         // String[] → JSON
+    pub policies: serde_json::Value,               // String[] → JSON
+    pub access_group_ids: serde_json::Value,       // String[] → JSON
+    pub model_spend: serde_json::Value,            // Json @default("{}")
+    pub model_max_budget: serde_json::Value,       // Json @default("{}")
     pub budget_id: Option<String>,
     pub organization_id: Option<String>,
     pub object_permission_id: Option<String>,
@@ -79,9 +78,9 @@ pub struct VirtualKey {
 /// Spend log entry — column-compatible with litellm's `LiteLLM_SpendLogs`
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct SpendLog {
-    pub request_id: String,                    // UUID, PK
+    pub request_id: String, // UUID, PK
     pub call_type: String,
-    pub api_key: String,                       // hashed API token
+    pub api_key: String, // hashed API token
     pub spend: f64,
     pub total_tokens: i32,
     pub prompt_tokens: i32,
@@ -96,7 +95,7 @@ pub struct SpendLog {
     pub custom_llm_provider: Option<String>,
     pub api_base: Option<String>,
     pub user: Option<String>,
-    pub metadata: Option<serde_json::Value>,   // project_id stored here
+    pub metadata: Option<serde_json::Value>, // project_id stored here
     pub cache_hit: Option<String>,
     pub cache_key: Option<String>,
     pub request_tags: Option<serde_json::Value>,
@@ -124,7 +123,7 @@ pub struct Organization {
     pub organization_alias: String,
     pub budget_id: String,
     pub metadata: serde_json::Value,
-    pub models: serde_json::Value,             // String[]
+    pub models: serde_json::Value, // String[]
     pub spend: f64,
     pub model_spend: serde_json::Value,
     pub object_permission_id: Option<String>,
@@ -141,14 +140,14 @@ pub struct Team {
     pub team_alias: Option<String>,
     pub organization_id: Option<String>,
     pub object_permission_id: Option<String>,
-    pub admins: serde_json::Value,             // String[]
-    pub members: serde_json::Value,            // String[]
+    pub admins: serde_json::Value,  // String[]
+    pub members: serde_json::Value, // String[]
     pub members_with_roles: serde_json::Value,
     pub metadata: serde_json::Value,
     pub max_budget: Option<f64>,
     pub soft_budget: Option<f64>,
     pub spend: f64,
-    pub models: serde_json::Value,             // String[]
+    pub models: serde_json::Value, // String[]
     pub max_parallel_requests: Option<i32>,
     pub tpm_limit: Option<i64>,
     pub rpm_limit: Option<i64>,
@@ -160,9 +159,9 @@ pub struct Team {
     pub model_spend: serde_json::Value,
     pub model_max_budget: serde_json::Value,
     pub router_settings: Option<serde_json::Value>,
-    pub team_member_permissions: serde_json::Value,  // String[]
-    pub access_group_ids: serde_json::Value,         // String[]
-    pub policies: serde_json::Value,                 // String[]
+    pub team_member_permissions: serde_json::Value, // String[]
+    pub access_group_ids: serde_json::Value,        // String[]
+    pub policies: serde_json::Value,                // String[]
     pub default_team_member_models: serde_json::Value,
     pub budget_limits: Option<serde_json::Value>,
     pub model_id: Option<i32>,
@@ -179,20 +178,20 @@ pub struct User {
     pub organization_id: Option<String>,
     pub object_permission_id: Option<String>,
     pub password: Option<String>,
-    pub teams: serde_json::Value,              // String[]
+    pub teams: serde_json::Value, // String[]
     pub user_role: Option<String>,
     pub max_budget: Option<f64>,
     pub spend: f64,
     pub user_email: Option<String>,
-    pub models: serde_json::Value,             // String[]
+    pub models: serde_json::Value, // String[]
     pub metadata: serde_json::Value,
     pub max_parallel_requests: Option<i32>,
     pub tpm_limit: Option<i64>,
     pub rpm_limit: Option<i64>,
     pub budget_duration: Option<String>,
     pub budget_reset_at: Option<DateTime<Utc>>,
-    pub allowed_cache_controls: serde_json::Value,  // String[]
-    pub policies: serde_json::Value,                // String[]
+    pub allowed_cache_controls: serde_json::Value, // String[]
+    pub policies: serde_json::Value,               // String[]
     pub model_spend: serde_json::Value,
     pub model_max_budget: serde_json::Value,
     pub created_at: Option<DateTime<Utc>>,
@@ -208,7 +207,7 @@ pub struct Project {
     pub team_id: Option<String>,
     pub budget_id: Option<String>,
     pub metadata: serde_json::Value,
-    pub models: serde_json::Value,             // String[]
+    pub models: serde_json::Value, // String[]
     pub spend: f64,
     pub model_spend: serde_json::Value,
     pub model_rpm_limit: serde_json::Value,
@@ -233,7 +232,7 @@ pub struct Budget {
     pub model_max_budget: serde_json::Value,
     pub budget_duration: Option<String>,
     pub budget_reset_at: Option<DateTime<Utc>>,
-    pub allowed_models: serde_json::Value,     // String[]
+    pub allowed_models: serde_json::Value, // String[]
     pub created_at: DateTime<Utc>,
     pub created_by: String,
     pub updated_at: DateTime<Utc>,
@@ -400,7 +399,7 @@ pub struct ModelInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenerateKeyRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub key: Option<String>,                   // custom key value (migration-critical)
+    pub key: Option<String>, // custom key value (migration-critical)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub key_alias: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

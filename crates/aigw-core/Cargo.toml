@@ -16,6 +16,16 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
+fastrand = "2"
+sha2 = { workspace = true }
+hex = { workspace = true }
+async-trait = { workspace = true }
+tower = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
+testcontainers = "0.23"
+testcontainers-modules = { version = "0.11", features = ["postgres", "mysql"] }
+
+[features]
+integration = []

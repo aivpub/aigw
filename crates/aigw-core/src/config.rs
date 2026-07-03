@@ -17,7 +17,10 @@ pub struct AigwConfig {
     #[serde(rename = "litellm_settings", skip_serializing_if = "Option::is_none")]
     pub litellm_settings: Option<serde_json::Value>,
 
-    #[serde(rename = "environment_variables", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "environment_variables",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub environment_variables: Option<serde_json::Value>,
 }
 
@@ -29,7 +32,10 @@ pub struct GeneralSettings {
     #[serde(rename = "database_url", skip_serializing_if = "Option::is_none")]
     pub database_url: Option<String>,
 
-    #[serde(rename = "custom_key_generate_length", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "custom_key_generate_length",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub custom_key_generate_length: Option<u32>,
 
     #[serde(rename = "disable_custom_api_keys", default)]
@@ -60,11 +66,20 @@ pub struct ModelParams {
     pub rpm: Option<i32>,
     #[serde(rename = "tpm", skip_serializing_if = "Option::is_none")]
     pub tpm: Option<i32>,
-    #[serde(rename = "max_parallel_requests", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "max_parallel_requests",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub max_parallel_requests: Option<i32>,
-    #[serde(rename = "input_cost_per_token", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "input_cost_per_token",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub input_cost_per_token: Option<f64>,
-    #[serde(rename = "output_cost_per_token", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "output_cost_per_token",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub output_cost_per_token: Option<f64>,
     #[serde(rename = "tpm_limit", skip_serializing_if = "Option::is_none")]
     pub tpm_limit: Option<i32>,
@@ -90,9 +105,15 @@ pub struct RouterSettings {
     pub fallbacks: Option<Vec<serde_json::Value>>,
 }
 
-fn default_allowed_fails() -> i32 { 3 }
-fn default_num_retries() -> i32 { 2 }
-fn default_cooldown() -> f64 { 30.0 }
+fn default_allowed_fails() -> i32 {
+    3
+}
+fn default_num_retries() -> i32 {
+    2
+}
+fn default_cooldown() -> f64 {
+    30.0
+}
 
 /// Re-export for backward compatibility
 pub type ModelInfo = ModelEntry;

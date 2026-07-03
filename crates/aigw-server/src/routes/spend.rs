@@ -1,0 +1,453 @@
+//! Spend/usage tracking endpoints — litellm-compatible /spend/* and /global/spend/* routes
+//!
+//! Endpoints:
+//! - GET /spend/logs          — Query spend logs (scoped to authenticated key)
+//! - GET /spend/keys          — Get spend per key summary
+//! - GET /spend/users         — Get spend per user summary
+//! - GET /spend/tags          — Get spend per tag summary
+//! - GET /global/spend        — Get total global spend (admin only)
+//! - GET /global/spend/logs   — All spend logs (admin only)
+//! - GET /global/spend/keys   — All keys spend (admin only)
+
+use aigw_core::crypto::hash_token;
+use aigw_core::middleware::{AuthError, KeyIdentity};
+use axum::{
+    extract::{FromRequestParts, Query, State},
+    http::{self, request::Parts, StatusCode},
+    Json,
+};
+use serde::Deserialize;
+use serde_json::{json, Value};
+use std::collections::HashMap;
+
+use super::keys::SharedState;
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Query parameters
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[derive(Debug, Deserialize)]
+pub struct SpendLogsQuery {
+    pub api_key: Option<String>,
+    pub limit: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SpendTagQuery {
+    pub tag: Option<String>,
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// SpendAuth — newtype wrapper for KeyIdentity to satisfy orphan rules
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Thin newtype around KeyIdentity so we can implement FromRequestParts<SharedState>
+/// locally without running into the orphan rule (middleware.rs already has a blanket impl).
+pub struct SpendAuth(pub KeyIdentity);
+
+impl std::ops::Deref for SpendAuth {
+    type Target = KeyIdentity;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<S> FromRequestParts<S> for SpendAuth
+where
+    S: Send + Sync,
+    SharedState: axum::extract::FromRef<S>,
+{
+    type Rejection = AuthError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let state: SharedState = axum::extract::FromRef::from_ref(state);
+        // 1. Extract Authorization header
+        let auth_header = parts
+            .headers
+            .get(http::header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .ok_or(AuthError::MissingHeader)?;
+
+        // 2. Extract Bearer token
+        let token = auth_header
+            .strip_prefix("Bearer ")
+            .ok_or(AuthError::InvalidFormat)?;
+
+        if token.is_empty() {
+            return Err(AuthError::InvalidFormat);
+        }
+
+        // 3. Check master key
+        if let Some(ref mk) = state.master_key {
+            if token == *mk {
+                return Ok(SpendAuth(KeyIdentity {
+                    token_hash: "*master*".to_string(),
+                    key_alias: Some("master".to_string()),
+                    user_id: None,
+                    team_id: None,
+                    organization_id: None,
+                    is_master_key: true,
+                }));
+            }
+        }
+
+        // 4. SHA256 hash and DB lookup
+        let token_hash = hash_token(token);
+        let key = state
+            .db
+            .get_key_by_token(&token_hash)
+            .await
+            .map_err(|_| AuthError::TokenNotFound)?;
+
+        match key {
+            Some(k) => Ok(SpendAuth(KeyIdentity {
+                token_hash,
+                key_alias: k.key_alias,
+                user_id: k.user_id,
+                team_id: k.team_id,
+                organization_id: k.organization_id,
+                is_master_key: false,
+            })),
+            None => Err(AuthError::TokenNotFound),
+        }
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Helper: check admin access
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+fn require_admin(auth: &KeyIdentity) -> Result<(), (StatusCode, Json<Value>)> {
+    if auth.is_master_key {
+        Ok(())
+    } else {
+        Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": {"message": "Admin access required", "type": "forbidden"}})),
+        ))
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// /spend/* endpoints (scoped to authenticated key)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// GET /spend/logs — Query spend logs for the authenticated key
+pub async fn spend_logs(
+    State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
+    Query(query): Query<SpendLogsQuery>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let api_key = query.api_key.unwrap_or_else(|| auth.token_hash.clone());
+
+    let logs = state
+        .db
+        .query_spend_logs(Some(&api_key), query.limit)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
+            )
+        })?;
+
+    let data: Vec<Value> = logs
+        .iter()
+        .map(|log| {
+            json!({
+                "request_id": log.request_id,
+                "call_type": log.call_type,
+                "api_key": log.api_key,
+                "spend": log.spend,
+                "total_tokens": log.total_tokens,
+                "prompt_tokens": log.prompt_tokens,
+                "completion_tokens": log.completion_tokens,
+                "start_time": log.start_time.to_rfc3339(),
+                "end_time": log.end_time.to_rfc3339(),
+                "model": log.model,
+                "user": log.user,
+                "request_tags": log.request_tags,
+                "status": log.status,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "data": data, "count": data.len() })))
+}
+
+/// GET /spend/keys — Get spend per key summary for the authenticated key
+pub async fn spend_keys(
+    State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let spend = state
+        .db
+        .get_spend_by_key(&auth.token_hash)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
+            )
+        })?;
+
+    Ok(Json(json!({
+        "key": auth.token_hash,
+        "spend": spend,
+    })))
+}
+
+/// GET /spend/users — Get spend per user summary for the authenticated user
+pub async fn spend_users(
+    State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let user_id = auth.user_id.unwrap_or_default();
+
+    if user_id.is_empty() {
+        return Ok(Json(json!({
+            "user_id": "",
+            "spend": 0.0,
+            "message": "No user_id associated with this key",
+        })));
+    }
+
+    let spend = state.db.get_spend_by_user(&user_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
+        )
+    })?;
+
+    Ok(Json(json!({
+        "user_id": user_id,
+        "spend": spend,
+    })))
+}
+
+/// GET /spend/tags — Get spend per tag summary
+pub async fn spend_tags(
+    State(state): State<SharedState>,
+    _auth: SpendAuth,
+    Query(query): Query<SpendTagQuery>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let tag = query.tag.as_deref().unwrap_or("");
+
+    if tag.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(
+                json!({"error": {"message": "Missing 'tag' query parameter", "type": "bad_request"}}),
+            ),
+        ));
+    }
+
+    let spend = state.db.get_spend_by_tag(tag).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
+        )
+    })?;
+
+    Ok(Json(json!({
+        "tag": tag,
+        "spend": spend,
+    })))
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// /global/spend/* endpoints (admin only)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// GET /global/spend — Get total global spend
+pub async fn global_spend(
+    State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    require_admin(&auth)?;
+
+    let spend = state.db.get_global_spend().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
+        )
+    })?;
+
+    Ok(Json(json!({ "spend": spend })))
+}
+
+/// GET /global/spend/logs — Get all spend logs (admin only)
+pub async fn global_spend_logs(
+    State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
+    Query(query): Query<SpendLogsQuery>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    require_admin(&auth)?;
+
+    let logs = state
+        .db
+        .query_spend_logs(query.api_key.as_deref(), query.limit)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
+            )
+        })?;
+
+    let data: Vec<Value> = logs
+        .iter()
+        .map(|log| {
+            json!({
+                "request_id": log.request_id,
+                "call_type": log.call_type,
+                "api_key": log.api_key,
+                "spend": log.spend,
+                "total_tokens": log.total_tokens,
+                "prompt_tokens": log.prompt_tokens,
+                "completion_tokens": log.completion_tokens,
+                "start_time": log.start_time.to_rfc3339(),
+                "end_time": log.end_time.to_rfc3339(),
+                "model": log.model,
+                "user": log.user,
+                "request_tags": log.request_tags,
+                "status": log.status,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "data": data, "count": data.len() })))
+}
+
+/// GET /global/spend/keys — Get spend for all keys (admin only)
+pub async fn global_spend_keys(
+    State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    require_admin(&auth)?;
+
+    let logs = state
+        .db
+        .query_spend_logs(None, Some(10000))
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
+            )
+        })?;
+
+    let mut spend_by_key: HashMap<String, f64> = HashMap::new();
+    for log in &logs {
+        *spend_by_key.entry(log.api_key.clone()).or_insert(0.0) += log.spend;
+    }
+
+    let data: Vec<Value> = spend_by_key
+        .into_iter()
+        .map(|(key, spend)| json!({ "api_key": key, "spend": spend }))
+        .collect();
+
+    Ok(Json(json!({ "data": data })))
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Tests
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::routes::keys::AppState;
+    use aigw_core::db::Database;
+    use aigw_core::provider::ProviderRegistry;
+    use aigw_core::rate_limiter::RateLimiter;
+    use aigw_core::router::RouterState;
+    use axum::{
+        body::Body,
+        http::{header, Method, Request},
+        Router,
+    };
+    use std::sync::Arc;
+    use tower::util::ServiceExt;
+
+    async fn test_app() -> Router {
+        let db = Database::init("sqlite::memory:")
+            .await
+            .expect("init sqlite");
+        let state = Arc::new(AppState {
+            db,
+            master_key: Some("sk-master-test-123".to_string()),
+            provider_registry: ProviderRegistry::new(),
+            router_state: RouterState::default(),
+            rate_limiter: Arc::new(RateLimiter::new()),
+            deployment_mode: "onprem".to_string(),
+        });
+        Router::new()
+            .route("/spend/logs", axum::routing::get(spend_logs))
+            .route("/spend/keys", axum::routing::get(spend_keys))
+            .route("/spend/users", axum::routing::get(spend_users))
+            .route("/spend/tags", axum::routing::get(spend_tags))
+            .route("/global/spend", axum::routing::get(global_spend))
+            .route("/global/spend/logs", axum::routing::get(global_spend_logs))
+            .route("/global/spend/keys", axum::routing::get(global_spend_keys))
+            .with_state(state)
+    }
+
+    #[tokio::test]
+    async fn test_spend_requires_auth() {
+        let app = test_app().await;
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("/spend/logs")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_global_spend_with_master() {
+        let app = test_app().await;
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("/global/spend")
+            .header(header::AUTHORIZATION, "Bearer sk-master-test-123")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let val: Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(val.get("spend").and_then(|v| v.as_f64()), Some(0.0));
+    }
+
+    #[tokio::test]
+    async fn test_global_spend_without_admin() {
+        let app = test_app().await;
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("/global/spend")
+            .header(header::AUTHORIZATION, "Bearer non-admin-key")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        // Should fail auth since key doesn't exist
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_spend_tags_missing_param() {
+        let app = test_app().await;
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("/spend/tags")
+            .header(header::AUTHORIZATION, "Bearer sk-master-test-123")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+}

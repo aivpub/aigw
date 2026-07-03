@@ -1,0 +1,40 @@
+# aigw Configuration
+# Copy to config.yaml and customize
+
+general_settings:
+  master_key: ${MASTER_KEY:-sk-master-change-me}
+  database_url: sqlite:/app/data/aigw.db
+
+model_list:
+  - model_name: gpt-4o
+    litellm_params:
+      model: gpt-4o
+      api_base: https://api.openai.com/v1
+      api_key: ${OPENAI_API_KEY:-}
+      rpm: 1000
+      tpm: 100000
+  - model_name: gpt-4o-mini
+    litellm_params:
+      model: gpt-4o-mini
+      api_base: https://api.openai.com/v1
+      api_key: ${OPENAI_API_KEY:-}
+      rpm: 2000
+      tpm: 200000
+  - model_name: claude-sonnet-4-20250514
+    litellm_params:
+      model: claude-sonnet-4-20250514
+      api_base: https://api.anthropic.com/v1
+      api_key: ${ANTHROPIC_API_KEY:-}
+      rpm: 1000
+      tpm: 100000
+
+router_settings:
+  routing_strategy: usage-based-routing-v2
+  allowed_fails: 3
+  cooldown_secs: 30
+  disable_cooldowns: false
+
+litellm_settings:
+  drop_params: true
+  request_timeout: 600
+  set_verbose: false
