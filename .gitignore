@@ -1,5 +1,6 @@
 # RDD
 .rdd/cache/
+.worktrees/
 
 # OS
 .DS_Store
