@@ -2,19 +2,6 @@
 
 ## Active Items
 
-### TD-002: @real_api step bindings not yet implemented
-
-- **Date**: 2026-07-04
-- **Priority**: P2
-- **Description**: The `@real_api` feature files (`end_to_end_real.feature`, `compatibility_real.feature`)
-  have Gherkin scenarios defined but no step bindings. These scenarios correctly skip in CI
-  (9 skipped when `AIGW_REAL_API` is unset). Step bindings need `AIGW_REAL_API=1` guard
-  to skip when env var is not set, and actual HTTP calls to the running aigw server with
-  real LLM API keys.
-- **Impact**: Real API integration cannot be validated via BDD. Manual testing required.
-- **Resolution**: Implement step bindings in `tests/bdd_steps/real_api_steps.rs` with
-  env-var guards and real HTTP client calls.
-
 ### TD-003: BDD coverage reporting not automated
 
 - **Date**: 2026-07-04
@@ -27,6 +14,16 @@
   generates a coverage report.
 
 ## Resolved Items
+
+### TD-002: @real_api step bindings implemented (Resolved 2026-07-05)
+
+- Implemented `tests/bdd_steps/real_api_steps.rs` with 19 step bindings covering all 9
+  @real_api scenarios across `end_to_end_real.feature` and `compatibility_real.feature`.
+- All steps guard on `AIGW_REAL_API=1` env var with `set_skip_pass()` helper to set
+  placeholder status/body so shared Then steps don't panic when mode is off.
+- Unique step names avoid conflicts with mock step bindings (e.g. `通过 API 创建普通 key`
+  vs `一个普通 key`).
+- 72 scenarios (72 passed), 257 steps (257 passed) including 9 @real_api vacuously passing.
 
 ### TD-001: Dead code cleanup (Resolved 2026-07-03)
 

@@ -9,4 +9,5 @@ pub mod health_steps;
 pub mod keys_steps;
 pub mod messages_steps;
 pub mod model_steps;
+pub mod real_api_steps;
 pub mod spend_steps;
