@@ -8,7 +8,6 @@ use tokio::sync::Mutex;
 use crate::bdd_support::mock_upstream::MockUpstream;
 use crate::TestWorld;
 
-use super::common::{make_request, build_spend_router};
 
 /// Global mock upstream — lives for the test lifetime
 static MOCK_UPSTREAM: std::sync::OnceLock<Arc<Mutex<Option<MockUpstream>>>> =

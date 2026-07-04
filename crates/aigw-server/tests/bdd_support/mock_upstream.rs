@@ -18,7 +18,9 @@ use tokio::net::TcpListener;
 #[derive(Debug, Clone)]
 pub struct RecordedRequest {
     pub path: String,
+    #[allow(dead_code)]
     pub headers: HashMap<String, String>,
+    #[allow(dead_code)]
     pub body: Value,
 }
 
@@ -27,6 +29,7 @@ pub struct RecordedRequest {
 pub struct MockResponse {
     pub status: u16,
     pub body: Value,
+    #[allow(dead_code)]
     pub headers: HashMap<String, String>,
 }
 
@@ -91,6 +94,7 @@ impl MockState {
         self.responses.lock().unwrap().clear();
     }
 
+    #[allow(dead_code)]
     pub fn reset_all(&self) {
         self.responses.lock().unwrap().clear();
         self.requests.lock().unwrap().clear();

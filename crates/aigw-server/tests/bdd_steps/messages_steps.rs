@@ -172,6 +172,7 @@ async fn when_post_messages_bearer(world: &mut TestWorld, step: &Step) {
 }
 
 #[when(expr = "发送 POST \\/v1\\/messages 请求带认证 model={string}")]
+#[allow(unused_variables)]
 async fn when_post_messages_with_model(world: &mut TestWorld, step: &Step, model_name: String) {
     let state = world.ensure_state().await;
     let router = build_messages_router(state);

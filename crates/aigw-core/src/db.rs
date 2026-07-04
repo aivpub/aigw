@@ -1,6 +1,7 @@
 //! Database module — multi-DB support with litellm-compatible schema
 //!
 //! aigw uses its own table names (see `docs/litellm-diff-baseline.md` §5 for mapping).
+#![allow(deprecated)] // chrono::DateTime::from_utc — chrono 0.4.x deprecated but still widely used
 //! Column names, types, and defaults match litellm schema.prisma at the column level.
 //! Data portability is ensured via the `aigw-migrate` tool, not by sharing table names.
 //!
