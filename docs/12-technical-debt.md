@@ -2,7 +2,29 @@
 
 ## Active Items
 
-None. All known debt resolved as of Stage 6 completion.
+### TD-002: @real_api step bindings not yet implemented
+
+- **Date**: 2026-07-04
+- **Priority**: P2
+- **Description**: The `@real_api` feature files (`end_to_end_real.feature`, `compatibility_real.feature`)
+  have Gherkin scenarios defined but no step bindings. These scenarios correctly skip in CI
+  (9 skipped when `AIGW_REAL_API` is unset). Step bindings need `AIGW_REAL_API=1` guard
+  to skip when env var is not set, and actual HTTP calls to the running aigw server with
+  real LLM API keys.
+- **Impact**: Real API integration cannot be validated via BDD. Manual testing required.
+- **Resolution**: Implement step bindings in `tests/bdd_steps/real_api_steps.rs` with
+  env-var guards and real HTTP client calls.
+
+### TD-003: BDD coverage reporting not automated
+
+- **Date**: 2026-07-04
+- **Priority**: P3
+- **Description**: No automated BDD endpoint coverage report. Stage 12 acceptance criteria
+  includes "BDD 覆盖率报告生成（端点覆盖率 ≥ 90%）" but this requires a coverage mapping
+  tool that links .feature scenarios to API routes.
+- **Impact**: Cannot quantitatively verify endpoint coverage.
+- **Resolution**: Implement a simple script/tool that maps scenarios to endpoints and
+  generates a coverage report.
 
 ## Resolved Items
 

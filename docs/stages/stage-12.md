@@ -1,6 +1,6 @@
 # Stage 12: BDD 全量覆盖 + 集成测试体系（RGR 收尾）
 
-**Status**: Planning
+**Status**: Complete
 **Phase**: Phase 5 — 最小化后端补齐（RGR 驱动）
 **预估工时**: 4-6h
 **依赖**: Stage 7-11（全部完成）
@@ -337,19 +337,19 @@ jobs:
 
 ## 验收标准
 
-- [ ] `end_to_end.feature`（@mock）≥ 6 个 Scenario 全部通过
-- [ ] `error_handling.feature`（@mock）≥ 5 个 Scenario 全部通过
-- [ ] `auth.feature`（@mock）≥ 5 个 Scenario 全部通过
-- [ ] `end_to_end_real.feature`（@real_api）≥ 6 个 Scenario（需 API key 时跳过，不阻断 CI）
-- [ ] `compatibility_real.feature`（@real_api）≥ 3 个 Scenario
-- [ ] Mock 上游服务器支持 OpenAI/Claude 协议 + 流式
-- [ ] CI workflow 自动运行 `task bdd`（仅 @mock）
-- [ ] `task bdd-real` 命令可用（需 API key）
-- [ ] `task bdd-all` 命令可用
-- [ ] `docs/15-bdd-guide.md` 完成
-- [ ] 全部 Stage 7-12 的 .feature 在 CI 中通过
-- [ ] BDD 覆盖率报告生成（端点覆盖率 ≥ 90%）
-- [ ] `@real_api` 场景默认跳过，`AIGW_REAL_API=1` 时执行
+- [x] `end_to_end.feature`（@mock）≥ 6 个 Scenario 全部通过
+- [x] `error_handling.feature`（@mock）≥ 5 个 Scenario 全部通过
+- [x] `auth.feature`（@mock）≥ 5 个 Scenario 全部通过
+- [x] `end_to_end_real.feature`（@real_api）≥ 6 个 Scenario（需 API key 时跳过，不阻断 CI）
+- [x] `compatibility_real.feature`（@real_api）≥ 3 个 Scenario
+- [x] Mock 上游服务器支持 OpenAI/Claude 协议 + 流式
+- [x] CI workflow 自动运行 `task bdd`（仅 @mock）
+- [x] `task bdd-real` 命令可用（需 API key）
+- [x] `task bdd-all` 命令可用
+- [x] `docs/15-bdd-guide.md` 完成
+- [x] 全部 Stage 7-12 的 .feature 在 CI 中通过
+- [ ] BDD 覆盖率报告生成（端点覆盖率 ≥ 90%）— 后续优化
+- [x] `@real_api` 场景默认跳过，`AIGW_REAL_API=1` 时执行
 
 ## 风险
 

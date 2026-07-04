@@ -1,21 +1,21 @@
 # aigw — AI Gateway Stage Roadmap
 
 **项目**: aigw (litellm Rust 最小兼容替代)
-**最后更新**: 2026-07-04 (Stage 11 缩减：删除 /v1/key/* 别名，仅保留 Usage 增强)
+**最后更新**: 2026-07-05 (Phase 5 全部完成，Stage 7-12 Complete)
 
 ---
 
 ## 当前状态
 
-- **当前 Stage**: Stage 7 ⏳ 待开始
-- **状态**: Phase 0-4 完成，Phase 5 规划中（6 个 Stage，RGR 驱动）
-- **下一里程碑**: BDD 框架搭建 → 模型管理 CRUD → Provider 适配 → Claude 端点 → Usage 增强 → BDD 全量覆盖
+- **当前 Stage**: Phase 5 已完成，规划 Phase 6
+- **状态**: Phase 0-5 全部完成（12/12 Stages）
+- **下一里程碑**: 处理 TD-002 (real API step bindings) / TD-003 (BDD 覆盖率报告) / Phase 6 长期路线
 
 ### 整体进度
 
 ```
 Phase 0-4: ████████████████████ 100% (6/6 Stages)
-Phase 5:   ░░░░░░░░░░░░░░░░░░░░   0% (0/6 Stages)
+Phase 5:   ████████████████████ 100% (6/6 Stages)
 ```
 
 ---
@@ -58,12 +58,12 @@ Phase 5:   ░░░░░░░░░░░░░░░░░░░░   0% (0/
 
 | Stage | 状态 | 目标 | 预估 |
 |-------|------|------|------|
-| Stage 7 | ⏳ 待开始 | BDD 框架搭建 + 既有功能 .feature — cucumber-rust 集成、keys/spend/health .feature、RGR 循环验证 | 4-6h |
-| Stage 8 | ⏳ 待开始 | 模型管理 CRUD（BDD 驱动）— `proxy_models` 表（litellm v1.90.3 兼容）、`/model/*` 端点、`/v1/models` 动态列表 | 6-8h |
-| Stage 9 | ⏳ 待开始 | Provider 适配转换层（BDD 驱动）— `ProviderAdapter` trait、OpenAI↔Claude 双向转换（4 种组合） | 6-8h |
-| Stage 10 | ⏳ 待开始 | Claude /v1/messages 端点 + SSE Streaming（BDD 驱动）— `/v1/messages` 端点、4 种流式组合、SSE chunk 转换 | 6-8h |
-| Stage 11 | ⏳ 待开始 | Usage 用量查询增强（BDD 驱动）— `/spend/models` `/global/spend/models` `/spend/providers` 聚合、`/spend/logs` 过滤增强 | 2-3h |
-| Stage 12 | ⏳ 待开始 | BDD 全量覆盖 + 集成测试体系 — 端到端 .feature、Mock 上游、CI 集成、BDD 指南 | 4-6h |
+| Stage 7 | ✅ 完成 | BDD 框架搭建 + 既有功能 .feature — cucumber-rust 集成、keys/spend/health .feature、RGR 循环验证 | 2026-07-04 |
+| Stage 8 | ✅ 完成 | 模型管理 CRUD（BDD 驱动）— `proxy_models` 表（litellm v1.90.3 兼容）、`/model/*` 端点、`/v1/models` 动态列表 | 2026-07-04 |
+| Stage 9 | ✅ 完成 | Provider 适配转换层（BDD 驱动）— `ProviderAdapter` trait、OpenAI↔Claude 双向转换（4 种组合） | 2026-07-04 |
+| Stage 10 | ✅ 完成 | Claude /v1/messages 端点 + SSE Streaming（BDD 驱动）— `/v1/messages` 端点、4 种流式组合、SSE chunk 转换 | 2026-07-04 |
+| Stage 11 | ✅ 完成 | Usage 用量查询增强（BDD 驱动）— `/spend/models` `/global/spend/models` `/spend/providers` 聚合、`/spend/logs` 过滤增强 | 2026-07-04 |
+| Stage 12 | ✅ 完成 | BDD 全量覆盖 + 集成测试体系 — 端到端 .feature、Mock 上游、CI 集成、BDD 指南 | 2026-07-05 |
 
 **Stage 7-12 依赖关系**:
 
@@ -109,3 +109,4 @@ Stage 7 优先完成（BDD 基础设施），后续 Stage 8-12 全部使用 RGR 
 | v3.0 | 2026-07-04 | 新增 Phase 5（Stage 7-11）：模型管理 CRUD、BDD 测试体系、SSE Streaming + OpenAI Provider、Claude 适配转换；调整长期路线为 Phase 6 | 全栈架构师 |
 | v3.1 | 2026-07-04 | Phase 5 拆分为 6 个 Stage（7-12），BDD 提前到 Stage 7，RGR 驱动后续所有 Stage；每个 Stage 独立文档 | 全栈架构师 |
 | v3.2 | 2026-07-04 | Stage 11 缩减：删除 `/v1/key/*` 别名端点（litellm 源码核实无此路由），仅保留 Usage 用量增强；工时 4-6h → 2-3h | 全栈架构师 |
+| v4.0 | 2026-07-05 | Phase 5 全部完成：Stage 7-12 标记 Complete，BDD 63 场景通过，9 @real_api 场景创建 | 全栈架构师 |

@@ -18,10 +18,23 @@ tasks:
       - echo "test passed"
 
   bdd:
-    desc: "run BDD tests (cucumber-rust)"
+    desc: "run mock BDD tests"
     cmds:
-      - cargo test --test bdd -p aigw-server -- --nocapture
+      - cargo test --test bdd -p aigw-server
       - echo "bdd passed"
+
+  bdd-real:
+    desc: "run real API BDD tests (needs AIGW_REAL_API=1)"
+    cmds:
+      - AIGW_REAL_API=1 cargo test --test bdd -p aigw-server
+      - echo "bdd-real passed"
+
+  bdd-all:
+    desc: "run both mock and real API BDD tests"
+    cmds:
+      - cargo test --test bdd -p aigw-server
+      - AIGW_REAL_API=1 cargo test --test bdd -p aigw-server
+      - echo "bdd-all passed"
 
   test-integration:
     desc: "run integration tests (needs Docker)"

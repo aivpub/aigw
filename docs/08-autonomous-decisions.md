@@ -69,3 +69,34 @@
   `task docker-build`, `task docker-up`, `task docker-down`, `task status`.
 - **Consequences**: Contributors must have `task` (go-task) installed. This is documented
   in CLAUDE.md and the project README.
+
+## ADR-006: BDD with cucumber-rust and Mock Upstream Server
+
+- **Date**: 2026-07-04
+- **Status**: Accepted
+- **Decision**: Use cucumber-rust 0.21.1 for BDD testing with an in-memory mock upstream
+  server for all end-to-end proxy scenarios. `@real_api` scenarios default to skipped
+  unless `AIGW_REAL_API=1` is set.
+- **Rationale**: BDD scenarios validate the gateway's contract-level behavior from the
+  perspective of an API consumer. A mock upstream server avoids dependency on external
+  LLM APIs (cost, flakiness, rate limits) while still validating full request/response
+  lifecycle including authentication, validation, proxying, and error propagation.
+- **Implementation**:
+  - `tests/bdd_support/mock_upstream.rs`: Axum server on ephemeral port supporting
+    `/v1/chat/completions` (OpenAI) and `/v1/messages` (Claude) with configurable
+    responses and request recording.
+  - `tests/bdd_steps/`: Domain-specific step bindings (keys, error, e2e, spend, etc.)
+    with `cucumber::when/given/then` attributes using `expr = "..."` syntax.
+  - `tests/bdd.rs`: `TestWorld` with lazy `ensure_state()` initialization, serial
+    scenario execution via `max_concurrent_scenarios(1)`.
+  - `make_request()` helper in `common.rs` adds `Bearer ` prefix automatically.
+- **Key design decisions**:
+  - Feature files use plain `/` in paths; Rust step bindings use `\/` (cucumber
+    expression syntax requirement).
+  - `@mock` scenarios always run in CI; `@real_api` scenarios in `features/real/`
+    directory auto-skip without `AIGW_REAL_API=1`.
+  - Scenarios run sequentially due to shared global MockUpstream state.
+- **Consequences**: 63 @mock scenarios passing (end_to_end: 6, error_handling: 7,
+  auth: 5, plus model/spend/health/key/protocol features from stages 7-11).
+  9 @real_api scenarios created (end_to_end_real: 6, compatibility_real: 3),
+  auto-skipped in CI.

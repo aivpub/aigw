@@ -6,6 +6,7 @@ use cucumber::World as _;
 use std::sync::Arc;
 
 mod bdd_steps;
+mod bdd_support;
 
 /// TestWorld — shared state across Given/When/Then steps within a Scenario.
 #[derive(Debug, Clone, cucumber::World)]
@@ -66,6 +67,11 @@ impl TestWorld {
 
 #[tokio::main]
 async fn main() {
-    // Cucumber run() resolves path relative to Cargo manifest dir
-    TestWorld::run("tests/features").await;
+    // Cucumber run() resolves path relative to Cargo manifest dir.
+    // Run scenarios sequentially: the mock upstream uses shared state
+    // and concurrent scenarios would interfere with each other.
+    TestWorld::cucumber()
+        .max_concurrent_scenarios(1)
+        .run("tests/features")
+        .await;
 }

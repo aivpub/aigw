@@ -3,6 +3,8 @@
 pub mod adapter_steps;
 pub mod common;
 pub mod common_steps;
+pub mod e2e_steps;
+pub mod error_steps;
 pub mod health_steps;
 pub mod keys_steps;
 pub mod messages_steps;
