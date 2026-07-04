@@ -23,7 +23,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
-use uuid::Uuid;
+
 
 use super::spend::{require_admin, SpendAuth};
 
@@ -31,6 +31,7 @@ use super::spend::{require_admin, SpendAuth};
 // AppState
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+#[derive(Debug)]
 pub struct AppState {
     pub db: Database,
     pub master_key: Option<String>,
@@ -106,6 +107,38 @@ pub struct GenerateKeyResponse {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Helper functions
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Generate a litellm-compatible key token: sk- + 22 base64url chars
+pub fn generate_key_token() -> String {
+    let mut buf = [0u8; 16];
+    for b in &mut buf {
+        *b = fastrand::u8(..);
+    }
+    let encoded = base64url_encode(&buf);
+    format!("sk-{}", &encoded[..22])
+}
+
+/// URL-safe base64 encode (no padding)
+fn base64url_encode(data: &[u8]) -> String {
+    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut out = String::new();
+    for chunk in data.chunks(3) {
+        let n = chunk.len();
+        let b0 = chunk[0] as u32;
+        let b1 = if n > 1 { chunk[1] as u32 } else { 0 };
+        let b2 = if n > 2 { chunk[2] as u32 } else { 0 };
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        out.push(char::from(CHARS[((triple >> 18) & 0x3F) as usize]));
+        out.push(char::from(CHARS[((triple >> 12) & 0x3F) as usize]));
+        if n > 1 {
+            out.push(char::from(CHARS[((triple >> 6) & 0x3F) as usize]));
+        }
+        if n > 2 {
+            out.push(char::from(CHARS[(triple & 0x3F) as usize]));
+        }
+    }
+    out
+}
 
 /// Parse an RFC3339 string to `DateTime<Utc>`.
 pub fn parse_rfc3339(s: &str) -> Option<DateTime<Utc>> {
@@ -215,7 +248,7 @@ pub async fn generate_key(
     let raw_token = req
         .key
         .clone()
-        .unwrap_or_else(|| format!("sk-{}", Uuid::new_v4()));
+        .unwrap_or_else(|| generate_key_token());
     let hash = hash_token(&raw_token);
 
     // Check if key already exists
@@ -563,7 +596,7 @@ pub async fn key_regenerate(
         })?;
 
     // Generate new token
-    let new_raw = format!("sk-{}", Uuid::new_v4());
+    let new_raw = generate_key_token();
     let new_hash = hash_token(&new_raw);
 
     // Copy existing key with new token

@@ -56,6 +56,7 @@ pub type Result<T> = std::result::Result<T, DbError>;
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /// Multi-database pool supporting SQLite, MySQL, PostgreSQL
+#[derive(Debug)]
 pub enum Database {
     Sqlite(SqlitePool),
     Mysql(MySqlPool),

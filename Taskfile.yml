@@ -17,6 +17,12 @@ tasks:
       - cargo test --workspace
       - echo "test passed"
 
+  bdd:
+    desc: "run BDD tests (cucumber-rust)"
+    cmds:
+      - cargo test --test bdd -p aigw-server -- --nocapture
+      - echo "bdd passed"
+
   test-integration:
     desc: "run integration tests (needs Docker)"
     cmds:

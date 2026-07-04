@@ -26,7 +26,14 @@ chrono = { workspace = true }
 async-trait = { workspace = true }
 tower = { workspace = true }
 tokio-stream = "0.1"
+fastrand = "2"
 
 [dev-dependencies]
 axum-test = "16"
+cucumber = { version = "0.21", features = ["macros"] }
 tokio = { workspace = true, features = ["test-util"] }
+anyhow = "1"
+
+[[test]]
+name = "bdd"
+harness = false

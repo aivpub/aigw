@@ -67,7 +67,7 @@ impl TokenBucket {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /// In-memory rate limiter for RPM and TPM enforcement.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct RateLimiter {
     rpm_buckets: Arc<Mutex<HashMap<String, TokenBucket>>>,
     tpm_buckets: Arc<Mutex<HashMap<String, TokenBucket>>>,
