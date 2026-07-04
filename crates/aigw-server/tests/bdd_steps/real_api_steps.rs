@@ -12,8 +12,13 @@ use crate::TestWorld;
 
 /// Base URL of the running aigw server for real API tests.
 /// Defaults to http://localhost:4000; override with AIGW_BASE_URL.
+///
+/// Trailing `/v1` is stripped — all step URLs already include
+/// their own prefixes (`/v1/...`, `/health`, `/key/generate`, etc.).
 fn base_url() -> String {
-    std::env::var("AIGW_BASE_URL").unwrap_or_else(|_| "http://localhost:4000".to_string())
+    let raw = std::env::var("AIGW_BASE_URL").unwrap_or_else(|_| "http://localhost:4000".to_string());
+    let raw = raw.strip_suffix("/v1").unwrap_or(&raw);
+    raw.trim_end_matches('/').to_string()
 }
 
 /// Returns true when real API mode is active.
