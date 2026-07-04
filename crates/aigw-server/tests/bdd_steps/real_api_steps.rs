@@ -39,21 +39,31 @@ fn client() -> reqwest::Client {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 #[given(expr = "AIGW_REAL_API=1 且 API keys 已配置")]
-async fn bg_real_api_configured(_world: &mut TestWorld) {
+async fn bg_real_api_configured(world: &mut TestWorld) {
     if !real_api_enabled() {
         return;
     }
-    // Verify the server is reachable
+    // Verify the server is reachable. Both aigw and litellm expose
+    // /health/liveliness as a no-auth health-check endpoint.
     let resp = client()
-        .get(format!("{}/health", base_url()))
+        .get(format!("{}/health/liveliness", base_url()))
         .send()
         .await;
     match resp {
         Ok(r) => {
-            assert!(r.status().is_success(), "aigw server not healthy at {}", base_url());
+            assert!(
+                r.status().is_success(),
+                "aigw/litellm server not reachable at {} (status {})",
+                base_url(),
+                r.status()
+            );
         }
         Err(e) => {
-            panic!("Cannot reach aigw server at {}: {}. Start the server first with `cargo run`", base_url(), e);
+            panic!(
+                "Cannot reach aigw server at {}: {}. Start the server first.",
+                base_url(),
+                e
+            );
         }
     }
 }

@@ -31,7 +31,8 @@ impl Default for TestWorld {
     fn default() -> Self {
         Self {
             state: None,
-            master_key: "sk-master-test".to_string(),
+            master_key: std::env::var("AIGW_MASTER_KEY")
+                .unwrap_or_else(|_| "sk-master-test".to_string()),
             last_status: None,
             last_body: None,
             created_keys: std::collections::HashMap::new(),
