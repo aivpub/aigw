@@ -9,3 +9,4 @@ pub mod keys;
 pub mod models;
 pub mod proxy;
 pub mod spend;
+pub mod v1_messages;

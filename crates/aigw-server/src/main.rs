@@ -19,7 +19,7 @@ use aigw_core::router::RouterState;
 use axum::{middleware, routing::get, Router};
 use clap::Parser;
 use routes::keys::{self, AppState, SharedState};
-use routes::{chat, cors_layer, docs, health, models, spend};
+use routes::{chat, cors_layer, docs, health, models, spend, v1_messages};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -171,6 +171,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/global/spend", get(spend::global_spend))
         .route("/global/spend/logs", get(spend::global_spend_logs))
         .route("/global/spend/keys", get(spend::global_spend_keys))
+        // Claude-compatible endpoint
+        .route("/v1/messages", axum::routing::post(v1_messages::messages_handler))
         .with_state(state)
         // CORS middleware — allows browser-based frontend to call API
         .layer(middleware::from_fn(cors_layer::add_cors_headers));
