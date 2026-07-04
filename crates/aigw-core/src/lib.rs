@@ -16,6 +16,7 @@
 //! ```
 
 pub mod budget;
+pub mod adapter;
 pub mod config;
 pub mod crypto;
 pub mod db;

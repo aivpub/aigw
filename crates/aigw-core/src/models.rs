@@ -479,3 +479,119 @@ pub struct GenerateKeyRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rotation_interval: Option<String>,
 }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Anthropic/Claude API message types (for /v1/messages endpoint)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Anthropic Messages API request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaudeMessageRequest {
+    pub model: String,
+    pub messages: Vec<ClaudeMessage>,
+    pub max_tokens: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub system: Option<ClaudeSystemMessage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_k: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop_sequences: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
+}
+
+/// System message content type — string or structured content blocks
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ClaudeSystemMessage {
+    Text(String),
+    Blocks(Vec<ClaudeContentBlock>),
+}
+
+/// Claude message (user/assistant)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaudeMessage {
+    pub role: String,
+    pub content: ClaudeContent,
+}
+
+/// Claude content — string or content blocks
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ClaudeContent {
+    Text(String),
+    Blocks(Vec<ClaudeContentBlock>),
+}
+
+/// Claude content block
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaudeContentBlock {
+    #[serde(rename = "type")]
+    pub content_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<ClaudeImageSource>,
+}
+
+/// Claude image source
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaudeImageSource {
+    #[serde(rename = "type")]
+    pub source_type: String,
+    pub media_type: String,
+    pub data: String,
+}
+
+/// Anthropic Messages API response (non-streaming)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaudeMessageResponse {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub response_type: String,
+    pub role: String,
+    pub content: Vec<ClaudeContentBlock>,
+    pub model: String,
+    pub stop_reason: Option<String>,
+    pub stop_sequence: Option<String>,
+    pub usage: ClaudeUsage,
+}
+
+/// Claude usage info
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaudeUsage {
+    pub input_tokens: i32,
+    pub output_tokens: i32,
+}
+
+/// Claude SSE stream event
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaudeStreamEvent {
+    #[serde(rename = "type")]
+    pub event_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delta: Option<ClaudeDelta>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_block: Option<ClaudeContentBlock>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<ClaudeMessageResponse>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<ClaudeUsage>,
+}
+
+/// Claude delta for streaming text/content block events
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaudeDelta {
+    #[serde(rename = "type")]
+    pub delta_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+}
