@@ -6,5 +6,6 @@ pub mod cors_layer;
 pub mod docs;
 pub mod health;
 pub mod keys;
+pub mod models;
 pub mod proxy;
 pub mod spend;

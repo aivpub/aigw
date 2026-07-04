@@ -19,7 +19,7 @@ use aigw_core::router::RouterState;
 use axum::{middleware, routing::get, Router};
 use clap::Parser;
 use routes::keys::{self, AppState, SharedState};
-use routes::{chat, cors_layer, docs, health, spend};
+use routes::{chat, cors_layer, docs, health, models, spend};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -157,6 +157,12 @@ async fn main() -> anyhow::Result<()> {
         .route("/key/update", axum::routing::put(keys::key_update))
         .route("/key/delete", axum::routing::delete(keys::key_delete))
         .route("/key/regenerate", axum::routing::post(keys::key_regenerate))
+        // Model management routes
+        .route("/model/new", axum::routing::post(models::model_new))
+        .route("/model/info", get(models::model_info))
+        .route("/model/list", get(models::model_list))
+        .route("/model/update", axum::routing::put(models::model_update))
+        .route("/model/delete", axum::routing::delete(models::model_delete))
         // Spend/usage tracking routes
         .route("/spend/logs", get(spend::spend_logs))
         .route("/spend/keys", get(spend::spend_keys))

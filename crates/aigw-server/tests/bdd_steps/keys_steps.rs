@@ -21,9 +21,6 @@ async fn create_key(
 // Given
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-#[given(expr = "管理员已认证")]
-async fn admin_authenticated(_world: &mut TestWorld) {}
-
 #[given(expr = "已存在 key {string}")]
 async fn existing_key(world: &mut TestWorld, alias: String) {
     let state = world.ensure_state().await;
@@ -181,17 +178,6 @@ async fn when_query_virtual_keys(world: &mut TestWorld) {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Then
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-#[then(expr = "响应状态码为 {int}")]
-async fn then_status_is(world: &mut TestWorld, expected: u16) {
-    assert_eq!(
-        world.last_status,
-        Some(expected),
-        "Expected status {}, got {:?}",
-        expected,
-        world.last_status
-    );
-}
 
 #[then(expr = "响应包含 key 字段")]
 async fn then_has_key(world: &mut TestWorld) {

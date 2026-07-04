@@ -392,6 +392,50 @@ pub struct ModelInfo {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// proxy_models — model deployment configuration (litellm ProxyModelTable)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// ProxyModel — column-compatible with litellm's `LiteLLM_ProxyModelTable`
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct ProxyModel {
+    pub model_id: String, // PK, UUID
+    pub model_name: String, // unique human-readable name
+    pub litellm_params: serde_json::Value, // JSON: {model, api_base, api_key, rpm, tpm, ...}
+    pub model_info: serde_json::Value,     // JSON: {id, mode, max_tokens, input_cost_per_token, ...}
+    pub created_at: String,
+    pub created_by: Option<String>,
+    pub updated_at: String,
+    pub updated_by: Option<String>,
+}
+
+/// Request body for /model/new (litellm-compatible)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AddModelRequest {
+    pub model_name: String,
+    pub litellm_params: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_info: Option<serde_json::Value>,
+}
+
+/// Request body for /model/update
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateModelRequest {
+    pub model_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub litellm_params: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_info: Option<serde_json::Value>,
+}
+
+/// Request body for /model/delete
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeleteModelRequest {
+    pub model_id: String,
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Key management request/response types (litellm-compatible)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

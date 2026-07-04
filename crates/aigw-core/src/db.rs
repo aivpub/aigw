@@ -1481,6 +1481,129 @@ impl Database {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ProxyModelStore trait — proxy_models CRUD
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[async_trait]
+pub trait ProxyModelStore {
+    async fn insert_model(&self, m: &ProxyModel) -> Result<()>;
+    async fn get_model_by_id(&self, model_id: &str) -> Result<Option<ProxyModel>>;
+    async fn list_models(&self) -> Result<Vec<ProxyModel>>;
+    async fn update_model(&self, m: &ProxyModel) -> Result<()>;
+    async fn delete_model(&self, model_id: &str) -> Result<()>;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ProxyModelStore implementation for SqlitePool
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const INSERT_MODEL_SQLITE: &str = r#"
+INSERT INTO proxy_models (model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+"#;
+
+const GET_MODEL_SQLITE: &str = r#"
+SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by
+FROM proxy_models WHERE model_id = ?
+"#;
+
+const LIST_MODELS_SQLITE: &str = r#"
+SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by
+FROM proxy_models ORDER BY model_name
+"#;
+
+const UPDATE_MODEL_SQLITE: &str = r#"
+UPDATE proxy_models SET model_name = ?, litellm_params = ?, model_info = ?, updated_at = ?, updated_by = ?
+WHERE model_id = ?
+"#;
+
+#[async_trait]
+impl ProxyModelStore for SqlitePool {
+    async fn insert_model(&self, m: &ProxyModel) -> Result<()> {
+        sqlx::query(INSERT_MODEL_SQLITE)
+            .bind(&m.model_id)
+            .bind(&m.model_name)
+            .bind(&m.litellm_params)
+            .bind(&m.model_info)
+            .bind(&m.created_at)
+            .bind(&m.created_by)
+            .bind(&m.updated_at)
+            .bind(&m.updated_by)
+            .execute(self).await?;
+        Ok(())
+    }
+
+    async fn get_model_by_id(&self, model_id: &str) -> Result<Option<ProxyModel>> {
+        sqlx::query_as(GET_MODEL_SQLITE)
+            .bind(model_id)
+            .fetch_optional(self).await
+            .map_err(DbError::from)
+    }
+
+    async fn list_models(&self) -> Result<Vec<ProxyModel>> {
+        sqlx::query_as(LIST_MODELS_SQLITE)
+            .fetch_all(self).await
+            .map_err(DbError::from)
+    }
+
+    async fn update_model(&self, m: &ProxyModel) -> Result<()> {
+        sqlx::query(UPDATE_MODEL_SQLITE)
+            .bind(&m.model_name)
+            .bind(&m.litellm_params)
+            .bind(&m.model_info)
+            .bind(&m.updated_at)
+            .bind(&m.updated_by)
+            .bind(&m.model_id)
+            .execute(self).await?;
+        Ok(())
+    }
+
+    async fn delete_model(&self, model_id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM proxy_models WHERE model_id = ?")
+            .bind(model_id)
+            .execute(self).await?;
+        Ok(())
+    }
+}
+
+impl Database {
+    pub async fn insert_model(&self, m: &ProxyModel) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.insert_model(m).await,
+            _ => Err(DbError::InvalidUrl("only SQLite supported for proxy_models".into())),
+        }
+    }
+
+    pub async fn get_model_by_id(&self, model_id: &str) -> Result<Option<ProxyModel>> {
+        match self {
+            Database::Sqlite(pool) => pool.get_model_by_id(model_id).await,
+            _ => Err(DbError::InvalidUrl("only SQLite supported for proxy_models".into())),
+        }
+    }
+
+    pub async fn list_models(&self) -> Result<Vec<ProxyModel>> {
+        match self {
+            Database::Sqlite(pool) => pool.list_models().await,
+            _ => Err(DbError::InvalidUrl("only SQLite supported for proxy_models".into())),
+        }
+    }
+
+    pub async fn update_model(&self, m: &ProxyModel) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.update_model(m).await,
+            _ => Err(DbError::InvalidUrl("only SQLite supported for proxy_models".into())),
+        }
+    }
+
+    pub async fn delete_model(&self, model_id: &str) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.delete_model(model_id).await,
+            _ => Err(DbError::InvalidUrl("only SQLite supported for proxy_models".into())),
+        }
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Unit tests
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
