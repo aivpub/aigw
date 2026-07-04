@@ -5,9 +5,13 @@
 //! - GET /spend/keys          — Get spend per key summary
 //! - GET /spend/users         — Get spend per user summary
 //! - GET /spend/tags          — Get spend per tag summary
+//! - GET /spend/models        — Spend aggregated by model
+//! - GET /spend/providers     — Spend aggregated by provider
 //! - GET /global/spend        — Get total global spend (admin only)
 //! - GET /global/spend/logs   — All spend logs (admin only)
 //! - GET /global/spend/keys   — All keys spend (admin only)
+//! - GET /global/spend/models — Spend aggregated by model (admin only)
+//! - GET /global/spend/providers — Spend aggregated by provider (admin only)
 
 use aigw_core::crypto::hash_token;
 use aigw_core::middleware::{AuthError, KeyIdentity};
@@ -29,12 +33,21 @@ use super::keys::SharedState;
 #[derive(Debug, Deserialize)]
 pub struct SpendLogsQuery {
     pub api_key: Option<String>,
+    pub model: Option<String>,
+    pub provider: Option<String>,
+    pub start_date: Option<String>,
+    pub end_date: Option<String>,
     pub limit: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct SpendTagQuery {
     pub tag: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SpendModelQuery {
+    pub api_key: Option<String>,
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -142,7 +155,14 @@ pub async fn spend_logs(
 
     let logs = state
         .db
-        .query_spend_logs(Some(&api_key), query.limit)
+        .query_spend_logs_filtered(
+            Some(&api_key),
+            query.model.as_deref(),
+            query.provider.as_deref(),
+            query.start_date.as_deref(),
+            query.end_date.as_deref(),
+            query.limit,
+        )
         .await
         .map_err(|e| {
             (
@@ -286,7 +306,14 @@ pub async fn global_spend_logs(
 
     let logs = state
         .db
-        .query_spend_logs(query.api_key.as_deref(), query.limit)
+        .query_spend_logs_filtered(
+            query.api_key.as_deref(),
+            query.model.as_deref(),
+            query.provider.as_deref(),
+            query.start_date.as_deref(),
+            query.end_date.as_deref(),
+            query.limit,
+        )
         .await
         .map_err(|e| {
             (
@@ -348,6 +375,141 @@ pub async fn global_spend_keys(
         .collect();
 
     Ok(Json(json!({ "data": data })))
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// /spend/models — Spend aggregated by model
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// GET /spend/models — Spend by model (scoped to authenticated key or global)
+pub async fn spend_models(
+    State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
+    Query(query): Query<SpendModelQuery>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let api_key = query.api_key.unwrap_or_else(|| auth.token_hash.clone());
+
+    let aggs = state
+        .db
+        .aggregate_spend_by_model(Some(&api_key))
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
+            )
+        })?;
+
+    let data: Vec<Value> = aggs
+        .iter()
+        .map(|a| {
+            json!({
+                "model": a.model,
+                "total_tokens": a.total_tokens,
+                "total_spend": a.total_spend,
+                "requests": a.requests,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "data": data, "count": data.len() })))
+}
+
+/// GET /spend/providers — Spend by provider (from proxy_models litellm_params)
+pub async fn spend_providers(
+    State(state): State<SharedState>,
+    _auth: SpendAuth,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let aggs = state
+        .db
+        .aggregate_spend_by_provider()
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
+            )
+        })?;
+
+    let data: Vec<Value> = aggs
+        .iter()
+        .map(|a| {
+            json!({
+                "provider": a.provider,
+                "total_tokens": a.total_tokens,
+                "total_spend": a.total_spend,
+                "requests": a.requests,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "data": data, "count": data.len() })))
+}
+
+/// GET /global/spend/models — Spend by model (admin only, all keys)
+pub async fn global_spend_models(
+    State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    require_admin(&auth)?;
+
+    let aggs = state
+        .db
+        .aggregate_spend_by_model(None)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
+            )
+        })?;
+
+    let data: Vec<Value> = aggs
+        .iter()
+        .map(|a| {
+            json!({
+                "model": a.model,
+                "total_tokens": a.total_tokens,
+                "total_spend": a.total_spend,
+                "requests": a.requests,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "data": data, "count": data.len() })))
+}
+
+/// GET /global/spend/providers — Spend by provider (admin only)
+pub async fn global_spend_providers(
+    State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    require_admin(&auth)?;
+
+    let aggs = state
+        .db
+        .aggregate_spend_by_provider()
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
+            )
+        })?;
+
+    let data: Vec<Value> = aggs
+        .iter()
+        .map(|a| {
+            json!({
+                "provider": a.provider,
+                "total_tokens": a.total_tokens,
+                "total_spend": a.total_spend,
+                "requests": a.requests,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "data": data, "count": data.len() })))
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

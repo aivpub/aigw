@@ -1052,6 +1052,17 @@ pub trait SpendLogStore {
     async fn get_spend_by_user(&self, user_id: &str) -> Result<f64>;
     async fn get_spend_by_tag(&self, tag: &str) -> Result<f64>;
     async fn get_global_spend(&self) -> Result<f64>;
+    async fn aggregate_spend_by_model(&self, api_key: Option<&str>) -> Result<Vec<SpendModelAgg>>;
+    async fn aggregate_spend_by_provider(&self) -> Result<Vec<SpendProviderAgg>>;
+    async fn query_spend_logs_filtered(
+        &self,
+        api_key: Option<&str>,
+        model: Option<&str>,
+        provider: Option<&str>,
+        start_date: Option<&str>,
+        end_date: Option<&str>,
+        limit: Option<i32>,
+    ) -> Result<Vec<SpendLog>>;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1195,6 +1206,90 @@ impl SpendLogStore for SqlitePool {
             .await?;
         Ok(row.0.unwrap_or(0.0))
     }
+
+    async fn aggregate_spend_by_model(&self, api_key: Option<&str>) -> Result<Vec<SpendModelAgg>> {
+        match api_key {
+            Some(_key) => {
+                sqlx::query_as(
+                    "SELECT model, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests \
+                     FROM spend_logs WHERE api_key = ? GROUP BY model ORDER BY total_tokens DESC"
+                )
+                .bind(_key)
+                .fetch_all(self)
+                .await
+                .map_err(DbError::from)
+            }
+            None => {
+                sqlx::query_as(
+                    "SELECT model, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests \
+                     FROM spend_logs GROUP BY model ORDER BY total_tokens DESC"
+                )
+                .fetch_all(self)
+                .await
+                .map_err(DbError::from)
+            }
+        }
+    }
+
+    async fn aggregate_spend_by_provider(&self) -> Result<Vec<SpendProviderAgg>> {
+        // Join spend_logs with proxy_models to get provider info from litellm_params JSON
+        let rows: Vec<(String, i64, f64, i64)> = sqlx::query_as(
+            r#"SELECT COALESCE(json_extract(pm.litellm_params, '$.model'), sl.model) as provider,
+               COALESCE(SUM(sl.total_tokens), 0) as total_tokens,
+               COALESCE(SUM(sl.spend), 0) as total_spend,
+               COUNT(sl.request_id) as requests
+               FROM spend_logs sl
+               LEFT JOIN proxy_models pm ON sl.model = pm.model_name
+               GROUP BY provider
+               ORDER BY total_tokens DESC"#
+        )
+        .fetch_all(self)
+        .await
+        .map_err(DbError::from)?;
+
+        Ok(rows.into_iter().map(|(provider, total_tokens, total_spend, requests)| {
+            SpendProviderAgg { provider, total_tokens, total_spend, requests }
+        }).collect())
+    }
+
+    async fn query_spend_logs_filtered(
+        &self,
+        api_key: Option<&str>,
+        model: Option<&str>,
+        _provider: Option<&str>,
+        start_date: Option<&str>,
+        end_date: Option<&str>,
+        limit: Option<i32>,
+    ) -> Result<Vec<SpendLog>> {
+        let limit_val = limit.unwrap_or(100);
+        let mut sql = String::from(
+            r#"SELECT
+                request_id, call_type, api_key, spend, total_tokens,
+                prompt_tokens, completion_tokens, start_time, end_time,
+                request_duration_ms, completion_start_time, model, model_id, model_group,
+                custom_llm_provider, api_base, "user", metadata,
+                cache_hit, cache_key, request_tags, team_id, organization_id,
+                end_user, requester_ip_address, messages, response,
+                session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request
+            FROM spend_logs WHERE 1=1"#
+        );
+
+        if api_key.is_some() { sql.push_str(" AND api_key = ?"); }
+        if model.is_some() { sql.push_str(" AND model = ?"); }
+        if start_date.is_some() { sql.push_str(" AND start_time >= ?"); }
+        if end_date.is_some() { sql.push_str(" AND start_time <= ?"); }
+
+        sql.push_str(" ORDER BY start_time DESC LIMIT ?");
+
+        let mut query = sqlx::query_as(&sql);
+        if let Some(k) = api_key { query = query.bind(k); }
+        if let Some(m) = model { query = query.bind(m); }
+        if let Some(sd) = start_date { query = query.bind(sd); }
+        if let Some(ed) = end_date { query = query.bind(ed); }
+        query = query.bind(limit_val);
+
+        query.fetch_all(self).await.map_err(DbError::from)
+    }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1318,6 +1413,62 @@ impl SpendLogStore for MySqlPool {
             .await?;
         Ok(row.0.unwrap_or(0.0))
     }
+
+    async fn aggregate_spend_by_model(&self, api_key: Option<&str>) -> Result<Vec<SpendModelAgg>> {
+        // MySQL aggregate — same pattern as SqlitePool but using ? for bind
+        let (sql, bind_key): (&str, Option<&str>) = match api_key {
+            Some(_) => ("SELECT model, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE api_key = ? GROUP BY model ORDER BY total_tokens DESC", api_key),
+            None => ("SELECT model, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs GROUP BY model ORDER BY total_tokens DESC", None),
+        };
+        let mut q = sqlx::query_as(sql);
+        if let Some(key) = bind_key { q = q.bind(key); }
+        q.fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn aggregate_spend_by_provider(&self) -> Result<Vec<SpendProviderAgg>> {
+        // MySQL: use JSON_EXTRACT for litellm_params
+        let rows: Vec<(String, i64, f64, i64)> = sqlx::query_as(
+            r#"SELECT COALESCE(JSON_UNQUOTE(JSON_EXTRACT(pm.litellm_params, '$.model')), sl.model) as provider,
+               COALESCE(SUM(sl.total_tokens), 0) as total_tokens,
+               COALESCE(SUM(sl.spend), 0) as total_spend,
+               COUNT(sl.request_id) as requests
+               FROM spend_logs sl
+               LEFT JOIN proxy_models pm ON sl.model = pm.model_name
+               GROUP BY provider
+               ORDER BY total_tokens DESC"#
+        )
+        .fetch_all(self)
+        .await
+        .map_err(DbError::from)?;
+        Ok(rows.into_iter().map(|(provider, total_tokens, total_spend, requests)| {
+            SpendProviderAgg { provider, total_tokens, total_spend, requests }
+        }).collect())
+    }
+
+    async fn query_spend_logs_filtered(
+        &self, api_key: Option<&str>, model: Option<&str>, _provider: Option<&str>,
+        start_date: Option<&str>, end_date: Option<&str>, limit: Option<i32>,
+    ) -> Result<Vec<SpendLog>> {
+        // Fallback: use basic query and do in-memory filter
+        let result = self.query_spend_logs(api_key, Some(limit.unwrap_or(100))).await?;
+        let filtered: Vec<SpendLog> = result.into_iter().filter(|log| {
+            if let Some(m) = model { if log.model != m { return false; } }
+            if let Some(sd) = start_date {
+                if let Ok(d) = chrono::NaiveDate::parse_from_str(sd, "%Y-%m-%d") {
+                    let dt = d.and_hms_opt(0, 0, 0).map(|t| chrono::DateTime::<chrono::Utc>::from_utc(t, chrono::Utc));
+                    if let Some(dt) = dt { if log.start_time < dt { return false; } }
+                }
+            }
+            if let Some(ed) = end_date {
+                if let Ok(d) = chrono::NaiveDate::parse_from_str(ed, "%Y-%m-%d") {
+                    let dt = d.and_hms_opt(23, 59, 59).map(|t| chrono::DateTime::<chrono::Utc>::from_utc(t, chrono::Utc));
+                    if let Some(dt) = dt { if log.start_time > dt { return false; } }
+                }
+            }
+            true
+        }).collect();
+        Ok(filtered)
+    }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1420,6 +1571,59 @@ impl SpendLogStore for PgPool {
             .await?;
         Ok(row.0.unwrap_or(0.0))
     }
+
+    async fn aggregate_spend_by_model(&self, api_key: Option<&str>) -> Result<Vec<SpendModelAgg>> {
+        let (sql, bind_key): (&str, Option<&str>) = match api_key {
+            Some(_) => ("SELECT model, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE api_key = $1 GROUP BY model ORDER BY total_tokens DESC", api_key),
+            None => ("SELECT model, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs GROUP BY model ORDER BY total_tokens DESC", None),
+        };
+        let mut q = sqlx::query_as(sql);
+        if let Some(key) = bind_key { q = q.bind(key); }
+        q.fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn aggregate_spend_by_provider(&self) -> Result<Vec<SpendProviderAgg>> {
+        let rows: Vec<(String, i64, f64, i64)> = sqlx::query_as(
+            r#"SELECT COALESCE(pm.litellm_params->>'model', sl.model) as provider,
+               COALESCE(SUM(sl.total_tokens), 0) as total_tokens,
+               COALESCE(SUM(sl.spend), 0) as total_spend,
+               COUNT(sl.request_id) as requests
+               FROM spend_logs sl
+               LEFT JOIN proxy_models pm ON sl.model = pm.model_name
+               GROUP BY provider
+               ORDER BY total_tokens DESC"#
+        )
+        .fetch_all(self)
+        .await
+        .map_err(DbError::from)?;
+        Ok(rows.into_iter().map(|(provider, total_tokens, total_spend, requests)| {
+            SpendProviderAgg { provider, total_tokens, total_spend, requests }
+        }).collect())
+    }
+
+    async fn query_spend_logs_filtered(
+        &self, api_key: Option<&str>, model: Option<&str>, _provider: Option<&str>,
+        start_date: Option<&str>, end_date: Option<&str>, limit: Option<i32>,
+    ) -> Result<Vec<SpendLog>> {
+        let result = self.query_spend_logs(api_key, Some(limit.unwrap_or(100))).await?;
+        let filtered: Vec<SpendLog> = result.into_iter().filter(|log| {
+            if let Some(m) = model { if log.model != m { return false; } }
+            if let Some(sd) = start_date {
+                if let Ok(d) = chrono::NaiveDate::parse_from_str(sd, "%Y-%m-%d") {
+                    let dt = d.and_hms_opt(0, 0, 0).map(|t| chrono::DateTime::<chrono::Utc>::from_utc(t, chrono::Utc));
+                    if let Some(dt) = dt { if log.start_time < dt { return false; } }
+                }
+            }
+            if let Some(ed) = end_date {
+                if let Ok(d) = chrono::NaiveDate::parse_from_str(ed, "%Y-%m-%d") {
+                    let dt = d.and_hms_opt(23, 59, 59).map(|t| chrono::DateTime::<chrono::Utc>::from_utc(t, chrono::Utc));
+                    if let Some(dt) = dt { if log.start_time > dt { return false; } }
+                }
+            }
+            true
+        }).collect();
+        Ok(filtered)
+    }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1476,6 +1680,50 @@ impl Database {
             Database::Sqlite(pool) => pool.get_global_spend().await,
             Database::Mysql(pool) => pool.get_global_spend().await,
             Database::Postgres(pool) => pool.get_global_spend().await,
+        }
+    }
+
+    pub async fn aggregate_spend_by_model(
+        &self,
+        api_key: Option<&str>,
+    ) -> Result<Vec<SpendModelAgg>> {
+        match self {
+            Database::Sqlite(pool) => pool.aggregate_spend_by_model(api_key).await,
+            Database::Mysql(pool) => pool.aggregate_spend_by_model(api_key).await,
+            Database::Postgres(pool) => pool.aggregate_spend_by_model(api_key).await,
+        }
+    }
+
+    pub async fn aggregate_spend_by_provider(&self) -> Result<Vec<SpendProviderAgg>> {
+        match self {
+            Database::Sqlite(pool) => pool.aggregate_spend_by_provider().await,
+            Database::Mysql(pool) => pool.aggregate_spend_by_provider().await,
+            Database::Postgres(pool) => pool.aggregate_spend_by_provider().await,
+        }
+    }
+
+    pub async fn query_spend_logs_filtered(
+        &self,
+        api_key: Option<&str>,
+        model: Option<&str>,
+        provider: Option<&str>,
+        start_date: Option<&str>,
+        end_date: Option<&str>,
+        limit: Option<i32>,
+    ) -> Result<Vec<SpendLog>> {
+        match self {
+            Database::Sqlite(pool) => {
+                pool.query_spend_logs_filtered(api_key, model, provider, start_date, end_date, limit)
+                    .await
+            }
+            Database::Mysql(pool) => {
+                pool.query_spend_logs_filtered(api_key, model, provider, start_date, end_date, limit)
+                    .await
+            }
+            Database::Postgres(pool) => {
+                pool.query_spend_logs_filtered(api_key, model, provider, start_date, end_date, limit)
+                    .await
+            }
         }
     }
 }

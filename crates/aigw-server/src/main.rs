@@ -168,9 +168,13 @@ async fn main() -> anyhow::Result<()> {
         .route("/spend/keys", get(spend::spend_keys))
         .route("/spend/users", get(spend::spend_users))
         .route("/spend/tags", get(spend::spend_tags))
+        .route("/spend/models", get(spend::spend_models))
+        .route("/spend/providers", get(spend::spend_providers))
         .route("/global/spend", get(spend::global_spend))
         .route("/global/spend/logs", get(spend::global_spend_logs))
         .route("/global/spend/keys", get(spend::global_spend_keys))
+        .route("/global/spend/models", get(spend::global_spend_models))
+        .route("/global/spend/providers", get(spend::global_spend_providers))
         // Claude-compatible endpoint
         .route("/v1/messages", axum::routing::post(v1_messages::messages_handler))
         .with_state(state)

@@ -83,6 +83,22 @@ pub fn build_spend_router(state: SharedState) -> Router {
             "/global/spend/keys",
             axum::routing::get(aigw_server::routes::spend::global_spend_keys),
         )
+        .route(
+            "/spend/models",
+            axum::routing::get(aigw_server::routes::spend::spend_models),
+        )
+        .route(
+            "/spend/providers",
+            axum::routing::get(aigw_server::routes::spend::spend_providers),
+        )
+        .route(
+            "/global/spend/models",
+            axum::routing::get(aigw_server::routes::spend::global_spend_models),
+        )
+        .route(
+            "/global/spend/providers",
+            axum::routing::get(aigw_server::routes::spend::global_spend_providers),
+        )
         .with_state(state)
 }
 

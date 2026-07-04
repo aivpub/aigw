@@ -112,6 +112,24 @@ pub struct SpendLog {
     pub proxy_server_request: Option<serde_json::Value>,
 }
 
+/// Spend aggregation by model
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct SpendModelAgg {
+    pub model: String,
+    pub total_tokens: i64,
+    pub total_spend: f64,
+    pub requests: i64,
+}
+
+/// Spend aggregation by provider (from proxy_models litellm_params JSON)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpendProviderAgg {
+    pub provider: String,
+    pub total_tokens: i64,
+    pub total_spend: f64,
+    pub requests: i64,
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Multi-tenant tables (minimum compatible — all columns, FK preserved)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
