@@ -400,6 +400,7 @@ mod tests {
         let state = Arc::new(AppState {
             db,
             master_key: Some("sk-master-v1msg".to_string()),
+            aigw_master_key: None,
             provider_registry: ProviderRegistry::new(),
             router_state: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             rate_limiter: Arc::new(RateLimiter::new()),

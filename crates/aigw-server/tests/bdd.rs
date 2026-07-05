@@ -51,6 +51,7 @@ impl TestWorld {
                 aigw_server::routes::keys::AppState {
                     db,
                     master_key: Some(mk.clone()),
+                    aigw_master_key: None,
                     provider_registry: aigw_core::provider::ProviderRegistry::new(),
                     router_state: aigw_core::router::RouterState::default(),
                     rate_limiter: Arc::new(aigw_core::rate_limiter::RateLimiter::new()),

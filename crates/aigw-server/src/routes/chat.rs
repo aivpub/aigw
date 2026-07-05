@@ -4,7 +4,7 @@
 //! - POST /v1/chat/completions — Chat completions (streaming SSE + non-streaming)
 //! - GET  /v1/models           — List available models for the authenticated key
 
-use aigw_core::crypto::hash_token;
+use aigw_core::crypto::{decrypt_litellm_value, hash_token};
 use aigw_core::middleware::KeyIdentity;
 use axum::{
     extract::State,
@@ -15,6 +15,194 @@ use serde::Serialize;
 use serde_json::{json, Value};
 
 use super::keys::SharedState;
+
+/// Resolved upstream routing parameters from proxy_models + credentials lookup.
+struct ResolvedUpstream {
+    api_base: String,
+    api_key: Option<String>,
+    model_name: String,
+}
+
+/// Look up a model by name in proxy_models, decrypt litellm_params if encrypted,
+/// and resolve credential references. Falls back to env vars if model not found.
+async fn resolve_upstream_params(
+    state: &SharedState,
+    model_name: &str,
+) -> Result<ResolvedUpstream, (StatusCode, Json<Value>)> {
+    // Try to look up the model in proxy_models
+    let model = state.db.get_model_by_name(model_name).await.map_err(|e| {
+        tracing::warn!("Failed to look up model '{}': {}", model_name, e);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {"message": format!("DB error: {}", e), "type": "db_error"}})),
+        )
+    })?;
+
+    match model {
+        Some(m) => {
+            let litellm_params_str = m.litellm_params.to_string();
+
+            // Detect whether litellm_params is encrypted (base64) or plaintext JSON
+            let params_json: Value = if litellm_params_str.starts_with('{') {
+                // Plaintext JSON — parse directly
+                m.litellm_params.clone()
+            } else {
+                // Encrypted — decrypt with aigw_master_key
+                let key = state.aigw_master_key.as_deref().ok_or_else(|| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({
+                            "error": {
+                                "message": "Model has encrypted params but AIGW_MASTER_KEY is not configured",
+                                "type": "config_error"
+                            }
+                        })),
+                    )
+                })?;
+
+                let decrypted = decrypt_litellm_value(&litellm_params_str, key).map_err(|e| {
+                    tracing::error!("Failed to decrypt litellm_params for model '{}': {}", model_name, e);
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({
+                            "error": {
+                                "message": format!("Failed to decrypt model params: {}", e),
+                                "type": "crypto_error"
+                            }
+                        })),
+                    )
+                })?;
+
+                serde_json::from_str(&decrypted).unwrap_or_else(|_| json!({}))
+            };
+
+            // Resolve credential reference if present
+            if let Some(cred_name) = params_json
+                .get("litellm_credential_name")
+                .and_then(|v| v.as_str())
+            {
+                let cred = state.db.get_credential_by_name(cred_name).await.map_err(|e| {
+                    tracing::error!("Failed to look up credential '{}': {}", cred_name, e);
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({
+                            "error": {
+                                "message": format!("Credential '{}' not found", cred_name),
+                                "type": "not_found"
+                            }
+                        })),
+                    )
+                })?;
+
+                let cred = cred.ok_or_else(|| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({
+                            "error": {
+                                "message": format!("Credential '{}' not found", cred_name),
+                                "type": "not_found"
+                            }
+                        })),
+                    )
+                })?;
+
+                let cred_values_str = cred.credential_values.to_string();
+                let cred_values: Value = if cred_values_str.starts_with('{') {
+                    cred.credential_values.clone()
+                } else {
+                    let key = state.aigw_master_key.as_deref().ok_or_else(|| {
+                        (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(json!({
+                                "error": {
+                                    "message": "Credential is encrypted but AIGW_MASTER_KEY is not configured",
+                                    "type": "config_error"
+                                }
+                            })),
+                        )
+                    })?;
+                    let decrypted =
+                        decrypt_litellm_value(&cred_values_str, key).map_err(|e| {
+                            (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                Json(json!({
+                                    "error": {
+                                        "message": format!("Failed to decrypt credential: {}", e),
+                                        "type": "crypto_error"
+                                    }
+                                })),
+                            )
+                        })?;
+                    serde_json::from_str(&decrypted).unwrap_or_else(|_| json!({}))
+                };
+
+                // Merge: credential values take precedence for api_key/api_base,
+                // but params_json fields take precedence if already set
+                let mut merged = cred_values;
+                if let Some(obj) = merged.as_object_mut() {
+                    for (k, v) in params_json.as_object().into_iter().flat_map(|o| o.iter()) {
+                        if !obj.contains_key(k) {
+                            obj.insert(k.clone(), v.clone());
+                        }
+                    }
+                }
+                let api_base = merged
+                    .get("api_base")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("https://api.openai.com/v1")
+                    .to_string();
+                let api_key = merged.get("api_key").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let upstream_model = merged
+                    .get("model")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(model_name)
+                    .to_string();
+
+                Ok(ResolvedUpstream {
+                    api_base,
+                    api_key,
+                    model_name: upstream_model,
+                })
+            } else {
+                let api_base = params_json
+                    .get("api_base")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("https://api.openai.com/v1")
+                    .to_string();
+                let api_key = params_json
+                    .get("api_key")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let upstream_model = params_json
+                    .get("model")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(model_name)
+                    .to_string();
+
+                Ok(ResolvedUpstream {
+                    api_base,
+                    api_key,
+                    model_name: upstream_model,
+                })
+            }
+        }
+        None => {
+            // Model not found in proxy_models — fall back to env vars
+            let api_base = std::env::var("UPSTREAM_LLM_URL")
+                .or_else(|_| std::env::var("OPENAI_BASE_URL"))
+                .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
+            let api_key = std::env::var("UPSTREAM_API_KEY")
+                .or_else(|_| std::env::var("OPENAI_API_KEY"))
+                .ok();
+
+            Ok(ResolvedUpstream {
+                api_base,
+                api_key,
+                model_name: model_name.to_string(),
+            })
+        }
+    }
+}
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Auth extraction (reuses the same pattern as spend.rs)
@@ -244,18 +432,18 @@ pub async fn chat_completions(
         }
     }
 
-    // 4. Determine upstream URL from environment/config
-    let upstream_base_url = std::env::var("UPSTREAM_LLM_URL")
-        .or_else(|_| std::env::var("OPENAI_BASE_URL"))
-        .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
+    // 4. Resolve upstream routing: look up model in proxy_models, decrypt if needed,
+    //    resolve credential references. Falls back to env vars if model not found.
+    let resolved = resolve_upstream_params(&state, _model).await?;
 
-    let upstream_api_key = std::env::var("UPSTREAM_API_KEY")
-        .or_else(|_| std::env::var("OPENAI_API_KEY"))
-        .ok();
-
+    // Build upstream request body — inject resolved model name
+    let mut upstream_body = body.clone();
+    if let Some(obj) = upstream_body.as_object_mut() {
+        obj.insert("model".to_string(), json!(resolved.model_name));
+    }
     let upstream_url = format!(
         "{}/chat/completions",
-        upstream_base_url.trim_end_matches('/')
+        resolved.api_base.trim_end_matches('/')
     );
 
     // 5. Build and send upstream request
@@ -275,9 +463,9 @@ pub async fn chat_completions(
             )
         })?;
 
-    let mut upstream_req = client.post(&upstream_url).json(&body);
+    let mut upstream_req = client.post(&upstream_url).json(&upstream_body);
 
-    if let Some(ref api_key) = upstream_api_key {
+    if let Some(ref api_key) = resolved.api_key {
         upstream_req = upstream_req.header("Authorization", format!("Bearer {}", api_key));
     }
 
@@ -389,7 +577,7 @@ pub async fn chat_completions(
             model_id: None,
             model_group: None,
             custom_llm_provider: None,
-            api_base: Some(upstream_base_url),
+            api_base: Some(resolved.api_base.clone()),
             user: auth.user_id.clone(),
             metadata: None,
             cache_hit: None,
@@ -510,6 +698,7 @@ mod tests {
         let state = Arc::new(AppState {
             db,
             master_key: Some("sk-master-chat-test".to_string()),
+            aigw_master_key: None,
             provider_registry: ProviderRegistry::new(),
             router_state: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             rate_limiter: Arc::new(RateLimiter::new()),
@@ -745,6 +934,7 @@ mod tests {
         let state = Arc::new(AppState {
             db,
             master_key: None,
+            aigw_master_key: None,
             provider_registry: ProviderRegistry::new(),
             router_state: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             rate_limiter: Arc::new(RateLimiter::new()),

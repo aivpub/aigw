@@ -143,6 +143,7 @@ mod tests {
         Arc::new(super::super::keys::AppState {
             db,
             master_key,
+            aigw_master_key: None,
             provider_registry: ProviderRegistry::new(),
             router_state: RouterState::default(),
             rate_limiter: Arc::new(RateLimiter::new()),

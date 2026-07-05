@@ -539,6 +539,7 @@ mod tests {
         let state = Arc::new(AppState {
             db,
             master_key: Some("sk-master-test-123".to_string()),
+            aigw_master_key: None,
             provider_registry: ProviderRegistry::new(),
             router_state: RouterState::default(),
             rate_limiter: Arc::new(RateLimiter::new()),

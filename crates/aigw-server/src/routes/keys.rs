@@ -35,6 +35,7 @@ use super::spend::{require_admin, SpendAuth};
 pub struct AppState {
     pub db: Database,
     pub master_key: Option<String>,
+    pub aigw_master_key: Option<String>, // for decrypting litellm_params at runtime
     #[allow(dead_code)]
     pub provider_registry: ProviderRegistry,
     #[allow(dead_code)]
@@ -651,6 +652,7 @@ mod tests {
         let state = Arc::new(AppState {
             db,
             master_key: Some("sk-master-test".to_string()),
+            aigw_master_key: None,
             provider_registry: ProviderRegistry::new(),
             router_state: RouterState::default(),
             rate_limiter: Arc::new(RateLimiter::new()),

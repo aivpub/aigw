@@ -126,10 +126,14 @@ async fn main() -> anyhow::Result<()> {
     // Initialize rate limiter
     let rate_limiter = Arc::new(RateLimiter::new());
 
+    // Determine aigw master key for runtime decryption (CREDENTIALS/encrypted fields)
+    let aigw_master_key = std::env::var("AIGW_MASTER_KEY").ok();
+
     // Build shared state
     let state: SharedState = Arc::new(AppState {
         db,
         master_key: Some(master_key.clone()),
+        aigw_master_key,
         provider_registry,
         router_state,
         rate_limiter,

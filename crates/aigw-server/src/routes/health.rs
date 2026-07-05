@@ -132,6 +132,7 @@ mod tests {
         let state = Arc::new(AppState {
             db,
             master_key: None,
+            aigw_master_key: None,
             provider_registry: Default::default(),
             router_state: std::sync::Arc::new(tokio::sync::Mutex::new(
                 std::collections::HashMap::new(),

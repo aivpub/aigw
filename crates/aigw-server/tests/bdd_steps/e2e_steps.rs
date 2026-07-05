@@ -40,14 +40,14 @@ async fn given_mock_upstream_started(_world: &mut TestWorld) {
 async fn given_model_points_to_mock(world: &mut TestWorld, name: String) {
     let state = world.ensure_state().await;
     let mu = mock_upstream().lock().await;
-    let mock_url = mu.as_ref().expect("mock upstream not started").url().to_string();
+    let mock_base = mu.as_ref().expect("mock upstream not started").url().to_string();
 
     let model = aigw_core::models::ProxyModel {
         model_id: uuid::Uuid::new_v4().to_string(),
         model_name: name.clone(),
         litellm_params: serde_json::json!({
             "model": name,
-            "api_base": mock_url
+            "api_base": format!("{mock_base}/v1")
         }),
         model_info: serde_json::json!({}),
         created_at: chrono::Utc::now().to_rfc3339(),
