@@ -3,6 +3,7 @@
 pub mod auth;
 pub mod chat;
 pub mod cors_layer;
+pub mod credentials;
 pub mod docs;
 pub mod health;
 pub mod keys;

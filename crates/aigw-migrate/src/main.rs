@@ -18,6 +18,7 @@
 
 mod export;
 mod import;
+mod remote_import;
 mod verify;
 
 use clap::{Parser, Subcommand};
@@ -34,6 +35,9 @@ pub const TABLE_MAPPINGS: &[(&str, &str)] = &[
     ("LiteLLM_BudgetTable", "budgets"),
     ("LiteLLM_OrganizationMembership", "organization_memberships"),
     ("LiteLLM_TeamMembership", "team_memberships"),
+    ("LiteLLM_ProxyModelTable", "proxy_models"),
+    ("LiteLLM_Config", "config"),
+    ("LiteLLM_CredentialsTable", "credentials"),
 ];
 
 #[derive(Parser)]
@@ -76,6 +80,21 @@ enum Commands {
         #[arg(long = "target-db")]
         target_db: String,
     },
+    /// Full migration: litellm → aigw with encryption key rotation
+    RemoteImport {
+        /// Source database URL (postgres:// or mysql:// or sqlite://)
+        #[arg(long)]
+        source_url: String,
+        /// Target database URL or file path
+        #[arg(long)]
+        target_url: String,
+        /// Source master key (optional; auto-extracted from LiteLLM_Config if not provided)
+        #[arg(long = "source-master-key")]
+        source_master_key: Option<String>,
+        /// Target master key (falls back to AIGW_MASTER_KEY env var)
+        #[arg(long = "target-master-key")]
+        target_master_key: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -104,6 +123,37 @@ async fn main() -> anyhow::Result<()> {
                 std::process::exit(0);
             } else {
                 eprintln!("Mismatch detected in one or more tables.");
+                std::process::exit(1);
+            }
+        }
+        Commands::RemoteImport {
+            source_url,
+            target_url,
+            source_master_key,
+            target_master_key,
+        } => {
+            let target_key = target_master_key
+                .or_else(|| std::env::var("AIGW_MASTER_KEY").ok())
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Target master key required. Provide --target-master-key or set AIGW_MASTER_KEY env var."
+                    )
+                })?;
+
+            println!(
+                "Remote import: litellm ({source_url}) → aigw ({target_url})"
+            );
+            let all_match = remote_import::run(
+                &source_url,
+                &target_url,
+                source_master_key.as_deref(),
+                &target_key,
+            )
+            .await?;
+            if all_match {
+                println!("Remote import complete. All row counts match.");
+            } else {
+                eprintln!("Remote import complete, but some row counts MISMATCH.");
                 std::process::exit(1);
             }
         }

@@ -1,30 +1,31 @@
 use crate::TABLE_MAPPINGS;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
-use sqlx::Column;
-use sqlx::Row;
+use sqlx::any::AnyPoolOptions;
+use sqlx::{AnyPool, Column, Row};
 
-pub async fn run(source_path: &str, target_path: &str) -> anyhow::Result<()> {
-    let source = SqlitePoolOptions::new()
+/// Connect to a database from either a file path (SQLite) or a URL (any DB).
+async fn connect(source_or_url: &str) -> anyhow::Result<AnyPool> {
+    if source_or_url.starts_with("sqlite:") || source_or_url.contains("://") {
+        let pool = AnyPoolOptions::new()
+            .max_connections(1)
+            .connect(source_or_url)
+            .await?;
+        return Ok(pool);
+    }
+    let url = format!("sqlite://{}", source_or_url);
+    let pool = AnyPoolOptions::new()
         .max_connections(1)
-        .connect_with(
-            SqliteConnectOptions::new()
-                .filename(source_path)
-                .create_if_missing(true),
-        )
+        .connect(&url)
         .await?;
-    let target = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect_with(
-            SqliteConnectOptions::new()
-                .filename(target_path)
-                .create_if_missing(true),
-        )
-        .await?;
+    Ok(pool)
+}
+
+pub async fn run(source_str: &str, target_str: &str) -> anyhow::Result<()> {
+    let source = connect(source_str).await?;
+    let target = connect(target_str).await?;
 
     for &(litellm_table, aigw_table) in TABLE_MAPPINGS {
         let query = format!("SELECT * FROM \"{}\"", aigw_table);
-        let rows: Vec<sqlx::sqlite::SqliteRow> = match sqlx::query(&query).fetch_all(&source).await
-        {
+        let rows = match sqlx::query(&query).fetch_all(&source).await {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("  [SKIP] {}: {}", aigw_table, e);
@@ -42,18 +43,19 @@ pub async fn run(source_path: &str, target_path: &str) -> anyhow::Result<()> {
             .iter()
             .map(|c| format!("\"{}\"", c.name()))
             .collect();
-        let placeholders: Vec<String> = columns.iter().map(|_| "?".to_string()).collect();
-
-        let insert_sql = format!(
-            "INSERT INTO \"{}\" ({}) VALUES ({})",
-            litellm_table,
-            columns.join(", "),
-            placeholders.join(", ")
-        );
 
         let mut inserted = 0usize;
         for row in &rows {
             let col_count = row.columns().len();
+            let placeholders: Vec<String> = (0..col_count).map(|_| "?".to_string()).collect();
+
+            let insert_sql = format!(
+                "INSERT INTO \"{}\" ({}) VALUES ({})",
+                litellm_table,
+                columns.join(", "),
+                placeholders.join(", ")
+            );
+
             let mut q = sqlx::query(&insert_sql);
             for i in 0..col_count {
                 if let Ok(v) = row.try_get::<String, _>(i) {
@@ -70,7 +72,10 @@ pub async fn run(source_path: &str, target_path: &str) -> anyhow::Result<()> {
             inserted += 1;
         }
 
-        println!("  {} -> {} ({} rows)", aigw_table, litellm_table, inserted);
+        println!(
+            "  {} -> {} ({} rows)",
+            aigw_table, litellm_table, inserted
+        );
     }
 
     Ok(())
@@ -83,6 +88,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_export_single_table() {
+        sqlx::any::install_default_drivers();
         let dir = tempfile::tempdir().unwrap();
         let src_path = dir.path().join("src.db");
         let tgt_path = dir.path().join("tgt.db");

@@ -19,7 +19,7 @@ use aigw_core::router::RouterState;
 use axum::{middleware, routing::get, Router};
 use clap::Parser;
 use routes::keys::{self, AppState, SharedState};
-use routes::{chat, cors_layer, docs, health, models, spend, v1_messages};
+use routes::{chat, cors_layer, credentials, docs, health, models, spend, v1_messages};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -163,6 +163,21 @@ async fn main() -> anyhow::Result<()> {
         .route("/model/list", get(models::model_list))
         .route("/model/update", axum::routing::put(models::model_update))
         .route("/model/delete", axum::routing::delete(models::model_delete))
+        // Credential management routes
+        .route(
+            "/credential/new",
+            axum::routing::post(credentials::credential_new),
+        )
+        .route("/credential/info", get(credentials::credential_info))
+        .route("/credential/list", get(credentials::credential_list))
+        .route(
+            "/credential/update",
+            axum::routing::put(credentials::credential_update),
+        )
+        .route(
+            "/credential/delete",
+            axum::routing::delete(credentials::credential_delete),
+        )
         // Spend/usage tracking routes
         .route("/spend/logs", get(spend::spend_logs))
         .route("/spend/keys", get(spend::spend_keys))

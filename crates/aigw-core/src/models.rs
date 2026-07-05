@@ -454,6 +454,48 @@ pub struct DeleteModelRequest {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// credentials — credential storage (litellm LiteLLM_CredentialsTable)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Credential — column-compatible with litellm's `LiteLLM_CredentialsTable`
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct Credential {
+    pub credential_id: String,
+    pub credential_name: String,
+    pub credential_values: serde_json::Value, // JSON, encrypted
+    pub credential_info: serde_json::Value,   // JSON
+    pub created_at: String,
+    pub created_by: Option<String>,
+    pub updated_at: String,
+    pub updated_by: Option<String>,
+}
+
+/// Request body for /credential/new
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AddCredentialRequest {
+    pub credential_name: String,
+    pub credential_values: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential_info: Option<serde_json::Value>,
+}
+
+/// Request body for /credential/update
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateCredentialRequest {
+    pub credential_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential_values: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential_info: Option<serde_json::Value>,
+}
+
+/// Request body for /credential/delete
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeleteCredentialRequest {
+    pub credential_name: String,
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Key management request/response types (litellm-compatible)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

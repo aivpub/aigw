@@ -30,7 +30,9 @@ pub mod tenant;
 
 // Re-export commonly used types
 pub use config::{AigwConfig, GeneralSettings, ModelInfo, RouterSettings};
+pub use crypto::{decrypt_litellm_value, encrypt_litellm_value, hash_token};
+pub use db::CredentialsStore;
 pub use models::{
-    Budget, Organization, OrganizationMembership, Project, SpendLog, Team, TeamMembership, User,
-    VirtualKey,
+    Budget, Credential, Organization, OrganizationMembership, Project, ProxyModel, SpendLog, Team,
+    TeamMembership, User, VirtualKey,
 };

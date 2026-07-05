@@ -1,30 +1,32 @@
 use crate::TABLE_MAPPINGS;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
-use sqlx::Column;
-use sqlx::Row;
+use sqlx::any::AnyPoolOptions;
+use sqlx::{AnyPool, Column, Row};
 
-pub async fn run(source_path: &str, target_path: &str) -> anyhow::Result<()> {
-    let source = SqlitePoolOptions::new()
+/// Connect to a database from either a file path (SQLite) or a URL (any DB).
+async fn connect(source_or_url: &str) -> anyhow::Result<AnyPool> {
+    if source_or_url.starts_with("sqlite:") || source_or_url.contains("://") {
+        let pool = AnyPoolOptions::new()
+            .max_connections(1)
+            .connect(source_or_url)
+            .await?;
+        return Ok(pool);
+    }
+    // Treat as SQLite file path — convert to sqlite:// URL for Any driver
+    let url = format!("sqlite://{}", source_or_url);
+    let pool = AnyPoolOptions::new()
         .max_connections(1)
-        .connect_with(
-            SqliteConnectOptions::new()
-                .filename(source_path)
-                .create_if_missing(true),
-        )
+        .connect(&url)
         .await?;
-    let target = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect_with(
-            SqliteConnectOptions::new()
-                .filename(target_path)
-                .create_if_missing(true),
-        )
-        .await?;
+    Ok(pool)
+}
+
+pub async fn run(source_str: &str, target_str: &str) -> anyhow::Result<()> {
+    let source = connect(source_str).await?;
+    let target = connect(target_str).await?;
 
     for &(litellm_table, aigw_table) in TABLE_MAPPINGS {
         let query = format!("SELECT * FROM \"{}\"", litellm_table);
-        let rows: Vec<sqlx::sqlite::SqliteRow> = match sqlx::query(&query).fetch_all(&source).await
-        {
+        let rows = match sqlx::query(&query).fetch_all(&source).await {
             Ok(r) => r,
             Err(e) => {
                 eprintln!("  [SKIP] {}: {}", litellm_table, e);
@@ -42,18 +44,19 @@ pub async fn run(source_path: &str, target_path: &str) -> anyhow::Result<()> {
             .iter()
             .map(|c| format!("\"{}\"", c.name()))
             .collect();
-        let placeholders: Vec<String> = columns.iter().map(|_| "?".to_string()).collect();
-
-        let insert_sql = format!(
-            "INSERT INTO \"{}\" ({}) VALUES ({})",
-            aigw_table,
-            columns.join(", "),
-            placeholders.join(", ")
-        );
 
         let mut inserted = 0usize;
         for row in &rows {
             let col_count = row.columns().len();
+            let placeholders: Vec<String> = (0..col_count).map(|_| "?".to_string()).collect();
+
+            let insert_sql = format!(
+                "INSERT INTO \"{}\" ({}) VALUES ({})",
+                aigw_table,
+                columns.join(", "),
+                placeholders.join(", ")
+            );
+
             let mut q = sqlx::query(&insert_sql);
             for i in 0..col_count {
                 if let Ok(v) = row.try_get::<String, _>(i) {
@@ -81,14 +84,9 @@ mod tests {
     use super::*;
     use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
-    fn open_db(path: &str) -> SqliteConnectOptions {
-        SqliteConnectOptions::new()
-            .filename(path)
-            .create_if_missing(true)
-    }
-
     #[tokio::test]
     async fn test_import_single_table() {
+        sqlx::any::install_default_drivers();
         let dir = tempfile::tempdir().unwrap();
         let src_path = dir.path().join("src.db");
         let tgt_path = dir.path().join("tgt.db");
@@ -97,13 +95,17 @@ mod tests {
 
         let src_pool = SqlitePoolOptions::new()
             .max_connections(1)
-            .connect_with(open_db(src_str))
+            .connect_with(
+                SqliteConnectOptions::new()
+                    .filename(src_str)
+                    .create_if_missing(true),
+            )
             .await
             .unwrap();
         sqlx::query(
             r#"CREATE TABLE "LiteLLM_OrganizationTable" (
             organization_id TEXT PRIMARY KEY, organization_alias TEXT, spend REAL DEFAULT 0,
-            models TEXT, max_budget REAL, created_at DATETIME, updated_at DATETIME
+            models TEXT, max_budget REAL, created_at TEXT, updated_at TEXT
         )"#,
         )
         .execute(&src_pool)
@@ -120,13 +122,17 @@ mod tests {
 
         let tgt_pool = SqlitePoolOptions::new()
             .max_connections(1)
-            .connect_with(open_db(tgt_str))
+            .connect_with(
+                SqliteConnectOptions::new()
+                    .filename(tgt_str)
+                    .create_if_missing(true),
+            )
             .await
             .unwrap();
         sqlx::query(
             r#"CREATE TABLE "organizations" (
             organization_id TEXT PRIMARY KEY, organization_alias TEXT, spend REAL DEFAULT 0,
-            models TEXT, max_budget REAL, created_at DATETIME, updated_at DATETIME
+            models TEXT, max_budget REAL, created_at TEXT, updated_at TEXT
         )"#,
         )
         .execute(&tgt_pool)
@@ -139,7 +145,11 @@ mod tests {
 
         let tgt_pool = SqlitePoolOptions::new()
             .max_connections(1)
-            .connect_with(open_db(tgt_str))
+            .connect_with(
+                SqliteConnectOptions::new()
+                    .filename(tgt_str)
+                    .create_if_missing(true),
+            )
             .await
             .unwrap();
         let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM organizations")

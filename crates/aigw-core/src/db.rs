@@ -1815,39 +1815,343 @@ impl ProxyModelStore for SqlitePool {
     }
 }
 
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ProxyModelStore implementation for MySqlPool
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[async_trait]
+impl ProxyModelStore for MySqlPool {
+    async fn insert_model(&self, m: &ProxyModel) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO proxy_models (model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(&m.model_id).bind(&m.model_name).bind(&m.litellm_params).bind(&m.model_info)
+        .bind(&m.created_at).bind(&m.created_by).bind(&m.updated_at).bind(&m.updated_by)
+        .execute(self).await?;
+        Ok(())
+    }
+
+    async fn get_model_by_id(&self, model_id: &str) -> Result<Option<ProxyModel>> {
+        sqlx::query_as("SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by FROM proxy_models WHERE model_id = ?")
+            .bind(model_id).fetch_optional(self).await.map_err(DbError::from)
+    }
+
+    async fn list_models(&self) -> Result<Vec<ProxyModel>> {
+        sqlx::query_as("SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by FROM proxy_models ORDER BY model_name")
+            .fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn update_model(&self, m: &ProxyModel) -> Result<()> {
+        sqlx::query("UPDATE proxy_models SET model_name = ?, litellm_params = ?, model_info = ?, updated_at = ?, updated_by = ? WHERE model_id = ?")
+            .bind(&m.model_name).bind(&m.litellm_params).bind(&m.model_info)
+            .bind(&m.updated_at).bind(&m.updated_by).bind(&m.model_id)
+            .execute(self).await?;
+        Ok(())
+    }
+
+    async fn delete_model(&self, model_id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM proxy_models WHERE model_id = ?")
+            .bind(model_id).execute(self).await?;
+        Ok(())
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ProxyModelStore implementation for PgPool
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[async_trait]
+impl ProxyModelStore for PgPool {
+    async fn insert_model(&self, m: &ProxyModel) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO proxy_models (model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)"
+        )
+        .bind(&m.model_id).bind(&m.model_name).bind(&m.litellm_params).bind(&m.model_info)
+        .bind(&m.created_at).bind(&m.created_by).bind(&m.updated_at).bind(&m.updated_by)
+        .execute(self).await?;
+        Ok(())
+    }
+
+    async fn get_model_by_id(&self, model_id: &str) -> Result<Option<ProxyModel>> {
+        sqlx::query_as("SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by FROM proxy_models WHERE model_id = $1")
+            .bind(model_id).fetch_optional(self).await.map_err(DbError::from)
+    }
+
+    async fn list_models(&self) -> Result<Vec<ProxyModel>> {
+        sqlx::query_as("SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by FROM proxy_models ORDER BY model_name")
+            .fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn update_model(&self, m: &ProxyModel) -> Result<()> {
+        sqlx::query("UPDATE proxy_models SET model_name = $1, litellm_params = $2, model_info = $3, updated_at = $4, updated_by = $5 WHERE model_id = $6")
+            .bind(&m.model_name).bind(&m.litellm_params).bind(&m.model_info)
+            .bind(&m.updated_at).bind(&m.updated_by).bind(&m.model_id)
+            .execute(self).await?;
+        Ok(())
+    }
+
+    async fn delete_model(&self, model_id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM proxy_models WHERE model_id = $1")
+            .bind(model_id).execute(self).await?;
+        Ok(())
+    }
+}
+
 impl Database {
     pub async fn insert_model(&self, m: &ProxyModel) -> Result<()> {
         match self {
             Database::Sqlite(pool) => pool.insert_model(m).await,
-            _ => Err(DbError::InvalidUrl("only SQLite supported for proxy_models".into())),
+            Database::Mysql(pool) => pool.insert_model(m).await,
+            Database::Postgres(pool) => pool.insert_model(m).await,
         }
     }
 
     pub async fn get_model_by_id(&self, model_id: &str) -> Result<Option<ProxyModel>> {
         match self {
             Database::Sqlite(pool) => pool.get_model_by_id(model_id).await,
-            _ => Err(DbError::InvalidUrl("only SQLite supported for proxy_models".into())),
+            Database::Mysql(pool) => pool.get_model_by_id(model_id).await,
+            Database::Postgres(pool) => pool.get_model_by_id(model_id).await,
         }
     }
 
     pub async fn list_models(&self) -> Result<Vec<ProxyModel>> {
         match self {
             Database::Sqlite(pool) => pool.list_models().await,
-            _ => Err(DbError::InvalidUrl("only SQLite supported for proxy_models".into())),
+            Database::Mysql(pool) => pool.list_models().await,
+            Database::Postgres(pool) => pool.list_models().await,
         }
     }
 
     pub async fn update_model(&self, m: &ProxyModel) -> Result<()> {
         match self {
             Database::Sqlite(pool) => pool.update_model(m).await,
-            _ => Err(DbError::InvalidUrl("only SQLite supported for proxy_models".into())),
+            Database::Mysql(pool) => pool.update_model(m).await,
+            Database::Postgres(pool) => pool.update_model(m).await,
         }
     }
 
     pub async fn delete_model(&self, model_id: &str) -> Result<()> {
         match self {
             Database::Sqlite(pool) => pool.delete_model(model_id).await,
-            _ => Err(DbError::InvalidUrl("only SQLite supported for proxy_models".into())),
+            Database::Mysql(pool) => pool.delete_model(model_id).await,
+            Database::Postgres(pool) => pool.delete_model(model_id).await,
+        }
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// CredentialsStore trait — credential CRUD across all DB backends
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Trait for credential operations across all DB backends.
+#[async_trait]
+pub trait CredentialsStore {
+    async fn insert_credential(&self, c: &Credential) -> Result<()>;
+    async fn get_credential_by_name(&self, name: &str) -> Result<Option<Credential>>;
+    async fn list_credentials(&self) -> Result<Vec<Credential>>;
+    async fn update_credential(&self, c: &Credential) -> Result<()>;
+    async fn delete_credential(&self, name: &str) -> Result<()>;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// CredentialsStore implementation for SqlitePool
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const INSERT_CREDENTIAL_SQLITE: &str = r#"
+INSERT INTO credentials (credential_id, credential_name, credential_values, credential_info, created_at, created_by, updated_at, updated_by)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+"#;
+
+const GET_CREDENTIAL_SQLITE: &str = r#"
+SELECT credential_id, credential_name, credential_values, credential_info, created_at, created_by, updated_at, updated_by
+FROM credentials WHERE credential_name = ?
+"#;
+
+const LIST_CREDENTIALS_SQLITE: &str = r#"
+SELECT credential_id, credential_name, credential_values, credential_info, created_at, created_by, updated_at, updated_by
+FROM credentials ORDER BY credential_name
+"#;
+
+const UPDATE_CREDENTIAL_SQLITE: &str = r#"
+UPDATE credentials SET credential_values = ?, credential_info = ?, updated_at = ?, updated_by = ?
+WHERE credential_name = ?
+"#;
+
+#[async_trait]
+impl CredentialsStore for SqlitePool {
+    async fn insert_credential(&self, c: &Credential) -> Result<()> {
+        sqlx::query(INSERT_CREDENTIAL_SQLITE)
+            .bind(&c.credential_id)
+            .bind(&c.credential_name)
+            .bind(&c.credential_values)
+            .bind(&c.credential_info)
+            .bind(&c.created_at)
+            .bind(&c.created_by)
+            .bind(&c.updated_at)
+            .bind(&c.updated_by)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn get_credential_by_name(&self, name: &str) -> Result<Option<Credential>> {
+        sqlx::query_as(GET_CREDENTIAL_SQLITE)
+            .bind(name)
+            .fetch_optional(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn list_credentials(&self) -> Result<Vec<Credential>> {
+        sqlx::query_as(LIST_CREDENTIALS_SQLITE)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn update_credential(&self, c: &Credential) -> Result<()> {
+        sqlx::query(UPDATE_CREDENTIAL_SQLITE)
+            .bind(&c.credential_values)
+            .bind(&c.credential_info)
+            .bind(&c.updated_at)
+            .bind(&c.updated_by)
+            .bind(&c.credential_name)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn delete_credential(&self, name: &str) -> Result<()> {
+        sqlx::query("DELETE FROM credentials WHERE credential_name = ?")
+            .bind(name)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// CredentialsStore implementation for MySqlPool
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[async_trait]
+impl CredentialsStore for MySqlPool {
+    async fn insert_credential(&self, c: &Credential) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO credentials (credential_id, credential_name, credential_values, credential_info, created_at, created_by, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        .bind(&c.credential_id).bind(&c.credential_name).bind(&c.credential_values).bind(&c.credential_info)
+        .bind(&c.created_at).bind(&c.created_by).bind(&c.updated_at).bind(&c.updated_by)
+        .execute(self).await?;
+        Ok(())
+    }
+
+    async fn get_credential_by_name(&self, name: &str) -> Result<Option<Credential>> {
+        sqlx::query_as("SELECT credential_id, credential_name, credential_values, credential_info, created_at, created_by, updated_at, updated_by FROM credentials WHERE credential_name = ?")
+            .bind(name).fetch_optional(self).await.map_err(DbError::from)
+    }
+
+    async fn list_credentials(&self) -> Result<Vec<Credential>> {
+        sqlx::query_as("SELECT credential_id, credential_name, credential_values, credential_info, created_at, created_by, updated_at, updated_by FROM credentials ORDER BY credential_name")
+            .fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn update_credential(&self, c: &Credential) -> Result<()> {
+        sqlx::query("UPDATE credentials SET credential_values = ?, credential_info = ?, updated_at = ?, updated_by = ? WHERE credential_name = ?")
+            .bind(&c.credential_values).bind(&c.credential_info).bind(&c.updated_at).bind(&c.updated_by).bind(&c.credential_name)
+            .execute(self).await?;
+        Ok(())
+    }
+
+    async fn delete_credential(&self, name: &str) -> Result<()> {
+        sqlx::query("DELETE FROM credentials WHERE credential_name = ?")
+            .bind(name).execute(self).await?;
+        Ok(())
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// CredentialsStore implementation for PgPool
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[async_trait]
+impl CredentialsStore for PgPool {
+    async fn insert_credential(&self, c: &Credential) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO credentials (credential_id, credential_name, credential_values, credential_info, created_at, created_by, updated_at, updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)"
+        )
+        .bind(&c.credential_id).bind(&c.credential_name).bind(&c.credential_values).bind(&c.credential_info)
+        .bind(&c.created_at).bind(&c.created_by).bind(&c.updated_at).bind(&c.updated_by)
+        .execute(self).await?;
+        Ok(())
+    }
+
+    async fn get_credential_by_name(&self, name: &str) -> Result<Option<Credential>> {
+        sqlx::query_as("SELECT credential_id, credential_name, credential_values, credential_info, created_at, created_by, updated_at, updated_by FROM credentials WHERE credential_name = $1")
+            .bind(name).fetch_optional(self).await.map_err(DbError::from)
+    }
+
+    async fn list_credentials(&self) -> Result<Vec<Credential>> {
+        sqlx::query_as("SELECT credential_id, credential_name, credential_values, credential_info, created_at, created_by, updated_at, updated_by FROM credentials ORDER BY credential_name")
+            .fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn update_credential(&self, c: &Credential) -> Result<()> {
+        sqlx::query("UPDATE credentials SET credential_values = $1, credential_info = $2, updated_at = $3, updated_by = $4 WHERE credential_name = $5")
+            .bind(&c.credential_values).bind(&c.credential_info).bind(&c.updated_at).bind(&c.updated_by).bind(&c.credential_name)
+            .execute(self).await?;
+        Ok(())
+    }
+
+    async fn delete_credential(&self, name: &str) -> Result<()> {
+        sqlx::query("DELETE FROM credentials WHERE credential_name = $1")
+            .bind(name).execute(self).await?;
+        Ok(())
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Database enum credential dispatch
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+impl Database {
+    pub async fn insert_credential(&self, c: &Credential) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.insert_credential(c).await,
+            Database::Mysql(pool) => pool.insert_credential(c).await,
+            Database::Postgres(pool) => pool.insert_credential(c).await,
+        }
+    }
+
+    pub async fn get_credential_by_name(&self, name: &str) -> Result<Option<Credential>> {
+        match self {
+            Database::Sqlite(pool) => pool.get_credential_by_name(name).await,
+            Database::Mysql(pool) => pool.get_credential_by_name(name).await,
+            Database::Postgres(pool) => pool.get_credential_by_name(name).await,
+        }
+    }
+
+    pub async fn list_credentials(&self) -> Result<Vec<Credential>> {
+        match self {
+            Database::Sqlite(pool) => pool.list_credentials().await,
+            Database::Mysql(pool) => pool.list_credentials().await,
+            Database::Postgres(pool) => pool.list_credentials().await,
+        }
+    }
+
+    pub async fn update_credential(&self, c: &Credential) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.update_credential(c).await,
+            Database::Mysql(pool) => pool.update_credential(c).await,
+            Database::Postgres(pool) => pool.update_credential(c).await,
+        }
+    }
+
+    pub async fn delete_credential(&self, name: &str) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.delete_credential(name).await,
+            Database::Mysql(pool) => pool.delete_credential(name).await,
+            Database::Postgres(pool) => pool.delete_credential(name).await,
         }
     }
 }
@@ -1861,7 +2165,7 @@ mod tests {
     use super::*;
     use crate::crypto::hash_token;
 
-    /// All 11 tables defined in the migrations (aigw names)
+    /// All 14 tables defined in the migrations (aigw names)
     const ALL_TABLES: &[&str] = &[
         "virtual_keys",
         "spend_logs",
@@ -1874,6 +2178,9 @@ mod tests {
         "team_memberships",
         "deprecated_keys",
         "deleted_keys",
+        "proxy_models",
+        "config",
+        "credentials",
     ];
 
     fn make_test_key(token_hash: &str, key_alias: &str) -> VirtualKey {
@@ -1942,7 +2249,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_all_11_tables_exist_after_migration() {
+    async fn test_all_14_tables_exist_after_migration() {
         let db = Database::init("sqlite::memory:").await.expect("init");
         match db {
             Database::Sqlite(pool) => {
@@ -2389,5 +2696,182 @@ mod tests {
         assert_eq!(db.get_spend_by_key(&key).await.unwrap(), 60.0);
         assert_eq!(db.get_spend_by_user("cycle-user").await.unwrap(), 60.0);
         assert_eq!(db.get_global_spend().await.unwrap(), 60.0);
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // CredentialsStore CRUD tests (SQLite in-memory)
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    fn make_test_credential(name: &str) -> Credential {
+        let now = Utc::now().to_rfc3339();
+        Credential {
+            credential_id: Uuid::new_v4().to_string(),
+            credential_name: name.to_string(),
+            credential_values: serde_json::json!({"api_key": "test-key-123"}),
+            credential_info: serde_json::json!({"provider": "openai"}),
+            created_at: now.clone(),
+            created_by: None,
+            updated_at: now,
+            updated_by: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_insert_and_get_credential() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let cred = make_test_credential("openai-key");
+        db.insert_credential(&cred).await.expect("insert");
+
+        let retrieved = db.get_credential_by_name("openai-key").await.expect("get");
+        assert!(retrieved.is_some());
+        let c = retrieved.unwrap();
+        assert_eq!(c.credential_name, "openai-key");
+        assert_eq!(c.credential_values["api_key"], "test-key-123");
+    }
+
+    #[tokio::test]
+    async fn test_get_nonexistent_credential() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let result = db.get_credential_by_name("no-such-cred").await.expect("get");
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_list_credentials() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        db.insert_credential(&make_test_credential("cred-a")).await.expect("insert");
+        db.insert_credential(&make_test_credential("cred-b")).await.expect("insert");
+        db.insert_credential(&make_test_credential("cred-c")).await.expect("insert");
+
+        let all = db.list_credentials().await.expect("list");
+        assert_eq!(all.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_update_credential() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let cred = make_test_credential("update-me");
+        db.insert_credential(&cred).await.expect("insert");
+
+        let mut updated = cred.clone();
+        updated.credential_values = serde_json::json!({"api_key": "updated-key"});
+        updated.credential_info = serde_json::json!({"provider": "updated-provider"});
+        updated.updated_at = Utc::now().to_rfc3339();
+
+        db.update_credential(&updated).await.expect("update");
+
+        let fetched = db.get_credential_by_name("update-me").await.expect("get").unwrap();
+        assert_eq!(fetched.credential_values["api_key"], "updated-key");
+        assert_eq!(fetched.credential_info["provider"], "updated-provider");
+    }
+
+    #[tokio::test]
+    async fn test_delete_credential() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let cred = make_test_credential("delete-me");
+        db.insert_credential(&cred).await.expect("insert");
+
+        assert!(db.get_credential_by_name("delete-me").await.unwrap().is_some());
+
+        db.delete_credential("delete-me").await.expect("delete");
+
+        assert!(db.get_credential_by_name("delete-me").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_credential_full_crud_cycle() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+
+        // Insert
+        let cred = make_test_credential("full-cycle");
+        db.insert_credential(&cred).await.expect("insert");
+        assert!(db.get_credential_by_name("full-cycle").await.unwrap().is_some());
+
+        // Update
+        let mut updated = cred.clone();
+        updated.credential_values = serde_json::json!({"api_key": "cycled-key"});
+        updated.updated_at = Utc::now().to_rfc3339();
+        db.update_credential(&updated).await.expect("update");
+        let fetched = db.get_credential_by_name("full-cycle").await.unwrap().unwrap();
+        assert_eq!(fetched.credential_values["api_key"], "cycled-key");
+
+        // List
+        let all = db.list_credentials().await.unwrap();
+        assert_eq!(all.len(), 1);
+
+        // Delete
+        db.delete_credential("full-cycle").await.expect("delete");
+        assert!(db.get_credential_by_name("full-cycle").await.unwrap().is_none());
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // ProxyModel CRUD tests (SQLite in-memory)
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    fn make_test_model(name: &str) -> ProxyModel {
+        let now = Utc::now().to_rfc3339();
+        ProxyModel {
+            model_id: Uuid::new_v4().to_string(),
+            model_name: name.to_string(),
+            litellm_params: serde_json::json!({"model": "gpt-4", "api_base": "https://api.openai.com"}),
+            model_info: serde_json::json!({"id": "gpt-4"}),
+            created_at: now.clone(),
+            created_by: None,
+            updated_at: now,
+            updated_by: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_insert_and_get_model() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let m = make_test_model("test-model");
+        db.insert_model(&m).await.expect("insert");
+
+        let retrieved = db.get_model_by_id(&m.model_id).await.expect("get");
+        assert!(retrieved.is_some());
+        let r = retrieved.unwrap();
+        assert_eq!(r.model_name, "test-model");
+        assert_eq!(r.litellm_params["model"], "gpt-4");
+    }
+
+    #[tokio::test]
+    async fn test_list_models() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        db.insert_model(&make_test_model("model-a")).await.expect("insert");
+        db.insert_model(&make_test_model("model-b")).await.expect("insert");
+
+        let all = db.list_models().await.expect("list");
+        assert_eq!(all.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_update_model() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let m = make_test_model("update-model");
+        db.insert_model(&m).await.expect("insert");
+
+        let mut updated = m.clone();
+        updated.model_name = "updated-model-name".to_string();
+        updated.litellm_params = serde_json::json!({"model": "gpt-4-turbo"});
+        updated.updated_at = Utc::now().to_rfc3339();
+        db.update_model(&updated).await.expect("update");
+
+        let fetched = db.get_model_by_id(&m.model_id).await.expect("get").unwrap();
+        assert_eq!(fetched.model_name, "updated-model-name");
+        assert_eq!(fetched.litellm_params["model"], "gpt-4-turbo");
+    }
+
+    #[tokio::test]
+    async fn test_delete_model() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let m = make_test_model("delete-model");
+        db.insert_model(&m).await.expect("insert");
+
+        assert!(db.get_model_by_id(&m.model_id).await.unwrap().is_some());
+
+        db.delete_model(&m.model_id).await.expect("delete");
+
+        assert!(db.get_model_by_id(&m.model_id).await.unwrap().is_none());
     }
 }
