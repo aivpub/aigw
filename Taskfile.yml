@@ -24,9 +24,18 @@ tasks:
       - echo "bdd passed"
 
   bdd-real:
-    desc: "run real API BDD tests (needs AIGW_REAL_API=1)"
+    desc: "run real API BDD tests (set AIGW_BASE_URL + AIGW_MASTER_KEY in .env)"
     cmds:
-      - AIGW_REAL_API=1 cargo test --test bdd -p aigw-server
+      - |
+        set -a
+        [ -f .env ] && . ./.env
+        set +a
+        export AIGW_BASE_URL="${AIGW_BASE_URL:-${OPENAPI_BASE_URL:-http://localhost:4000}}"
+        export AIGW_MASTER_KEY="${AIGW_MASTER_KEY:-${OPENAPI_KEY:-${MASTER_KEY:-sk-master-test}}}"
+        export AIGW_REAL_API=1
+        echo "==> AIGW_BASE_URL=${AIGW_BASE_URL}"
+        echo "==> AIGW_MASTER_KEY=$(echo ${AIGW_MASTER_KEY} | cut -c1-8)..."
+        cargo test --test bdd -p aigw-server
       - echo "bdd-real passed"
 
   bdd-all:
