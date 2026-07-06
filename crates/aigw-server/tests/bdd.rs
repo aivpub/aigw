@@ -74,7 +74,11 @@ async fn main() {
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     let manager = bdd_support::test_db::TestDatabaseManager::from_env();
     let db_info = if let Some(ref mgr) = manager {
-        Some(mgr.create_db().await.expect("create test db"))
+        let info = mgr.create_db().await.expect("create test db");
+        // Expose the auto-created DB URL to migration sync steps
+        // (they read AIGW_TEST_DB_URL to know where to sync data)
+        std::env::set_var("AIGW_TEST_DB_URL", &info.database_url);
+        Some(info)
     } else {
         None
     };
@@ -107,7 +111,11 @@ async fn main() {
     if let Some(s) = server {
         s.stop().await;
     }
-    if let (Some(mgr), Some(info)) = (manager, db_info) {
-        mgr.drop_db(&info).await.ok();
+    if let (Some(mgr), Some(ref info)) = (manager, db_info) {
+        if std::env::var("AIGW_TEST_KEEP_DB").as_deref() == Ok("1") {
+            eprintln!("==> AIGW_TEST_KEEP_DB=1: keeping test DB: {}", info.database_url);
+        } else {
+            mgr.drop_db(info).await.ok();
+        }
     }
 }

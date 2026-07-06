@@ -29,6 +29,7 @@ tokio-stream = "0.1"
 fastrand = "2"
 
 [dev-dependencies]
+aigw-migrate = { path = "../aigw-migrate" }
 axum-test = "16"
 cucumber = { version = "0.21", features = ["macros"] }
 tokio = { workspace = true, features = ["test-util"] }

@@ -105,6 +105,7 @@ name = "aigw-server"
 version = "0.1.0"
 dependencies = [
  "aigw-core",
+ "aigw-migrate",
  "anyhow",
  "async-trait",
  "axum 0.8.9",
