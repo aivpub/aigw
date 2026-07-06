@@ -60,7 +60,10 @@ tasks:
         set +a
         export OPENAI_API_KEY="${OPENAI_API_KEY:-${OPENAPI_KEY:-}}"
         export OPENAI_BASE_URL="${OPENAI_BASE_URL:-${OPENAPI_BASE_URL:-}}"
-        AIGW_REAL_API=1 AIGW_TEST_DB_DRIVER=postgres AIGW_TEST_START_SERVER=1 cargo test --test bdd -p aigw-server
+        AIGW_REAL_API=1 AIGW_TEST_DB_DRIVER=postgres AIGW_TEST_START_SERVER=1 \
+          AIGW_UPSTREAM_DB_URL="${AIGW_UPSTREAM_DB_URL:-}" \
+          AIGW_UPSTREAM_MASTER_KEY="${AIGW_UPSTREAM_MASTER_KEY:-}" \
+          cargo test --test bdd -p aigw-server
 
   bdd-real-mysql:
     desc: "run BDD tests with MySQL (auto DB + server)"
