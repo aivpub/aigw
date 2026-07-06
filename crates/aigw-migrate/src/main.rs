@@ -18,27 +18,13 @@
 
 mod export;
 mod import;
+mod remote_export;
 mod remote_import;
 mod verify;
 
 use clap::{Parser, Subcommand};
 
-/// Table name pairs for bidirectional migration.
-/// Order: (litellm_table_name, aigw_table_name).
-pub const TABLE_MAPPINGS: &[(&str, &str)] = &[
-    ("LiteLLM_VerificationToken", "virtual_keys"),
-    ("LiteLLM_SpendLogs", "spend_logs"),
-    ("LiteLLM_OrganizationTable", "organizations"),
-    ("LiteLLM_TeamTable", "teams"),
-    ("LiteLLM_UserTable", "users"),
-    ("LiteLLM_ProjectTable", "projects"),
-    ("LiteLLM_BudgetTable", "budgets"),
-    ("LiteLLM_OrganizationMembership", "organization_memberships"),
-    ("LiteLLM_TeamMembership", "team_memberships"),
-    ("LiteLLM_ProxyModelTable", "proxy_models"),
-    ("LiteLLM_Config", "config"),
-    ("LiteLLM_CredentialsTable", "credentials"),
-];
+use aigw_migrate::TABLE_MAPPINGS;
 
 #[derive(Parser)]
 #[command(
@@ -82,6 +68,7 @@ enum Commands {
     },
     /// Full migration: litellm → aigw with encryption key rotation
     RemoteImport {
+
         /// Source database URL (postgres:// or mysql:// or sqlite://)
         #[arg(long)]
         source_url: String,
@@ -92,6 +79,21 @@ enum Commands {
         #[arg(long = "source-master-key")]
         source_master_key: Option<String>,
         /// Target master key (falls back to AIGW_MASTER_KEY env var)
+        #[arg(long = "target-master-key")]
+        target_master_key: Option<String>,
+    },
+    /// Full reverse migration: aigw → litellm with encryption key rotation
+    RemoteExport {
+        /// Source database URL (aigw DB)
+        #[arg(long)]
+        source_url: String,
+        /// Target database URL (litellm DB)
+        #[arg(long)]
+        target_url: String,
+        /// Source master key (aigw key; falls back to AIGW_MASTER_KEY env var)
+        #[arg(long = "source-master-key")]
+        source_master_key: Option<String>,
+        /// Target master key (litellm key; auto-extracted from LiteLLM_Config if not provided)
         #[arg(long = "target-master-key")]
         target_master_key: Option<String>,
     },
@@ -148,12 +150,44 @@ async fn main() -> anyhow::Result<()> {
                 &target_url,
                 source_master_key.as_deref(),
                 &target_key,
+                None, // import all spend_logs
             )
             .await?;
             if all_match {
                 println!("Remote import complete. All row counts match.");
             } else {
                 eprintln!("Remote import complete, but some row counts MISMATCH.");
+                std::process::exit(1);
+            }
+        }
+        Commands::RemoteExport {
+            source_url,
+            target_url,
+            source_master_key,
+            target_master_key,
+        } => {
+            let source_key = source_master_key
+                .or_else(|| std::env::var("AIGW_MASTER_KEY").ok())
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Source master key required. Provide --source-master-key or set AIGW_MASTER_KEY env var."
+                    )
+                })?;
+
+            println!(
+                "Remote export: aigw ({source_url}) → litellm ({target_url})"
+            );
+            let all_match = remote_export::run(
+                &source_url,
+                &target_url,
+                &source_key,
+                target_master_key.as_deref(),
+            )
+            .await?;
+            if all_match {
+                println!("Remote export complete. All row counts match.");
+            } else {
+                eprintln!("Remote export complete, but some row counts MISMATCH.");
                 std::process::exit(1);
             }
         }

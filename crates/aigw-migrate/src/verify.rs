@@ -20,6 +20,7 @@ async fn connect(source_or_url: &str) -> anyhow::Result<AnyPool> {
 }
 
 pub async fn run(source_db: &str, target_db: &str) -> anyhow::Result<bool> {
+    sqlx::any::install_default_drivers();
     let source = connect(source_db).await?;
     let target = connect(target_db).await?;
 

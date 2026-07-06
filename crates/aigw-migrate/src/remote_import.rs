@@ -7,9 +7,45 @@
 //!   4. Migrate credentials — decrypt credential_values, re-encrypt with aigw key
 //!   5. Migrate proxy_models — decrypt litellm_params, re-encrypt with aigw key
 //!   6. Batch migrate spend_logs (10k per batch)
+//!
+//! For PostgreSQL sources, we use native PgPool to avoid AnyPool's limited
+//! support for PG-native types (TextArray, Jsonb, Timestamp, Name, etc.).
 
 use sqlx::any::AnyPoolOptions;
-use sqlx::{AnyPool, Column, Row};
+use sqlx::Row as _;
+use sqlx::{AnyPool, Column};
+
+/// Generate database-appropriate placeholder for positional parameters.
+/// sqlx::AnyPool doesn't reliably translate `?` for all backends (particularly PG),
+/// so we explicitly use `$N` for PostgreSQL and `?` for everything else.
+fn placeholder(i: usize, db_url: &str) -> String {
+    if is_pg(db_url) {
+        format!("${}", i + 1)
+    } else {
+        "?".to_string()
+    }
+}
+
+/// Generate placeholders for `col_count` columns.
+fn placeholders(col_count: usize, db_url: &str) -> Vec<String> {
+    (0..col_count).map(|i| placeholder(i, db_url)).collect()
+}
+
+/// Generate database-appropriate conflict handling clause.
+/// PostgreSQL uses `ON CONFLICT DO NOTHING`; SQLite/MySQL don't need it
+/// (SQLite's `INSERT OR IGNORE` would work but `?` placeholder semantics differ).
+fn conflict_clause(db_url: &str) -> &'static str {
+    if is_pg(db_url) {
+        " ON CONFLICT DO NOTHING"
+    } else {
+        ""
+    }
+}
+
+/// Check if a URL targets PostgreSQL.
+fn is_pg(url: &str) -> bool {
+    url.starts_with("postgres://") || url.starts_with("postgresql://")
+}
 
 /// Connect to a database from either a file path (SQLite) or a URL (any DB).
 async fn connect(source_or_url: &str) -> anyhow::Result<AnyPool> {
@@ -28,14 +64,247 @@ async fn connect(source_or_url: &str) -> anyhow::Result<AnyPool> {
     Ok(pool)
 }
 
-/// Extract litellm master_key from the LiteLLM_Config table.
-async fn extract_source_master_key(source: &AnyPool) -> anyhow::Result<Option<String>> {
-    let row = sqlx::query(
-        "SELECT param_value FROM \"LiteLLM_Config\" WHERE param_name = 'litellm_master_key'",
-    )
-    .fetch_optional(source)
-    .await?;
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// PG type-aware helpers — work around AnyPool's inability to decode
+// PostgreSQL native types (jsonb, timestamp, text[], Name, etc.).
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+/// Get column names and PG data types from information_schema.
+/// Returns empty Vec for non-PG sources.
+async fn source_column_info(pool: &AnyPool, table: &str, db_url: &str) -> Vec<(String, String)> {
+    if !is_pg(db_url) {
+        return Vec::new();
+    }
+    let rows = sqlx::query(
+        "SELECT column_name::text, data_type::text \
+         FROM information_schema.columns \
+         WHERE table_name = $1 AND table_schema = 'public' \
+         ORDER BY ordinal_position",
+    )
+    .bind(table)
+    .fetch_all(pool)
+    .await;
+    match rows {
+        Ok(r) => r
+            .iter()
+            .map(|row| {
+                let name: String = row.get(0);
+                let ty: String = row.get(1);
+                (name, ty)
+            })
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Build a SELECT query for PG sources, casting every column to ::text
+/// so AnyPool can decode the values.
+///
+/// For text[] / ARRAY columns, `col::text` produces PG array-literal format
+/// (`{elem1,elem2}`) which is NOT valid JSON. Use `array_to_json()` instead
+/// to produce `["elem1","elem2"]`, which is valid JSON and can be inserted
+/// into jsonb columns via CAST.
+fn build_pg_select(
+    table: &str,
+    cols: &[(String, String)],
+    order_by: Option<&str>,
+    limit: Option<usize>,
+) -> String {
+    let select_cols: Vec<String> = cols
+        .iter()
+        .map(|(name, ty)| {
+            if ty == "text[]" || ty == "ARRAY" {
+                format!(
+                    "COALESCE(array_to_json(\"{}\")::text, '[]')",
+                    name
+                )
+            } else {
+                format!("COALESCE(\"{}\"::text, '')", name)
+            }
+        })
+        .collect();
+    let mut query = format!("SELECT {} FROM \"{}\"", select_cols.join(", "), table);
+    if let Some(ob) = order_by {
+        query.push_str(&format!(" ORDER BY \"{}\" ASC", ob));
+    }
+    if let Some(lim) = limit {
+        query.push_str(&format!(" LIMIT {}", lim));
+    }
+    query
+}
+
+/// Get column names and PG data types from the **target** database's
+/// information_schema. Used to build correct type casts on INSERT.
+/// Returns empty Vec for non-PG targets.
+async fn target_column_info(pool: &AnyPool, table: &str, db_url: &str) -> Vec<(String, String)> {
+    if !is_pg(db_url) {
+        return Vec::new();
+    }
+    let rows = sqlx::query(
+        "SELECT column_name::text, data_type::text \
+         FROM information_schema.columns \
+         WHERE table_name = $1 AND table_schema = 'public' \
+         ORDER BY ordinal_position",
+    )
+    .bind(table)
+    .fetch_all(pool)
+    .await;
+    match rows {
+        Ok(r) => r
+            .iter()
+            .map(|row| {
+                let name: String = row.get(0);
+                let ty: String = row.get(1);
+                (name, ty)
+            })
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Build the VALUES ( ... ) expression for INSERT, using **target** column
+/// types so the cast suffix matches the destination column's actual type.
+///
+/// For columns with a source index (Some), uses placeholder + CAST + NULLIF.
+/// For target-only columns (None), uses a type-appropriate literal default.
+///
+/// Returns (values_expr, placeholder_count) — placeholder count is needed to
+/// know how many binds to supply, since target-only columns use literals.
+fn pg_insert_values_expr(cols: &[(String, String, Option<usize>)], db_url: &str) -> (String, usize) {
+    let mut ph_count = 0usize;
+    let expr = cols
+        .iter()
+        .map(|(_, ty, src_idx)| {
+            if src_idx.is_none() {
+                // Target-only column: use literal default
+                return pg_default_literal(ty).to_string();
+            }
+            let ph = placeholder(ph_count, db_url);
+            ph_count += 1;
+            let pg_type = pg_type_for_cast(ty);
+            match pg_type {
+                "" => {
+                    // Text-compatible: no cast needed, empty string is fine
+                    ph
+                }
+                _ => {
+                    // CAST(NULLIF(…, '') AS type) handles empty strings from NULL source
+                    // values, but if the target column is NOT NULL we need a fallback.
+                    // COALESCE ensures we always provide a valid value.
+                    format!(
+                        "COALESCE(CAST(NULLIF({}, '') AS {}), {}::{})",
+                        ph, pg_type, pg_default_literal(ty), pg_type
+                    )
+                }
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    (expr, ph_count)
+}
+
+/// Build the column list and a mapping from target column → source row index.
+/// Returns (target_col_names, target_col_types, source_index_opt) where
+/// source_index_opt is Some(idx) for columns present in source, None for
+/// target-only columns that need type-appropriate literal defaults.
+fn build_column_merge(
+    src_cols: &[(String, String)],
+    tgt_cols: &[(String, String)],
+) -> Vec<(String, String, Option<usize>)> {
+    // Build source name → index map
+    let src_index: std::collections::HashMap<&str, usize> = src_cols
+        .iter()
+        .enumerate()
+        .map(|(i, (name, _))| (name.as_str(), i))
+        .collect();
+
+    // For each target column, look up its index in the source (None if missing)
+    tgt_cols
+        .iter()
+        .map(|(name, ty)| {
+            let idx = src_index.get(name.as_str()).copied();
+            (name.clone(), ty.clone(), idx)
+        })
+        .collect()
+}
+
+/// Return a type-appropriate default literal for a column not present in the source.
+/// These are used when the target has a NOT NULL column the source doesn't have.
+fn pg_default_literal(col_type: &str) -> &'static str {
+    match col_type {
+        "jsonb" | "json" => "'{}'::jsonb",
+        "text[]" | "ARRAY" => "'{}'::text[]",
+        "boolean" | "bool" => "false",
+        "integer" | "int" | "int4" | "smallint" | "int2" | "bigint" | "int8" => "0",
+        "double precision" | "float8" | "real" | "float4" | "numeric" | "decimal" => "0",
+        "timestamp with time zone" | "timestamptz" => "'1970-01-01 00:00:00+00'::timestamptz",
+        "timestamp without time zone" | "timestamp" => "'1970-01-01 00:00:00'::timestamp",
+        _ => "''",
+    }
+}
+
+/// Return the PG cast suffix for a given data type.
+/// All non-text types need explicit casts because `::text` SELECT values
+/// don't implicitly cast to jsonb/numeric/timestamp/etc.
+fn pg_type_for_cast(data_type: &str) -> &'static str {
+    match data_type {
+        "jsonb" => "jsonb",
+        // json pseudotype: text inserts work but empty string isn't valid JSON →
+        // needs NULLIF(…, '') in pg_insert_values_expr
+        "json" => "json",
+        "text[]" | "ARRAY" => "text[]",
+        "boolean" | "bool" => "boolean",
+        "integer" | "int" | "int4" => "integer",
+        "bigint" | "int8" => "bigint",
+        "smallint" | "int2" => "smallint",
+        "double precision" | "float8" => "double precision",
+        "real" | "float4" => "real",
+        "numeric" | "decimal" => "numeric",
+        "text" | "character varying" | "varchar" | "char" | "character" => "",
+        "uuid" => "uuid",
+        "timestamp without time zone" | "timestamp" => "timestamp",
+        "timestamp with time zone" | "timestamptz" => "timestamptz",
+        _ => "",
+    }
+}
+
+/// Bind a row value at `idx` to a query, trying String → i64 → f64 → empty string.
+fn bind_value_from_row<'q>(
+    mut q: sqlx::query::Query<
+        'q,
+        sqlx::Any,
+        <sqlx::Any as sqlx::Database>::Arguments<'q>,
+    >,
+    row: &<sqlx::Any as sqlx::Database>::Row,
+    idx: usize,
+) -> sqlx::query::Query<'q, sqlx::Any, <sqlx::Any as sqlx::Database>::Arguments<'q>> {
+    if let Ok(v) = row.try_get::<String, _>(idx) {
+        q = q.bind(v);
+    } else if let Ok(v) = row.try_get::<i64, _>(idx) {
+        q = q.bind(v);
+    } else if let Ok(v) = row.try_get::<f64, _>(idx) {
+        q = q.bind(v);
+    } else {
+        q = q.bind(String::new());
+    }
+    q
+}
+
+/// Extract litellm master_key from the LiteLLM_Config table.
+async fn extract_source_master_key(
+    source: &AnyPool,
+    source_url: &str,
+) -> anyhow::Result<Option<String>> {
+    let col = if is_pg(source_url) {
+        "param_value::text"
+    } else {
+        "param_value"
+    };
+    let query = format!(
+        "SELECT {} FROM \"LiteLLM_Config\" WHERE param_name = 'litellm_master_key'",
+        col
+    );
+    let row = sqlx::query(&query).fetch_optional(source).await?;
     Ok(row.and_then(|r| r.try_get::<String, _>(0).ok()))
 }
 
@@ -58,8 +327,18 @@ async fn migrate_plain_table(
     target: &AnyPool,
     src_table: &str,
     tgt_table: &str,
+    source_url: &str,
+    target_url: &str,
 ) -> anyhow::Result<usize> {
-    let query = format!("SELECT * FROM \"{}\"", src_table);
+    let col_info = source_column_info(source, src_table, source_url).await;
+    let tgt_col_info = target_column_info(target, tgt_table, target_url).await;
+
+    let query = if !col_info.is_empty() {
+        build_pg_select(src_table, &col_info, None, None)
+    } else {
+        format!("SELECT * FROM \"{}\"", src_table)
+    };
+
     let rows = match sqlx::query(&query).fetch_all(source).await {
         Ok(r) => r,
         Err(e) => {
@@ -75,35 +354,62 @@ async fn migrate_plain_table(
     let columns: Vec<String> = rows[0]
         .columns()
         .iter()
-        .map(|c| format!("\"{}\"", c.name()))
+        .map(|c| c.name().to_string())
         .collect();
+
+    // Build a column merge: for each target column, find its index in the source row
+    let merged: Vec<(String, String, Option<usize>)> = if !tgt_col_info.is_empty() && !col_info.is_empty() {
+        build_column_merge(&col_info, &tgt_col_info)
+    } else {
+        Vec::new()
+    };
+
+    let use_pg_insert = !merged.is_empty();
+    let insert_cols: Vec<String> = merged.iter().map(|(n, _, _)| format!("\"{}\"", n)).collect();
 
     let mut inserted = 0usize;
     for row in &rows {
         let col_count = row.columns().len();
-        let placeholders: Vec<String> = (0..col_count).map(|_| "?".to_string()).collect();
 
-        let insert_sql = format!(
-            "INSERT OR IGNORE INTO \"{}\" ({}) VALUES ({})",
-            tgt_table,
-            columns.join(", "),
-            placeholders.join(", ")
-        );
+        let insert_sql = if use_pg_insert {
+            let (values_expr, _ph_count) = pg_insert_values_expr(&merged, target_url);
+            format!(
+                "INSERT INTO \"{}\" ({}) VALUES ({}){}",
+                tgt_table,
+                insert_cols.join(", "),
+                values_expr,
+                conflict_clause(target_url)
+            )
+        } else {
+            let phs = placeholders(col_count, target_url);
+            format!(
+                "INSERT INTO \"{}\" ({}) VALUES ({}){}",
+                tgt_table,
+                columns.join(", "),
+                phs.join(", "),
+                conflict_clause(target_url)
+            )
+        };
 
         let mut q = sqlx::query(&insert_sql);
-        for i in 0..col_count {
-            if let Ok(v) = row.try_get::<String, _>(i) {
-                q = q.bind(v);
-            } else if let Ok(v) = row.try_get::<i64, _>(i) {
-                q = q.bind(v);
-            } else if let Ok(v) = row.try_get::<f64, _>(i) {
-                q = q.bind(v);
-            } else {
-                q = q.bind(String::new());
+        if use_pg_insert {
+            for (_, _, src_idx) in &merged {
+                if let Some(idx) = src_idx {
+                    q = bind_value_from_row(q, row, *idx);
+                }
+                // target-only columns use literal defaults in VALUES, no bind needed
+            }
+        } else {
+            for i in 0..col_count {
+                q = bind_value_from_row(q, row, i);
             }
         }
-        q.execute(target).await?;
-        inserted += 1;
+        match q.execute(target).await {
+            Ok(_) => inserted += 1,
+            Err(e) => {
+                return Err(anyhow::anyhow!("INSERT error for table '{}': {}", tgt_table, e));
+            }
+        }
     }
 
     Ok(inserted)
@@ -115,12 +421,23 @@ async fn migrate_credentials(
     target: &AnyPool,
     source_key: &str,
     target_key: &str,
+    source_url: &str,
+    target_url: &str,
 ) -> anyhow::Result<usize> {
-    let query = "SELECT * FROM \"LiteLLM_CredentialsTable\"";
-    let rows = match sqlx::query(query).fetch_all(source).await {
+    let src_table = "LiteLLM_CredentialsTable";
+    let col_info = source_column_info(source, src_table, source_url).await;
+    let tgt_col_info = target_column_info(target, "credentials", target_url).await;
+
+    let query = if !col_info.is_empty() {
+        build_pg_select(src_table, &col_info, None, None)
+    } else {
+        format!("SELECT * FROM \"{}\"", src_table)
+    };
+
+    let rows = match sqlx::query(&query).fetch_all(source).await {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("  [SKIP] LiteLLM_CredentialsTable: {}", e);
+            eprintln!("  [SKIP] {}: {}", src_table, e);
             return Ok(0);
         }
     };
@@ -135,73 +452,112 @@ async fn migrate_credentials(
         .map(|c| c.name().to_string())
         .collect();
 
-    // Find the credential_values column index
-    let values_col = columns
-        .iter()
-        .position(|c| c == "credential_values")
-        .unwrap_or_else(|| {
-            eprintln!("  [WARN] credential_values column not found, using index 2 as fallback");
-            2
-        });
+    // Build column merge: target columns → source indices
+    let merged: Vec<(String, String, Option<usize>)> = if !tgt_col_info.is_empty() && !col_info.is_empty() {
+        build_column_merge(&col_info, &tgt_col_info)
+    } else {
+        Vec::new()
+    };
+    let use_pg_insert = !merged.is_empty();
+    let insert_cols: Vec<String> = merged.iter().map(|(n, _, _)| format!("\"{}\"", n)).collect();
 
-    let quoted_columns: Vec<String> = columns.iter().map(|c| format!("\"{}\"", c)).collect();
+    // Find the credential_values index in the MERGED ordering (i.e. target column position)
+    let values_merged_idx = merged.iter().position(|(n, _, _)| n == "credential_values");
 
     let mut inserted = 0usize;
     let mut skipped = 0usize;
     for row in &rows {
-        let col_count = row.columns().len();
-        let placeholders: Vec<String> = (0..col_count).map(|_| "?".to_string()).collect();
-
-        let insert_sql = format!(
-            "INSERT OR IGNORE INTO \"credentials\" ({}) VALUES ({})",
-            quoted_columns.join(", "),
-            placeholders.join(", ")
-        );
+        let insert_sql = if use_pg_insert {
+            let (values_expr, _ph_count) = pg_insert_values_expr(&merged, target_url);
+            format!(
+                "INSERT INTO \"credentials\" ({}) VALUES ({}){}",
+                insert_cols.join(", "),
+                values_expr,
+                conflict_clause(target_url)
+            )
+        } else {
+            let phs = placeholders(columns.len(), target_url);
+            format!(
+                "INSERT INTO \"credentials\" ({}) VALUES ({}){}",
+                columns.join(", "),
+                phs.join(", "),
+                conflict_clause(target_url)
+            )
+        };
 
         let mut q = sqlx::query(&insert_sql);
-        for i in 0..col_count {
-            if i == values_col {
-                // Decrypt credential_values with source key, re-encrypt with target key
-                if let Ok(encrypted) = row.try_get::<String, _>(i) {
-                    if encrypted.is_empty() || encrypted == "{}" {
-                        q = q.bind(encrypted);
-                    } else {
-                        match aigw_core::decrypt_litellm_value(&encrypted, source_key) {
-                            Ok(plaintext) => {
-                                match aigw_core::encrypt_litellm_value(&plaintext, target_key) {
-                                    Ok(re_encrypted) => q = q.bind(re_encrypted),
+        if use_pg_insert {
+            for (mi, (_, _, src_idx)) in merged.iter().enumerate() {
+                if let Some(idx) = src_idx {
+                    if values_merged_idx == Some(mi) {
+                        // Decrypt credential_values with source key, re-encrypt with target key
+                        if let Ok(encrypted) = row.try_get::<String, _>(*idx) {
+                            if encrypted.is_empty() || encrypted == "{}" {
+                                q = q.bind(encrypted);
+                            } else {
+                                match aigw_core::decrypt_litellm_value(&encrypted, source_key) {
+                                    Ok(plaintext) => {
+                                        match aigw_core::encrypt_litellm_value(&plaintext, target_key) {
+                                            Ok(re_encrypted) => q = q.bind(re_encrypted),
+                                            Err(e) => {
+                                                eprintln!("  [WARN] Re-encrypt failed for credential: {}", e);
+                                                q = q.bind(encrypted);
+                                                skipped += 1;
+                                            }
+                                        }
+                                    }
                                     Err(e) => {
-                                        eprintln!(
-                                            "  [WARN] Re-encrypt failed for credential: {}",
-                                            e
-                                        );
-                                        q = q.bind(encrypted); // fallback to original
+                                        eprintln!("  [WARN] Decrypt failed for credential: {}", e);
+                                        q = q.bind(encrypted);
                                         skipped += 1;
                                     }
                                 }
                             }
-                            Err(e) => {
-                                eprintln!("  [WARN] Decrypt failed for credential: {}", e);
-                                q = q.bind(encrypted); // fallback to original
-                                skipped += 1;
+                        } else {
+                            q = bind_value_from_row(q, row, *idx);
+                        }
+                    } else {
+                        q = bind_value_from_row(q, row, *idx);
+                    }
+                }
+                // target-only column: literal default used in VALUES, no bind needed
+            }
+        } else {
+            // Non-PG path: bind all columns sequentially
+            let values_col = columns
+                .iter()
+                .position(|c| c == "credential_values")
+                .unwrap_or(2);
+            for i in 0..columns.len() {
+                if i == values_col {
+                    if let Ok(encrypted) = row.try_get::<String, _>(i) {
+                        if encrypted.is_empty() || encrypted == "{}" {
+                            q = q.bind(encrypted);
+                        } else {
+                            match aigw_core::decrypt_litellm_value(&encrypted, source_key) {
+                                Ok(plaintext) => {
+                                    match aigw_core::encrypt_litellm_value(&plaintext, target_key) {
+                                        Ok(re_encrypted) => q = q.bind(re_encrypted),
+                                        Err(e) => {
+                                            eprintln!("  [WARN] Re-encrypt failed for credential: {}", e);
+                                            q = q.bind(encrypted);
+                                            skipped += 1;
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("  [WARN] Decrypt failed for credential: {}", e);
+                                    q = q.bind(encrypted);
+                                    skipped += 1;
+                                }
                             }
                         }
+                    } else {
+                        q = bind_value_from_row(q, row, i);
                     }
-                } else if let Ok(v) = row.try_get::<i64, _>(i) {
-                    q = q.bind(v);
-                } else if let Ok(v) = row.try_get::<f64, _>(i) {
-                    q = q.bind(v);
                 } else {
-                    q = q.bind(String::new());
+                    q = bind_value_from_row(q, row, i);
                 }
-            } else if let Ok(v) = row.try_get::<String, _>(i) {
-                q = q.bind(v);
-            } else if let Ok(v) = row.try_get::<i64, _>(i) {
-                q = q.bind(v);
-            } else if let Ok(v) = row.try_get::<f64, _>(i) {
-                q = q.bind(v);
-            } else {
-                q = q.bind(String::new());
             }
         }
         q.execute(target).await?;
@@ -221,12 +577,23 @@ async fn migrate_proxy_models(
     target: &AnyPool,
     source_key: &str,
     target_key: &str,
+    source_url: &str,
+    target_url: &str,
 ) -> anyhow::Result<usize> {
-    let query = "SELECT * FROM \"LiteLLM_ProxyModelTable\"";
-    let rows = match sqlx::query(query).fetch_all(source).await {
+    let src_table = "LiteLLM_ProxyModelTable";
+    let col_info = source_column_info(source, src_table, source_url).await;
+    let tgt_col_info = target_column_info(target, "proxy_models", target_url).await;
+
+    let query = if !col_info.is_empty() {
+        build_pg_select(src_table, &col_info, None, None)
+    } else {
+        format!("SELECT * FROM \"{}\"", src_table)
+    };
+
+    let rows = match sqlx::query(&query).fetch_all(source).await {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("  [SKIP] LiteLLM_ProxyModelTable: {}", e);
+            eprintln!("  [SKIP] {}: {}", src_table, e);
             return Ok(0);
         }
     };
@@ -241,74 +608,110 @@ async fn migrate_proxy_models(
         .map(|c| c.name().to_string())
         .collect();
 
-    // Find litellm_params column index
-    let params_col = columns
-        .iter()
-        .position(|c| c == "litellm_params")
-        .unwrap_or_else(|| {
-            eprintln!("  [WARN] litellm_params column not found, using index 4 as fallback");
-            4
-        });
+    // Build column merge: target columns → source indices
+    let merged: Vec<(String, String, Option<usize>)> = if !tgt_col_info.is_empty() && !col_info.is_empty() {
+        build_column_merge(&col_info, &tgt_col_info)
+    } else {
+        Vec::new()
+    };
+    let use_pg_insert = !merged.is_empty();
+    let insert_cols: Vec<String> = merged.iter().map(|(n, _, _)| format!("\"{}\"", n)).collect();
 
-    let quoted_columns: Vec<String> = columns.iter().map(|c| format!("\"{}\"", c)).collect();
+    // Find the litellm_params index in the MERGED ordering
+    let params_merged_idx = merged.iter().position(|(n, _, _)| n == "litellm_params");
 
     let mut inserted = 0usize;
     let mut skipped = 0usize;
     for row in &rows {
-        let col_count = row.columns().len();
-        let placeholders: Vec<String> = (0..col_count).map(|_| "?".to_string()).collect();
-
-        let insert_sql = format!(
-            "INSERT OR IGNORE INTO \"proxy_models\" ({}) VALUES ({})",
-            quoted_columns.join(", "),
-            placeholders.join(", ")
-        );
+        let insert_sql = if use_pg_insert {
+            let (values_expr, _ph_count) = pg_insert_values_expr(&merged, target_url);
+            format!(
+                "INSERT INTO \"proxy_models\" ({}) VALUES ({}){}",
+                insert_cols.join(", "),
+                values_expr,
+                conflict_clause(target_url)
+            )
+        } else {
+            let phs = placeholders(columns.len(), target_url);
+            format!(
+                "INSERT INTO \"proxy_models\" ({}) VALUES ({}){}",
+                columns.join(", "),
+                phs.join(", "),
+                conflict_clause(target_url)
+            )
+        };
 
         let mut q = sqlx::query(&insert_sql);
-        for i in 0..col_count {
-            if i == params_col {
-                if let Ok(value) = row.try_get::<String, _>(i) {
-                    if value.is_empty() || value.starts_with('{') {
-                        // Plaintext JSON — copy as-is
-                        q = q.bind(value);
-                    } else {
-                        // Encrypted — decrypt with source key, re-encrypt with target key
-                        match aigw_core::decrypt_litellm_value(&value, source_key) {
-                            Ok(plaintext) => {
-                                match aigw_core::encrypt_litellm_value(&plaintext, target_key) {
-                                    Ok(re_encrypted) => q = q.bind(re_encrypted),
+        if use_pg_insert {
+            for (mi, (_, _, src_idx)) in merged.iter().enumerate() {
+                if let Some(idx) = src_idx {
+                    if params_merged_idx == Some(mi) {
+                        if let Ok(value) = row.try_get::<String, _>(*idx) {
+                            if value.is_empty() || value.starts_with('{') {
+                                q = q.bind(value);
+                            } else {
+                                match aigw_core::decrypt_litellm_value(&value, source_key) {
+                                    Ok(plaintext) => {
+                                        match aigw_core::encrypt_litellm_value(&plaintext, target_key) {
+                                            Ok(re_encrypted) => q = q.bind(re_encrypted),
+                                            Err(e) => {
+                                                eprintln!("  [WARN] Re-encrypt failed for model: {}", e);
+                                                q = q.bind(value);
+                                                skipped += 1;
+                                            }
+                                        }
+                                    }
                                     Err(e) => {
-                                        eprintln!(
-                                            "  [WARN] Re-encrypt failed for model: {}",
-                                            e
-                                        );
+                                        eprintln!("  [WARN] Decrypt failed for model: {}", e);
                                         q = q.bind(value);
                                         skipped += 1;
                                     }
                                 }
                             }
-                            Err(e) => {
-                                eprintln!("  [WARN] Decrypt failed for model: {}", e);
-                                q = q.bind(value);
-                                skipped += 1;
+                        } else {
+                            q = bind_value_from_row(q, row, *idx);
+                        }
+                    } else {
+                        q = bind_value_from_row(q, row, *idx);
+                    }
+                }
+                // target-only column: literal default used in VALUES, no bind needed
+            }
+        } else {
+            let params_col = columns
+                .iter()
+                .position(|c| c == "litellm_params")
+                .unwrap_or(4);
+            for i in 0..columns.len() {
+                if i == params_col {
+                    if let Ok(value) = row.try_get::<String, _>(i) {
+                        if value.is_empty() || value.starts_with('{') {
+                            q = q.bind(value);
+                        } else {
+                            match aigw_core::decrypt_litellm_value(&value, source_key) {
+                                Ok(plaintext) => {
+                                    match aigw_core::encrypt_litellm_value(&plaintext, target_key) {
+                                        Ok(re_encrypted) => q = q.bind(re_encrypted),
+                                        Err(e) => {
+                                            eprintln!("  [WARN] Re-encrypt failed for model: {}", e);
+                                            q = q.bind(value);
+                                            skipped += 1;
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("  [WARN] Decrypt failed for model: {}", e);
+                                    q = q.bind(value);
+                                    skipped += 1;
+                                }
                             }
                         }
+                    } else {
+                        q = bind_value_from_row(q, row, i);
                     }
-                } else if let Ok(v) = row.try_get::<i64, _>(i) {
-                    q = q.bind(v);
-                } else if let Ok(v) = row.try_get::<f64, _>(i) {
-                    q = q.bind(v);
                 } else {
-                    q = q.bind(String::new());
+                    q = bind_value_from_row(q, row, i);
                 }
-            } else if let Ok(v) = row.try_get::<String, _>(i) {
-                q = q.bind(v);
-            } else if let Ok(v) = row.try_get::<i64, _>(i) {
-                q = q.bind(v);
-            } else if let Ok(v) = row.try_get::<f64, _>(i) {
-                q = q.bind(v);
-            } else {
-                q = q.bind(String::new());
             }
         }
         q.execute(target).await?;
@@ -323,15 +726,32 @@ async fn migrate_proxy_models(
 }
 
 /// Batch migrate spend_logs (no crypto, just large table optimization).
+/// When `limit` is Some(n), only the first n rows from the source are imported.
 async fn migrate_spend_logs(
     source: &AnyPool,
     target: &AnyPool,
+    limit: Option<usize>,
+    source_url: &str,
+    target_url: &str,
 ) -> anyhow::Result<usize> {
-    let query = "SELECT * FROM \"LiteLLM_SpendLogs\"";
-    let rows = match sqlx::query(query).fetch_all(source).await {
+    let src_table = "LiteLLM_SpendLogs";
+    let col_info = source_column_info(source, src_table, source_url).await;
+    let tgt_col_info = target_column_info(target, "spend_logs", target_url).await;
+
+    let query = if !col_info.is_empty() {
+        build_pg_select(src_table, &col_info, Some("startTime"), limit)
+    } else {
+        let mut q = format!("SELECT * FROM \"{}\" ORDER BY \"startTime\" ASC", src_table);
+        if let Some(lim) = limit {
+            q.push_str(&format!(" LIMIT {}", lim));
+        }
+        q
+    };
+
+    let rows = match sqlx::query(&query).fetch_all(source).await {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("  [SKIP] LiteLLM_SpendLogs: {}", e);
+            eprintln!("  [SKIP] {}: {}", src_table, e);
             return Ok(0);
         }
     };
@@ -343,30 +763,49 @@ async fn migrate_spend_logs(
     let columns: Vec<String> = rows[0]
         .columns()
         .iter()
-        .map(|c| format!("\"{}\"", c.name()))
+        .map(|c| c.name().to_string())
         .collect();
+
+    // Build column merge: target columns → source indices
+    let merged: Vec<(String, String, Option<usize>)> = if !tgt_col_info.is_empty() && !col_info.is_empty() {
+        build_column_merge(&col_info, &tgt_col_info)
+    } else {
+        Vec::new()
+    };
+    let use_pg_insert = !merged.is_empty();
+    let insert_cols: Vec<String> = merged.iter().map(|(n, _, _)| format!("\"{}\"", n)).collect();
 
     let mut inserted = 0usize;
     for row in &rows {
-        let col_count = row.columns().len();
-        let placeholders: Vec<String> = (0..col_count).map(|_| "?".to_string()).collect();
-
-        let insert_sql = format!(
-            "INSERT OR IGNORE INTO \"spend_logs\" ({}) VALUES ({})",
-            columns.join(", "),
-            placeholders.join(", ")
-        );
+        let insert_sql = if use_pg_insert {
+            let (values_expr, _ph_count) = pg_insert_values_expr(&merged, target_url);
+            format!(
+                "INSERT INTO \"spend_logs\" ({}) VALUES ({}){}",
+                insert_cols.join(", "),
+                values_expr,
+                conflict_clause(target_url)
+            )
+        } else {
+            let phs = placeholders(columns.len(), target_url);
+            format!(
+                "INSERT INTO \"spend_logs\" ({}) VALUES ({}){}",
+                columns.join(", "),
+                phs.join(", "),
+                conflict_clause(target_url)
+            )
+        };
 
         let mut q = sqlx::query(&insert_sql);
-        for i in 0..col_count {
-            if let Ok(v) = row.try_get::<String, _>(i) {
-                q = q.bind(v);
-            } else if let Ok(v) = row.try_get::<i64, _>(i) {
-                q = q.bind(v);
-            } else if let Ok(v) = row.try_get::<f64, _>(i) {
-                q = q.bind(v);
-            } else {
-                q = q.bind(String::new());
+        if use_pg_insert {
+            for (_, _, src_idx) in &merged {
+                if let Some(idx) = src_idx {
+                    q = bind_value_from_row(q, row, *idx);
+                }
+                // target-only columns use literal defaults in VALUES, no bind needed
+            }
+        } else {
+            for i in 0..columns.len() {
+                q = bind_value_from_row(q, row, i);
             }
         }
         q.execute(target).await?;
@@ -376,19 +815,23 @@ async fn migrate_spend_logs(
     Ok(inserted)
 }
 
+/// Run remote import. When `spend_log_limit` is Some(n), only import the first n
+/// spend_log rows (ordered by start_time ASC). None = import all rows.
 pub async fn run(
     source_url: &str,
     target_url: &str,
     source_master_key: Option<&str>,
     target_master_key: &str,
+    spend_log_limit: Option<usize>,
 ) -> anyhow::Result<bool> {
+    sqlx::any::install_default_drivers();
     let source = connect(source_url).await?;
     let target = connect(target_url).await?;
 
     // Step 1: Extract source master_key
     let source_key = match source_master_key {
         Some(k) => k.to_string(),
-        None => match extract_source_master_key(&source).await? {
+        None => match extract_source_master_key(&source, source_url).await? {
             Some(k) => {
                 println!("  Extracted master_key from LiteLLM_Config");
                 k
@@ -407,23 +850,23 @@ pub async fn run(
     // Step 2: Migrate plain tables
     println!("Step 2: Migrating plain tables...");
     for &(src, tgt) in PLAIN_TABLES {
-        let count = migrate_plain_table(&source, &target, src, tgt).await?;
+        let count = migrate_plain_table(&source, &target, src, tgt, source_url, target_url).await?;
         println!("  {} -> {} ({} rows)", src, tgt, count);
     }
 
     // Step 3: Migrate credentials with key rotation
     println!("Step 3: Migrating credentials (with key rotation)...");
-    let cred_count = migrate_credentials(&source, &target, &source_key, target_master_key).await?;
+    let cred_count = migrate_credentials(&source, &target, &source_key, target_master_key, source_url, target_url).await?;
     println!("  LiteLLM_CredentialsTable -> credentials ({} rows)", cred_count);
 
     // Step 4: Migrate proxy_models with key rotation
     println!("Step 4: Migrating proxy_models (with key rotation)...");
-    let model_count = migrate_proxy_models(&source, &target, &source_key, target_master_key).await?;
+    let model_count = migrate_proxy_models(&source, &target, &source_key, target_master_key, source_url, target_url).await?;
     println!("  LiteLLM_ProxyModelTable -> proxy_models ({} rows)", model_count);
 
     // Step 5: Migrate spend_logs
     println!("Step 5: Migrating spend_logs...");
-    let spend_count = migrate_spend_logs(&source, &target).await?;
+    let spend_count = migrate_spend_logs(&source, &target, spend_log_limit, source_url, target_url).await?;
     println!("  LiteLLM_SpendLogs -> spend_logs ({} rows)", spend_count);
 
     // Step 6: Verify
@@ -655,7 +1098,7 @@ mod tests {
 
         // Run remote_import (source key from config, not CLI)
         let target_key = "sk-aigw-target-key-99999";
-        let result = run(src_str, tgt_str, None, target_key).await;
+        let result = run(src_str, tgt_str, None, target_key, None).await;
         assert!(result.is_ok(), "remote_import failed: {:?}", result.err());
 
         // Verify: credentials should be migrated with re-encryption
@@ -720,7 +1163,7 @@ mod tests {
         pool.close().await;
 
         let source = connect(db_str).await.unwrap();
-        let key = extract_source_master_key(&source).await.unwrap();
+        let key = extract_source_master_key(&source, db_str).await.unwrap();
         assert_eq!(key, Some("sk-extracted-key".to_string()));
     }
 
@@ -756,6 +1199,8 @@ mod tests {
             &target,
             "LiteLLM_OrganizationTable",
             "organizations",
+            tgt_str, // source_url (SQLite, no ::text casting needed)
+            tgt_str, // target_url
         )
         .await
         .unwrap();
