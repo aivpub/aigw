@@ -7,4 +7,4 @@ CREATE TABLE IF NOT EXISTS config (
     param_value TEXT NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_config_param_name ON config(param_name);
+CREATE UNIQUE INDEX idx_config_param_name ON config(param_name);

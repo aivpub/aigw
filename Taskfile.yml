@@ -38,6 +38,41 @@ tasks:
         cargo test --test bdd -p aigw-server
       - echo "bdd-real passed"
 
+  bdd-real-sqlite:
+    desc: "run BDD tests with SQLite (auto DB + server)"
+    cmds:
+      - |
+        set -a
+        [ -f .env ] && . ./.env
+        set +a
+        # ProviderRegistry::default_with_env() needs OPENAI_API_KEY
+        # resolve_upstream_params() needs OPENAI_API_KEY + OPENAI_BASE_URL
+        export OPENAI_API_KEY="${OPENAI_API_KEY:-${OPENAPI_KEY:-}}"
+        export OPENAI_BASE_URL="${OPENAI_BASE_URL:-${OPENAPI_BASE_URL:-}}"
+        AIGW_REAL_API=1 AIGW_TEST_DB_DRIVER=sqlite AIGW_TEST_START_SERVER=1 cargo test --test bdd -p aigw-server
+
+  bdd-real-pg:
+    desc: "run BDD tests with PostgreSQL (auto DB + server)"
+    cmds:
+      - |
+        set -a
+        [ -f .env ] && . ./.env
+        set +a
+        export OPENAI_API_KEY="${OPENAI_API_KEY:-${OPENAPI_KEY:-}}"
+        export OPENAI_BASE_URL="${OPENAI_BASE_URL:-${OPENAPI_BASE_URL:-}}"
+        AIGW_REAL_API=1 AIGW_TEST_DB_DRIVER=postgres AIGW_TEST_START_SERVER=1 cargo test --test bdd -p aigw-server
+
+  bdd-real-mysql:
+    desc: "run BDD tests with MySQL (auto DB + server)"
+    cmds:
+      - |
+        set -a
+        [ -f .env ] && . ./.env
+        set +a
+        export OPENAI_API_KEY="${OPENAI_API_KEY:-${OPENAPI_KEY:-}}"
+        export OPENAI_BASE_URL="${OPENAI_BASE_URL:-${OPENAPI_BASE_URL:-}}"
+        AIGW_REAL_API=1 AIGW_TEST_DB_DRIVER=mysql AIGW_TEST_START_SERVER=1 cargo test --test bdd -p aigw-server
+
   bdd-all:
     desc: "run both mock and real API BDD tests"
     cmds:

@@ -33,6 +33,7 @@ axum-test = "16"
 cucumber = { version = "0.21", features = ["macros"] }
 tokio = { workspace = true, features = ["test-util"] }
 anyhow = "1"
+sqlx = { workspace = true }
 
 [[test]]
 name = "bdd"

@@ -12,4 +12,4 @@ CREATE TABLE IF NOT EXISTS proxy_models (
     updated_by VARCHAR(255)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_proxy_models_model_name ON proxy_models(model_name);
+CREATE UNIQUE INDEX idx_proxy_models_model_name ON proxy_models(model_name);

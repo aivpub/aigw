@@ -69,6 +69,30 @@ impl TestWorld {
 
 #[tokio::main]
 async fn main() {
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // DB + server lifecycle (before all scenarios — once per test run)
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    let manager = bdd_support::test_db::TestDatabaseManager::from_env();
+    let db_info = if let Some(ref mgr) = manager {
+        Some(mgr.create_db().await.expect("create test db"))
+    } else {
+        None
+    };
+
+    let server = if let (Some(info), true) = (
+        &db_info,
+        std::env::var("AIGW_TEST_START_SERVER").as_deref() == Ok("1"),
+    ) {
+        let s = bdd_support::server::ServerGuard::start(&info.database_url, "sk-master-test")
+            .await
+            .expect("start server");
+        std::env::set_var("AIGW_BASE_URL", &s.base_url);
+        std::env::set_var("AIGW_MASTER_KEY", "sk-master-test");
+        Some(s)
+    } else {
+        None
+    };
+
     // Cucumber run() resolves path relative to Cargo manifest dir.
     // Run scenarios sequentially: the mock upstream uses shared state
     // and concurrent scenarios would interfere with each other.
@@ -76,4 +100,14 @@ async fn main() {
         .max_concurrent_scenarios(1)
         .run("tests/features")
         .await;
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // Cleanup (after all scenarios)
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    if let Some(s) = server {
+        s.stop().await;
+    }
+    if let (Some(mgr), Some(info)) = (manager, db_info) {
+        mgr.drop_db(&info).await.ok();
+    }
 }

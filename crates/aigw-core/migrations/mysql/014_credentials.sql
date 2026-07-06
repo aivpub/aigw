@@ -12,4 +12,4 @@ CREATE TABLE IF NOT EXISTS credentials (
     updated_by VARCHAR(255)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_credentials_credential_name ON credentials(credential_name);
+CREATE UNIQUE INDEX idx_credentials_credential_name ON credentials(credential_name);
