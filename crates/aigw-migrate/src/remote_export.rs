@@ -8,8 +8,91 @@
 //!   5. Migrate proxy_models — decrypt with aigw key, re-encrypt with litellm key
 //!   6. Batch migrate spend_logs (no crypto)
 
+use std::collections::HashSet;
 use sqlx::any::AnyPoolOptions;
 use sqlx::{AnyPool, Column, Row};
+
+fn is_pg(url: &str) -> bool {
+    url.starts_with("postgres://") || url.starts_with("postgresql://")
+}
+
+fn is_mysql(url: &str) -> bool {
+    url.starts_with("mysql://") || url.starts_with("mariadb://")
+}
+
+/// Get column names and data types for a table in the target database.
+async fn target_column_info(target: &AnyPool, table: &str, db_url: &str) -> Vec<(String, String)> {
+    if is_pg(db_url) {
+        let rows = sqlx::query(
+            "SELECT column_name::text, data_type::text FROM information_schema.columns \
+             WHERE table_name = $1 AND table_schema = 'public' \
+             ORDER BY ordinal_position",
+        )
+        .bind(table)
+        .fetch_all(target)
+        .await;
+        match rows {
+            Ok(r) => r.iter().map(|row| (row.get::<String, _>(0), row.get::<String, _>(1))).collect(),
+            Err(_) => Vec::new(),
+        }
+    } else if is_mysql(db_url) {
+        let rows =
+            sqlx::query(&format!("SHOW COLUMNS FROM `{}`", table))
+                .fetch_all(target)
+                .await;
+        match rows {
+            Ok(r) => r.iter().map(|row| {
+                let name: String = row.get(0);
+                let ty: String = row.try_get::<String, _>(1).unwrap_or_default();
+                (name, ty)
+            }).collect(),
+            Err(_) => Vec::new(),
+        }
+    } else {
+        // SQLite
+        let rows =
+            sqlx::query(&format!("PRAGMA table_info(\"{}\")", table))
+                .fetch_all(target)
+                .await;
+        match rows {
+            Ok(r) => r.iter().map(|row| {
+                let name: String = row.get(1);
+                let ty: String = row.try_get::<String, _>(2).unwrap_or_default();
+                (name, ty)
+            }).collect(),
+            Err(_) => Vec::new(),
+        }
+    }
+}
+
+fn placeholder(i: usize, target_url: &str) -> String {
+    if is_pg(target_url) {
+        format!("${}", i + 1)
+    } else {
+        "?".to_string()
+    }
+}
+
+/// Build a CAST expression for PostgreSQL columns that need explicit type casts
+/// (jsonb, timestamp, timestamptz). Returns the placeholder unchanged for non-PG
+/// or non-cast-needing columns.
+fn cast_expr(col_name: &str, col_ty: Option<&str>, ph: &str, target_url: &str) -> String {
+    if !is_pg(target_url) {
+        return ph.to_string();
+    }
+    let ty = col_ty.unwrap_or("").to_lowercase();
+    if ty == "jsonb" && !col_name.starts_with("user_api_key_hash") {
+        format!("CAST({} AS jsonb)", ph)
+    } else if ty.contains("timestamp") {
+        if ty.contains("with time zone") || ty == "timestamptz" {
+            format!("CAST({} AS timestamptz)", ph)
+        } else {
+            format!("CAST({} AS timestamp)", ph)
+        }
+    } else {
+        ph.to_string()
+    }
+}
 
 /// Connect to a database from a file path or URL.
 async fn connect(source_or_url: &str) -> anyhow::Result<AnyPool> {
@@ -53,9 +136,11 @@ const PLAIN_TABLES: &[(&str, &str)] = &[
 ];
 
 /// Copy all rows from src_table (aigw) to tgt_table (litellm).
+/// Only inserts columns that exist in the target table (intersection of source & target columns).
 async fn migrate_plain_table(
     source: &AnyPool,
     target: &AnyPool,
+    target_url: &str,
     src_table: &str,
     tgt_table: &str,
 ) -> anyhow::Result<usize> {
@@ -72,31 +157,65 @@ async fn migrate_plain_table(
         return Ok(0);
     }
 
-    let columns: Vec<String> = rows[0]
+    // Get source column names from the first row
+    let src_columns: Vec<String> = rows[0]
         .columns()
         .iter()
         .map(|c| c.name().to_string())
         .collect();
 
+    // Get target column info (name + type) from metadata
+    let tgt_col_info = target_column_info(target, tgt_table, target_url).await;
+    let tgt_set: HashSet<&str> = tgt_col_info.iter().map(|(s, _)| s.as_str()).collect();
+    let tgt_type_map: std::collections::HashMap<&str, &str> = tgt_col_info
+        .iter()
+        .map(|(n, t)| (n.as_str(), t.as_str()))
+        .collect();
+
+    // Filter to columns present in both source and target (intersection)
+    let insert_cols: Vec<(&str, Option<&str>, usize)> = src_columns
+        .iter()
+        .enumerate()
+        .filter(|(_, name)| tgt_set.contains(name.as_str()))
+        .map(|(idx, name)| (name.as_str(), tgt_type_map.get(name.as_str()).copied(), idx))
+        .collect();
+
+    if insert_cols.is_empty() {
+        eprintln!("  [SKIP] {}: no intersecting columns with target", src_table);
+        return Ok(0);
+    }
+
     let mut inserted = 0usize;
+    let pg_conflict = if is_pg(target_url) { " ON CONFLICT DO NOTHING" } else { "" };
     for row in &rows {
-        let col_count = row.columns().len();
-        let placeholders: Vec<String> = (0..col_count).map(|_| "?".to_string()).collect();
+        let values_expr: Vec<String> = insert_cols
+            .iter()
+            .enumerate()
+            .map(|(ph_idx, (name, col_ty, _src_idx))| {
+                let ph = placeholder(ph_idx, target_url);
+                cast_expr(name, *col_ty, &ph, target_url)
+            })
+            .collect();
 
         let insert_sql = format!(
-            "INSERT INTO \"{}\" ({}) VALUES ({})",
+            "INSERT INTO \"{}\" ({}) VALUES ({}){}",
             tgt_table,
-            columns.join(", "),
-            placeholders.join(", ")
+            insert_cols
+                .iter()
+                .map(|(n, _, _)| format!("\"{}\"", n))
+                .collect::<Vec<_>>()
+                .join(", "),
+            values_expr.join(", "),
+            pg_conflict,
         );
 
         let mut q = sqlx::query(&insert_sql);
-        for i in 0..col_count {
-            if let Ok(v) = row.try_get::<String, _>(i) {
+        for &(_name, _col_ty, src_idx) in &insert_cols {
+            if let Ok(v) = row.try_get::<String, _>(src_idx) {
                 q = q.bind(v);
-            } else if let Ok(v) = row.try_get::<i64, _>(i) {
+            } else if let Ok(v) = row.try_get::<i64, _>(src_idx) {
                 q = q.bind(v);
-            } else if let Ok(v) = row.try_get::<f64, _>(i) {
+            } else if let Ok(v) = row.try_get::<f64, _>(src_idx) {
                 q = q.bind(v);
             } else {
                 q = q.bind(String::new());
@@ -113,6 +232,7 @@ async fn migrate_plain_table(
 async fn migrate_credentials(
     source: &AnyPool,
     target: &AnyPool,
+    target_url: &str,
     source_key: &str,
     target_key: &str,
 ) -> anyhow::Result<usize> {
@@ -129,13 +249,20 @@ async fn migrate_credentials(
         return Ok(0);
     }
 
-    let columns: Vec<String> = rows[0]
+    let src_columns: Vec<String> = rows[0]
         .columns()
         .iter()
         .map(|c| c.name().to_string())
         .collect();
 
-    let values_col = columns
+    // Get target column types for proper CAST (jsonb columns need explicit CAST)
+    let tgt_col_info = target_column_info(target, "LiteLLM_CredentialsTable", target_url).await;
+    let tgt_type_map: std::collections::HashMap<&str, &str> = tgt_col_info
+        .iter()
+        .map(|(n, t)| (n.as_str(), t.as_str()))
+        .collect();
+
+    let values_col = src_columns
         .iter()
         .position(|c| c == "credential_values")
         .unwrap_or_else(|| {
@@ -145,14 +272,22 @@ async fn migrate_credentials(
 
     let mut inserted = 0usize;
     let mut skipped = 0usize;
+    let pg_conflict = if is_pg(target_url) { " ON CONFLICT DO NOTHING" } else { "" };
     for row in &rows {
         let col_count = row.columns().len();
-        let placeholders: Vec<String> = (0..col_count).map(|_| "?".to_string()).collect();
+        let values_expr: Vec<String> = (0..col_count)
+            .map(|i| {
+                let ph = placeholder(i, target_url);
+                let col_name = &src_columns[i];
+                cast_expr(col_name, tgt_type_map.get(col_name.as_str()).copied(), &ph, target_url)
+            })
+            .collect();
 
         let insert_sql = format!(
-            "INSERT INTO \"LiteLLM_CredentialsTable\" ({}) VALUES ({})",
-            columns.join(", "),
-            placeholders.join(", ")
+            "INSERT INTO \"LiteLLM_CredentialsTable\" ({}) VALUES ({}){}",
+            src_columns.join(", "),
+            values_expr.join(", "),
+            pg_conflict,
         );
 
         let mut q = sqlx::query(&insert_sql);
@@ -212,6 +347,7 @@ async fn migrate_credentials(
 async fn migrate_proxy_models(
     source: &AnyPool,
     target: &AnyPool,
+    target_url: &str,
     source_key: &str,
     target_key: &str,
 ) -> anyhow::Result<usize> {
@@ -228,13 +364,20 @@ async fn migrate_proxy_models(
         return Ok(0);
     }
 
-    let columns: Vec<String> = rows[0]
+    let src_columns: Vec<String> = rows[0]
         .columns()
         .iter()
         .map(|c| c.name().to_string())
         .collect();
 
-    let params_col = columns
+    // Get target column types for jsonb CAST
+    let tgt_col_info = target_column_info(target, "LiteLLM_ProxyModelTable", target_url).await;
+    let tgt_type_map: std::collections::HashMap<&str, &str> = tgt_col_info
+        .iter()
+        .map(|(n, t)| (n.as_str(), t.as_str()))
+        .collect();
+
+    let params_col = src_columns
         .iter()
         .position(|c| c == "litellm_params")
         .unwrap_or_else(|| {
@@ -244,14 +387,22 @@ async fn migrate_proxy_models(
 
     let mut inserted = 0usize;
     let mut skipped = 0usize;
+    let pg_conflict = if is_pg(target_url) { " ON CONFLICT DO NOTHING" } else { "" };
     for row in &rows {
         let col_count = row.columns().len();
-        let placeholders: Vec<String> = (0..col_count).map(|_| "?".to_string()).collect();
+        let values_expr: Vec<String> = (0..col_count)
+            .map(|i| {
+                let ph = placeholder(i, target_url);
+                let col_name = &src_columns[i];
+                cast_expr(col_name, tgt_type_map.get(col_name.as_str()).copied(), &ph, target_url)
+            })
+            .collect();
 
         let insert_sql = format!(
-            "INSERT INTO \"LiteLLM_ProxyModelTable\" ({}) VALUES ({})",
-            columns.join(", "),
-            placeholders.join(", ")
+            "INSERT INTO \"LiteLLM_ProxyModelTable\" ({}) VALUES ({}){}",
+            src_columns.join(", "),
+            values_expr.join(", "),
+            pg_conflict,
         );
 
         let mut q = sqlx::query(&insert_sql);
@@ -308,7 +459,11 @@ async fn migrate_proxy_models(
 }
 
 /// Batch migrate spend_logs (no crypto).
-async fn migrate_spend_logs(source: &AnyPool, target: &AnyPool) -> anyhow::Result<usize> {
+async fn migrate_spend_logs(
+    source: &AnyPool,
+    target: &AnyPool,
+    target_url: &str,
+) -> anyhow::Result<usize> {
     let query = "SELECT * FROM \"spend_logs\"";
     let rows = match sqlx::query(query).fetch_all(source).await {
         Ok(r) => r,
@@ -329,14 +484,18 @@ async fn migrate_spend_logs(source: &AnyPool, target: &AnyPool) -> anyhow::Resul
         .collect();
 
     let mut inserted = 0usize;
+    let pg_conflict = if is_pg(target_url) { " ON CONFLICT DO NOTHING" } else { "" };
     for row in &rows {
         let col_count = row.columns().len();
-        let placeholders: Vec<String> = (0..col_count).map(|_| "?".to_string()).collect();
+        let placeholders: Vec<String> = (0..col_count)
+            .map(|i| placeholder(i, target_url))
+            .collect();
 
         let insert_sql = format!(
-            "INSERT INTO \"LiteLLM_SpendLogs\" ({}) VALUES ({})",
+            "INSERT INTO \"LiteLLM_SpendLogs\" ({}) VALUES ({}){}",
             columns.join(", "),
-            placeholders.join(", ")
+            placeholders.join(", "),
+            pg_conflict,
         );
 
         let mut q = sqlx::query(&insert_sql);
@@ -390,20 +549,23 @@ pub async fn run(
     // Step 2: Migrate plain tables
     println!("Step 2: Exporting plain tables (aigw → litellm)...");
     for &(src, tgt) in PLAIN_TABLES {
-        let count = migrate_plain_table(&source, &target, src, tgt).await?;
+        let count =
+            migrate_plain_table(&source, &target, target_url, src, tgt).await?;
         println!("  {} -> {} ({} rows)", src, tgt, count);
     }
 
     // Step 3: Migrate credentials with key rotation (aigw→litellm)
     println!("Step 3: Exporting credentials (with key rotation)...");
     let cred_count =
-        migrate_credentials(&source, &target, source_master_key, &target_key).await?;
+        migrate_credentials(&source, &target, target_url, source_master_key, &target_key)
+            .await?;
     println!("  credentials -> LiteLLM_CredentialsTable ({} rows)", cred_count);
 
     // Step 4: Migrate proxy_models with key rotation
     println!("Step 4: Exporting proxy_models (with key rotation)...");
     let model_count =
-        migrate_proxy_models(&source, &target, source_master_key, &target_key).await?;
+        migrate_proxy_models(&source, &target, target_url, source_master_key, &target_key)
+            .await?;
     println!(
         "  proxy_models -> LiteLLM_ProxyModelTable ({} rows)",
         model_count
@@ -411,7 +573,7 @@ pub async fn run(
 
     // Step 5: Migrate spend_logs
     println!("Step 5: Exporting spend_logs...");
-    let spend_count = migrate_spend_logs(&source, &target).await?;
+    let spend_count = migrate_spend_logs(&source, &target, target_url).await?;
     println!(
         "  spend_logs -> LiteLLM_SpendLogs ({} rows)",
         spend_count

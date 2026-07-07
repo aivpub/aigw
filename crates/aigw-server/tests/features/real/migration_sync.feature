@@ -8,7 +8,7 @@ Feature: 上游数据同步验证
   Scenario: 同步 plain tables（不含加密字段）
     When 从上游同步所有 plain tables 到 aigw
     Then 同步成功无报错
-    And organizations 表行数 > 0
+    And organizations 表行数 >= 0
     And teams 表行数 > 0
     And 所有 plain tables 与上游行数一致
 

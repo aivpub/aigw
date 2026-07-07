@@ -53,6 +53,18 @@ impl ServerGuard {
             (c, false)
         };
 
+        // Forward provider/upstream env vars to the child process
+        // so real API scenarios (end_to_end_real, compatibility_real) work.
+        for (key, val) in std::env::vars() {
+            let upper = key.to_uppercase();
+            if upper.starts_with("OPENAI_")
+                || upper.starts_with("OPENAPI_")
+                || upper.starts_with("AIGW_UPSTREAM_")
+            {
+                cmd.env(&key, &val);
+            }
+        }
+
         // Common args for both paths.
         // When using cargo run, the "--" separator is already added above.
         cmd.args([
