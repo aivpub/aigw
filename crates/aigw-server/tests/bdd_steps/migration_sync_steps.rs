@@ -24,8 +24,15 @@ fn upstream_master_key() -> Option<String> {
 }
 
 /// Returns the target aigw database URL for the test.
-fn target_db_url() -> Option<String> {
-    std::env::var("AIGW_TEST_DB_URL").ok()
+/// Must be set by the BDD test harness before running scenarios.
+fn target_db_url() -> String {
+    std::env::var("AIGW_TEST_DB_URL")
+        .expect("AIGW_TEST_DB_URL must be set by the BDD test harness")
+}
+
+/// Returns the optional migrate step filter from env var.
+fn migrate_step_filter() -> Option<u8> {
+    std::env::var("AIGW_MIGRATE_STEP").ok().and_then(|v| v.parse().ok())
 }
 
 /// Get the target master key.
@@ -58,17 +65,18 @@ async fn when_sync_plain_tables(world: &mut TestWorld) {
         return;
     }
     let source_url = upstream_db_url().expect("AIGW_UPSTREAM_DB_URL not set");
-    let target_url = target_db_url().unwrap_or_else(|| "sqlite::memory:".to_string());
+    let target_url = target_db_url();
     let source_key = upstream_master_key();
     let target_key = target_master_key();
 
-    // Drop the spend_log_limit to 0 to skip spend_logs entirely for this test
-    let result = aigw_migrate::remote_import::run(
+    // skip spend_logs entirely for this test
+    let result = aigw_migrate::remote_import_run_filtered(
         &source_url,
         &target_url,
         source_key.as_deref(),
         &target_key,
-        Some(0), // skip spend_logs for plain tables test
+        Some(0),
+        migrate_step_filter(),
     ).await;
 
     match result {
@@ -87,16 +95,17 @@ async fn when_sync_credentials(world: &mut TestWorld) {
         return;
     }
     let source_url = upstream_db_url().expect("AIGW_UPSTREAM_DB_URL not set");
-    let target_url = target_db_url().unwrap_or_else(|| "sqlite::memory:".to_string());
+    let target_url = target_db_url();
     let source_key = upstream_master_key();
     let target_key = target_master_key();
 
-    let result = aigw_migrate::remote_import::run(
+    let result = aigw_migrate::remote_import_run_filtered(
         &source_url,
         &target_url,
         source_key.as_deref(),
         &target_key,
-        Some(0), // skip spend_logs
+        Some(0),
+        migrate_step_filter(),
     ).await;
 
     match result {
@@ -115,16 +124,17 @@ async fn when_sync_proxy_models(world: &mut TestWorld) {
         return;
     }
     let source_url = upstream_db_url().expect("AIGW_UPSTREAM_DB_URL not set");
-    let target_url = target_db_url().unwrap_or_else(|| "sqlite::memory:".to_string());
+    let target_url = target_db_url();
     let source_key = upstream_master_key();
     let target_key = target_master_key();
 
-    let result = aigw_migrate::remote_import::run(
+    let result = aigw_migrate::remote_import_run_filtered(
         &source_url,
         &target_url,
         source_key.as_deref(),
         &target_key,
-        Some(0), // skip spend_logs
+        Some(0),
+        migrate_step_filter(),
     ).await;
 
     match result {
@@ -143,16 +153,17 @@ async fn when_sync_spend_logs_limit_10(world: &mut TestWorld) {
         return;
     }
     let source_url = upstream_db_url().expect("AIGW_UPSTREAM_DB_URL not set");
-    let target_url = target_db_url().unwrap_or_else(|| "sqlite::memory:".to_string());
+    let target_url = target_db_url();
     let source_key = upstream_master_key();
     let target_key = target_master_key();
 
-    let result = aigw_migrate::remote_import::run(
+    let result = aigw_migrate::remote_import_run_filtered(
         &source_url,
         &target_url,
         source_key.as_deref(),
         &target_key,
-        Some(10), // only 10 spend_log rows
+        Some(10),
+        migrate_step_filter(),
     ).await;
 
     match result {
@@ -186,7 +197,6 @@ fn then_org_rows_gt_0(world: &mut TestWorld) {
     if !real_api_enabled() {
         return;
     }
-    // For now, just verify sync didn't error
     let body = world.last_body.as_ref().expect("no sync result");
     assert!(
         body.as_object().unwrap().values().any(|v| v == "ok"),
