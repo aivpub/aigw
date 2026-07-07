@@ -43,6 +43,7 @@ pub struct AppState {
     #[allow(dead_code)]
     pub rate_limiter: Arc<RateLimiter>,
     pub deployment_mode: String, // "onprem" or "saas"
+    pub started_at: std::time::Instant,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -657,6 +658,7 @@ mod tests {
             router_state: RouterState::default(),
             rate_limiter: Arc::new(RateLimiter::new()),
             deployment_mode: "onprem".to_string(),
+            started_at: std::time::Instant::now(),
         });
         Router::new()
             .route("/key/generate", axum::routing::post(generate_key))

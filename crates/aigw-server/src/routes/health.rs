@@ -4,11 +4,13 @@
 //! - GET /health            — Simple health check (always ok if running)
 //! - GET /health/readiness   — Readiness check (DB connected)
 //! - GET /health/liveliness  — Liveliness check (always ok if running)
+//! - GET /health/metrics     — Operational metrics (admin only)
 //! - GET /system/info        — System information (version, deployment mode, routes)
 
-use axum::{extract::State, Json};
+use axum::{extract::State, http::StatusCode, Json};
 use serde_json::{json, Value};
 
+use super::spend::{require_admin, SpendAuth};
 use crate::routes::keys::SharedState;
 
 /// GET /health — simple health check
@@ -38,11 +40,56 @@ pub async fn system_info(State(state): State<SharedState>) -> Json<Value> {
             "/spend/logs", "/spend/keys", "/spend/users", "/spend/tags",
             "/global/spend", "/global/spend/logs", "/global/spend/keys",
             "/v1/chat/completions", "/v1/models",
-            "/health", "/health/readiness", "/health/liveliness",
+            "/health", "/health/readiness", "/health/liveliness", "/health/metrics",
             "/docs", "/openapi.json",
+            "/org/new", "/org/info", "/org/list", "/org/update", "/org/delete",
+            "/team/new", "/team/info", "/team/list", "/team/update", "/team/delete",
+            "/user/new", "/user/info", "/user/list", "/user/update", "/user/delete",
             "/system/info"
         ]
     }))
+}
+
+/// GET /health/metrics — operational metrics (admin only)
+pub async fn health_metrics(
+    State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    require_admin(&auth)?;
+
+    let uptime = state.started_at.elapsed().as_secs();
+
+    let (keys, models, orgs, teams, users) = tokio::try_join!(
+        state.db.count_virtual_keys(),
+        state.db.count_proxy_models(),
+        state.db.count_organizations(),
+        state.db.count_teams(),
+        state.db.count_users(),
+    )
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {"message": format!("{}", e), "type": "internal"}})),
+        )
+    })?;
+
+    Ok(Json(json!({
+        "status": "healthy",
+        "uptime_seconds": uptime,
+        "db": {
+            "connected": true,
+            "pool_size": state.db.pool_size(),
+            "idle": state.db.pool_idle(),
+        },
+        "counts": {
+            "virtual_keys": keys,
+            "proxy_models": models,
+            "organizations": orgs,
+            "teams": teams,
+            "users": users,
+        },
+        "version": env!("CARGO_PKG_VERSION"),
+    })))
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -139,6 +186,7 @@ mod tests {
             )),
             rate_limiter: std::sync::Arc::new(Default::default()),
             deployment_mode: "test".to_string(),
+            started_at: std::time::Instant::now(),
         });
 
         let app = Router::new()

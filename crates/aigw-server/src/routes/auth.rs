@@ -148,6 +148,7 @@ mod tests {
             router_state: RouterState::default(),
             rate_limiter: Arc::new(RateLimiter::new()),
             deployment_mode: deployment_mode.to_string(),
+            started_at: std::time::Instant::now(),
         })
     }
 

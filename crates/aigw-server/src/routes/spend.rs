@@ -544,6 +544,7 @@ mod tests {
             router_state: RouterState::default(),
             rate_limiter: Arc::new(RateLimiter::new()),
             deployment_mode: "onprem".to_string(),
+            started_at: std::time::Instant::now(),
         });
         Router::new()
             .route("/spend/logs", axum::routing::get(spend_logs))

@@ -56,6 +56,7 @@ impl TestWorld {
                     router_state: aigw_core::router::RouterState::default(),
                     rate_limiter: Arc::new(aigw_core::rate_limiter::RateLimiter::new()),
                     deployment_mode: "test".to_string(),
+                    started_at: std::time::Instant::now(),
                 },
             );
             self.master_key = mk;

@@ -158,6 +158,7 @@ async fn main() -> anyhow::Result<()> {
         router_state,
         rate_limiter,
         deployment_mode: cli.deployment_mode.clone(),
+        started_at: std::time::Instant::now(),
     });
 
     // Build router
@@ -167,6 +168,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/health", get(health::health))
         .route("/health/readiness", get(health::readiness))
         .route("/health/liveliness", get(health::liveliness))
+        .route("/health/metrics", get(health::health_metrics))
         .route("/system/info", get(health::system_info))
         // OpenAI-compatible endpoints
         .route(

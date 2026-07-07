@@ -405,6 +405,7 @@ mod tests {
             router_state: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             rate_limiter: Arc::new(RateLimiter::new()),
             deployment_mode: "onprem".to_string(),
+            started_at: std::time::Instant::now(),
         });
 
         Router::new()

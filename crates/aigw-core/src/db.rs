@@ -2894,6 +2894,54 @@ impl Database {
             Database::Postgres(pool) => pool.delete_user(user_id).await,
         }
     }
+
+    // ── Health / Metrics ──
+
+    pub fn pool_size(&self) -> u32 {
+        match self {
+            Database::Sqlite(p) => p.size(),
+            Database::Mysql(p) => p.size(),
+            Database::Postgres(p) => p.size(),
+        }
+    }
+
+    pub fn pool_idle(&self) -> u32 {
+        match self {
+            Database::Sqlite(p) => p.num_idle() as u32,
+            Database::Mysql(p) => p.num_idle() as u32,
+            Database::Postgres(p) => p.num_idle() as u32,
+        }
+    }
+
+    async fn _count(&self, table: &str) -> Result<i64> {
+        let query = format!("SELECT COUNT(*) FROM {}", table);
+        let row: (i64,) = match self {
+            Database::Sqlite(p) => sqlx::query_as(&query).fetch_one(p).await?,
+            Database::Mysql(p) => sqlx::query_as(&query).fetch_one(p).await?,
+            Database::Postgres(p) => sqlx::query_as(&query).fetch_one(p).await?,
+        };
+        Ok(row.0)
+    }
+
+    pub async fn count_virtual_keys(&self) -> Result<i64> {
+        self._count("virtual_keys").await
+    }
+
+    pub async fn count_proxy_models(&self) -> Result<i64> {
+        self._count("proxy_models").await
+    }
+
+    pub async fn count_organizations(&self) -> Result<i64> {
+        self._count("organizations").await
+    }
+
+    pub async fn count_teams(&self) -> Result<i64> {
+        self._count("teams").await
+    }
+
+    pub async fn count_users(&self) -> Result<i64> {
+        self._count("users").await
+    }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
