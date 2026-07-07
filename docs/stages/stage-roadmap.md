@@ -1,21 +1,22 @@
 # aigw — AI Gateway Stage Roadmap
 
 **项目**: aigw (litellm Rust 最小兼容替代)
-**最后更新**: 2026-07-06 (Phase 5 全部完成，Phase 7 规划中)
+**最后更新**: 2026-07-07 (Phase 7 Stage 13-16 已完成，Stage 17 80%)
 
 ---
 
 ## 当前状态
 
-- **当前 Stage**: Phase 5 已完成，Phase 7 规划中
-- **状态**: Phase 0-5 全部完成（12/12 Stages）
-- **下一里程碑**: Stage 13 — 生产 litellm 迁移到 aigw
+- **当前 Stage**: Phase 7 Stage 17 收尾中
+- **状态**: Phase 0-5 全部完成（12/12），Phase 7 Stage 13-16 已完成（4/5）
+- **下一里程碑**: Stage 17 收尾 — 自动化预检/监控工具
 
 ### 整体进度
 
 ```
 Phase 0-4: ████████████████████ 100% (6/6 Stages)
 Phase 5:   ████████████████████ 100% (6/6 Stages)
+Phase 7:   ███████████████████   96% (4.8/5 Stages)
 ```
 
 ---
@@ -80,13 +81,15 @@ Stage 7 优先完成（BDD 基础设施），后续 Stage 8-12 全部使用 RGR 
 
 ### Phase 7：生产 litellm 迁移到 aigw
 
-| Stage | 状态 | 目标 | 预估 |
-|-------|------|------|------|
-| Stage 13 | ⏳ 待开始 | credentials 表 + CredentialsStore + 全量 Store PG/MySQL 补齐 | 6-8h |
-| Stage 14 | ⏳ 待开始 | NaCl 加密/解密 Rust 库 + aigw-migrate PostgreSQL 源 + master_key 提取 | 6-8h |
-| Stage 15 | ⏳ 待开始 | aigw-migrate 全量迁移（解密 litellm → 重加密 aigw）+ 端到端验证 | 6-8h |
-| Stage 16 | ⏳ 待开始 | aigw 运行时解密 + 凭证引用解析（litellm_credential_name） | 4-6h |
-| Stage 17 | ⏳ 待开始 | 生产迁移 SOP + export 增强 + 回滚方案 | 4-6h |
+| Stage | 状态 | 目标 | 完成日期 |
+|-------|------|------|----------|
+| Stage 13 | ✅ 完成 | credentials 表 + CredentialsStore + 全量 Store PG/MySQL 补齐 | 2026-07-06 |
+| Stage 14 | ✅ 完成 | NaCl 加密/解密 Rust 库 + aigw-migrate PostgreSQL 源 + master_key 提取 | 2026-07-06 |
+| Stage 15 | ✅ 完成 | aigw-migrate 全量迁移（解密 litellm → 重加密 aigw）+ 端到端验证 | 2026-07-06 |
+| Stage 16 | ✅ 完成 | aigw 运行时解密 + 凭证引用解析（litellm_credential_name） | 2026-07-07 |
+| Stage 17 | 🔄 进行中 | 生产迁移 SOP + export 增强 + 回滚方案 | — |
+
+**Stage 17 进度**: SOP 文档 (372行) ✅、remote-export 回滚工具 ✅、BDD 迁移测试 ✅；待完成：自动化预检工具、一键回滚脚本。
 
 **Stage 13-17 依赖关系**:
 
@@ -133,3 +136,4 @@ Stage 13 (credentials 表 + 全量 Store PG/MySQL)
 | v3.2 | 2026-07-04 | Stage 11 缩减：删除 `/v1/key/*` 别名端点（litellm 源码核实无此路由），仅保留 Usage 用量增强；工时 4-6h → 2-3h | 全栈架构师 |
 | v4.0 | 2026-07-05 | Phase 5 全部完成：Stage 7-12 标记 Complete，BDD 63 场景通过，9 @real_api 场景创建 | 全栈架构师 |
 | v5.0 | 2026-07-06 | 新增 Phase 7（Stage 13-17）：生产 litellm 迁移到 aigw，纯 DB 迁移 + NaCl 解密方案 | 全栈架构师 |
+| v5.1 | 2026-07-07 | 更新 Phase 7 实际状态：Stage 13-16 已完成，Stage 17 80%（SOP/export/BDD 已完成，缺自动化预检/监控） | Claude Code |

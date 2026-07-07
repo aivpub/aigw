@@ -1,11 +1,11 @@
 # aigw -- 下一步行动
 
-**上次更新**: 2026-07-05
-**当前阶段**: Phase 5 全部完成，TD-002 已解决
+**上次更新**: 2026-07-07
+**当前阶段**: Phase 7 Stage 13-16 完成，Stage 17 收尾中
 
 ---
 
-## 当前状态：Phase 0-5 完成（12/12 Stages）
+## 当前状态：Phase 0-5 完成，Phase 7 Stage 13-16 完成
 
 ### Phase 0-4 已完成（6 个 Stage）
 
@@ -30,6 +30,16 @@
 | Stage 11 | ✅ | Usage 用量查询增强（BDD 驱动） |
 | Stage 12 | ✅ | BDD 全量覆盖 + 集成测试体系 |
 
+### Phase 7：生产 litellm 迁移到 aigw
+
+| Stage | 状态 | 目标 |
+|-------|------|------|
+| Stage 13 | ✅ | credentials 表 + CredentialsStore + 全量 Store PG/MySQL 补齐 |
+| Stage 14 | ✅ | NaCl 加密/解密 + aigw-migrate PG 源 + master_key 提取 |
+| Stage 15 | ✅ | aigw-migrate 全量迁移（解密 litellm → 重加密 aigw） |
+| Stage 16 | ✅ | aigw 运行时解密 + 凭证引用解析 |
+| Stage 17 | 🔄 | 生产迁移 SOP + export 增强 + 回滚方案（SOP/export/BDD 已完成，缺自动化预检/监控） |
+
 详见各 Stage 独立文档：`docs/stages/stage-{7..12}.md`
 
 ## 技术债状态
@@ -42,8 +52,8 @@
 
 ## 立即行动
 
-1. **TD-003**: BDD 覆盖率报告自动化 — 编写工具映射 .feature 场景到 API 路由
-2. **Phase 6 长期路线**: 按优先级推进（多租户、前端控制台、Redis、Observability）
+1. **Stage 17 收尾**: 自动化预检工具 + 一键回滚脚本
+2. **TD-003**: BDD 覆盖率报告自动化（P3）
 
 ## 长期路线（Phase 6）
 
