@@ -18,6 +18,7 @@
 
 mod export;
 mod import;
+mod pre_check;
 mod remote_export;
 mod remote_import;
 mod verify;
@@ -82,6 +83,18 @@ enum Commands {
         #[arg(long = "target-master-key")]
         target_master_key: Option<String>,
     },
+    /// Pre-migration checks: verify source/target connectivity, keys, and data
+    PreCheck {
+        /// Source database URL (litellm DB)
+        #[arg(long)]
+        source_url: String,
+        /// Target database URL (aigw DB)
+        #[arg(long)]
+        target_url: String,
+        /// Target master key (falls back to AIGW_MASTER_KEY env var)
+        #[arg(long = "target-master-key")]
+        target_master_key: Option<String>,
+    },
     /// Full reverse migration: aigw → litellm with encryption key rotation
     RemoteExport {
         /// Source database URL (aigw DB)
@@ -125,6 +138,27 @@ async fn main() -> anyhow::Result<()> {
                 std::process::exit(0);
             } else {
                 eprintln!("Mismatch detected in one or more tables.");
+                std::process::exit(1);
+            }
+        }
+        Commands::PreCheck {
+            source_url,
+            target_url,
+            target_master_key,
+        } => {
+            let target_key = target_master_key
+                .or_else(|| std::env::var("AIGW_MASTER_KEY").ok())
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Target master key required. Provide --target-master-key or set AIGW_MASTER_KEY env var."
+                    )
+                })?;
+            let all_pass = pre_check::run(&source_url, &target_url, &target_key).await?;
+            if all_pass {
+                println!("All checks passed. Ready to migrate.");
+                std::process::exit(0);
+            } else {
+                eprintln!("Some checks failed. Fix issues before migrating.");
                 std::process::exit(1);
             }
         }
