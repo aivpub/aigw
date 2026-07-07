@@ -8,9 +8,9 @@
 //!   5. Migrate proxy_models — decrypt with aigw key, re-encrypt with litellm key
 //!   6. Batch migrate spend_logs (no crypto)
 
-use std::collections::HashSet;
 use sqlx::any::AnyPoolOptions;
 use sqlx::{AnyPool, Column, Row};
+use std::collections::HashSet;
 
 fn is_pg(url: &str) -> bool {
     url.starts_with("postgres://") || url.starts_with("postgresql://")
@@ -18,6 +18,16 @@ fn is_pg(url: &str) -> bool {
 
 fn is_mysql(url: &str) -> bool {
     url.starts_with("mysql://") || url.starts_with("mariadb://")
+}
+
+/// Quote an SQL identifier for the given database URL.
+/// PG/SQLite: double-quotes; MySQL: backticks.
+fn quote_ident(name: &str, db_url: &str) -> String {
+    if is_mysql(db_url) {
+        format!("`{}`", name)
+    } else {
+        format!("\"{}\"", name)
+    }
 }
 
 /// Get column names and data types for a table in the target database.
@@ -32,34 +42,54 @@ async fn target_column_info(target: &AnyPool, table: &str, db_url: &str) -> Vec<
         .fetch_all(target)
         .await;
         match rows {
-            Ok(r) => r.iter().map(|row| (row.get::<String, _>(0), row.get::<String, _>(1))).collect(),
+            Ok(r) => r
+                .iter()
+                .map(|row| (row.get::<String, _>(0), row.get::<String, _>(1)))
+                .collect(),
             Err(_) => Vec::new(),
         }
     } else if is_mysql(db_url) {
-        let rows =
-            sqlx::query(&format!("SHOW COLUMNS FROM `{}`", table))
-                .fetch_all(target)
-                .await;
+        // Use INFORMATION_SCHEMA instead of SHOW COLUMNS because sqlx Any driver
+        // cannot decode the Type column from SHOW COLUMNS results on MySQL.
+        // Decode DATA_TYPE as Vec<u8> and convert to String because mysql
+        // driver may return it as BLOB.
+        let rows = sqlx::query(
+            "SELECT COLUMN_NAME, DATA_TYPE \
+             FROM INFORMATION_SCHEMA.COLUMNS \
+             WHERE TABLE_NAME = ? AND TABLE_SCHEMA = DATABASE() \
+             ORDER BY ORDINAL_POSITION",
+        )
+        .bind(table)
+        .fetch_all(target)
+        .await;
         match rows {
-            Ok(r) => r.iter().map(|row| {
-                let name: String = row.get(0);
-                let ty: String = row.try_get::<String, _>(1).unwrap_or_default();
-                (name, ty)
-            }).collect(),
+            Ok(r) => r
+                .iter()
+                .map(|row| {
+                    let name: String = row.get(0);
+                    let ty: String = row
+                        .try_get::<Vec<u8>, _>(1)
+                        .map(|b| String::from_utf8_lossy(&b).to_string())
+                        .unwrap_or_default();
+                    (name, ty)
+                })
+                .collect(),
             Err(_) => Vec::new(),
         }
     } else {
         // SQLite
-        let rows =
-            sqlx::query(&format!("PRAGMA table_info(\"{}\")", table))
-                .fetch_all(target)
-                .await;
+        let rows = sqlx::query(&format!("PRAGMA table_info(\"{}\")", table))
+            .fetch_all(target)
+            .await;
         match rows {
-            Ok(r) => r.iter().map(|row| {
-                let name: String = row.get(1);
-                let ty: String = row.try_get::<String, _>(2).unwrap_or_default();
-                (name, ty)
-            }).collect(),
+            Ok(r) => r
+                .iter()
+                .map(|row| {
+                    let name: String = row.get(1);
+                    let ty: String = row.try_get::<String, _>(2).unwrap_or_default();
+                    (name, ty)
+                })
+                .collect(),
             Err(_) => Vec::new(),
         }
     }
@@ -112,10 +142,15 @@ async fn connect(source_or_url: &str) -> anyhow::Result<AnyPool> {
 }
 
 /// Extract litellm master_key from the LiteLLM_Config table in the target DB.
-async fn extract_target_master_key(target: &AnyPool) -> anyhow::Result<Option<String>> {
-    let row = sqlx::query(
-        "SELECT param_value FROM \"LiteLLM_Config\" WHERE param_name = 'litellm_master_key'",
-    )
+async fn extract_target_master_key(
+    target: &AnyPool,
+    target_url: &str,
+) -> anyhow::Result<Option<String>> {
+    let table = quote_ident("LiteLLM_Config", target_url);
+    let row = sqlx::query(&format!(
+        "SELECT param_value FROM {} WHERE param_name = 'litellm_master_key'",
+        table,
+    ))
     .fetch_optional(target)
     .await?;
 
@@ -144,7 +179,8 @@ async fn migrate_plain_table(
     src_table: &str,
     tgt_table: &str,
 ) -> anyhow::Result<usize> {
-    let query = format!("SELECT * FROM \"{}\"", src_table);
+    let src_quoted = quote_ident(src_table, target_url);
+    let query = format!("SELECT * FROM {}", src_quoted);
     let rows = match sqlx::query(&query).fetch_all(source).await {
         Ok(r) => r,
         Err(e) => {
@@ -181,12 +217,19 @@ async fn migrate_plain_table(
         .collect();
 
     if insert_cols.is_empty() {
-        eprintln!("  [SKIP] {}: no intersecting columns with target", src_table);
+        eprintln!(
+            "  [SKIP] {}: no intersecting columns with target",
+            src_table
+        );
         return Ok(0);
     }
 
     let mut inserted = 0usize;
-    let pg_conflict = if is_pg(target_url) { " ON CONFLICT DO NOTHING" } else { "" };
+    let pg_conflict = if is_pg(target_url) {
+        " ON CONFLICT DO NOTHING"
+    } else {
+        ""
+    };
     for row in &rows {
         let values_expr: Vec<String> = insert_cols
             .iter()
@@ -197,12 +240,13 @@ async fn migrate_plain_table(
             })
             .collect();
 
+        let tgt_quoted = quote_ident(tgt_table, target_url);
         let insert_sql = format!(
-            "INSERT INTO \"{}\" ({}) VALUES ({}){}",
-            tgt_table,
+            "INSERT INTO {} ({}) VALUES ({}){}",
+            tgt_quoted,
             insert_cols
                 .iter()
-                .map(|(n, _, _)| format!("\"{}\"", n))
+                .map(|(n, _, _)| quote_ident(n, target_url))
                 .collect::<Vec<_>>()
                 .join(", "),
             values_expr.join(", "),
@@ -236,8 +280,9 @@ async fn migrate_credentials(
     source_key: &str,
     target_key: &str,
 ) -> anyhow::Result<usize> {
-    let query = "SELECT * FROM \"credentials\"";
-    let rows = match sqlx::query(query).fetch_all(source).await {
+    let cred_quoted = quote_ident("credentials", target_url);
+    let query = format!("SELECT * FROM {}", cred_quoted);
+    let rows = match sqlx::query(&query).fetch_all(source).await {
         Ok(r) => r,
         Err(e) => {
             eprintln!("  [SKIP] credentials: {}", e);
@@ -272,20 +317,34 @@ async fn migrate_credentials(
 
     let mut inserted = 0usize;
     let mut skipped = 0usize;
-    let pg_conflict = if is_pg(target_url) { " ON CONFLICT DO NOTHING" } else { "" };
+    let pg_conflict = if is_pg(target_url) {
+        " ON CONFLICT DO NOTHING"
+    } else {
+        ""
+    };
     for row in &rows {
         let col_count = row.columns().len();
         let values_expr: Vec<String> = (0..col_count)
             .map(|i| {
                 let ph = placeholder(i, target_url);
                 let col_name = &src_columns[i];
-                cast_expr(col_name, tgt_type_map.get(col_name.as_str()).copied(), &ph, target_url)
+                cast_expr(
+                    col_name,
+                    tgt_type_map.get(col_name.as_str()).copied(),
+                    &ph,
+                    target_url,
+                )
             })
             .collect();
 
+        let cred_cols_quoted: Vec<String> = src_columns
+            .iter()
+            .map(|c| quote_ident(c, target_url))
+            .collect();
         let insert_sql = format!(
-            "INSERT INTO \"LiteLLM_CredentialsTable\" ({}) VALUES ({}){}",
-            src_columns.join(", "),
+            "INSERT INTO {} ({}) VALUES ({}){}",
+            quote_ident("LiteLLM_CredentialsTable", target_url),
+            cred_cols_quoted.join(", "),
             values_expr.join(", "),
             pg_conflict,
         );
@@ -351,8 +410,9 @@ async fn migrate_proxy_models(
     source_key: &str,
     target_key: &str,
 ) -> anyhow::Result<usize> {
-    let query = "SELECT * FROM \"proxy_models\"";
-    let rows = match sqlx::query(query).fetch_all(source).await {
+    let models_quoted = quote_ident("proxy_models", target_url);
+    let query = format!("SELECT * FROM {}", models_quoted);
+    let rows = match sqlx::query(&query).fetch_all(source).await {
         Ok(r) => r,
         Err(e) => {
             eprintln!("  [SKIP] proxy_models: {}", e);
@@ -387,19 +447,30 @@ async fn migrate_proxy_models(
 
     let mut inserted = 0usize;
     let mut skipped = 0usize;
-    let pg_conflict = if is_pg(target_url) { " ON CONFLICT DO NOTHING" } else { "" };
+    let pg_conflict = if is_pg(target_url) {
+        " ON CONFLICT DO NOTHING"
+    } else {
+        ""
+    };
     for row in &rows {
         let col_count = row.columns().len();
         let values_expr: Vec<String> = (0..col_count)
             .map(|i| {
                 let ph = placeholder(i, target_url);
                 let col_name = &src_columns[i];
-                cast_expr(col_name, tgt_type_map.get(col_name.as_str()).copied(), &ph, target_url)
+                cast_expr(
+                    col_name,
+                    tgt_type_map.get(col_name.as_str()).copied(),
+                    &ph,
+                    target_url,
+                )
             })
             .collect();
 
+        let proxy_table = quote_ident("LiteLLM_ProxyModelTable", target_url);
         let insert_sql = format!(
-            "INSERT INTO \"LiteLLM_ProxyModelTable\" ({}) VALUES ({}){}",
+            "INSERT INTO {} ({}) VALUES ({}){}",
+            proxy_table,
             src_columns.join(", "),
             values_expr.join(", "),
             pg_conflict,
@@ -464,8 +535,9 @@ async fn migrate_spend_logs(
     target: &AnyPool,
     target_url: &str,
 ) -> anyhow::Result<usize> {
-    let query = "SELECT * FROM \"spend_logs\"";
-    let rows = match sqlx::query(query).fetch_all(source).await {
+    let logs_quoted = quote_ident("spend_logs", target_url);
+    let query = format!("SELECT * FROM {}", logs_quoted);
+    let rows = match sqlx::query(&query).fetch_all(source).await {
         Ok(r) => r,
         Err(e) => {
             eprintln!("  [SKIP] spend_logs: {}", e);
@@ -484,15 +556,20 @@ async fn migrate_spend_logs(
         .collect();
 
     let mut inserted = 0usize;
-    let pg_conflict = if is_pg(target_url) { " ON CONFLICT DO NOTHING" } else { "" };
+    let pg_conflict = if is_pg(target_url) {
+        " ON CONFLICT DO NOTHING"
+    } else {
+        ""
+    };
     for row in &rows {
         let col_count = row.columns().len();
-        let placeholders: Vec<String> = (0..col_count)
-            .map(|i| placeholder(i, target_url))
-            .collect();
+        let placeholders: Vec<String> =
+            (0..col_count).map(|i| placeholder(i, target_url)).collect();
 
+        let spend_table = quote_ident("LiteLLM_SpendLogs", target_url);
         let insert_sql = format!(
-            "INSERT INTO \"LiteLLM_SpendLogs\" ({}) VALUES ({}){}",
+            "INSERT INTO {} ({}) VALUES ({}){}",
+            spend_table,
             columns.join(", "),
             placeholders.join(", "),
             pg_conflict,
@@ -530,7 +607,7 @@ pub async fn run(
     // Step 1: Determine target litellm master_key
     let target_key = match target_master_key {
         Some(k) => k.to_string(),
-        None => match extract_target_master_key(&target).await? {
+        None => match extract_target_master_key(&target, target_url).await? {
             Some(k) => {
                 println!("  Extracted master_key from LiteLLM_Config in target DB");
                 k
@@ -549,23 +626,23 @@ pub async fn run(
     // Step 2: Migrate plain tables
     println!("Step 2: Exporting plain tables (aigw → litellm)...");
     for &(src, tgt) in PLAIN_TABLES {
-        let count =
-            migrate_plain_table(&source, &target, target_url, src, tgt).await?;
+        let count = migrate_plain_table(&source, &target, target_url, src, tgt).await?;
         println!("  {} -> {} ({} rows)", src, tgt, count);
     }
 
     // Step 3: Migrate credentials with key rotation (aigw→litellm)
     println!("Step 3: Exporting credentials (with key rotation)...");
     let cred_count =
-        migrate_credentials(&source, &target, target_url, source_master_key, &target_key)
-            .await?;
-    println!("  credentials -> LiteLLM_CredentialsTable ({} rows)", cred_count);
+        migrate_credentials(&source, &target, target_url, source_master_key, &target_key).await?;
+    println!(
+        "  credentials -> LiteLLM_CredentialsTable ({} rows)",
+        cred_count
+    );
 
     // Step 4: Migrate proxy_models with key rotation
     println!("Step 4: Exporting proxy_models (with key rotation)...");
     let model_count =
-        migrate_proxy_models(&source, &target, target_url, source_master_key, &target_key)
-            .await?;
+        migrate_proxy_models(&source, &target, target_url, source_master_key, &target_key).await?;
     println!(
         "  proxy_models -> LiteLLM_ProxyModelTable ({} rows)",
         model_count
@@ -574,10 +651,7 @@ pub async fn run(
     // Step 5: Migrate spend_logs
     println!("Step 5: Exporting spend_logs...");
     let spend_count = migrate_spend_logs(&source, &target, target_url).await?;
-    println!(
-        "  spend_logs -> LiteLLM_SpendLogs ({} rows)",
-        spend_count
-    );
+    println!("  spend_logs -> LiteLLM_SpendLogs ({} rows)", spend_count);
 
     // Step 6: Verify
     println!("Step 6: Verifying row counts...");
@@ -598,13 +672,23 @@ pub async fn run(
     ];
 
     for &(src, tgt) in all_tables {
-        let src_count: i64 = sqlx::query(&format!("SELECT COUNT(*) FROM \"{}\"", src))
+        let src_quoted = if is_mysql(target_url) {
+            format!("`{}`", src)
+        } else {
+            format!("\"{}\"", src)
+        };
+        let src_count: i64 = sqlx::query(&format!("SELECT COUNT(*) FROM {}", src_quoted))
             .fetch_one(&source)
             .await
             .map(|row| row.get(0))
             .unwrap_or(0);
 
-        let tgt_count: i64 = sqlx::query(&format!("SELECT COUNT(*) FROM \"{}\"", tgt))
+        let tgt_quoted = if is_mysql(target_url) {
+            format!("`{}`", tgt)
+        } else {
+            format!("\"{}\"", tgt)
+        };
+        let tgt_count: i64 = sqlx::query(&format!("SELECT COUNT(*) FROM {}", tgt_quoted))
             .fetch_one(&target)
             .await
             .map(|row| row.get(0))
@@ -808,8 +892,7 @@ mod tests {
         .fetch_one(&tgt_pool)
         .await
         .unwrap();
-        let decrypted_params =
-            aigw_core::decrypt_litellm_value(&model_row.0, litellm_key).unwrap();
+        let decrypted_params = aigw_core::decrypt_litellm_value(&model_row.0, litellm_key).unwrap();
         assert_eq!(
             decrypted_params, plain_params,
             "model params should decrypt with litellm key"

@@ -87,7 +87,7 @@ async fn connect(source_or_url: &str) -> anyhow::Result<AnyPool> {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /// Get column names and data types for the source database.
-/// Supports PG (information_schema), MySQL (DESCRIBE), and SQLite (PRAGMA table_info).
+/// Supports PG (information_schema), MySQL (INFORMATION_SCHEMA), and SQLite (PRAGMA table_info).
 async fn source_column_info(pool: &AnyPool, table: &str, db_url: &str) -> Vec<(String, String)> {
     if is_pg(db_url) {
         let rows = sqlx::query(
@@ -111,16 +111,28 @@ async fn source_column_info(pool: &AnyPool, table: &str, db_url: &str) -> Vec<(S
             Err(_) => Vec::new(),
         }
     } else if is_mysql(db_url) {
-        let quoted = quote_ident(table, db_url);
-        let rows = sqlx::query(&format!("DESCRIBE {}", quoted))
-            .fetch_all(pool)
-            .await;
+        // Use INFORMATION_SCHEMA instead of DESCRIBE because sqlx Any driver
+        // cannot decode the Type column from DESCRIBE results on MySQL.
+        // Decode DATA_TYPE as Vec<u8> and convert to String because mysql
+        // driver may return it as BLOB even after CAST(… AS CHAR).
+        let rows = sqlx::query(
+            "SELECT COLUMN_NAME, DATA_TYPE \
+             FROM INFORMATION_SCHEMA.COLUMNS \
+             WHERE TABLE_NAME = ? AND TABLE_SCHEMA = DATABASE() \
+             ORDER BY ORDINAL_POSITION",
+        )
+        .bind(table)
+        .fetch_all(pool)
+        .await;
         match rows {
             Ok(r) => r
                 .iter()
                 .map(|row| {
                     let name: String = row.get(0);
-                    let ty: String = row.try_get::<String, _>(1).unwrap_or_default();
+                    let ty: String = row
+                        .try_get::<Vec<u8>, _>(1)
+                        .map(|b| String::from_utf8_lossy(&b).to_string())
+                        .unwrap_or_default();
                     (name, normalize_mysql_type(&ty))
                 })
                 .collect(),
@@ -128,10 +140,9 @@ async fn source_column_info(pool: &AnyPool, table: &str, db_url: &str) -> Vec<(S
         }
     } else {
         // SQLite: PRAGMA table_info returns (cid, name, type, notnull, dflt_value, pk)
-        let rows =
-            sqlx::query(&format!("PRAGMA table_info(\"{}\")", table))
-                .fetch_all(pool)
-                .await;
+        let rows = sqlx::query(&format!("PRAGMA table_info(\"{}\")", table))
+            .fetch_all(pool)
+            .await;
         match rows {
             Ok(r) => r
                 .iter()
@@ -163,9 +174,7 @@ fn build_pg_select(
         .iter()
         .map(|(name, ty)| {
             if ty == "text[]" || ty == "ARRAY" {
-                format!(
-                    "COALESCE(array_to_json(\"{name}\")::text, '[]') AS \"{name}\"",
-                )
+                format!("COALESCE(array_to_json(\"{name}\")::text, '[]') AS \"{name}\"",)
             } else {
                 format!("COALESCE(\"{name}\"::text, '') AS \"{name}\"")
             }
@@ -185,7 +194,7 @@ fn build_pg_select(
 ///
 /// PG:  uses information_schema.columns
 /// SQLite: uses PRAGMA table_info (returns cid, name, type, notnull, dflt_value, pk)
-/// MySQL: uses SHOW COLUMNS or DESCRIBE
+/// MySQL: uses INFORMATION_SCHEMA.COLUMNS (sqlx Any driver cannot decode DESCRIBE Type column).
 async fn target_column_info(pool: &AnyPool, table: &str, db_url: &str) -> Vec<(String, String)> {
     if is_pg(db_url) {
         let rows = sqlx::query(
@@ -209,16 +218,28 @@ async fn target_column_info(pool: &AnyPool, table: &str, db_url: &str) -> Vec<(S
             Err(_) => Vec::new(),
         }
     } else if is_mysql(db_url) {
-        let quoted = quote_ident(table, db_url);
-        let rows = sqlx::query(&format!("DESCRIBE {}", quoted))
-            .fetch_all(pool)
-            .await;
+        // Use INFORMATION_SCHEMA instead of DESCRIBE because sqlx Any driver
+        // cannot decode the Type column from DESCRIBE results on MySQL.
+        // Decode DATA_TYPE as Vec<u8> and convert to String because mysql
+        // driver may return it as BLOB even after CAST(… AS CHAR).
+        let rows = sqlx::query(
+            "SELECT COLUMN_NAME, DATA_TYPE \
+             FROM INFORMATION_SCHEMA.COLUMNS \
+             WHERE TABLE_NAME = ? AND TABLE_SCHEMA = DATABASE() \
+             ORDER BY ORDINAL_POSITION",
+        )
+        .bind(table)
+        .fetch_all(pool)
+        .await;
         match rows {
             Ok(r) => r
                 .iter()
                 .map(|row| {
                     let name: String = row.get(0);
-                    let ty: String = row.try_get::<String, _>(1).unwrap_or_default();
+                    let ty: String = row
+                        .try_get::<Vec<u8>, _>(1)
+                        .map(|b| String::from_utf8_lossy(&b).to_string())
+                        .unwrap_or_default();
                     (name, normalize_mysql_type(&ty))
                 })
                 .collect(),
@@ -226,10 +247,9 @@ async fn target_column_info(pool: &AnyPool, table: &str, db_url: &str) -> Vec<(S
         }
     } else {
         // SQLite: PRAGMA table_info returns (cid, name, type, notnull, dflt_value, pk)
-        let rows =
-            sqlx::query(&format!("PRAGMA table_info(\"{}\")", table))
-                .fetch_all(pool)
-                .await;
+        let rows = sqlx::query(&format!("PRAGMA table_info(\"{}\")", table))
+            .fetch_all(pool)
+            .await;
         match rows {
             Ok(r) => r
                 .iter()
@@ -247,7 +267,12 @@ async fn target_column_info(pool: &AnyPool, table: &str, db_url: &str) -> Vec<(S
 /// Map MySQL type names to SQL-standard equivalents used in pg_type_for_cast.
 fn normalize_mysql_type(raw: &str) -> String {
     let lower = raw.to_lowercase();
-    if lower.starts_with("varchar") || lower.starts_with("char") || lower.starts_with("text") || lower.starts_with("longtext") || lower.starts_with("mediumtext") {
+    if lower.starts_with("varchar")
+        || lower.starts_with("char")
+        || lower.starts_with("text")
+        || lower.starts_with("longtext")
+        || lower.starts_with("mediumtext")
+    {
         "text".to_string()
     } else if lower.starts_with("int") || lower.starts_with("tinyint") {
         "integer".to_string()
@@ -285,7 +310,10 @@ fn is_mysql(url: &str) -> bool {
 ///
 /// Returns (values_expr, placeholder_count) — placeholder count is needed to
 /// know how many binds to supply, since target-only columns use literals.
-fn pg_insert_values_expr(cols: &[(String, String, Option<usize>)], db_url: &str) -> (String, usize) {
+fn pg_insert_values_expr(
+    cols: &[(String, String, Option<usize>)],
+    db_url: &str,
+) -> (String, usize) {
     let mut ph_count = 0usize;
     let expr = cols
         .iter()
@@ -308,7 +336,10 @@ fn pg_insert_values_expr(cols: &[(String, String, Option<usize>)], db_url: &str)
                     // COALESCE ensures we always provide a valid value.
                     format!(
                         "COALESCE(CAST(NULLIF({}, '') AS {}), {}::{})",
-                        ph, pg_type, pg_default_literal(ty), pg_type
+                        ph,
+                        pg_type,
+                        pg_default_literal(ty),
+                        pg_type
                     )
                 }
             }
@@ -360,7 +391,9 @@ fn build_column_merge(
     tgt_cols
         .iter()
         .map(|(name, ty)| {
-            let idx = src_index.get(name.as_str()).copied()
+            let idx = src_index
+                .get(name.as_str())
+                .copied()
                 .or_else(|| src_snake_map.get(name.as_str()).copied());
             (name.clone(), ty.clone(), idx)
         })
@@ -411,11 +444,7 @@ fn pg_type_for_cast(data_type: &str) -> &'static str {
 /// When `col_type` is provided and target is MySQL, JSON-typed columns are sanitized:
 /// empty/invalid strings are replaced with `'{}'` to satisfy MySQL's strict JSON validation.
 fn bind_value_from_row<'q>(
-    mut q: sqlx::query::Query<
-        'q,
-        sqlx::Any,
-        <sqlx::Any as sqlx::Database>::Arguments<'q>,
-    >,
+    mut q: sqlx::query::Query<'q, sqlx::Any, <sqlx::Any as sqlx::Database>::Arguments<'q>>,
     row: &<sqlx::Any as sqlx::Database>::Row,
     idx: usize,
     col_type: Option<&str>,
@@ -490,9 +519,7 @@ const PLAIN_TABLES: &[(&str, &str)] = &[
 
 /// Build a simple INSERT for non-PG targets using target column info + column merge.
 /// Target-only columns get `''` or `'{}'` literal defaults.
-fn non_pg_insert_values_expr(
-    merged: &[(String, String, Option<usize>)],
-) -> (String, usize) {
+fn non_pg_insert_values_expr(merged: &[(String, String, Option<usize>)]) -> (String, usize) {
     let mut ph_count = 0usize;
     let expr = merged
         .iter()
@@ -508,7 +535,13 @@ fn non_pg_insert_values_expr(
                     "X''".to_string()
                 } else if ty_lower == "json" || ty_lower.contains("json") || ty_lower == "jsonb" {
                     "'{}'".to_string()
-                } else if ty_lower.contains("int") || ty_lower == "integer" || ty_lower == "real" || ty_lower == "float" || ty_lower.contains("double") || ty_lower.contains("numeric") {
+                } else if ty_lower.contains("int")
+                    || ty_lower == "integer"
+                    || ty_lower == "real"
+                    || ty_lower == "float"
+                    || ty_lower.contains("double")
+                    || ty_lower.contains("numeric")
+                {
                     "0".to_string()
                 } else {
                     "''".to_string()
@@ -565,13 +598,40 @@ async fn migrate_plain_table(
 
     let do_merge = !merged.is_empty();
     let use_pg = do_merge && is_pg(target_url);
-    let insert_cols: Vec<String> = merged.iter().map(|(n, _, _)| quote_ident(n, target_url)).collect();
+    let insert_cols: Vec<String> = merged
+        .iter()
+        .map(|(n, _, _)| quote_ident(n, target_url))
+        .collect();
+
+    // Build a column-name→type lookup from target column info for MySQL JSON sanitization.
+    // Needed even when do_merge is false: PG sources produce empty strings for NULL JSON
+    // columns (via COALESCE(col::text, '')), and MySQL rejects empty strings in JSON columns.
+    let tgt_type_lookup: std::collections::HashMap<&str, &str> =
+        if !do_merge && is_mysql(target_url) {
+            tgt_col_info
+                .iter()
+                .map(|(n, t)| (n.as_str(), t.as_str()))
+                .collect()
+        } else {
+            std::collections::HashMap::new()
+        };
 
     let mut inserted = 0usize;
-    for row in &rows {
+    for (row_idx, row) in rows.iter().enumerate() {
+        if row_idx == 0 && tgt_table.contains("teams") {
+            for (name, ty, idx) in &merged {
+                if name == "default_team_member_models" {
+                    eprintln!("  [DEBUG-MERGED] {name}: ty={ty}, src_idx={idx:?}");
+                }
+            }
+        }
         let col_count = row.columns().len();
 
-        let pg_conflict = if is_pg(target_url) { " ON CONFLICT DO NOTHING" } else { "" };
+        let pg_conflict = if is_pg(target_url) {
+            " ON CONFLICT DO NOTHING"
+        } else {
+            ""
+        };
         let tgt_quoted = quote_ident(tgt_table, target_url);
         let insert_sql = if do_merge {
             if use_pg {
@@ -617,13 +677,19 @@ async fn migrate_plain_table(
             }
         } else {
             for i in 0..col_count {
-                q = bind_value_from_row(q, row, i, None, is_mysql(target_url));
+                let col_name = &columns[i];
+                let col_type = tgt_type_lookup.get(col_name.as_str()).copied();
+                q = bind_value_from_row(q, row, i, col_type, is_mysql(target_url));
             }
         }
         match q.execute(target).await {
             Ok(_) => inserted += 1,
             Err(e) => {
-                return Err(anyhow::anyhow!("INSERT error for table '{}': {}", tgt_table, e));
+                return Err(anyhow::anyhow!(
+                    "INSERT error for table '{}': {}",
+                    tgt_table,
+                    e
+                ));
             }
         }
     }
@@ -677,7 +743,10 @@ async fn migrate_credentials(
 
     let do_merge = !merged.is_empty();
     let use_pg = do_merge && is_pg(target_url);
-    let insert_cols: Vec<String> = merged.iter().map(|(n, _, _)| quote_ident(n, target_url)).collect();
+    let insert_cols: Vec<String> = merged
+        .iter()
+        .map(|(n, _, _)| quote_ident(n, target_url))
+        .collect();
 
     // Find the credential_values index in the MERGED ordering (i.e. target column position)
     let values_merged_idx = merged.iter().position(|(n, _, _)| n == "credential_values");
@@ -685,7 +754,11 @@ async fn migrate_credentials(
     let mut inserted = 0usize;
     let mut skipped = 0usize;
     for row in &rows {
-        let pg_conflict = if is_pg(target_url) { " ON CONFLICT DO NOTHING" } else { "" };
+        let pg_conflict = if is_pg(target_url) {
+            " ON CONFLICT DO NOTHING"
+        } else {
+            ""
+        };
         let insert_sql = if do_merge {
             if use_pg {
                 let (values_expr, _ph_count) = pg_insert_values_expr(&merged, target_url);
@@ -732,7 +805,9 @@ async fn migrate_credentials(
                             } else {
                                 match aigw_core::decrypt_litellm_value(&encrypted, source_key) {
                                     Ok(plaintext) => {
-                                        match aigw_core::encrypt_litellm_value(&plaintext, target_key) {
+                                        match aigw_core::encrypt_litellm_value(
+                                            &plaintext, target_key,
+                                        ) {
                                             Ok(re_encrypted) => q = q.bind(re_encrypted),
                                             Err(_e) => {
                                                 q = q.bind(encrypted);
@@ -797,7 +872,10 @@ async fn migrate_credentials(
     }
 
     if skipped > 0 {
-        eprintln!("  [WARN] Skipped {} credential rows due to crypto errors", skipped);
+        eprintln!(
+            "  [WARN] Skipped {} credential rows due to crypto errors",
+            skipped
+        );
     }
 
     Ok(inserted)
@@ -849,7 +927,10 @@ async fn migrate_proxy_models(
 
     let do_merge = !merged.is_empty();
     let use_pg = do_merge && is_pg(target_url);
-    let insert_cols: Vec<String> = merged.iter().map(|(n, _, _)| quote_ident(n, target_url)).collect();
+    let insert_cols: Vec<String> = merged
+        .iter()
+        .map(|(n, _, _)| quote_ident(n, target_url))
+        .collect();
 
     // Find the litellm_params index in the MERGED ordering
     let params_merged_idx = merged.iter().position(|(n, _, _)| n == "litellm_params");
@@ -857,7 +938,11 @@ async fn migrate_proxy_models(
     let mut inserted = 0usize;
     let mut skipped = 0usize;
     for row in &rows {
-        let pg_conflict = if is_pg(target_url) { " ON CONFLICT DO NOTHING" } else { "" };
+        let pg_conflict = if is_pg(target_url) {
+            " ON CONFLICT DO NOTHING"
+        } else {
+            ""
+        };
         let tgt_quoted = quote_ident("proxy_models", target_url);
         let insert_sql = if do_merge {
             if use_pg {
@@ -904,7 +989,9 @@ async fn migrate_proxy_models(
                             } else {
                                 match aigw_core::decrypt_litellm_value(&value, source_key) {
                                     Ok(plaintext) => {
-                                        match aigw_core::encrypt_litellm_value(&plaintext, target_key) {
+                                        match aigw_core::encrypt_litellm_value(
+                                            &plaintext, target_key,
+                                        ) {
                                             Ok(re_encrypted) => q = q.bind(re_encrypted),
                                             Err(_e) => {
                                                 q = q.bind(value);
@@ -969,7 +1056,10 @@ async fn migrate_proxy_models(
     }
 
     if skipped > 0 {
-        eprintln!("  [WARN] Skipped {} model rows due to crypto errors", skipped);
+        eprintln!(
+            "  [WARN] Skipped {} model rows due to crypto errors",
+            skipped
+        );
     }
 
     Ok(inserted)
@@ -1008,7 +1098,11 @@ async fn migrate_spend_logs(
     };
 
     let row_count = rows.len();
-    eprintln!("  [TIMING] spend_logs fetch: {:?} ({} rows)", t_fetch.elapsed(), row_count);
+    eprintln!(
+        "  [TIMING] spend_logs fetch: {:?} ({} rows)",
+        t_fetch.elapsed(),
+        row_count
+    );
 
     if row_count == 0 {
         return Ok(0);
@@ -1029,12 +1123,30 @@ async fn migrate_spend_logs(
 
     let do_merge = !merged.is_empty();
     let use_pg = do_merge && is_pg(target_url);
-    let insert_cols: Vec<String> = merged.iter().map(|(n, _, _)| quote_ident(n, target_url)).collect();
+    let insert_cols: Vec<String> = merged
+        .iter()
+        .map(|(n, _, _)| quote_ident(n, target_url))
+        .collect();
+
+    // Build a column-name→type lookup from target column info for MySQL JSON sanitization.
+    let tgt_type_lookup: std::collections::HashMap<&str, &str> =
+        if !do_merge && is_mysql(target_url) {
+            tgt_col_info
+                .iter()
+                .map(|(n, t)| (n.as_str(), t.as_str()))
+                .collect()
+        } else {
+            std::collections::HashMap::new()
+        };
 
     let t_insert = std::time::Instant::now();
     let mut inserted = 0usize;
     for row in &rows {
-        let pg_conflict = if is_pg(target_url) { " ON CONFLICT DO NOTHING" } else { "" };
+        let pg_conflict = if is_pg(target_url) {
+            " ON CONFLICT DO NOTHING"
+        } else {
+            ""
+        };
         let tgt_quoted = quote_ident("spend_logs", target_url);
         let insert_sql = if do_merge {
             if use_pg {
@@ -1080,13 +1192,20 @@ async fn migrate_spend_logs(
             }
         } else {
             for i in 0..columns.len() {
-                q = bind_value_from_row(q, row, i, None, is_mysql(target_url));
+                let col_name = &columns[i];
+                let col_type = tgt_type_lookup.get(col_name.as_str()).copied();
+                q = bind_value_from_row(q, row, i, col_type, is_mysql(target_url));
             }
         }
         q.execute(target).await?;
         inserted += 1;
     }
-    eprintln!("  [TIMING] spend_logs insert: {:?} ({} rows, avg {:?}/row)", t_insert.elapsed(), inserted, t_insert.elapsed() / inserted.max(1) as u32);
+    eprintln!(
+        "  [TIMING] spend_logs insert: {:?} ({} rows, avg {:?}/row)",
+        t_insert.elapsed(),
+        inserted,
+        t_insert.elapsed() / inserted.max(1) as u32
+    );
 
     Ok(inserted)
 }
@@ -1100,7 +1219,15 @@ pub async fn run(
     target_master_key: &str,
     spend_log_limit: Option<usize>,
 ) -> anyhow::Result<bool> {
-    run_filtered(source_url, target_url, source_master_key, target_master_key, spend_log_limit, None).await
+    run_filtered(
+        source_url,
+        target_url,
+        source_master_key,
+        target_master_key,
+        spend_log_limit,
+        None,
+    )
+    .await
 }
 
 /// Same as `run()` but accepts an optional `step_filter` — when set, only that step executes.
@@ -1148,8 +1275,15 @@ pub async fn run_filtered(
         let t0 = std::time::Instant::now();
         for &(src, tgt) in PLAIN_TABLES {
             let t_tbl = std::time::Instant::now();
-            let count = migrate_plain_table(&source, &target, src, tgt, source_url, target_url).await?;
-            eprintln!("  {} -> {} ({} rows, {:?})", src, tgt, count, t_tbl.elapsed());
+            let count =
+                migrate_plain_table(&source, &target, src, tgt, source_url, target_url).await?;
+            eprintln!(
+                "  {} -> {} ({} rows, {:?})",
+                src,
+                tgt,
+                count,
+                t_tbl.elapsed()
+            );
         }
         eprintln!("Step 2: plain tables done ({:?})", t0.elapsed());
     } else {
@@ -1160,8 +1294,20 @@ pub async fn run_filtered(
     if run_step(3) {
         eprintln!("Step 3: Migrating credentials (with key rotation)...");
         let t0 = std::time::Instant::now();
-        let cred_count = migrate_credentials(&source, &target, &source_key, target_master_key, source_url, target_url).await?;
-        eprintln!("  LiteLLM_CredentialsTable -> credentials ({} rows, {:?})", cred_count, t0.elapsed());
+        let cred_count = migrate_credentials(
+            &source,
+            &target,
+            &source_key,
+            target_master_key,
+            source_url,
+            target_url,
+        )
+        .await?;
+        eprintln!(
+            "  LiteLLM_CredentialsTable -> credentials ({} rows, {:?})",
+            cred_count,
+            t0.elapsed()
+        );
     } else {
         eprintln!("Step 3: [SKIP]");
     }
@@ -1170,8 +1316,20 @@ pub async fn run_filtered(
     if run_step(4) {
         eprintln!("Step 4: Migrating proxy_models (with key rotation)...");
         let t0 = std::time::Instant::now();
-        let model_count = migrate_proxy_models(&source, &target, &source_key, target_master_key, source_url, target_url).await?;
-        eprintln!("  LiteLLM_ProxyModelTable -> proxy_models ({} rows, {:?})", model_count, t0.elapsed());
+        let model_count = migrate_proxy_models(
+            &source,
+            &target,
+            &source_key,
+            target_master_key,
+            source_url,
+            target_url,
+        )
+        .await?;
+        eprintln!(
+            "  LiteLLM_ProxyModelTable -> proxy_models ({} rows, {:?})",
+            model_count,
+            t0.elapsed()
+        );
     } else {
         eprintln!("Step 4: [SKIP]");
     }
@@ -1180,8 +1338,13 @@ pub async fn run_filtered(
     if run_step(5) {
         eprintln!("Step 5: Migrating spend_logs...");
         let t0 = std::time::Instant::now();
-        let spend_count = migrate_spend_logs(&source, &target, spend_log_limit, source_url, target_url).await?;
-        eprintln!("  LiteLLM_SpendLogs -> spend_logs ({} rows, {:?})", spend_count, t0.elapsed());
+        let spend_count =
+            migrate_spend_logs(&source, &target, spend_log_limit, source_url, target_url).await?;
+        eprintln!(
+            "  LiteLLM_SpendLogs -> spend_logs ({} rows, {:?})",
+            spend_count,
+            t0.elapsed()
+        );
     } else {
         eprintln!("Step 5: [SKIP]");
     }
@@ -1206,23 +1369,32 @@ pub async fn run_filtered(
     ];
 
     for &(src, tgt) in all_tables {
-        let src_count: i64 = sqlx::query(&format!("SELECT COUNT(*) FROM \"{}\"", src))
+        let src_quoted = quote_ident(src, source_url);
+        let src_count: i64 = sqlx::query(&format!("SELECT COUNT(*) FROM {}", src_quoted))
             .fetch_one(&source)
             .await
             .map(|row| row.get(0))
             .unwrap_or(0);
 
-        let tgt_count: i64 = sqlx::query(&format!("SELECT COUNT(*) FROM \"{}\"", tgt))
+        let tgt_quoted = quote_ident(tgt, target_url);
+        let tgt_count: i64 = sqlx::query(&format!("SELECT COUNT(*) FROM {}", tgt_quoted))
             .fetch_one(&target)
             .await
             .map(|row| row.get(0))
             .unwrap_or(-1);
 
-        let status = if src_count == tgt_count { "OK" } else { "MISMATCH" };
+        let status = if src_count == tgt_count {
+            "OK"
+        } else {
+            "MISMATCH"
+        };
         if src_count != tgt_count {
             all_match = false;
         }
-        eprintln!("  {} -> {}: src={} tgt={} [{}]", src, tgt, src_count, tgt_count, status);
+        eprintln!(
+            "  {} -> {}: src={} tgt={} [{}]",
+            src, tgt, src_count, tgt_count, status
+        );
     }
     eprintln!("Step 6: verify done ({:?})", t0.elapsed());
 
@@ -1430,13 +1602,17 @@ mod tests {
         assert_eq!(cred_count.0, 1, "should have 1 credential");
 
         // Verify credential_values was re-encrypted with target key
-        let cred_row: (String,) =
-            sqlx::query_as("SELECT credential_values FROM credentials WHERE credential_id = 'cred-1'")
-                .fetch_one(&tgt_pool)
-                .await
-                .unwrap();
+        let cred_row: (String,) = sqlx::query_as(
+            "SELECT credential_values FROM credentials WHERE credential_id = 'cred-1'",
+        )
+        .fetch_one(&tgt_pool)
+        .await
+        .unwrap();
         let decrypted = aigw_core::decrypt_litellm_value(&cred_row.0, target_key).unwrap();
-        assert_eq!(decrypted, plain_cred, "credential should decrypt with target key");
+        assert_eq!(
+            decrypted, plain_cred,
+            "credential should decrypt with target key"
+        );
 
         // Verify proxy_models litellm_params was re-encrypted
         let model_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM proxy_models")
@@ -1450,8 +1626,7 @@ mod tests {
                 .fetch_one(&tgt_pool)
                 .await
                 .unwrap();
-        let decrypted_params =
-            aigw_core::decrypt_litellm_value(&model_row.0, target_key).unwrap();
+        let decrypted_params = aigw_core::decrypt_litellm_value(&model_row.0, target_key).unwrap();
         assert_eq!(
             decrypted_params, plain_params,
             "model params should decrypt with target key"
@@ -1497,12 +1672,10 @@ mod tests {
         let tgt_str = tgt_path.to_str().unwrap();
 
         let src_pool = create_pool(src_str).await;
-        sqlx::query(
-            r#"CREATE TABLE "LiteLLM_OrganizationTable" (organization_id TEXT)"#,
-        )
-        .execute(&src_pool)
-        .await
-        .unwrap();
+        sqlx::query(r#"CREATE TABLE "LiteLLM_OrganizationTable" (organization_id TEXT)"#)
+            .execute(&src_pool)
+            .await
+            .unwrap();
         src_pool.close().await;
 
         let tgt_pool = create_pool(tgt_str).await;
