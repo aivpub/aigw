@@ -8,6 +8,7 @@
 //! - `/health`, `/health/readiness`, `/health/liveliness` — health checks
 //! - `/docs` — OpenAPI documentation (Stage 4)
 
+mod frontend;
 mod openapi;
 mod routes;
 
@@ -170,6 +171,9 @@ async fn main() -> anyhow::Result<()> {
         .route("/health/liveliness", get(health::liveliness))
         .route("/health/metrics", get(health::health_metrics))
         .route("/system/info", get(health::system_info))
+        // Frontend admin console (embedded SPA)
+        .route("/admin", get(frontend::serve_frontend))
+        .route("/admin/{*rest}", get(frontend::serve_frontend))
         // OpenAI-compatible endpoints
         .route(
             "/v1/chat/completions",

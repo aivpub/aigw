@@ -100,3 +100,63 @@
   auth: 5, plus model/spend/health/key/protocol features from stages 7-11).
   9 @real_api scenarios created (end_to_end_real: 6, compatibility_real: 3),
   auto-skipped in CI.
+
+## ADR-007: React + TypeScript + shadcn/ui Frontend Stack
+
+- **Date**: 2026-07-08
+- **Status**: Accepted
+- **Decision**: Use React 19, TypeScript, Vite 8, shadcn/ui (Radix primitives + Tailwind
+  CSS v4), TanStack React Query v5, React Router DOM v7, Recharts v3, date-fns v4, and
+  sonner for toast notifications. Default path alias `@/` maps to `src/`.
+- **Rationale**: React ecosystem has the widest component library support and TanStack
+  React Query is the standard for server-state management in React SPA. shadcn/ui
+  components (built on Radix primitives) provide accessible, composable UI that matches
+  the admin console use case. Tailwind CSS v4's `@theme` directive with HSL CSS custom
+  properties enables dark mode support in a single CSS file without tailwind.config.ts.
+  Recharts was chosen over alternatives for its React-native charting with minimal config.
+- **Alternatives considered**:
+  - **HTMX + server-rendered templates**: Rejected — admin console needs rich interactions
+    (CRUD modals, charts, real-time search/filter) that require client-side JS.
+  - **Next.js**: Rejected — SPA is sufficient for an admin console behind authentication;
+    SSR/SSG adds complexity without benefit for this use case.
+  - **Svelte**: Rejected — smaller ecosystem for admin UI components and fewer developers
+    familiar with it.
+- **Implementation**: Frontend in `crates/aigw-frontend/` as a standalone Vite project.
+  Components live in `src/components/ui/` (shadcn) and `src/components/layout/` (shell,
+  sidebar, header). Pages under `src/pages/` per domain (dashboard, keys, models, health).
+  API calls via a lightweight `apiGet/apiPost/apiPut/apiDelete` wrapper around fetch in
+  `src/lib/api.ts`.
+- **Consequences**: 4 admin pages (dashboard, keys, models, health) delivering working
+  production builds. Frontend served via rust-embed from the aigw-server binary at
+  `/admin` route, providing a single-binary deployment. All pages consistently use the
+  same loading/empty/error state patterns. Future pages follow the same structure.
+  TypeScript compilation with `verbatimModuleSyntax` and `erasableSyntaxOnly` ensures
+  maximum compatibility with modern tooling.
+
+## ADR-008: rust-embed for Single-Binary Frontend Deployment
+
+- **Date**: 2026-07-08
+- **Status**: Accepted
+- **Decision**: Use `rust-embed` crate to embed the Vite-built frontend assets
+  (`crates/aigw-frontend/dist/`) directly into the `aigw-server` binary, served at
+  `/admin` and `/admin/{*rest}` routes with SPA fallback to `index.html`.
+- **Rationale**: Single-binary deployment is a core requirement for self-hosted users.
+  rust-embed compiles static assets into the binary at build time, eliminating the need
+  for a separate web server, reverse proxy configuration, or asset directory management.
+  The 840KB frontend adds negligible size to the 15MB release binary. SPA client-side
+  routing is preserved through the `index.html` fallback for unmatched paths.
+- **Alternatives considered**:
+  - **Separate web server (nginx/Caddy)**: Rejected — adds operational complexity for
+    self-hosted users. Single binary is simpler.
+  - **Tower-http ServeDir**: Rejected — requires the `dist/` directory on disk at
+    runtime, complicating deployment.
+  - **include_dir**: Rejected — less mature than rust-embed, lacks `mime_guess`
+    integration.
+- **Implementation**: `crates/aigw-server/src/frontend.rs` defines a `FrontendAssets`
+  struct via `#[derive(RustEmbed)]` pointing to `../aigw-frontend/dist/`. Two axum
+  routes (`/admin`, `/admin/{*rest}`) serve embedded files with proper MIME types.
+  Asset files get `Cache-Control: immutable` for 1 year; HTML gets `no-cache`.
+  Unknown paths fall back to `index.html` for React Router client-side navigation.
+- **Consequences**: Frontend must be rebuilt (`npm run build`) before compiling the
+  server binary. CI pipelines should build the frontend first. Binary size increases
+  by ~840KB (the frontend dist size).

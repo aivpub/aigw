@@ -1,15 +1,15 @@
 # aigw — AI Gateway Stage Roadmap
 
 **项目**: aigw (litellm Rust 最小兼容替代)
-**最后更新**: 2026-07-08 (Phase 7 完成，Phase 8-9 启动)
+**最后更新**: 2026-07-08 (Phase 0-9 全部完成，24/24 Stages)
 
 ---
 
 ## 当前状态
 
-- **当前 Stage**: Phase 8 Stage 18 待开始
-- **状态**: Phase 0-7 全部完成（18/18），Phase 8-9 规划完成待实施
-- **下一里程碑**: Phase 8 — 生产化基础（结构化日志 + 多租户 API + 健康指标）
+- **当前 Stage**: Phase 0-9 全部完成（24/24 Stages）
+- **状态**: 生产就绪，Phase 10 长期路线待触发
+- **下一里程碑**: rust-embed 前端集成 + Phase 10 长期路线按需启动
 
 ### 整体进度
 
@@ -17,8 +17,8 @@
 Phase 0-4: ████████████████████ 100% (6/6 Stages)
 Phase 5:   ████████████████████ 100% (6/6 Stages)
 Phase 7:   ████████████████████ 100% (5/5 Stages)
-Phase 8:   ⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳   0% (0/3 Stages)
-Phase 9:   ⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳   0% (0/4 Stages)
+Phase 8:   ████████████████████ 100% (3/3 Stages)
+Phase 9:   ████████████████████ 100% (4/4 Stages)
 ```
 
 ---
@@ -107,9 +107,9 @@ Stage 13 (credentials 表 + 全量 Store PG/MySQL)
 
 | Stage | 状态 | 目标 | 完成日期 |
 |-------|------|------|----------|
-| Stage 18 | ⏳ 待开始 | 结构化日志 — tracing + tracing-subscriber + JSON 格式 + request_id | — |
-| Stage 19 | ⏳ 待开始 | 多租户管理 API — /org/* /team/* /user/* CRUD（15 端点，BDD 驱动） | — |
-| Stage 20 | ⏳ 待开始 | 健康检查增强 — /health/metrics（DB 连接池、uptime、key/model 计数） | — |
+| Stage 18 | ✅ 完成 | 结构化日志 — tracing + tracing-subscriber + JSON 格式 + request_id | 2026-07-08 |
+| Stage 19 | ✅ 完成 | 多租户管理 API — /org/* /team/* /user/* CRUD（15 端点，BDD 驱动） | 2026-07-08 |
+| Stage 20 | ✅ 完成 | 健康检查增强 — /health/metrics（DB 连接池、uptime、key/model 计数） | 2026-07-08 |
 
 **Stage 18-20 依赖关系**:
 
@@ -125,10 +125,10 @@ Stage 18 为后续 Stage 提供可观测性基础。Stage 19/20 可并行开发�
 
 | Stage | 状态 | 目标 | 完成日期 |
 |-------|------|------|----------|
-| Stage 21 | ⏳ 待开始 | 前端工程搭建 — Vite + React + shadcn/ui + rust-embed 集成 | — |
-| Stage 22 | ⏳ 待开始 | Key 管理页面 — 列表/搜索/创建/编辑/删除/复制 API key | — |
-| Stage 23 | ⏳ 待开始 | 用量 Dashboard — 支出卡片 + 图表 + spend logs 表格 + 日期筛选 | — |
-| Stage 24 | ⏳ 待开始 | Model 管理页面 — proxy_models 列表 + 详情展开 | — |
+| Stage 21 | ✅ 完成 | 前端工程搭建 — Vite + React + shadcn/ui + rust-embed 集成 | 2026-07-08 |
+| Stage 22 | ✅ 完成 | Key 管理页面 — 列表/搜索/创建/编辑/删除/复制 API key | 2026-07-08 |
+| Stage 23 | ✅ 完成 | 用量 Dashboard — 支出卡片 + 图表 + spend logs 表格 + 日期筛选 | 2026-07-08 |
+| Stage 24 | ✅ 完成 | Model 管理页面 — proxy_models 列表 + 详情展开 | 2026-07-08 |
 
 **Stage 21-24 依赖关系**:
 
@@ -176,3 +176,4 @@ Stage 21 优先完成（前端基础设施）。Stage 22-24 可并行开发。
 | v5.0 | 2026-07-06 | 新增 Phase 7（Stage 13-17）：生产 litellm 迁移到 aigw，纯 DB 迁移 + NaCl 解密方案 | 全栈架构师 |
 | v5.1 | 2026-07-07 | 更新 Phase 7 实际状态：Stage 13-16 已完成，Stage 17 80%（SOP/export/BDD 已完成，缺自动化预检/监控） | Claude Code |
 | v6.0 | 2026-07-08 | Phase 7 Stage 17 标记完成；新增 Phase 8（Stage 18-20 生产化基础）和 Phase 9（Stage 21-24 前端管理控制台）；Phase 6 长期路线重新编号为 Phase 10 | Claude Code |
+| v7.0 | 2026-07-08 | Phase 8-9 全部完成（24/24 Stages）；结构化日志、多租户 API、健康指标、React 前端管理控制台 4 页面全部交付；添加 rust-embed 单二进制部署 | Claude Code |
