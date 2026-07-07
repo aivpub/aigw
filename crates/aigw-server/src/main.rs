@@ -20,7 +20,7 @@ use axum::http::HeaderName;
 use axum::{middleware, routing::get, Router};
 use clap::Parser;
 use routes::keys::{self, AppState, SharedState};
-use routes::{chat, cors_layer, credentials, docs, health, models, spend, v1_messages};
+use routes::{chat, cors_layer, credentials, docs, health, models, org, spend, team, user, v1_messages};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -202,6 +202,24 @@ async fn main() -> anyhow::Result<()> {
             "/credential/delete",
             axum::routing::delete(credentials::credential_delete),
         )
+        // Organization management routes
+        .route("/org/new", axum::routing::post(org::org_new))
+        .route("/org/info", get(org::org_info))
+        .route("/org/list", get(org::org_list))
+        .route("/org/update", axum::routing::put(org::org_update))
+        .route("/org/delete", axum::routing::delete(org::org_delete))
+        // Team management routes
+        .route("/team/new", axum::routing::post(team::team_new))
+        .route("/team/info", get(team::team_info))
+        .route("/team/list", get(team::team_list))
+        .route("/team/update", axum::routing::put(team::team_update))
+        .route("/team/delete", axum::routing::delete(team::team_delete))
+        // User management routes
+        .route("/user/new", axum::routing::post(user::user_new))
+        .route("/user/info", get(user::user_info))
+        .route("/user/list", get(user::user_list))
+        .route("/user/update", axum::routing::put(user::user_update))
+        .route("/user/delete", axum::routing::delete(user::user_delete))
         // Spend/usage tracking routes
         .route("/spend/logs", get(spend::spend_logs))
         .route("/spend/keys", get(spend::spend_keys))

@@ -2188,6 +2188,715 @@ impl Database {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// OrganizationStore trait — org CRUD across all DB backends
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[async_trait]
+pub trait OrganizationStore {
+    async fn insert_organization(&self, o: &Organization) -> Result<()>;
+    async fn get_organization_by_id(&self, org_id: &str) -> Result<Option<Organization>>;
+    async fn list_organizations(&self) -> Result<Vec<Organization>>;
+    async fn update_organization(&self, o: &Organization) -> Result<()>;
+    async fn delete_organization(&self, org_id: &str) -> Result<()>;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// OrganizationStore — SqlitePool
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const INSERT_ORG_SQLITE: &str = r#"
+INSERT INTO organizations (organization_id, organization_alias, budget_id, metadata, models, spend, model_spend, object_permission_id, created_at, created_by, updated_at, updated_by)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+"#;
+
+const GET_ORG_SQLITE: &str = r#"
+SELECT organization_id, organization_alias, budget_id, metadata, models, spend, model_spend, object_permission_id, created_at, created_by, updated_at, updated_by
+FROM organizations WHERE organization_id = ?
+"#;
+
+const LIST_ORGS_SQLITE: &str = r#"
+SELECT organization_id, organization_alias, budget_id, metadata, models, spend, model_spend, object_permission_id, created_at, created_by, updated_at, updated_by
+FROM organizations ORDER BY organization_alias
+"#;
+
+const UPDATE_ORG_SQLITE: &str = r#"
+UPDATE organizations SET organization_alias = ?, budget_id = ?, metadata = ?, models = ?, spend = ?, model_spend = ?, object_permission_id = ?, updated_at = ?, updated_by = ?
+WHERE organization_id = ?
+"#;
+
+#[async_trait]
+impl OrganizationStore for SqlitePool {
+    async fn insert_organization(&self, o: &Organization) -> Result<()> {
+        sqlx::query(INSERT_ORG_SQLITE)
+            .bind(&o.organization_id).bind(&o.organization_alias).bind(&o.budget_id)
+            .bind(&o.metadata).bind(&o.models).bind(o.spend).bind(&o.model_spend)
+            .bind(&o.object_permission_id).bind(o.created_at).bind(&o.created_by)
+            .bind(o.updated_at).bind(&o.updated_by)
+            .execute(self).await?;
+        Ok(())
+    }
+
+    async fn get_organization_by_id(&self, org_id: &str) -> Result<Option<Organization>> {
+        sqlx::query_as(GET_ORG_SQLITE).bind(org_id).fetch_optional(self).await.map_err(DbError::from)
+    }
+
+    async fn list_organizations(&self) -> Result<Vec<Organization>> {
+        sqlx::query_as(LIST_ORGS_SQLITE).fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn update_organization(&self, o: &Organization) -> Result<()> {
+        sqlx::query(UPDATE_ORG_SQLITE)
+            .bind(&o.organization_alias).bind(&o.budget_id).bind(&o.metadata).bind(&o.models)
+            .bind(o.spend).bind(&o.model_spend).bind(&o.object_permission_id)
+            .bind(o.updated_at).bind(&o.updated_by).bind(&o.organization_id)
+            .execute(self).await?;
+        Ok(())
+    }
+
+    async fn delete_organization(&self, org_id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM organizations WHERE organization_id = ?").bind(org_id).execute(self).await?;
+        Ok(())
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// OrganizationStore — MySqlPool
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[async_trait]
+impl OrganizationStore for MySqlPool {
+    async fn insert_organization(&self, o: &Organization) -> Result<()> {
+        sqlx::query("INSERT INTO organizations (organization_id, organization_alias, budget_id, metadata, models, spend, model_spend, object_permission_id, created_at, created_by, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+            .bind(&o.organization_id).bind(&o.organization_alias).bind(&o.budget_id)
+            .bind(&o.metadata).bind(&o.models).bind(o.spend).bind(&o.model_spend)
+            .bind(&o.object_permission_id).bind(o.created_at).bind(&o.created_by)
+            .bind(o.updated_at).bind(&o.updated_by)
+            .execute(self).await?;
+        Ok(())
+    }
+
+    async fn get_organization_by_id(&self, org_id: &str) -> Result<Option<Organization>> {
+        sqlx::query_as("SELECT organization_id, organization_alias, budget_id, metadata, models, spend, model_spend, object_permission_id, created_at, created_by, updated_at, updated_by FROM organizations WHERE organization_id = ?")
+            .bind(org_id).fetch_optional(self).await.map_err(DbError::from)
+    }
+
+    async fn list_organizations(&self) -> Result<Vec<Organization>> {
+        sqlx::query_as("SELECT organization_id, organization_alias, budget_id, metadata, models, spend, model_spend, object_permission_id, created_at, created_by, updated_at, updated_by FROM organizations ORDER BY organization_alias")
+            .fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn update_organization(&self, o: &Organization) -> Result<()> {
+        sqlx::query("UPDATE organizations SET organization_alias = ?, budget_id = ?, metadata = ?, models = ?, spend = ?, model_spend = ?, object_permission_id = ?, updated_at = ?, updated_by = ? WHERE organization_id = ?")
+            .bind(&o.organization_alias).bind(&o.budget_id).bind(&o.metadata).bind(&o.models)
+            .bind(o.spend).bind(&o.model_spend).bind(&o.object_permission_id)
+            .bind(o.updated_at).bind(&o.updated_by).bind(&o.organization_id)
+            .execute(self).await?;
+        Ok(())
+    }
+
+    async fn delete_organization(&self, org_id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM organizations WHERE organization_id = ?").bind(org_id).execute(self).await?;
+        Ok(())
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// OrganizationStore — PgPool
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[async_trait]
+impl OrganizationStore for PgPool {
+    async fn insert_organization(&self, o: &Organization) -> Result<()> {
+        sqlx::query("INSERT INTO organizations (organization_id, organization_alias, budget_id, metadata, models, spend, model_spend, object_permission_id, created_at, created_by, updated_at, updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)")
+            .bind(&o.organization_id).bind(&o.organization_alias).bind(&o.budget_id)
+            .bind(&o.metadata).bind(&o.models).bind(o.spend).bind(&o.model_spend)
+            .bind(&o.object_permission_id).bind(o.created_at).bind(&o.created_by)
+            .bind(o.updated_at).bind(&o.updated_by)
+            .execute(self).await?;
+        Ok(())
+    }
+
+    async fn get_organization_by_id(&self, org_id: &str) -> Result<Option<Organization>> {
+        sqlx::query_as("SELECT organization_id, organization_alias, budget_id, metadata, models, spend, model_spend, object_permission_id, created_at, created_by, updated_at, updated_by FROM organizations WHERE organization_id = $1")
+            .bind(org_id).fetch_optional(self).await.map_err(DbError::from)
+    }
+
+    async fn list_organizations(&self) -> Result<Vec<Organization>> {
+        sqlx::query_as("SELECT organization_id, organization_alias, budget_id, metadata, models, spend, model_spend, object_permission_id, created_at, created_by, updated_at, updated_by FROM organizations ORDER BY organization_alias")
+            .fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn update_organization(&self, o: &Organization) -> Result<()> {
+        sqlx::query("UPDATE organizations SET organization_alias = $1, budget_id = $2, metadata = $3, models = $4, spend = $5, model_spend = $6, object_permission_id = $7, updated_at = $8, updated_by = $9 WHERE organization_id = $10")
+            .bind(&o.organization_alias).bind(&o.budget_id).bind(&o.metadata).bind(&o.models)
+            .bind(o.spend).bind(&o.model_spend).bind(&o.object_permission_id)
+            .bind(o.updated_at).bind(&o.updated_by).bind(&o.organization_id)
+            .execute(self).await?;
+        Ok(())
+    }
+
+    async fn delete_organization(&self, org_id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM organizations WHERE organization_id = $1").bind(org_id).execute(self).await?;
+        Ok(())
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// TeamStore trait — team CRUD across all DB backends
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[async_trait]
+pub trait TeamStore {
+    async fn insert_team(&self, t: &Team) -> Result<()>;
+    async fn get_team_by_id(&self, team_id: &str) -> Result<Option<Team>>;
+    async fn list_teams(&self, org_id: Option<&str>) -> Result<Vec<Team>>;
+    async fn update_team(&self, t: &Team) -> Result<()>;
+    async fn delete_team(&self, team_id: &str) -> Result<()>;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// TeamStore — SqlitePool
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const INSERT_TEAM_SQLITE: &str = r#"
+INSERT INTO teams (team_id, team_alias, organization_id, object_permission_id, admins, members, members_with_roles, metadata, max_budget, soft_budget, spend, models, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, blocked, created_at, updated_at, model_spend, model_max_budget, router_settings, team_member_permissions, access_group_ids, policies, default_team_member_models, budget_limits, model_id, allow_team_guardrail_config)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+"#;
+
+const GET_TEAM_SQLITE: &str = r#"
+SELECT team_id, team_alias, organization_id, object_permission_id, admins, members, members_with_roles, metadata, max_budget, soft_budget, spend, models, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, blocked, created_at, updated_at, model_spend, model_max_budget, router_settings, team_member_permissions, access_group_ids, policies, default_team_member_models, budget_limits, model_id, allow_team_guardrail_config
+FROM teams WHERE team_id = ?
+"#;
+
+const LIST_TEAMS_SQLITE: &str = r#"
+SELECT team_id, team_alias, organization_id, object_permission_id, admins, members, members_with_roles, metadata, max_budget, soft_budget, spend, models, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, blocked, created_at, updated_at, model_spend, model_max_budget, router_settings, team_member_permissions, access_group_ids, policies, default_team_member_models, budget_limits, model_id, allow_team_guardrail_config
+FROM teams ORDER BY team_alias
+"#;
+
+const LIST_TEAMS_BY_ORG_SQLITE: &str = r#"
+SELECT team_id, team_alias, organization_id, object_permission_id, admins, members, members_with_roles, metadata, max_budget, soft_budget, spend, models, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, blocked, created_at, updated_at, model_spend, model_max_budget, router_settings, team_member_permissions, access_group_ids, policies, default_team_member_models, budget_limits, model_id, allow_team_guardrail_config
+FROM teams WHERE organization_id = ? ORDER BY team_alias
+"#;
+
+const UPDATE_TEAM_SQLITE: &str = r#"
+UPDATE teams SET team_alias = ?, organization_id = ?, object_permission_id = ?, admins = ?, members = ?, members_with_roles = ?, metadata = ?, max_budget = ?, soft_budget = ?, spend = ?, models = ?, max_parallel_requests = ?, tpm_limit = ?, rpm_limit = ?, budget_duration = ?, budget_reset_at = ?, blocked = ?, updated_at = ?, model_spend = ?, model_max_budget = ?, router_settings = ?, team_member_permissions = ?, access_group_ids = ?, policies = ?, default_team_member_models = ?, budget_limits = ?, model_id = ?, allow_team_guardrail_config = ?
+WHERE team_id = ?
+"#;
+
+#[async_trait]
+impl TeamStore for SqlitePool {
+    async fn insert_team(&self, t: &Team) -> Result<()> {
+        sqlx::query(INSERT_TEAM_SQLITE)
+            .bind(&t.team_id).bind(&t.team_alias).bind(&t.organization_id).bind(&t.object_permission_id)
+            .bind(&t.admins).bind(&t.members).bind(&t.members_with_roles).bind(&t.metadata)
+            .bind(t.max_budget).bind(t.soft_budget).bind(t.spend).bind(&t.models)
+            .bind(t.max_parallel_requests).bind(t.tpm_limit).bind(t.rpm_limit)
+            .bind(&t.budget_duration).bind(t.budget_reset_at).bind(t.blocked)
+            .bind(t.created_at).bind(t.updated_at)
+            .bind(&t.model_spend).bind(&t.model_max_budget).bind(&t.router_settings)
+            .bind(&t.team_member_permissions).bind(&t.access_group_ids).bind(&t.policies)
+            .bind(&t.default_team_member_models).bind(&t.budget_limits).bind(t.model_id)
+            .bind(t.allow_team_guardrail_config)
+            .execute(self).await?;
+        Ok(())
+    }
+
+    async fn get_team_by_id(&self, team_id: &str) -> Result<Option<Team>> {
+        sqlx::query_as(GET_TEAM_SQLITE).bind(team_id).fetch_optional(self).await.map_err(DbError::from)
+    }
+
+    async fn list_teams(&self, org_id: Option<&str>) -> Result<Vec<Team>> {
+        match org_id {
+            Some(_) => sqlx::query_as(LIST_TEAMS_BY_ORG_SQLITE).bind(org_id).fetch_all(self).await.map_err(DbError::from),
+            None => sqlx::query_as(LIST_TEAMS_SQLITE).fetch_all(self).await.map_err(DbError::from),
+        }
+    }
+
+    async fn update_team(&self, t: &Team) -> Result<()> {
+        sqlx::query(UPDATE_TEAM_SQLITE)
+            .bind(&t.team_alias).bind(&t.organization_id).bind(&t.object_permission_id)
+            .bind(&t.admins).bind(&t.members).bind(&t.members_with_roles).bind(&t.metadata)
+            .bind(t.max_budget).bind(t.soft_budget).bind(t.spend).bind(&t.models)
+            .bind(t.max_parallel_requests).bind(t.tpm_limit).bind(t.rpm_limit)
+            .bind(&t.budget_duration).bind(t.budget_reset_at).bind(t.blocked)
+            .bind(t.updated_at)
+            .bind(&t.model_spend).bind(&t.model_max_budget).bind(&t.router_settings)
+            .bind(&t.team_member_permissions).bind(&t.access_group_ids).bind(&t.policies)
+            .bind(&t.default_team_member_models).bind(&t.budget_limits).bind(t.model_id)
+            .bind(t.allow_team_guardrail_config)
+            .bind(&t.team_id)
+            .execute(self).await?;
+        Ok(())
+    }
+
+    async fn delete_team(&self, team_id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM teams WHERE team_id = ?").bind(team_id).execute(self).await?;
+        Ok(())
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// TeamStore — MySqlPool
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[async_trait]
+impl TeamStore for MySqlPool {
+    async fn insert_team(&self, t: &Team) -> Result<()> {
+        let cols = "team_id, team_alias, organization_id, object_permission_id, admins, members, members_with_roles, metadata, max_budget, soft_budget, spend, models, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, blocked, created_at, updated_at, model_spend, model_max_budget, router_settings, team_member_permissions, access_group_ids, policies, default_team_member_models, budget_limits, model_id, allow_team_guardrail_config";
+        let vals = "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?";
+        sqlx::query(&format!("INSERT INTO teams ({}) VALUES ({})", cols, vals))
+            .bind(&t.team_id).bind(&t.team_alias).bind(&t.organization_id).bind(&t.object_permission_id)
+            .bind(&t.admins).bind(&t.members).bind(&t.members_with_roles).bind(&t.metadata)
+            .bind(t.max_budget).bind(t.soft_budget).bind(t.spend).bind(&t.models)
+            .bind(t.max_parallel_requests).bind(t.tpm_limit).bind(t.rpm_limit)
+            .bind(&t.budget_duration).bind(t.budget_reset_at).bind(t.blocked)
+            .bind(t.created_at).bind(t.updated_at)
+            .bind(&t.model_spend).bind(&t.model_max_budget).bind(&t.router_settings)
+            .bind(&t.team_member_permissions).bind(&t.access_group_ids).bind(&t.policies)
+            .bind(&t.default_team_member_models).bind(&t.budget_limits).bind(t.model_id)
+            .bind(t.allow_team_guardrail_config)
+            .execute(self).await?;
+        Ok(())
+    }
+
+    async fn get_team_by_id(&self, team_id: &str) -> Result<Option<Team>> {
+        sqlx::query_as("SELECT team_id, team_alias, organization_id, object_permission_id, admins, members, members_with_roles, metadata, max_budget, soft_budget, spend, models, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, blocked, created_at, updated_at, model_spend, model_max_budget, router_settings, team_member_permissions, access_group_ids, policies, default_team_member_models, budget_limits, model_id, allow_team_guardrail_config FROM teams WHERE team_id = ?")
+            .bind(team_id).fetch_optional(self).await.map_err(DbError::from)
+    }
+
+    async fn list_teams(&self, org_id: Option<&str>) -> Result<Vec<Team>> {
+        match org_id {
+            Some(_) => sqlx::query_as("SELECT team_id, team_alias, organization_id, object_permission_id, admins, members, members_with_roles, metadata, max_budget, soft_budget, spend, models, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, blocked, created_at, updated_at, model_spend, model_max_budget, router_settings, team_member_permissions, access_group_ids, policies, default_team_member_models, budget_limits, model_id, allow_team_guardrail_config FROM teams WHERE organization_id = ? ORDER BY team_alias")
+                .bind(org_id).fetch_all(self).await.map_err(DbError::from),
+            None => sqlx::query_as("SELECT team_id, team_alias, organization_id, object_permission_id, admins, members, members_with_roles, metadata, max_budget, soft_budget, spend, models, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, blocked, created_at, updated_at, model_spend, model_max_budget, router_settings, team_member_permissions, access_group_ids, policies, default_team_member_models, budget_limits, model_id, allow_team_guardrail_config FROM teams ORDER BY team_alias")
+                .fetch_all(self).await.map_err(DbError::from),
+        }
+    }
+
+    async fn update_team(&self, t: &Team) -> Result<()> {
+        sqlx::query("UPDATE teams SET team_alias = ?, organization_id = ?, object_permission_id = ?, admins = ?, members = ?, members_with_roles = ?, metadata = ?, max_budget = ?, soft_budget = ?, spend = ?, models = ?, max_parallel_requests = ?, tpm_limit = ?, rpm_limit = ?, budget_duration = ?, budget_reset_at = ?, blocked = ?, updated_at = ?, model_spend = ?, model_max_budget = ?, router_settings = ?, team_member_permissions = ?, access_group_ids = ?, policies = ?, default_team_member_models = ?, budget_limits = ?, model_id = ?, allow_team_guardrail_config = ? WHERE team_id = ?")
+            .bind(&t.team_alias).bind(&t.organization_id).bind(&t.object_permission_id)
+            .bind(&t.admins).bind(&t.members).bind(&t.members_with_roles).bind(&t.metadata)
+            .bind(t.max_budget).bind(t.soft_budget).bind(t.spend).bind(&t.models)
+            .bind(t.max_parallel_requests).bind(t.tpm_limit).bind(t.rpm_limit)
+            .bind(&t.budget_duration).bind(t.budget_reset_at).bind(t.blocked)
+            .bind(t.updated_at)
+            .bind(&t.model_spend).bind(&t.model_max_budget).bind(&t.router_settings)
+            .bind(&t.team_member_permissions).bind(&t.access_group_ids).bind(&t.policies)
+            .bind(&t.default_team_member_models).bind(&t.budget_limits).bind(t.model_id)
+            .bind(t.allow_team_guardrail_config)
+            .bind(&t.team_id)
+            .execute(self).await?;
+        Ok(())
+    }
+
+    async fn delete_team(&self, team_id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM teams WHERE team_id = ?").bind(team_id).execute(self).await?;
+        Ok(())
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// TeamStore — PgPool
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[async_trait]
+impl TeamStore for PgPool {
+    async fn insert_team(&self, t: &Team) -> Result<()> {
+        let cols = "team_id, team_alias, organization_id, object_permission_id, admins, members, members_with_roles, metadata, max_budget, soft_budget, spend, models, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, blocked, created_at, updated_at, model_spend, model_max_budget, router_settings, team_member_permissions, access_group_ids, policies, default_team_member_models, budget_limits, model_id, allow_team_guardrail_config";
+        let vals = "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30";
+        sqlx::query(&format!("INSERT INTO teams ({}) VALUES ({})", cols, vals))
+            .bind(&t.team_id).bind(&t.team_alias).bind(&t.organization_id).bind(&t.object_permission_id)
+            .bind(&t.admins).bind(&t.members).bind(&t.members_with_roles).bind(&t.metadata)
+            .bind(t.max_budget).bind(t.soft_budget).bind(t.spend).bind(&t.models)
+            .bind(t.max_parallel_requests).bind(t.tpm_limit).bind(t.rpm_limit)
+            .bind(&t.budget_duration).bind(t.budget_reset_at).bind(t.blocked)
+            .bind(t.created_at).bind(t.updated_at)
+            .bind(&t.model_spend).bind(&t.model_max_budget).bind(&t.router_settings)
+            .bind(&t.team_member_permissions).bind(&t.access_group_ids).bind(&t.policies)
+            .bind(&t.default_team_member_models).bind(&t.budget_limits).bind(t.model_id)
+            .bind(t.allow_team_guardrail_config)
+            .execute(self).await?;
+        Ok(())
+    }
+
+    async fn get_team_by_id(&self, team_id: &str) -> Result<Option<Team>> {
+        sqlx::query_as("SELECT team_id, team_alias, organization_id, object_permission_id, admins, members, members_with_roles, metadata, max_budget, soft_budget, spend, models, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, blocked, created_at, updated_at, model_spend, model_max_budget, router_settings, team_member_permissions, access_group_ids, policies, default_team_member_models, budget_limits, model_id, allow_team_guardrail_config FROM teams WHERE team_id = $1")
+            .bind(team_id).fetch_optional(self).await.map_err(DbError::from)
+    }
+
+    async fn list_teams(&self, org_id: Option<&str>) -> Result<Vec<Team>> {
+        match org_id {
+            Some(_) => sqlx::query_as("SELECT team_id, team_alias, organization_id, object_permission_id, admins, members, members_with_roles, metadata, max_budget, soft_budget, spend, models, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, blocked, created_at, updated_at, model_spend, model_max_budget, router_settings, team_member_permissions, access_group_ids, policies, default_team_member_models, budget_limits, model_id, allow_team_guardrail_config FROM teams WHERE organization_id = $1 ORDER BY team_alias")
+                .bind(org_id).fetch_all(self).await.map_err(DbError::from),
+            None => sqlx::query_as("SELECT team_id, team_alias, organization_id, object_permission_id, admins, members, members_with_roles, metadata, max_budget, soft_budget, spend, models, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, blocked, created_at, updated_at, model_spend, model_max_budget, router_settings, team_member_permissions, access_group_ids, policies, default_team_member_models, budget_limits, model_id, allow_team_guardrail_config FROM teams ORDER BY team_alias")
+                .fetch_all(self).await.map_err(DbError::from),
+        }
+    }
+
+    async fn update_team(&self, t: &Team) -> Result<()> {
+        sqlx::query("UPDATE teams SET team_alias = $1, organization_id = $2, object_permission_id = $3, admins = $4, members = $5, members_with_roles = $6, metadata = $7, max_budget = $8, soft_budget = $9, spend = $10, models = $11, max_parallel_requests = $12, tpm_limit = $13, rpm_limit = $14, budget_duration = $15, budget_reset_at = $16, blocked = $17, updated_at = $18, model_spend = $19, model_max_budget = $20, router_settings = $21, team_member_permissions = $22, access_group_ids = $23, policies = $24, default_team_member_models = $25, budget_limits = $26, model_id = $27, allow_team_guardrail_config = $28 WHERE team_id = $29")
+            .bind(&t.team_alias).bind(&t.organization_id).bind(&t.object_permission_id)
+            .bind(&t.admins).bind(&t.members).bind(&t.members_with_roles).bind(&t.metadata)
+            .bind(t.max_budget).bind(t.soft_budget).bind(t.spend).bind(&t.models)
+            .bind(t.max_parallel_requests).bind(t.tpm_limit).bind(t.rpm_limit)
+            .bind(&t.budget_duration).bind(t.budget_reset_at).bind(t.blocked)
+            .bind(t.updated_at)
+            .bind(&t.model_spend).bind(&t.model_max_budget).bind(&t.router_settings)
+            .bind(&t.team_member_permissions).bind(&t.access_group_ids).bind(&t.policies)
+            .bind(&t.default_team_member_models).bind(&t.budget_limits).bind(t.model_id)
+            .bind(t.allow_team_guardrail_config)
+            .bind(&t.team_id)
+            .execute(self).await?;
+        Ok(())
+    }
+
+    async fn delete_team(&self, team_id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM teams WHERE team_id = $1").bind(team_id).execute(self).await?;
+        Ok(())
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// UserStore trait — user CRUD across all DB backends
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[async_trait]
+pub trait UserStore {
+    async fn insert_user(&self, u: &User) -> Result<()>;
+    async fn get_user_by_id(&self, user_id: &str) -> Result<Option<User>>;
+    async fn list_users(&self, org_id: Option<&str>) -> Result<Vec<User>>;
+    async fn update_user(&self, u: &User) -> Result<()>;
+    async fn delete_user(&self, user_id: &str) -> Result<()>;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// UserStore — SqlitePool
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const INSERT_USER_SQLITE: &str = r#"
+INSERT INTO users (user_id, user_alias, team_id, sso_user_id, organization_id, object_permission_id, password, teams, user_role, max_budget, spend, user_email, models, metadata, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, allowed_cache_controls, policies, model_spend, model_max_budget, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+"#;
+
+const GET_USER_SQLITE: &str = r#"
+SELECT user_id, user_alias, team_id, sso_user_id, organization_id, object_permission_id, password, teams, user_role, max_budget, spend, user_email, models, metadata, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, allowed_cache_controls, policies, model_spend, model_max_budget, created_at, updated_at
+FROM users WHERE user_id = ?
+"#;
+
+const LIST_USERS_SQLITE: &str = r#"
+SELECT user_id, user_alias, team_id, sso_user_id, organization_id, object_permission_id, password, teams, user_role, max_budget, spend, user_email, models, metadata, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, allowed_cache_controls, policies, model_spend, model_max_budget, created_at, updated_at
+FROM users ORDER BY user_alias
+"#;
+
+const LIST_USERS_BY_ORG_SQLITE: &str = r#"
+SELECT user_id, user_alias, team_id, sso_user_id, organization_id, object_permission_id, password, teams, user_role, max_budget, spend, user_email, models, metadata, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, allowed_cache_controls, policies, model_spend, model_max_budget, created_at, updated_at
+FROM users WHERE organization_id = ? ORDER BY user_alias
+"#;
+
+const UPDATE_USER_SQLITE: &str = r#"
+UPDATE users SET user_alias = ?, team_id = ?, sso_user_id = ?, organization_id = ?, object_permission_id = ?, password = ?, teams = ?, user_role = ?, max_budget = ?, spend = ?, user_email = ?, models = ?, metadata = ?, max_parallel_requests = ?, tpm_limit = ?, rpm_limit = ?, budget_duration = ?, budget_reset_at = ?, allowed_cache_controls = ?, policies = ?, model_spend = ?, model_max_budget = ?, updated_at = ?
+WHERE user_id = ?
+"#;
+
+#[async_trait]
+impl UserStore for SqlitePool {
+    async fn insert_user(&self, u: &User) -> Result<()> {
+        sqlx::query(INSERT_USER_SQLITE)
+            .bind(&u.user_id).bind(&u.user_alias).bind(&u.team_id).bind(&u.sso_user_id)
+            .bind(&u.organization_id).bind(&u.object_permission_id).bind(&u.password)
+            .bind(&u.teams).bind(&u.user_role).bind(u.max_budget).bind(u.spend)
+            .bind(&u.user_email).bind(&u.models).bind(&u.metadata)
+            .bind(u.max_parallel_requests).bind(u.tpm_limit).bind(u.rpm_limit)
+            .bind(&u.budget_duration).bind(u.budget_reset_at)
+            .bind(&u.allowed_cache_controls).bind(&u.policies)
+            .bind(&u.model_spend).bind(&u.model_max_budget)
+            .bind(u.created_at).bind(u.updated_at)
+            .execute(self).await?;
+        Ok(())
+    }
+
+    async fn get_user_by_id(&self, user_id: &str) -> Result<Option<User>> {
+        sqlx::query_as(GET_USER_SQLITE).bind(user_id).fetch_optional(self).await.map_err(DbError::from)
+    }
+
+    async fn list_users(&self, org_id: Option<&str>) -> Result<Vec<User>> {
+        match org_id {
+            Some(_) => sqlx::query_as(LIST_USERS_BY_ORG_SQLITE).bind(org_id).fetch_all(self).await.map_err(DbError::from),
+            None => sqlx::query_as(LIST_USERS_SQLITE).fetch_all(self).await.map_err(DbError::from),
+        }
+    }
+
+    async fn update_user(&self, u: &User) -> Result<()> {
+        sqlx::query(UPDATE_USER_SQLITE)
+            .bind(&u.user_alias).bind(&u.team_id).bind(&u.sso_user_id)
+            .bind(&u.organization_id).bind(&u.object_permission_id).bind(&u.password)
+            .bind(&u.teams).bind(&u.user_role).bind(u.max_budget).bind(u.spend)
+            .bind(&u.user_email).bind(&u.models).bind(&u.metadata)
+            .bind(u.max_parallel_requests).bind(u.tpm_limit).bind(u.rpm_limit)
+            .bind(&u.budget_duration).bind(u.budget_reset_at)
+            .bind(&u.allowed_cache_controls).bind(&u.policies)
+            .bind(&u.model_spend).bind(&u.model_max_budget)
+            .bind(u.updated_at)
+            .bind(&u.user_id)
+            .execute(self).await?;
+        Ok(())
+    }
+
+    async fn delete_user(&self, user_id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM users WHERE user_id = ?").bind(user_id).execute(self).await?;
+        Ok(())
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// UserStore — MySqlPool
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[async_trait]
+impl UserStore for MySqlPool {
+    async fn insert_user(&self, u: &User) -> Result<()> {
+        let cols = "user_id, user_alias, team_id, sso_user_id, organization_id, object_permission_id, password, teams, user_role, max_budget, spend, user_email, models, metadata, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, allowed_cache_controls, policies, model_spend, model_max_budget, created_at, updated_at";
+        let vals = "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?";
+        sqlx::query(&format!("INSERT INTO users ({}) VALUES ({})", cols, vals))
+            .bind(&u.user_id).bind(&u.user_alias).bind(&u.team_id).bind(&u.sso_user_id)
+            .bind(&u.organization_id).bind(&u.object_permission_id).bind(&u.password)
+            .bind(&u.teams).bind(&u.user_role).bind(u.max_budget).bind(u.spend)
+            .bind(&u.user_email).bind(&u.models).bind(&u.metadata)
+            .bind(u.max_parallel_requests).bind(u.tpm_limit).bind(u.rpm_limit)
+            .bind(&u.budget_duration).bind(u.budget_reset_at)
+            .bind(&u.allowed_cache_controls).bind(&u.policies)
+            .bind(&u.model_spend).bind(&u.model_max_budget)
+            .bind(u.created_at).bind(u.updated_at)
+            .execute(self).await?;
+        Ok(())
+    }
+
+    async fn get_user_by_id(&self, user_id: &str) -> Result<Option<User>> {
+        sqlx::query_as("SELECT user_id, user_alias, team_id, sso_user_id, organization_id, object_permission_id, password, teams, user_role, max_budget, spend, user_email, models, metadata, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, allowed_cache_controls, policies, model_spend, model_max_budget, created_at, updated_at FROM users WHERE user_id = ?")
+            .bind(user_id).fetch_optional(self).await.map_err(DbError::from)
+    }
+
+    async fn list_users(&self, org_id: Option<&str>) -> Result<Vec<User>> {
+        match org_id {
+            Some(_) => sqlx::query_as("SELECT user_id, user_alias, team_id, sso_user_id, organization_id, object_permission_id, password, teams, user_role, max_budget, spend, user_email, models, metadata, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, allowed_cache_controls, policies, model_spend, model_max_budget, created_at, updated_at FROM users WHERE organization_id = ? ORDER BY user_alias")
+                .bind(org_id).fetch_all(self).await.map_err(DbError::from),
+            None => sqlx::query_as("SELECT user_id, user_alias, team_id, sso_user_id, organization_id, object_permission_id, password, teams, user_role, max_budget, spend, user_email, models, metadata, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, allowed_cache_controls, policies, model_spend, model_max_budget, created_at, updated_at FROM users ORDER BY user_alias")
+                .fetch_all(self).await.map_err(DbError::from),
+        }
+    }
+
+    async fn update_user(&self, u: &User) -> Result<()> {
+        sqlx::query("UPDATE users SET user_alias = ?, team_id = ?, sso_user_id = ?, organization_id = ?, object_permission_id = ?, password = ?, teams = ?, user_role = ?, max_budget = ?, spend = ?, user_email = ?, models = ?, metadata = ?, max_parallel_requests = ?, tpm_limit = ?, rpm_limit = ?, budget_duration = ?, budget_reset_at = ?, allowed_cache_controls = ?, policies = ?, model_spend = ?, model_max_budget = ?, updated_at = ? WHERE user_id = ?")
+            .bind(&u.user_alias).bind(&u.team_id).bind(&u.sso_user_id)
+            .bind(&u.organization_id).bind(&u.object_permission_id).bind(&u.password)
+            .bind(&u.teams).bind(&u.user_role).bind(u.max_budget).bind(u.spend)
+            .bind(&u.user_email).bind(&u.models).bind(&u.metadata)
+            .bind(u.max_parallel_requests).bind(u.tpm_limit).bind(u.rpm_limit)
+            .bind(&u.budget_duration).bind(u.budget_reset_at)
+            .bind(&u.allowed_cache_controls).bind(&u.policies)
+            .bind(&u.model_spend).bind(&u.model_max_budget)
+            .bind(u.updated_at)
+            .bind(&u.user_id)
+            .execute(self).await?;
+        Ok(())
+    }
+
+    async fn delete_user(&self, user_id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM users WHERE user_id = ?").bind(user_id).execute(self).await?;
+        Ok(())
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// UserStore — PgPool
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[async_trait]
+impl UserStore for PgPool {
+    async fn insert_user(&self, u: &User) -> Result<()> {
+        let cols = "user_id, user_alias, team_id, sso_user_id, organization_id, object_permission_id, password, teams, user_role, max_budget, spend, user_email, models, metadata, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, allowed_cache_controls, policies, model_spend, model_max_budget, created_at, updated_at";
+        let vals = "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25";
+        sqlx::query(&format!("INSERT INTO users ({}) VALUES ({})", cols, vals))
+            .bind(&u.user_id).bind(&u.user_alias).bind(&u.team_id).bind(&u.sso_user_id)
+            .bind(&u.organization_id).bind(&u.object_permission_id).bind(&u.password)
+            .bind(&u.teams).bind(&u.user_role).bind(u.max_budget).bind(u.spend)
+            .bind(&u.user_email).bind(&u.models).bind(&u.metadata)
+            .bind(u.max_parallel_requests).bind(u.tpm_limit).bind(u.rpm_limit)
+            .bind(&u.budget_duration).bind(u.budget_reset_at)
+            .bind(&u.allowed_cache_controls).bind(&u.policies)
+            .bind(&u.model_spend).bind(&u.model_max_budget)
+            .bind(u.created_at).bind(u.updated_at)
+            .execute(self).await?;
+        Ok(())
+    }
+
+    async fn get_user_by_id(&self, user_id: &str) -> Result<Option<User>> {
+        sqlx::query_as("SELECT user_id, user_alias, team_id, sso_user_id, organization_id, object_permission_id, password, teams, user_role, max_budget, spend, user_email, models, metadata, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, allowed_cache_controls, policies, model_spend, model_max_budget, created_at, updated_at FROM users WHERE user_id = $1")
+            .bind(user_id).fetch_optional(self).await.map_err(DbError::from)
+    }
+
+    async fn list_users(&self, org_id: Option<&str>) -> Result<Vec<User>> {
+        match org_id {
+            Some(_) => sqlx::query_as("SELECT user_id, user_alias, team_id, sso_user_id, organization_id, object_permission_id, password, teams, user_role, max_budget, spend, user_email, models, metadata, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, allowed_cache_controls, policies, model_spend, model_max_budget, created_at, updated_at FROM users WHERE organization_id = $1 ORDER BY user_alias")
+                .bind(org_id).fetch_all(self).await.map_err(DbError::from),
+            None => sqlx::query_as("SELECT user_id, user_alias, team_id, sso_user_id, organization_id, object_permission_id, password, teams, user_role, max_budget, spend, user_email, models, metadata, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, allowed_cache_controls, policies, model_spend, model_max_budget, created_at, updated_at FROM users ORDER BY user_alias")
+                .fetch_all(self).await.map_err(DbError::from),
+        }
+    }
+
+    async fn update_user(&self, u: &User) -> Result<()> {
+        sqlx::query("UPDATE users SET user_alias = $1, team_id = $2, sso_user_id = $3, organization_id = $4, object_permission_id = $5, password = $6, teams = $7, user_role = $8, max_budget = $9, spend = $10, user_email = $11, models = $12, metadata = $13, max_parallel_requests = $14, tpm_limit = $15, rpm_limit = $16, budget_duration = $17, budget_reset_at = $18, allowed_cache_controls = $19, policies = $20, model_spend = $21, model_max_budget = $22, updated_at = $23 WHERE user_id = $24")
+            .bind(&u.user_alias).bind(&u.team_id).bind(&u.sso_user_id)
+            .bind(&u.organization_id).bind(&u.object_permission_id).bind(&u.password)
+            .bind(&u.teams).bind(&u.user_role).bind(u.max_budget).bind(u.spend)
+            .bind(&u.user_email).bind(&u.models).bind(&u.metadata)
+            .bind(u.max_parallel_requests).bind(u.tpm_limit).bind(u.rpm_limit)
+            .bind(&u.budget_duration).bind(u.budget_reset_at)
+            .bind(&u.allowed_cache_controls).bind(&u.policies)
+            .bind(&u.model_spend).bind(&u.model_max_budget)
+            .bind(u.updated_at)
+            .bind(&u.user_id)
+            .execute(self).await?;
+        Ok(())
+    }
+
+    async fn delete_user(&self, user_id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM users WHERE user_id = $1").bind(user_id).execute(self).await?;
+        Ok(())
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Database enum dispatch: org, team, user CRUD
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+impl Database {
+    // ── Organization dispatch ──
+    pub async fn insert_organization(&self, o: &Organization) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.insert_organization(o).await,
+            Database::Mysql(pool) => pool.insert_organization(o).await,
+            Database::Postgres(pool) => pool.insert_organization(o).await,
+        }
+    }
+
+    pub async fn get_organization_by_id(&self, org_id: &str) -> Result<Option<Organization>> {
+        match self {
+            Database::Sqlite(pool) => pool.get_organization_by_id(org_id).await,
+            Database::Mysql(pool) => pool.get_organization_by_id(org_id).await,
+            Database::Postgres(pool) => pool.get_organization_by_id(org_id).await,
+        }
+    }
+
+    pub async fn list_organizations(&self) -> Result<Vec<Organization>> {
+        match self {
+            Database::Sqlite(pool) => pool.list_organizations().await,
+            Database::Mysql(pool) => pool.list_organizations().await,
+            Database::Postgres(pool) => pool.list_organizations().await,
+        }
+    }
+
+    pub async fn update_organization(&self, o: &Organization) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.update_organization(o).await,
+            Database::Mysql(pool) => pool.update_organization(o).await,
+            Database::Postgres(pool) => pool.update_organization(o).await,
+        }
+    }
+
+    pub async fn delete_organization(&self, org_id: &str) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.delete_organization(org_id).await,
+            Database::Mysql(pool) => pool.delete_organization(org_id).await,
+            Database::Postgres(pool) => pool.delete_organization(org_id).await,
+        }
+    }
+
+    // ── Team dispatch ──
+    pub async fn insert_team(&self, t: &Team) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.insert_team(t).await,
+            Database::Mysql(pool) => pool.insert_team(t).await,
+            Database::Postgres(pool) => pool.insert_team(t).await,
+        }
+    }
+
+    pub async fn get_team_by_id(&self, team_id: &str) -> Result<Option<Team>> {
+        match self {
+            Database::Sqlite(pool) => pool.get_team_by_id(team_id).await,
+            Database::Mysql(pool) => pool.get_team_by_id(team_id).await,
+            Database::Postgres(pool) => pool.get_team_by_id(team_id).await,
+        }
+    }
+
+    pub async fn list_teams(&self, org_id: Option<&str>) -> Result<Vec<Team>> {
+        match self {
+            Database::Sqlite(pool) => pool.list_teams(org_id).await,
+            Database::Mysql(pool) => pool.list_teams(org_id).await,
+            Database::Postgres(pool) => pool.list_teams(org_id).await,
+        }
+    }
+
+    pub async fn update_team(&self, t: &Team) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.update_team(t).await,
+            Database::Mysql(pool) => pool.update_team(t).await,
+            Database::Postgres(pool) => pool.update_team(t).await,
+        }
+    }
+
+    pub async fn delete_team(&self, team_id: &str) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.delete_team(team_id).await,
+            Database::Mysql(pool) => pool.delete_team(team_id).await,
+            Database::Postgres(pool) => pool.delete_team(team_id).await,
+        }
+    }
+
+    // ── User dispatch ──
+    pub async fn insert_user(&self, u: &User) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.insert_user(u).await,
+            Database::Mysql(pool) => pool.insert_user(u).await,
+            Database::Postgres(pool) => pool.insert_user(u).await,
+        }
+    }
+
+    pub async fn get_user_by_id(&self, user_id: &str) -> Result<Option<User>> {
+        match self {
+            Database::Sqlite(pool) => pool.get_user_by_id(user_id).await,
+            Database::Mysql(pool) => pool.get_user_by_id(user_id).await,
+            Database::Postgres(pool) => pool.get_user_by_id(user_id).await,
+        }
+    }
+
+    pub async fn list_users(&self, org_id: Option<&str>) -> Result<Vec<User>> {
+        match self {
+            Database::Sqlite(pool) => pool.list_users(org_id).await,
+            Database::Mysql(pool) => pool.list_users(org_id).await,
+            Database::Postgres(pool) => pool.list_users(org_id).await,
+        }
+    }
+
+    pub async fn update_user(&self, u: &User) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.update_user(u).await,
+            Database::Mysql(pool) => pool.update_user(u).await,
+            Database::Postgres(pool) => pool.update_user(u).await,
+        }
+    }
+
+    pub async fn delete_user(&self, user_id: &str) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.delete_user(user_id).await,
+            Database::Mysql(pool) => pool.delete_user(user_id).await,
+            Database::Postgres(pool) => pool.delete_user(user_id).await,
+        }
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Unit tests
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
