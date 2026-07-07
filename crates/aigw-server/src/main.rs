@@ -16,6 +16,7 @@ use aigw_core::db::Database;
 use aigw_core::provider::ProviderRegistry;
 use aigw_core::rate_limiter::RateLimiter;
 use aigw_core::router::RouterState;
+use axum::http::HeaderName;
 use axum::{middleware, routing::get, Router};
 use clap::Parser;
 use routes::keys::{self, AppState, SharedState};
@@ -23,7 +24,12 @@ use routes::{chat, cors_layer, credentials, docs, health, models, spend, v1_mess
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tower_http::request_id::{MakeRequestId, RequestId, SetRequestIdLayer};
+use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
+use tracing::Level;
+use tracing::Span;
 use tracing_subscriber::EnvFilter;
+use uuid::Uuid;
 
 /// AI Gateway — litellm-compatible LLM proxy in Rust
 #[derive(Parser, Debug)]
@@ -48,6 +54,20 @@ struct Cli {
     /// Bind address
     #[arg(long, default_value = "0.0.0.0:4000")]
     bind: String,
+}
+
+/// Custom UUID v7 request ID generator.
+///
+/// Produces lexicographically sortable request IDs for log correlation.
+#[derive(Clone, Default)]
+struct UuidV7RequestId;
+
+impl MakeRequestId for UuidV7RequestId {
+    fn make_request_id<B>(&mut self, _request: &axum::http::Request<B>) -> Option<RequestId> {
+        let id = Uuid::now_v7().to_string();
+        Span::current().record("request_id", &id);
+        Some(RequestId::new(id.parse().ok()?))
+    }
 }
 
 #[tokio::main]
@@ -197,6 +217,26 @@ async fn main() -> anyhow::Result<()> {
         // Claude-compatible endpoint
         .route("/v1/messages", axum::routing::post(v1_messages::messages_handler))
         .with_state(state)
+        // UUID v7 request ID layer — propagates request_id into tracing span
+        .layer(SetRequestIdLayer::new(
+            HeaderName::from_static("x-request-id"),
+            UuidV7RequestId,
+        ))
+        // HTTP request tracing — JSON logs with request_id, method, path, latency
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(
+                    DefaultMakeSpan::new()
+                        .include_headers(false)
+                        .level(Level::INFO),
+                )
+                .on_response(
+                    DefaultOnResponse::new()
+                        .include_headers(false)
+                        .level(Level::INFO)
+                        .latency_unit(tower_http::LatencyUnit::Millis),
+                ),
+        )
         // CORS middleware — allows browser-based frontend to call API
         .layer(middleware::from_fn(cors_layer::add_cors_headers));
 
