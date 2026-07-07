@@ -1,22 +1,24 @@
 # aigw — AI Gateway Stage Roadmap
 
 **项目**: aigw (litellm Rust 最小兼容替代)
-**最后更新**: 2026-07-07 (Phase 7 Stage 13-16 已完成，Stage 17 80%)
+**最后更新**: 2026-07-08 (Phase 7 完成，Phase 8-9 启动)
 
 ---
 
 ## 当前状态
 
-- **当前 Stage**: Phase 7 Stage 17 收尾中
-- **状态**: Phase 0-5 全部完成（12/12），Phase 7 Stage 13-16 已完成（4/5）
-- **下一里程碑**: Stage 17 收尾 — 自动化预检/监控工具
+- **当前 Stage**: Phase 8 Stage 18 待开始
+- **状态**: Phase 0-7 全部完成（18/18），Phase 8-9 规划完成待实施
+- **下一里程碑**: Phase 8 — 生产化基础（结构化日志 + 多租户 API + 健康指标）
 
 ### 整体进度
 
 ```
 Phase 0-4: ████████████████████ 100% (6/6 Stages)
 Phase 5:   ████████████████████ 100% (6/6 Stages)
-Phase 7:   ███████████████████   96% (4.8/5 Stages)
+Phase 7:   ████████████████████ 100% (5/5 Stages)
+Phase 8:   ⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳   0% (0/3 Stages)
+Phase 9:   ⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳⏳   0% (0/4 Stages)
 ```
 
 ---
@@ -87,9 +89,7 @@ Stage 7 优先完成（BDD 基础设施），后续 Stage 8-12 全部使用 RGR 
 | Stage 14 | ✅ 完成 | NaCl 加密/解密 Rust 库 + aigw-migrate PostgreSQL 源 + master_key 提取 | 2026-07-06 |
 | Stage 15 | ✅ 完成 | aigw-migrate 全量迁移（解密 litellm → 重加密 aigw）+ 端到端验证 | 2026-07-06 |
 | Stage 16 | ✅ 完成 | aigw 运行时解密 + 凭证引用解析（litellm_credential_name） | 2026-07-07 |
-| Stage 17 | 🔄 进行中 | 生产迁移 SOP + export 增强 + 回滚方案 | — |
-
-**Stage 17 进度**: SOP 文档 (372行) ✅、remote-export 回滚工具 ✅、BDD 迁移测试 ✅；待完成：自动化预检工具、一键回滚脚本。
+| Stage 17 | ✅ 完成 | 生产迁移 SOP + pre-check 预检 + rollback.sh 回滚脚本 | 2026-07-08 |
 
 **Stage 13-17 依赖关系**:
 
@@ -103,14 +103,52 @@ Stage 13 (credentials 表 + 全量 Store PG/MySQL)
 
 纯 DB 迁移方案：NaCl SecretBox 解密 litellm 加密字段 → 用 aigw master_key 重加密 → 写入 aigw DB。详见 `docs/stages/stage-13.md` ~ `docs/stages/stage-17.md`。
 
-### Phase 6：长期路线（Stage 17+ 后续）
+### Phase 8：生产化基础
+
+| Stage | 状态 | 目标 | 完成日期 |
+|-------|------|------|----------|
+| Stage 18 | ⏳ 待开始 | 结构化日志 — tracing + tracing-subscriber + JSON 格式 + request_id | — |
+| Stage 19 | ⏳ 待开始 | 多租户管理 API — /org/* /team/* /user/* CRUD（15 端点，BDD 驱动） | — |
+| Stage 20 | ⏳ 待开始 | 健康检查增强 — /health/metrics（DB 连接池、uptime、key/model 计数） | — |
+
+**Stage 18-20 依赖关系**:
+
+```
+Stage 18 (结构化日志)
+  ├── Stage 19 (多租户管理 API)
+  └── Stage 20 (健康检查增强)
+```
+
+Stage 18 为后续 Stage 提供可观测性基础。Stage 19/20 可并行开发。
+
+### Phase 9：前端管理控制台
+
+| Stage | 状态 | 目标 | 完成日期 |
+|-------|------|------|----------|
+| Stage 21 | ⏳ 待开始 | 前端工程搭建 — Vite + React + shadcn/ui + rust-embed 集成 | — |
+| Stage 22 | ⏳ 待开始 | Key 管理页面 — 列表/搜索/创建/编辑/删除/复制 API key | — |
+| Stage 23 | ⏳ 待开始 | 用量 Dashboard — 支出卡片 + 图表 + spend logs 表格 + 日期筛选 | — |
+| Stage 24 | ⏳ 待开始 | Model 管理页面 — proxy_models 列表 + 详情展开 | — |
+
+**Stage 21-24 依赖关系**:
+
+```
+Stage 21 (前端工程搭建)
+  ├── Stage 22 (Key 管理页面)
+  ├── Stage 23 (用量 Dashboard)
+  └── Stage 24 (Model 管理页面)
+```
+
+Stage 21 优先完成（前端基础设施）。Stage 22-24 可并行开发。
+
+前端技术栈：React + TypeScript + Vite + shadcn/ui (Radix UI + Tailwind CSS v4) + Recharts（shadcn/ui chart 封装）+ TanStack Query + Zustand + react-hook-form + zod + Lucide React + Sonner。
+
+### Phase 10：生产化进阶（后续路线）
 
 | ID | 主题 | 优先级 | 触发条件 |
 |----|------|--------|---------|
-| LT-1 | 多租户管理 API (/org/*, /team/*, /user/* CRUD) | P1 | 有自托管客户需要 Web UI 管理团队 |
 | LT-2 | Redis 缓存 + 性能优化 | P2 | QPS > 1000 |
 | LT-3 | Observability (Prometheus + OTEL) | P2 | 生产环境部署 |
-| LT-4 | 前端管理控制台完整实现 | P1 | Stage 4 完成后 |
 | LT-5 | SSO/OAuth 鉴权 | P3 | 企业客户需求 |
 | LT-6 | PostgreSQL 生产级支持 + 迁移工具 | P2 | 多实例 + 高可用 |
 | LT-7 | Kubernetes Operator + Helm Chart | P3 | 云原生客户需求 |
@@ -137,3 +175,4 @@ Stage 13 (credentials 表 + 全量 Store PG/MySQL)
 | v4.0 | 2026-07-05 | Phase 5 全部完成：Stage 7-12 标记 Complete，BDD 63 场景通过，9 @real_api 场景创建 | 全栈架构师 |
 | v5.0 | 2026-07-06 | 新增 Phase 7（Stage 13-17）：生产 litellm 迁移到 aigw，纯 DB 迁移 + NaCl 解密方案 | 全栈架构师 |
 | v5.1 | 2026-07-07 | 更新 Phase 7 实际状态：Stage 13-16 已完成，Stage 17 80%（SOP/export/BDD 已完成，缺自动化预检/监控） | Claude Code |
+| v6.0 | 2026-07-08 | Phase 7 Stage 17 标记完成；新增 Phase 8（Stage 18-20 生产化基础）和 Phase 9（Stage 21-24 前端管理控制台）；Phase 6 长期路线重新编号为 Phase 10 | Claude Code |
