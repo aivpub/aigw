@@ -160,3 +160,34 @@
 - **Consequences**: Frontend must be rebuilt (`npm run build`) before compiling the
   server binary. CI pipelines should build the frontend first. Binary size increases
   by ~840KB (the frontend dist size).
+
+## ADR-008: Complete Core Stages (0-30) — Defer Production Advanced Features
+
+- **Date**: 2026-07-08
+- **Status**: Accepted
+- **Decision**: Mark all 30 core stages as complete. Defer Phase 10 production-advanced
+  features (Redis caching, Prometheus/OTEL observability, SSO/OAuth, K8s operator) to
+  post-deployment trigger-based activation rather than pre-building them.
+- **Background**: Phase 0-11 delivered: BDD-driven backend (72 scenarios, 3 DB backends),
+  production litellm migration tooling (aigw-migrate + pre-check + rollback.sh),
+  structured JSON logging with request_id tracing, multi-tenant management API (org/team/user
+  CRUD, 15 endpoints), single-binary deployment with embedded React frontend,
+  JWT+Cookie+scrypt login security, mobile-responsive admin console (6 pages, 69 BDD tests
+  across 3 viewports), and health check metrics (/health/metrics).
+- **Rationale**: The current system covers the minimum viable production surface for
+  self-hosted AI Gateway deployments. Phase 10 items (Redis, Prometheus, K8s) are
+  infrastructure optimizations that should be triggered by actual production demand
+  signals (QPS thresholds, multi-instance needs, enterprise customer requirements)
+  rather than pre-built prematurely. Building infrastructure without real load patterns
+  risks over-engineering for scenarios that may never materialize.
+- **Impact on Subsequent Stages**:
+  - Phase 10 remains as a trigger-based backlog — each item has a clear activation criterion
+  - All further work should be demand-driven: wait for production signals before building
+  - Current architecture supports incremental addition of Redis/Prometheus/K8s without rework
+- **Alternatives Considered**:
+  1. **Continue building Phase 10 immediately**: Rejected — no production load data to
+     inform sizing/configuration decisions. Risk of building wrong abstractions.
+  2. **Only build Prometheus metrics**: Rejected — structured JSON logs already provide
+     sufficient observability for single-instance deployments.
+  3. **Build K8s operator proactively**: Rejected — single-binary Docker deployment meets
+     current needs; K8s is premature without multi-instance demand.
