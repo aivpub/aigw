@@ -173,27 +173,61 @@ pub async fn run(source_url: &str, target_url: &str, target_master_key: &str) ->
             } else {
                 "credential_values"
             };
-            let cred_row = sqlx::query(&format!(
-                "SELECT credential_name, {val_col} FROM {cred_table} LIMIT 1"
+            let cred_rows = sqlx::query(&format!(
+                "SELECT credential_name, {val_col} FROM {cred_table}"
             ))
-            .fetch_optional(&source)
+            .fetch_all(&source)
             .await;
 
-            match cred_row {
-                Ok(Some(row)) => {
-                    let name: String = row.get(0);
-                    let encrypted: String = row.try_get(1).unwrap_or_default();
-                    match aigw_core::crypto::decrypt_litellm_value(&encrypted, &key) {
-                        Ok(_) => {
-                            println!("[PASS] decrypted '{name}'");
-                            passed += 1;
-                        }
-                        Err(e) => println!("[FAIL] cannot decrypt '{name}': {e}"),
-                    }
-                }
-                Ok(None) => {
+            match cred_rows {
+                Ok(rows) if rows.is_empty() => {
                     println!("[PASS] no credentials to check (skipped)");
                     passed += 1;
+                }
+                Ok(rows) => {
+                    // Find encrypted credentials and try to decrypt one
+                    let mut encrypted_count = 0u32;
+                    let mut ok = false;
+                    for row in &rows {
+                        let name: String = row.get(0);
+                        let val: String = row.try_get(1).unwrap_or_default();
+                        // Skip placeholders and plaintext JSON (not encrypted)
+                        if val.is_empty()
+                            || val == "{}"
+                            || val.starts_with('{')
+                            || val.starts_with('[')
+                        {
+                            continue;
+                        }
+                        encrypted_count += 1;
+                        match aigw_core::crypto::decrypt_litellm_value(&val, &key) {
+                            Ok(_) => {
+                                println!("[PASS] decrypted '{name}'");
+                                passed += 1;
+                                ok = true;
+                                break;
+                            }
+                            Err(e) => {
+                                eprintln!(
+                                    "       [WARN] cannot decrypt '{name}': {e} (trying next)"
+                                );
+                            }
+                        }
+                    }
+                    if !ok {
+                        if encrypted_count == 0 {
+                            println!(
+                                "[PASS] {} plaintext credential(s), no encrypted ones to check",
+                                rows.len()
+                            );
+                            passed += 1;
+                        } else {
+                            println!(
+                                "[FAIL] no decryptable credential found ({} encrypted checked)",
+                                encrypted_count
+                            );
+                        }
+                    }
                 }
                 Err(e) => println!("[FAIL] {e}"),
             }
