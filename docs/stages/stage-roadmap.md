@@ -7,9 +7,9 @@
 
 ## 当前状态
 
-- **当前 Stage**: Phase 11 — Stage 25（前端 BDD 测试基础设施）
-- **状态**: Phase 0-9 全部完成（24/24 Stages），Phase 11 规划中（6 Stages）
-- **下一里程碑**: Stage 25 BDD 基础设施搭建
+- **当前 Stage**: Phase 11 — Stage 27（移动端适配）
+- **状态**: Phase 0-11 进行中（26/30 Stages 完成）
+- **下一里程碑**: Stage 27 移动端全页面响应式适配
 
 ### 整体进度
 
@@ -19,7 +19,7 @@ Phase 5:   ████████████████████ 100% (6/
 Phase 7:   ████████████████████ 100% (5/5 Stages)
 Phase 8:   ████████████████████ 100% (3/3 Stages)
 Phase 9:   ████████████████████ 100% (4/4 Stages)
-Phase 11:  ░░░░░░░░░░░░░░░░░░░░   0% (0/6 Stages)
+Phase 11:  ██████░░░░░░░░░░░░░░░░  33% (2/6 Stages)
 ```
 
 ---
@@ -148,8 +148,8 @@ Stage 21 优先完成（前端基础设施）。Stage 22-24 可并行开发。
 
 | Stage | 状态 | 目标 | 预估 |
 |-------|------|------|------|
-| Stage 25 | ⏳ 待开始 | 前端 BDD 测试基础设施 — Playwright + Gherkin + 截图/GIF + Mock API | 4-6h |
-| Stage 26 | ⏳ 待开始 | 登录安全对齐 Litellm — `/v2/login` JWT + Cookie + scrypt + 数据库用户认证 | 4-6h |
+| Stage 25 | ✅ 完成 | 前端 BDD 测试基础设施 — Playwright + Gherkin + 截图/GIF + Mock API | 2026-07-08 |
+| Stage 26 | ✅ 完成 | 登录安全对齐 Litellm — `/v2/login` JWT + Cookie + scrypt + 数据库用户认证 | 2026-07-08 |
 | Stage 27 | ⏳ 待开始 | 移动端适配 — 全页面响应式改造（卡片布局 + 图表适配 + 全屏 Dialog） | 3-4h |
 | Stage 28 | ⏳ 待开始 | Key 创建 UX 修复 — Token 展示对话框 + 复制确认 + 一次性提示 | 1-2h |
 | Stage 29 | ⏳ 待开始 | 用户/组织/团队管理前端页面 — Users/Orgs/Teams CRUD + 侧边栏导航 | 6-8h |
@@ -204,3 +204,4 @@ Stage 25 是基础（所有后续 Stage 需 BDD R-G-R 循环）。Stage 27/28 �
 | v6.0 | 2026-07-08 | Phase 7 Stage 17 标记完成；新增 Phase 8（Stage 18-20 生产化基础）和 Phase 9（Stage 21-24 前端管理控制台）；Phase 6 长期路线重新编号为 Phase 10 | Claude Code |
 | v7.0 | 2026-07-08 | Phase 8-9 全部完成（24/24 Stages）；结构化日志、多租户 API、健康指标、React 前端管理控制台 4 页面全部交付；添加 rust-embed 单二进制部署 | Claude Code |
 | v8.0 | 2026-07-08 | 新增 Phase 11（Stage 25-30）：前端 BDD 测试、登录安全对齐 Litellm（JWT+Cookie）、移动端适配、Key UX 修复、用户/组织/团队管理页面、Dashboard 数据接入 | Claude Code |
+| v8.1 | 2026-07-08 | Stage 25-26 标记完成；Phase 11 进度 2/6 (33%) | Claude Code |
