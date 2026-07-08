@@ -24,6 +24,11 @@ target/
 # Local config (template: config.example.yaml)
 config.yaml
 
+# Playwright
+**/html-report/
+**/playwright-report/
+**/test-results/
+
 # MCP tools
 .serena/
 aigw.db

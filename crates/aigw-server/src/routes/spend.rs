@@ -114,6 +114,7 @@ impl SpendAuth {
                     team_id: None,
                     organization_id: None,
                     is_master_key: true,
+                    user_role: Some("proxy_admin".to_string()),
                 }));
             }
         }
@@ -134,6 +135,7 @@ impl SpendAuth {
                 team_id: k.team_id,
                 organization_id: k.organization_id,
                 is_master_key: false,
+                user_role: None,
             })),
             None => Err(AuthError::TokenNotFound),
         }
@@ -181,6 +183,7 @@ impl SpendAuth {
                 team_id: k.team_id,
                 organization_id: k.organization_id,
                 is_master_key: false,
+                user_role: Some(claims.user_role.clone()),
             })),
             None => Err(AuthError::TokenNotFound),
         }
@@ -192,7 +195,7 @@ impl SpendAuth {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 pub fn require_admin(auth: &KeyIdentity) -> Result<(), (StatusCode, Json<Value>)> {
-    if auth.is_master_key {
+    if auth.is_master_key || auth.user_role.as_deref() == Some("proxy_admin") {
         Ok(())
     } else {
         Err((

@@ -4,6 +4,7 @@
 //! - POST /v1/chat/completions — Chat completions (streaming SSE + non-streaming)
 //! - GET  /v1/models           — List available models for the authenticated key
 
+use aigw_core::auth::decode_jwt;
 use aigw_core::crypto::{decrypt_litellm_value, hash_token};
 use aigw_core::middleware::KeyIdentity;
 use axum::{
@@ -232,6 +233,24 @@ where
     ) -> Result<Self, Self::Rejection> {
         let shared_state: SharedState = axum::extract::FromRef::from_ref(state);
 
+        // 1. Try Bearer token from Authorization header
+        let bearer_result = Self::try_bearer_token(&shared_state, parts).await;
+
+        if let Ok(auth) = bearer_result {
+            return Ok(auth);
+        }
+
+        // 2. Fall back to HttpOnly cookie JWT
+        Self::try_cookie_jwt(&shared_state, parts).await
+    }
+}
+
+impl ChatAuth {
+    /// Try Bearer token from Authorization header
+    async fn try_bearer_token(
+        state: &SharedState,
+        parts: &http::request::Parts,
+    ) -> Result<ChatAuth, (StatusCode, Json<Value>)> {
         let auth_header = parts
             .headers
             .get(http::header::AUTHORIZATION)
@@ -262,7 +281,7 @@ where
         }
 
         // Check master key
-        if let Some(ref mk) = shared_state.master_key {
+        if let Some(ref mk) = state.master_key {
             if token == *mk {
                 return Ok(ChatAuth(KeyIdentity {
                     token_hash: "*master*".to_string(),
@@ -271,13 +290,14 @@ where
                     team_id: None,
                     organization_id: None,
                     is_master_key: true,
+                    user_role: Some("proxy_admin".to_string()),
                 }));
             }
         }
 
         // Hash and DB lookup
         let token_hash = hash_token(token);
-        let key = shared_state
+        let key = state
             .db
             .get_key_by_token(&token_hash)
             .await
@@ -296,6 +316,77 @@ where
                 team_id: k.team_id,
                 organization_id: k.organization_id,
                 is_master_key: false,
+                user_role: None,
+            })),
+            None => Err((
+                StatusCode::UNAUTHORIZED,
+                Json(json!({"error": {"message": "Invalid API key", "type": "auth_error"}})),
+            )),
+        }
+    }
+
+    /// Try HttpOnly cookie JWT
+    async fn try_cookie_jwt(
+        state: &SharedState,
+        parts: &http::request::Parts,
+    ) -> Result<ChatAuth, (StatusCode, Json<Value>)> {
+        let master_key = state.master_key.as_ref().ok_or_else(|| {
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({"error": {"message": "Missing Authorization header", "type": "auth_error"}})),
+            )
+        })?;
+
+        // Extract cookie named "token"
+        let cookie_value = parts
+            .headers
+            .get(http::header::COOKIE)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| {
+                s.split(';')
+                    .map(|c| c.trim())
+                    .find_map(|c| {
+                        let (k, v) = c.split_once('=')?;
+                        if k == "token" { Some(v.to_string()) } else { None }
+                    })
+            })
+            .ok_or_else(|| {
+                (
+                    StatusCode::UNAUTHORIZED,
+                    Json(json!({"error": {"message": "Missing Authorization header", "type": "auth_error"}})),
+                )
+            })?;
+
+        // Decode JWT
+        let claims = decode_jwt(&cookie_value, master_key).map_err(|_| {
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({"error": {"message": "Invalid API key", "type": "auth_error"}})),
+            )
+        })?;
+
+        // Hash the key from JWT claims and look up in DB
+        let token_hash = hash_token(&claims.key);
+        let key = state
+            .db
+            .get_key_by_token(&token_hash)
+            .await
+            .map_err(|_| {
+                (
+                    StatusCode::UNAUTHORIZED,
+                    Json(json!({"error": {"message": "Invalid API key", "type": "auth_error"}})),
+                )
+            })?;
+
+        match key {
+            Some(k) => Ok(ChatAuth(KeyIdentity {
+                token_hash,
+                key_alias: k.key_alias,
+                user_id: k.user_id,
+                team_id: k.team_id,
+                organization_id: k.organization_id,
+                is_master_key: false,
+                user_role: Some(claims.user_role.clone()),
             })),
             None => Err((
                 StatusCode::UNAUTHORIZED,

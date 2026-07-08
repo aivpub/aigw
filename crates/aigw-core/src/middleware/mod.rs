@@ -40,6 +40,8 @@ pub struct KeyIdentity {
     pub team_id: Option<String>,
     pub organization_id: Option<String>,
     pub is_master_key: bool,
+    /// user_role from JWT claims, if authenticated via cookie JWT.
+    pub user_role: Option<String>,
 }
 
 impl KeyIdentity {
@@ -147,6 +149,7 @@ async fn authenticate(
             team_id: None,
             organization_id: None,
             is_master_key: true,
+            user_role: Some("proxy_admin".to_string()),
         });
     }
 
@@ -166,6 +169,7 @@ async fn authenticate(
             team_id: k.team_id,
             organization_id: k.organization_id,
             is_master_key: false,
+            user_role: None,
         }),
         None => Err(AuthError::TokenNotFound),
     }

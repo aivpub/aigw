@@ -110,6 +110,26 @@ tasks:
       - npm run lint
       - echo "fe-lint passed"
 
+  fe-bdd:
+    desc: "run Playwright BDD tests (requires: task dev in another terminal)"
+    dir: crates/aigw-frontend
+    cmds:
+      - npx playwright test
+      - echo "fe-bdd passed"
+
+  fe-bdd-report:
+    desc: "run Playwright BDD tests and show HTML report"
+    dir: crates/aigw-frontend
+    cmds:
+      - npx playwright test --reporter=html
+      - npx playwright show-report
+
+  fe-bdd-headed:
+    desc: "run Playwright BDD tests in headed browser"
+    dir: crates/aigw-frontend
+    cmds:
+      - npx playwright test --headed
+
   fe-dev:
     desc: "start Vite dev server (proxy API to :4000)"
     dir: crates/aigw-frontend

@@ -86,6 +86,7 @@ where
                     team_id: None,
                     organization_id: None,
                     is_master_key: true,
+                    user_role: Some("proxy_admin".to_string()),
                 };
                 return Ok(TenantAuth(TenantIdentity::new(identity, deployment_mode)));
             }
@@ -108,6 +109,7 @@ where
                     team_id: k.team_id,
                     organization_id: k.organization_id,
                     is_master_key: false,
+                    user_role: None,
                 };
 
                 // In SaaS mode, verify key belongs to an organization
