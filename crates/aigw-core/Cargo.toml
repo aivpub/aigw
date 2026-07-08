@@ -27,6 +27,9 @@ aes-gcm = "0.11.0"
 getrandom = "0.4.3"
 hmac = "0.12"
 pbkdf2 = "0.12"
+jsonwebtoken = { workspace = true }
+scrypt = { workspace = true }
+rand = "0.8"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

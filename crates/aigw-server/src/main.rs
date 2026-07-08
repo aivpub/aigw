@@ -21,7 +21,7 @@ use axum::http::HeaderName;
 use axum::{middleware, routing::get, Router};
 use clap::Parser;
 use routes::keys::{self, AppState, SharedState};
-use routes::{chat, cors_layer, credentials, docs, health, models, org, spend, team, user, v1_messages};
+use routes::{chat, cors_layer, credentials, docs, health, login, models, org, spend, team, user, v1_messages};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -172,8 +172,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/health/metrics", get(health::health_metrics))
         .route("/system/info", get(health::system_info))
         // Frontend admin console (embedded SPA)
-        .route("/admin", get(frontend::serve_frontend))
-        .route("/admin/{*rest}", get(frontend::serve_frontend))
+        .route("/dash", get(frontend::serve_frontend))
+        .route("/dash/{*rest}", get(frontend::serve_frontend))
         // OpenAI-compatible endpoints
         .route(
             "/v1/chat/completions",
@@ -238,6 +238,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/global/spend/keys", get(spend::global_spend_keys))
         .route("/global/spend/models", get(spend::global_spend_models))
         .route("/global/spend/providers", get(spend::global_spend_providers))
+        // Login/Logout endpoints (litellm-compatible /v2/login/*)
+        .route("/v2/login", axum::routing::post(login::login))
+        .route("/v2/logout", axum::routing::post(login::logout_with_cleanup))
+        .route("/v2/login/check", get(login::login_check))
         // Claude-compatible endpoint
         .route("/v1/messages", axum::routing::post(v1_messages::messages_handler))
         .with_state(state)

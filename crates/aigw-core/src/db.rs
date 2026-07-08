@@ -2565,6 +2565,7 @@ impl TeamStore for PgPool {
 pub trait UserStore {
     async fn insert_user(&self, u: &User) -> Result<()>;
     async fn get_user_by_id(&self, user_id: &str) -> Result<Option<User>>;
+    async fn get_user_by_email(&self, email: &str) -> Result<Option<User>>;
     async fn list_users(&self, org_id: Option<&str>) -> Result<Vec<User>>;
     async fn update_user(&self, u: &User) -> Result<()>;
     async fn delete_user(&self, user_id: &str) -> Result<()>;
@@ -2582,6 +2583,11 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 
 const GET_USER_SQLITE: &str = r#"
 SELECT user_id, user_alias, team_id, sso_user_id, organization_id, object_permission_id, password, teams, user_role, max_budget, spend, user_email, models, metadata, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, allowed_cache_controls, policies, model_spend, model_max_budget, created_at, updated_at
 FROM users WHERE user_id = ?
+"#;
+
+const GET_USER_BY_EMAIL_SQLITE: &str = r#"
+SELECT user_id, user_alias, team_id, sso_user_id, organization_id, object_permission_id, password, teams, user_role, max_budget, spend, user_email, models, metadata, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, allowed_cache_controls, policies, model_spend, model_max_budget, created_at, updated_at
+FROM users WHERE user_email = ?
 "#;
 
 const LIST_USERS_SQLITE: &str = r#"
@@ -2618,6 +2624,10 @@ impl UserStore for SqlitePool {
 
     async fn get_user_by_id(&self, user_id: &str) -> Result<Option<User>> {
         sqlx::query_as(GET_USER_SQLITE).bind(user_id).fetch_optional(self).await.map_err(DbError::from)
+    }
+
+    async fn get_user_by_email(&self, email: &str) -> Result<Option<User>> {
+        sqlx::query_as(GET_USER_BY_EMAIL_SQLITE).bind(email).fetch_optional(self).await.map_err(DbError::from)
     }
 
     async fn list_users(&self, org_id: Option<&str>) -> Result<Vec<User>> {
@@ -2677,6 +2687,11 @@ impl UserStore for MySqlPool {
             .bind(user_id).fetch_optional(self).await.map_err(DbError::from)
     }
 
+    async fn get_user_by_email(&self, email: &str) -> Result<Option<User>> {
+        sqlx::query_as("SELECT user_id, user_alias, team_id, sso_user_id, organization_id, object_permission_id, password, teams, user_role, max_budget, spend, user_email, models, metadata, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, allowed_cache_controls, policies, model_spend, model_max_budget, created_at, updated_at FROM users WHERE user_email = ?")
+            .bind(email).fetch_optional(self).await.map_err(DbError::from)
+    }
+
     async fn list_users(&self, org_id: Option<&str>) -> Result<Vec<User>> {
         match org_id {
             Some(_) => sqlx::query_as("SELECT user_id, user_alias, team_id, sso_user_id, organization_id, object_permission_id, password, teams, user_role, max_budget, spend, user_email, models, metadata, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, allowed_cache_controls, policies, model_spend, model_max_budget, created_at, updated_at FROM users WHERE organization_id = ? ORDER BY user_alias")
@@ -2734,6 +2749,11 @@ impl UserStore for PgPool {
     async fn get_user_by_id(&self, user_id: &str) -> Result<Option<User>> {
         sqlx::query_as("SELECT user_id, user_alias, team_id, sso_user_id, organization_id, object_permission_id, password, teams, user_role, max_budget, spend, user_email, models, metadata, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, allowed_cache_controls, policies, model_spend, model_max_budget, created_at, updated_at FROM users WHERE user_id = $1")
             .bind(user_id).fetch_optional(self).await.map_err(DbError::from)
+    }
+
+    async fn get_user_by_email(&self, email: &str) -> Result<Option<User>> {
+        sqlx::query_as("SELECT user_id, user_alias, team_id, sso_user_id, organization_id, object_permission_id, password, teams, user_role, max_budget, spend, user_email, models, metadata, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, allowed_cache_controls, policies, model_spend, model_max_budget, created_at, updated_at FROM users WHERE user_email = $1")
+            .bind(email).fetch_optional(self).await.map_err(DbError::from)
     }
 
     async fn list_users(&self, org_id: Option<&str>) -> Result<Vec<User>> {
@@ -2868,6 +2888,14 @@ impl Database {
             Database::Sqlite(pool) => pool.get_user_by_id(user_id).await,
             Database::Mysql(pool) => pool.get_user_by_id(user_id).await,
             Database::Postgres(pool) => pool.get_user_by_id(user_id).await,
+        }
+    }
+
+    pub async fn get_user_by_email(&self, email: &str) -> Result<Option<User>> {
+        match self {
+            Database::Sqlite(pool) => pool.get_user_by_email(email).await,
+            Database::Mysql(pool) => pool.get_user_by_email(email).await,
+            Database::Postgres(pool) => pool.get_user_by_email(email).await,
         }
     }
 

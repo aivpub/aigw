@@ -333,6 +333,7 @@ pub async fn key_list(
 
     let data: Vec<Value> = keys
         .iter()
+        .filter(|k| k.team_id.as_deref() != Some("litellm-dashboard"))
         .map(|k| {
             json!({
                 "token": k.token,

@@ -15,20 +15,23 @@
 //!              (schema)      (sqlite)
 //! ```
 
-pub mod budget;
 pub mod adapter;
+pub mod auth;
+pub mod budget;
 pub mod config;
 pub mod crypto;
 pub mod db;
 pub mod instance;
 pub mod middleware;
 pub mod models;
+pub mod password;
 pub mod provider;
 pub mod rate_limiter;
 pub mod router;
 pub mod tenant;
 
 // Re-export commonly used types
+pub use auth::{decode_jwt, encode_jwt, JwtClaims};
 pub use config::{AigwConfig, GeneralSettings, ModelInfo, RouterSettings};
 pub use crypto::{decrypt_litellm_value, encrypt_litellm_value, hash_token};
 pub use db::CredentialsStore;
@@ -36,3 +39,4 @@ pub use models::{
     Budget, Credential, Organization, OrganizationMembership, Project, ProxyModel, SpendLog, Team,
     TeamMembership, User, VirtualKey,
 };
+pub use password::{hash_password, verify_password};

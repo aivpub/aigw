@@ -40,6 +40,10 @@ dotenvy = "0.15"
 # Crypto
 sha2 = "0.10"
 hex = "0.4"
+# JWT
+jsonwebtoken = "9"
+# Password hashing
+scrypt = "0.11"
 # Async traits
 async-trait = "0.1"
 # Embedded static files

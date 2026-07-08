@@ -7,6 +7,7 @@ pub mod credentials;
 pub mod docs;
 pub mod health;
 pub mod keys;
+pub mod login;
 pub mod models;
 pub mod org;
 pub mod proxy;

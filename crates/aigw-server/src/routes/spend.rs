@@ -13,6 +13,7 @@
 //! - GET /global/spend/models — Spend aggregated by model (admin only)
 //! - GET /global/spend/providers — Spend aggregated by provider (admin only)
 
+use aigw_core::auth::decode_jwt;
 use aigw_core::crypto::hash_token;
 use aigw_core::middleware::{AuthError, KeyIdentity};
 use axum::{
@@ -74,14 +75,27 @@ where
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let state: SharedState = axum::extract::FromRef::from_ref(state);
-        // 1. Extract Authorization header
+        // 1. Try Authorization header (Bearer token)
+        let header_result = Self::try_bearer_token(&state, parts).await;
+
+        if let Ok(auth) = header_result {
+            return Ok(auth);
+        }
+
+        // 2. Fall back to HttpOnly cookie JWT
+        Self::try_cookie_jwt(&state, parts).await
+    }
+}
+
+impl SpendAuth {
+    /// Try Bearer token from Authorization header
+    async fn try_bearer_token(state: &SharedState, parts: &Parts) -> Result<SpendAuth, AuthError> {
         let auth_header = parts
             .headers
             .get(http::header::AUTHORIZATION)
             .and_then(|v| v.to_str().ok())
             .ok_or(AuthError::MissingHeader)?;
 
-        // 2. Extract Bearer token
         let token = auth_header
             .strip_prefix("Bearer ")
             .ok_or(AuthError::InvalidFormat)?;
@@ -90,7 +104,7 @@ where
             return Err(AuthError::InvalidFormat);
         }
 
-        // 3. Check master key
+        // Check master key
         if let Some(ref mk) = state.master_key {
             if token == *mk {
                 return Ok(SpendAuth(KeyIdentity {
@@ -104,8 +118,55 @@ where
             }
         }
 
-        // 4. SHA256 hash and DB lookup
+        // SHA256 hash and DB lookup
         let token_hash = hash_token(token);
+        let key = state
+            .db
+            .get_key_by_token(&token_hash)
+            .await
+            .map_err(|_| AuthError::TokenNotFound)?;
+
+        match key {
+            Some(k) => Ok(SpendAuth(KeyIdentity {
+                token_hash,
+                key_alias: k.key_alias,
+                user_id: k.user_id,
+                team_id: k.team_id,
+                organization_id: k.organization_id,
+                is_master_key: false,
+            })),
+            None => Err(AuthError::TokenNotFound),
+        }
+    }
+
+    /// Try HttpOnly cookie JWT
+    async fn try_cookie_jwt(state: &SharedState, parts: &Parts) -> Result<SpendAuth, AuthError> {
+        let master_key = state
+            .master_key
+            .as_ref()
+            .ok_or(AuthError::MissingHeader)?;
+
+        // Extract cookie named "token"
+        let cookie_value = parts
+            .headers
+            .get(http::header::COOKIE)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| {
+                s.split(';')
+                    .map(|c| c.trim())
+                    .find_map(|c| {
+                        let (k, v) = c.split_once('=')?;
+                        if k == "token" { Some(v.to_string()) } else { None }
+                    })
+            })
+            .ok_or(AuthError::MissingHeader)?;
+
+        // Decode JWT
+        let claims = decode_jwt(&cookie_value, master_key)
+            .map_err(|_| AuthError::TokenNotFound)?;
+
+        // Hash the key from JWT claims and look up in DB
+        let token_hash = hash_token(&claims.key);
         let key = state
             .db
             .get_key_by_token(&token_hash)
