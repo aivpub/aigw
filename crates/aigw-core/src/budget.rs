@@ -68,7 +68,7 @@ impl BudgetEnforcer {
         };
 
         // If no max_budget is set, the key has unlimited budget
-        let max_budget = match key.max_budget {
+        let max_budget = match key.max_budget_f64() {
             Some(mb) if mb > 0.0 => mb,
             _ => return Ok(()),
         };
@@ -102,7 +102,7 @@ mod tests {
             token: token_hash.to_string(),
             key_name: Some("budget-test-key".to_string()),
             key_alias: Some("budget-test".to_string()),
-            soft_budget_cooldown: false,
+            soft_budget_cooldown: "false".to_string(),
             spend,
             expires: None,
             models: json!([]),
@@ -119,7 +119,7 @@ mod tests {
             blocked: None,
             tpm_limit: None,
             rpm_limit: None,
-            max_budget,
+            max_budget: max_budget.map(|v| v.to_string()),
             budget_duration: None,
             budget_reset_at: None,
             allowed_cache_controls: json!([]),

@@ -4,8 +4,8 @@
 
 CREATE TABLE IF NOT EXISTS budgets (
     budget_id TEXT NOT NULL,
-    max_budget DOUBLE PRECISION,
-    soft_budget DOUBLE PRECISION,
+    max_budget TEXT,
+    soft_budget TEXT,
     max_parallel_requests INTEGER,
     tpm_limit BIGINT,
     rpm_limit BIGINT,

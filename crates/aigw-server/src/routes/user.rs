@@ -64,7 +64,7 @@ pub async fn user_new(
         password: body.get("password").and_then(|v| v.as_str()).map(String::from),
         teams: body.get("teams").cloned().unwrap_or(json!([])),
         user_role: body.get("user_role").and_then(|v| v.as_str()).map(String::from),
-        max_budget: body.get("max_budget").and_then(|v| v.as_f64()),
+        max_budget: body.get("max_budget").and_then(|v| v.as_f64()).map(|v| v.to_string()),
         spend: 0.0,
         user_email: body.get("user_email").and_then(|v| v.as_str()).map(String::from),
         models: body.get("models").cloned().unwrap_or(json!([])),
@@ -200,7 +200,7 @@ pub async fn user_update(
         existing.user_email = v.as_str().map(String::from);
     }
     if let Some(v) = body.get("max_budget") {
-        existing.max_budget = v.as_f64();
+        existing.max_budget = v.as_f64().map(|vv| vv.to_string());
     }
     if let Some(v) = body.get("models") {
         existing.models = v.clone();

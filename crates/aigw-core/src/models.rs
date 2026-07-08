@@ -29,7 +29,8 @@ pub struct VirtualKey {
     pub token: String, // SHA256 hex hash, PK
     pub key_name: Option<String>,
     pub key_alias: Option<String>,
-    pub soft_budget_cooldown: bool,
+    #[sqlx(default)]
+    pub soft_budget_cooldown: String,
     pub spend: f64,
     pub expires: Option<DateTime<Utc>>,
     pub models: serde_json::Value,  // String[] → JSON array
@@ -46,7 +47,8 @@ pub struct VirtualKey {
     pub blocked: Option<bool>,
     pub tpm_limit: Option<i64>, // BigInt
     pub rpm_limit: Option<i64>,
-    pub max_budget: Option<f64>,
+    #[sqlx(default)]
+    pub max_budget: Option<String>,
     pub budget_duration: Option<String>,
     pub budget_reset_at: Option<DateTime<Utc>>,
     pub allowed_cache_controls: serde_json::Value, // String[] → JSON
@@ -64,11 +66,31 @@ pub struct VirtualKey {
     pub updated_by: Option<String>,
     pub last_active: Option<DateTime<Utc>>,
     pub rotation_count: Option<i32>,
-    pub auto_rotate: Option<bool>,
+    #[sqlx(default)]
+    pub auto_rotate: Option<String>,
     pub rotation_interval: Option<String>,
     pub last_rotation_at: Option<DateTime<Utc>>,
     pub key_rotation_at: Option<DateTime<Utc>>,
     pub budget_limits: Option<serde_json::Value>,
+}
+
+impl VirtualKey {
+    /// Parse `soft_budget_cooldown` as bool from TEXT-compatible string.
+    pub fn soft_budget_cooldown_bool(&self) -> bool {
+        self.soft_budget_cooldown.eq_ignore_ascii_case("true")
+    }
+
+    /// Parse `max_budget` as Option<f64> from TEXT-compatible string.
+    pub fn max_budget_f64(&self) -> Option<f64> {
+        self.max_budget.as_deref().and_then(|s| s.parse().ok())
+    }
+
+    /// Parse `auto_rotate` as Option<bool> from TEXT-compatible string.
+    pub fn auto_rotate_bool(&self) -> Option<bool> {
+        self.auto_rotate
+            .as_deref()
+            .map(|s| s.eq_ignore_ascii_case("true"))
+    }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -162,8 +184,10 @@ pub struct Team {
     pub members: serde_json::Value, // String[]
     pub members_with_roles: serde_json::Value,
     pub metadata: serde_json::Value,
-    pub max_budget: Option<f64>,
-    pub soft_budget: Option<f64>,
+    #[sqlx(default)]
+    pub max_budget: Option<String>,
+    #[sqlx(default)]
+    pub soft_budget: Option<String>,
     pub spend: f64,
     pub models: serde_json::Value, // String[]
     pub max_parallel_requests: Option<i32>,
@@ -186,6 +210,18 @@ pub struct Team {
     pub allow_team_guardrail_config: bool,
 }
 
+impl Team {
+    /// Parse `max_budget` as Option<f64> from TEXT-compatible string.
+    pub fn max_budget_f64(&self) -> Option<f64> {
+        self.max_budget.as_deref().and_then(|s| s.parse().ok())
+    }
+
+    /// Parse `soft_budget` as Option<f64> from TEXT-compatible string.
+    pub fn soft_budget_f64(&self) -> Option<f64> {
+        self.soft_budget.as_deref().and_then(|s| s.parse().ok())
+    }
+}
+
 /// User — column-compatible with litellm's `LiteLLM_UserTable`
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct User {
@@ -198,7 +234,8 @@ pub struct User {
     pub password: Option<String>,
     pub teams: serde_json::Value, // String[]
     pub user_role: Option<String>,
-    pub max_budget: Option<f64>,
+    #[sqlx(default)]
+    pub max_budget: Option<String>,
     pub spend: f64,
     pub user_email: Option<String>,
     pub models: serde_json::Value, // String[]
@@ -214,6 +251,13 @@ pub struct User {
     pub model_max_budget: serde_json::Value,
     pub created_at: Option<DateTime<Utc>>,
     pub updated_at: Option<DateTime<Utc>>,
+}
+
+impl User {
+    /// Parse `max_budget` as Option<f64> from TEXT-compatible string.
+    pub fn max_budget_f64(&self) -> Option<f64> {
+        self.max_budget.as_deref().and_then(|s| s.parse().ok())
+    }
 }
 
 /// Project — column-compatible with litellm's `LiteLLM_ProjectTable`
@@ -242,8 +286,10 @@ pub struct Project {
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Budget {
     pub budget_id: String,
-    pub max_budget: Option<f64>,
-    pub soft_budget: Option<f64>,
+    #[sqlx(default)]
+    pub max_budget: Option<String>,
+    #[sqlx(default)]
+    pub soft_budget: Option<String>,
     pub max_parallel_requests: Option<i32>,
     pub tpm_limit: Option<i64>,
     pub rpm_limit: Option<i64>,
@@ -255,6 +301,13 @@ pub struct Budget {
     pub created_by: String,
     pub updated_at: DateTime<Utc>,
     pub updated_by: String,
+}
+
+impl Budget {
+    /// Parse `max_budget` as Option<f64> from TEXT-compatible string.
+    pub fn max_budget_f64(&self) -> Option<f64> {
+        self.max_budget.as_deref().and_then(|s| s.parse().ok())
+    }
 }
 
 /// Organization Membership — column-compatible with litellm's `LiteLLM_OrganizationMembership`

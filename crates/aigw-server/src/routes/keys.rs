@@ -159,7 +159,7 @@ fn build_virtual_key(hash: &str, req: &GenerateKeyRequest) -> VirtualKey {
         token: hash.to_string(),
         key_name: req.key_alias.clone(),
         key_alias: req.key_alias.clone(),
-        soft_budget_cooldown: false,
+        soft_budget_cooldown: "false".to_string(),
         spend: 0.0,
         expires: req.expires,
         models: req
@@ -180,7 +180,7 @@ fn build_virtual_key(hash: &str, req: &GenerateKeyRequest) -> VirtualKey {
         blocked: None,
         tpm_limit: req.tpm_limit,
         rpm_limit: req.rpm_limit,
-        max_budget: req.max_budget,
+        max_budget: req.max_budget.map(|v| v.to_string()),
         budget_duration: req.budget_duration.clone(),
         budget_reset_at: req.budget_reset_at,
         allowed_cache_controls: json!([]),
@@ -198,7 +198,7 @@ fn build_virtual_key(hash: &str, req: &GenerateKeyRequest) -> VirtualKey {
         updated_by: None,
         last_active: None,
         rotation_count: None,
-        auto_rotate: req.auto_rotate,
+        auto_rotate: req.auto_rotate.map(|v| v.to_string()),
         rotation_interval: req.rotation_interval.clone(),
         last_rotation_at: None,
         key_rotation_at: None,
@@ -218,7 +218,7 @@ fn key_to_response(raw_token: &str, key: &VirtualKey) -> GenerateKeyResponse {
         organization_id: key.organization_id.clone(),
         project_id: key.project_id.clone(),
         models: key.models.clone(),
-        max_budget: key.max_budget,
+        max_budget: key.max_budget_f64(),
         budget_duration: key.budget_duration.clone(),
         budget_reset_at: key.budget_reset_at.map(|dt| dt.to_rfc3339()),
         tpm_limit: key.tpm_limit,
@@ -229,7 +229,7 @@ fn key_to_response(raw_token: &str, key: &VirtualKey) -> GenerateKeyResponse {
         blocked: key.blocked,
         metadata: key.metadata.clone(),
         permissions: key.permissions.clone(),
-        auto_rotate: key.auto_rotate,
+        auto_rotate: key.auto_rotate_bool(),
         rotation_interval: key.rotation_interval.clone(),
         created_at: key.created_at.map(|dt| dt.to_rfc3339()),
         updated_at: key.updated_at.map(|dt| dt.to_rfc3339()),
@@ -400,7 +400,8 @@ pub async fn key_update(
         soft_budget_cooldown: body
             .get("soft_budget_cooldown")
             .and_then(|v| v.as_bool())
-            .unwrap_or(false),
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "false".to_string()),
         spend: body.get("spend").and_then(|v| v.as_f64()).unwrap_or(0.0),
         expires: body
             .get("expires")
@@ -438,7 +439,7 @@ pub async fn key_update(
         blocked: body.get("blocked").and_then(|v| v.as_bool()),
         tpm_limit: body.get("tpm_limit").and_then(|v| v.as_i64()),
         rpm_limit: body.get("rpm_limit").and_then(|v| v.as_i64()),
-        max_budget: body.get("max_budget").and_then(|v| v.as_f64()),
+        max_budget: body.get("max_budget").and_then(|v| v.as_f64()).map(|v| v.to_string()),
         budget_duration: body
             .get("budget_duration")
             .and_then(|v| v.as_str())
@@ -492,7 +493,7 @@ pub async fn key_update(
             .get("rotation_count")
             .and_then(|v| v.as_i64())
             .map(|v| v as i32),
-        auto_rotate: body.get("auto_rotate").and_then(|v| v.as_bool()),
+        auto_rotate: body.get("auto_rotate").and_then(|v| v.as_bool()).map(|v| v.to_string()),
         rotation_interval: body
             .get("rotation_interval")
             .and_then(|v| v.as_str())

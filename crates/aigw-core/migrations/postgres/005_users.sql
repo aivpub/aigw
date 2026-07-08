@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS users (
     password TEXT,
     teams JSONB NOT NULL,
     user_role TEXT,
-    max_budget DOUBLE PRECISION,
+    max_budget TEXT,
     spend DOUBLE PRECISION NOT NULL DEFAULT 0.0,
     user_email TEXT,
     models JSONB NOT NULL,

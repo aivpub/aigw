@@ -7,6 +7,7 @@
 //! - PUT    /model/update    — Update existing model
 //! - DELETE /model/delete    — Delete a model
 
+use aigw_core::crypto::decrypt_litellm_value;
 use aigw_core::models::ProxyModel;
 use axum::{
     extract::{Query, State},
@@ -64,18 +65,39 @@ pub struct ModelResponse {
     pub updated_by: Option<String>,
 }
 
-impl From<ProxyModel> for ModelResponse {
-    fn from(m: ProxyModel) -> Self {
+impl ModelResponse {
+    /// Build a ModelResponse, decrypting `litellm_params` if needed.
+    ///
+    /// If `master_key` is provided and `litellm_params` appears encrypted (not starting with `{`),
+    /// it will be decrypted and parsed as JSON.
+    fn from_model(m: ProxyModel, master_key: Option<&str>) -> Self {
+        let litellm_params = Self::decrypt_params(&m.litellm_params, master_key);
         Self {
             model_id: m.model_id,
             model_name: m.model_name,
-            litellm_params: m.litellm_params,
+            litellm_params,
             model_info: m.model_info,
             created_at: m.created_at,
             created_by: m.created_by,
             updated_at: m.updated_at,
             updated_by: m.updated_by,
         }
+    }
+
+    fn decrypt_params(params: &Value, master_key: Option<&str>) -> Value {
+        let s = params.to_string();
+        if s.starts_with('{') {
+            return params.clone();
+        }
+        let key = match master_key {
+            Some(k) => k,
+            None => return params.clone(),
+        };
+        let decrypted = match decrypt_litellm_value(&s, key) {
+            Ok(d) => d,
+            Err(_) => return params.clone(),
+        };
+        serde_json::from_str(&decrypted).unwrap_or_else(|_| params.clone())
     }
 }
 
@@ -111,7 +133,7 @@ pub async fn model_new(
         )
     })?;
 
-    let resp = ModelResponse::from(model);
+    let resp = ModelResponse::from_model(model, state.aigw_master_key.as_deref());
     Ok(Json(serde_json::to_value(resp).unwrap_or(json!({}))))
 }
 
@@ -131,7 +153,7 @@ pub async fn model_info(
 
     match model {
         Some(m) => {
-            let resp = ModelResponse::from(m);
+            let resp = ModelResponse::from_model(m, state.aigw_master_key.as_deref());
             Ok(Json(serde_json::to_value(resp).unwrap_or(json!({}))))
         }
         None => Err((
@@ -154,9 +176,10 @@ pub async fn model_list(
         )
     })?;
 
+    let mk = state.aigw_master_key.as_deref();
     let data: Vec<Value> = models
         .into_iter()
-        .map(|m| serde_json::to_value(ModelResponse::from(m)).unwrap_or(json!({})))
+        .map(|m| serde_json::to_value(ModelResponse::from_model(m, mk)).unwrap_or(json!({})))
         .collect();
 
     Ok(Json(json!({"object": "list", "data": data})))
@@ -201,7 +224,7 @@ pub async fn model_update(
         )
     })?;
 
-    let resp = ModelResponse::from(model);
+    let resp = ModelResponse::from_model(model, state.aigw_master_key.as_deref());
     Ok(Json(serde_json::to_value(resp).unwrap_or(json!({}))))
 }
 

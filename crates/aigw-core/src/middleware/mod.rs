@@ -198,7 +198,7 @@ mod tests {
             token: token_hash.to_string(),
             key_name: Some("test-key".to_string()),
             key_alias: Some("test-alias".to_string()),
-            soft_budget_cooldown: false,
+            soft_budget_cooldown: "false".to_string(),
             spend: 0.0,
             expires,
             models: json!([]),

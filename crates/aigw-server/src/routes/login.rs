@@ -174,7 +174,7 @@ pub async fn login(
         token: token_hash.clone(),
         key_name: Some(format!("ui-session-{}", &user_id)),
         key_alias: Some(format!("ui-session-{}", &user_id)),
-        soft_budget_cooldown: false,
+        soft_budget_cooldown: "false".to_string(),
         spend: 0.0,
         expires: Some(expiry),
         models: json!([]),

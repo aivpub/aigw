@@ -68,7 +68,7 @@ async fn given_regular_key(world: &mut TestWorld, alias: String) {
         token: aigw_core::crypto::hash_token(&raw_token),
         key_name: Some(alias.clone()),
         key_alias: Some(alias.clone()),
-        soft_budget_cooldown: false,
+        soft_budget_cooldown: "false".to_string(),
         spend: 0.0,
         expires: None,
         models: serde_json::json!([]),

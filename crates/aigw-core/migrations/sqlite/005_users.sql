@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS users (
     password TEXT,
     teams BLOB NOT NULL,
     user_role TEXT,
-    max_budget REAL,
+    max_budget TEXT,
     spend REAL NOT NULL DEFAULT 0.0,
     user_email TEXT,
     models BLOB NOT NULL,

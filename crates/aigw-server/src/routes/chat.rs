@@ -483,7 +483,7 @@ pub async fn chat_completions(
 
         if let Some(key) = key_record {
             // Check if the requested model is in the key's allowed models
-            let models = key.models;
+            let models = key.models.clone();
             if !models.is_null() {
                 if let Some(model_list) = models.as_array() {
                     let allowed = model_list.iter().any(|m| m.as_str() == Some(_model));
@@ -506,7 +506,7 @@ pub async fn chat_completions(
             }
 
             // Check budget
-            if let Some(max_budget) = key.max_budget {
+            if let Some(max_budget) = key.max_budget_f64() {
                 if key.spend >= max_budget {
                     return Err((
                         StatusCode::TOO_MANY_REQUESTS,
@@ -979,7 +979,7 @@ mod tests {
             token: token_hash.clone(),
             key_name: Some("test-key".to_string()),
             key_alias: Some("test-alias".to_string()),
-            soft_budget_cooldown: false,
+            soft_budget_cooldown: "false".to_string(),
             spend: 0.0,
             expires: None,
             models: json!(["gpt-4", "gpt-3.5-turbo"]),

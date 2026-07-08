@@ -63,8 +63,8 @@ pub async fn team_new(
         members: body.get("members").cloned().unwrap_or(json!([])),
         members_with_roles: body.get("members_with_roles").cloned().unwrap_or(json!([])),
         metadata: body.get("metadata").cloned().unwrap_or(json!({})),
-        max_budget: body.get("max_budget").and_then(|v| v.as_f64()),
-        soft_budget: body.get("soft_budget").and_then(|v| v.as_f64()),
+        max_budget: body.get("max_budget").and_then(|v| v.as_f64()).map(|v| v.to_string()),
+        soft_budget: body.get("soft_budget").and_then(|v| v.as_f64()).map(|v| v.to_string()),
         spend: 0.0,
         models: body.get("models").cloned().unwrap_or(json!([])),
         max_parallel_requests: body.get("max_parallel_requests").and_then(|v| v.as_i64()).map(|v| v as i32),
@@ -193,7 +193,7 @@ pub async fn team_update(
         existing.metadata = v.clone();
     }
     if let Some(v) = body.get("max_budget") {
-        existing.max_budget = v.as_f64();
+        existing.max_budget = v.as_f64().map(|vv| vv.to_string());
     }
     if let Some(v) = body.get("models") {
         existing.models = v.clone();
