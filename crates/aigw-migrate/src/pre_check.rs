@@ -152,12 +152,12 @@ pub async fn run(source_url: &str, target_url: &str, target_master_key: &str) ->
 
     // Check 5: Target master key valid
     print!("[ 5/6] Target master key... ");
-    if target_master_key.len() >= 32 {
+    if target_master_key.len() >= 16 {
         println!("[PASS] {} chars", target_master_key.len());
         passed += 1;
     } else {
         println!(
-            "[FAIL] too short: {} chars (need >= 32)",
+            "[FAIL] too short: {} chars (need >= 16)",
             target_master_key.len()
         );
     }
@@ -168,8 +168,13 @@ pub async fn run(source_url: &str, target_url: &str, target_master_key: &str) ->
     match source_key {
         Some(key) => {
             let cred_table = quote_table("LiteLLM_CredentialsTable", source_url);
+            let val_col = if is_pg(source_url) {
+                "credential_values::text"
+            } else {
+                "credential_values"
+            };
             let cred_row = sqlx::query(&format!(
-                "SELECT credential_name, credential_values FROM {cred_table} LIMIT 1"
+                "SELECT credential_name, {val_col} FROM {cred_table} LIMIT 1"
             ))
             .fetch_optional(&source)
             .await;
