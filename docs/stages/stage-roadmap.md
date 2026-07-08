@@ -1,15 +1,15 @@
 # aigw — AI Gateway Stage Roadmap
 
 **项目**: aigw (litellm Rust 最小兼容替代)
-**最后更新**: 2026-07-08 (Phase 0-9 全部完成，24/24 Stages)
+**最后更新**: 2026-07-08 (Phase 0-11，24 完成 + 6 规划中)
 
 ---
 
 ## 当前状态
 
-- **当前 Stage**: Phase 0-9 全部完成（24/24 Stages）
-- **状态**: 生产就绪，Phase 10 长期路线待触发
-- **下一里程碑**: rust-embed 前端集成 + Phase 10 长期路线按需启动
+- **当前 Stage**: Phase 11 — Stage 25（前端 BDD 测试基础设施）
+- **状态**: Phase 0-9 全部完成（24/24 Stages），Phase 11 规划中（6 Stages）
+- **下一里程碑**: Stage 25 BDD 基础设施搭建
 
 ### 整体进度
 
@@ -19,6 +19,7 @@ Phase 5:   ████████████████████ 100% (6/
 Phase 7:   ████████████████████ 100% (5/5 Stages)
 Phase 8:   ████████████████████ 100% (3/3 Stages)
 Phase 9:   ████████████████████ 100% (4/4 Stages)
+Phase 11:  ░░░░░░░░░░░░░░░░░░░░   0% (0/6 Stages)
 ```
 
 ---
@@ -143,6 +144,31 @@ Stage 21 优先完成（前端基础设施）。Stage 22-24 可并行开发。
 
 前端技术栈：React + TypeScript + Vite + shadcn/ui (Radix UI + Tailwind CSS v4) + Recharts（shadcn/ui chart 封装）+ TanStack Query + Zustand + react-hook-form + zod + Lucide React + Sonner。
 
+### Phase 11：前端质量加固 + 安全达标
+
+| Stage | 状态 | 目标 | 预估 |
+|-------|------|------|------|
+| Stage 25 | ⏳ 待开始 | 前端 BDD 测试基础设施 — Playwright + Gherkin + 截图/GIF + Mock API | 4-6h |
+| Stage 26 | ⏳ 待开始 | 登录安全对齐 Litellm — `/v2/login` JWT + Cookie + scrypt + 数据库用户认证 | 4-6h |
+| Stage 27 | ⏳ 待开始 | 移动端适配 — 全页面响应式改造（卡片布局 + 图表适配 + 全屏 Dialog） | 3-4h |
+| Stage 28 | ⏳ 待开始 | Key 创建 UX 修复 — Token 展示对话框 + 复制确认 + 一次性提示 | 1-2h |
+| Stage 29 | ⏳ 待开始 | 用户/组织/团队管理前端页面 — Users/Orgs/Teams CRUD + 侧边栏导航 | 6-8h |
+| Stage 30 | ⏳ 待开始 | Dashboard 数据接入 + 移动端图表 — 真实 spend API + Loading/Empty/Error 状态 | 3-4h |
+
+**Stage 25-30 依赖关系**:
+
+```
+Stage 25 (BDD 基础设施) ─────────────────────────────┐
+  ├── Stage 26 (登录安全 JWT+Cookie) ────────────────┤
+  ├── Stage 27 (移动端适配) ─────────────────────────┤
+  │     └── Stage 29 (用户管理页面，含移动端) ────────┤
+  ├── Stage 28 (Key UX 修复) ────────────────────────┤
+  └── Stage 30 (Dashboard 数据接入 + 移动端图表) ────┘
+```
+
+Stage 25 是基础（所有后续 Stage 需 BDD R-G-R 循环）。Stage 27/28 可与 26 并行。Stage 29/30 依赖 27（移动端）。
+优先级：P0 → Stage 25 > 26 > 28 | P1 → Stage 27 > 29 | P2 → Stage 30
+
 ### Phase 10：生产化进阶（后续路线）
 
 | ID | 主题 | 优先级 | 触发条件 |
@@ -177,3 +203,4 @@ Stage 21 优先完成（前端基础设施）。Stage 22-24 可并行开发。
 | v5.1 | 2026-07-07 | 更新 Phase 7 实际状态：Stage 13-16 已完成，Stage 17 80%（SOP/export/BDD 已完成，缺自动化预检/监控） | Claude Code |
 | v6.0 | 2026-07-08 | Phase 7 Stage 17 标记完成；新增 Phase 8（Stage 18-20 生产化基础）和 Phase 9（Stage 21-24 前端管理控制台）；Phase 6 长期路线重新编号为 Phase 10 | Claude Code |
 | v7.0 | 2026-07-08 | Phase 8-9 全部完成（24/24 Stages）；结构化日志、多租户 API、健康指标、React 前端管理控制台 4 页面全部交付；添加 rust-embed 单二进制部署 | Claude Code |
+| v8.0 | 2026-07-08 | 新增 Phase 11（Stage 25-30）：前端 BDD 测试、登录安全对齐 Litellm（JWT+Cookie）、移动端适配、Key UX 修复、用户/组织/团队管理页面、Dashboard 数据接入 | Claude Code |
