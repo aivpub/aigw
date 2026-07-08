@@ -23,6 +23,7 @@ export default defineConfig({
       "/model": "http://localhost:4000",
     },
   },
+  base: "/dash/",
   build: {
     outDir: "dist",
     emptyOutDir: true,

@@ -95,11 +95,39 @@ tasks:
       - cargo test --workspace --features integration
       - echo "integration test passed"
 
-  build:
-    desc: "build release"
+  fe-build:
+    desc: "build frontend dist/ (for rust-embed)"
+    dir: crates/aigw-frontend
     cmds:
+      - npm install --silent
+      - npm run build
+      - echo "fe-build passed"
+
+  fe-lint:
+    desc: "lint frontend"
+    dir: crates/aigw-frontend
+    cmds:
+      - npm run lint
+      - echo "fe-lint passed"
+
+  fe-dev:
+    desc: "start Vite dev server (proxy API to :4000)"
+    dir: crates/aigw-frontend
+    cmds:
+      - npm run dev
+
+  build:
+    desc: "build release (frontend → rust-embed → binary)"
+    cmds:
+      - task: fe-build
       - cargo build --workspace --release
       - echo "build passed"
+
+  dev:
+    desc: "start server (debug build, embeds frontend)"
+    cmds:
+      - task: fe-build
+      - cargo run -p aigw-server
 
   fmt:
     desc: "code format check"

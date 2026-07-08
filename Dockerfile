@@ -16,7 +16,17 @@
 #   docker run -p 4000:4000 -v $(pwd)/config.yaml:/app/config.yaml aigw:latest
 # =============================================================================
 
-# Stage 1: Build
+# Stage 1: Frontend build
+FROM node:22-slim AS frontend-builder
+
+WORKDIR /app/crates/aigw-frontend
+COPY crates/aigw-frontend/package.json crates/aigw-frontend/package-lock.json ./
+RUN npm ci --silent
+
+COPY crates/aigw-frontend/ ./
+RUN npm run build
+
+# Stage 2: Rust build
 FROM rust:1.88-slim-bookworm AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -30,6 +40,9 @@ WORKDIR /app
 # with sqlx::migrate! macros and multi-crate workspace deps)
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
+
+# Copy pre-built frontend dist/ for rust-embed
+COPY --from=frontend-builder /app/crates/aigw-frontend/dist/ crates/aigw-frontend/dist/
 
 RUN cargo build --release
 

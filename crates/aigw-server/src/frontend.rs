@@ -15,14 +15,14 @@ struct FrontendAssets;
 
 /// Serve an embedded frontend file by path.
 ///
-/// Maps `/admin` → `index.html`, `/admin/` → `index.html`,
-/// `/admin/assets/foo.js` → `assets/foo.js`.
+/// Maps `/dash` → `index.html`, `/dash/` → `index.html`,
+/// `/dash/assets/foo.js` → `assets/foo.js`.
 /// Unknown paths fall back to `index.html` for SPA client-side routing.
 pub async fn serve_frontend(uri: Uri) -> impl IntoResponse {
     let path = uri.path();
 
-    // Strip /admin prefix to get the embedded file path
-    let relative = path.strip_prefix("/admin").unwrap_or(path);
+    // Strip /dash prefix to get the embedded file path
+    let relative = path.strip_prefix("/dash").unwrap_or(path);
     let relative = relative.strip_prefix('/').unwrap_or(relative);
 
     // Serve index.html for root and SPA routes

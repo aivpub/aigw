@@ -12,6 +12,10 @@ dist
 dist-ssr
 *.local
 
+# BDD test artifacts
+.features-gen/
+tests/output/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
