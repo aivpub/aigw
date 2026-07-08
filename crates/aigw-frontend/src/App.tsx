@@ -5,10 +5,16 @@ import { LoginPage } from "@/pages/login";
 import { DashboardPage } from "@/pages/dashboard";
 import { KeysPage } from "@/pages/keys";
 import { ModelsPage } from "@/pages/models";
+import { UsersPage } from "@/pages/users";
+import { OrgsPage } from "@/pages/orgs";
+import { TeamsPage } from "@/pages/teams";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, isLoading } = useAuth();
   const location = useLocation();
+
+  // Don't redirect while auth check is in flight — avoids flash redirects
+  if (isLoading) return null;
 
   if (!isAuthenticated) {
     const redirect = location.pathname !== "/dash" ? location.pathname : "/dash/home";
@@ -43,6 +49,9 @@ export default function App() {
             <Route path="home" element={<DashboardPage />} />
             <Route path="keys" element={<KeysPage />} />
             <Route path="models" element={<ModelsPage />} />
+            <Route path="users" element={<UsersPage />} />
+            <Route path="orgs" element={<OrgsPage />} />
+            <Route path="teams" element={<TeamsPage />} />
           </Route>
 
           {/* Catch-all: authenticated pages redirect to /dash; unauthenticated to login */}

@@ -1,11 +1,14 @@
 import { NavLink } from "react-router-dom";
-import { LayoutDashboard, Key, Box } from "lucide-react";
+import { LayoutDashboard, Key, Box, Users, Building2, Users2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const navItems = [
   { to: "/dash/home", label: "Home", icon: LayoutDashboard },
   { to: "/dash/keys", label: "Keys", icon: Key },
   { to: "/dash/models", label: "Models", icon: Box },
+  { to: "/dash/users", label: "Users", icon: Users },
+  { to: "/dash/orgs", label: "Orgs", icon: Building2 },
+  { to: "/dash/teams", label: "Teams", icon: Users2 },
 ];
 
 interface SidebarProps {

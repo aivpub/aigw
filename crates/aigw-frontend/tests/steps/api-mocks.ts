@@ -122,6 +122,9 @@ export async function defineMockRoutes(route: Route, request: Request) {
   if (url.pathname === "/user/delete" && route.request().method() === "DELETE") {
     return route.fulfill({ status: 200, json: { message: "User deleted" } });
   }
+  if (url.pathname === "/user/update" && route.request().method() === "PUT") {
+    return route.fulfill({ status: 200, json: sampleUsers[0] });
+  }
 
   // Org management
   if (url.pathname === "/org/list") {
@@ -132,6 +135,9 @@ export async function defineMockRoutes(route: Route, request: Request) {
   }
   if (url.pathname === "/org/delete" && route.request().method() === "DELETE") {
     return route.fulfill({ status: 200, json: { message: "Organization deleted" } });
+  }
+  if (url.pathname === "/org/update" && route.request().method() === "PUT") {
+    return route.fulfill({ status: 200, json: sampleOrgs[0] });
   }
 
   // Team management
@@ -144,10 +150,16 @@ export async function defineMockRoutes(route: Route, request: Request) {
   if (url.pathname === "/team/delete" && route.request().method() === "DELETE") {
     return route.fulfill({ status: 200, json: { message: "Team deleted" } });
   }
+  if (url.pathname === "/team/update" && route.request().method() === "PUT") {
+    return route.fulfill({ status: 200, json: sampleTeams[0] });
+  }
 
   // Login (for Stage 26)
   if (url.pathname === "/v2/login") {
     return route.fulfill({ status: 200, json: { user_id: "default_user_id", user_role: "proxy_admin", user_email: null } });
+  }
+  if (url.pathname === "/v2/login/check") {
+    return route.fulfill({ status: 200, json: { user_id: "default_user_id", user_role: "proxy_admin" } });
   }
 
   // Health
@@ -166,4 +178,26 @@ export async function defineMockRoutes(route: Route, request: Request) {
 
 export async function mockAllApis(page: Page, _opts?: MockOptions) {
   await page.route("**/*", defineMockRoutes);
+}
+
+function unauthenticatedHandler(route: Route, request: Request) {
+  const url = new URL(request.url());
+  // Return 401 for auth check so login page renders
+  if (url.pathname === "/v2/login/check") {
+    return route.fulfill({ status: 401 });
+  }
+  // Login: mock wrong-password as 401, everything else as success
+  if (url.pathname === "/v2/login") {
+    const body = request.postData() ?? "";
+    if (body.includes("wrong-password")) {
+      return route.fulfill({ status: 401, json: { error: { message: "Invalid credentials" } } });
+    }
+    return route.fulfill({ status: 200, json: { user_id: "default_user_id", user_role: "proxy_admin", user_email: null } });
+  }
+  // Fallback to standard mock routes for all other endpoints
+  return defineMockRoutes(route, request);
+}
+
+export async function mockApisUnauthenticated(page: Page) {
+  await page.route("**/*", unauthenticatedHandler);
 }

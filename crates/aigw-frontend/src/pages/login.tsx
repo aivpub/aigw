@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,11 +14,12 @@ export function LoginPage() {
   const [loading, setLoading] = useState(false);
   const { login, isAuthenticated } = useAuth();
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const redirect = searchParams.get("redirect") ?? "/dash/home";
 
-  // Already authenticated → redirect via location href
+  // Already authenticated → redirect via React Router (SPA navigation)
   if (isAuthenticated) {
-    window.location.href = redirect;
+    navigate(redirect, { replace: true });
     return null;
   }
 
@@ -35,7 +36,7 @@ export function LoginPage() {
 
     try {
       await login(username.trim(), password);
-      window.location.href = redirect;
+      navigate(redirect, { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Authentication failed.");
       setLoading(false);
@@ -44,7 +45,7 @@ export function LoginPage() {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-muted/30 px-4">
-      <Card className="w-full max-w-sm">
+      <Card className="w-full max-w-sm mx-4 sm:mx-0">
         <CardHeader className="text-center">
           <div className="mx-auto mb-2 flex h-10 w-10 items-center justify-center rounded-full bg-primary/10">
             <Key className="h-5 w-5 text-primary" />
@@ -83,7 +84,7 @@ export function LoginPage() {
             <Button
               type="submit"
               className="w-full"
-              disabled={loading || !username.trim() || !password.trim()}
+              disabled={loading}
             >
               {loading ? "Signing in..." : "Sign In"}
             </Button>

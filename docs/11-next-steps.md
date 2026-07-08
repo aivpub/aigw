@@ -1,85 +1,74 @@
 # aigw -- 下一步行动
 
 **上次更新**: 2026-07-08
-**当前阶段**: Phase 11 — Stage 25（前端 BDD 测试基础设施）
+**当前阶段**: 全部完成（30/30 Stages）
 
 ---
 
-## 当前状态：Phase 0-9 全部完成 + Phase 11 规划中
+## 当前状态：Phase 0-11 全部完成
 
-### Phase 0-9 全部完成（24/24 Stages）
+### 项目里程碑
 
-| Phase | Stages | 状态 |
-|-------|--------|------|
-| Phase 0-4 | Stage 0-6 | ✅ |
-| Phase 5 | Stage 7-12 | ✅ |
-| Phase 7 | Stage 13-17 | ✅ |
-| Phase 8 | Stage 18-20 | ✅ |
-| Phase 9 | Stage 21-24 | ✅ |
-
-### Phase 11：前端质量加固 + 安全达标（规划中）
-
-| Stage | 状态 | 目标 | 优先级 |
-|-------|------|------|--------|
-| Stage 25 | ⏳ 待开始 | 前端 BDD 测试基础设施 — Playwright + Gherkin + 截图/GIF + Mock API | P0 |
-| Stage 26 | ⏳ 待开始 | 登录安全对齐 Litellm — `/v2/login` JWT + Cookie + scrypt | P0 |
-| Stage 27 | ⏳ 待开始 | 移动端适配 — 全页面响应式改造 | P1 |
-| Stage 28 | ⏳ 待开始 | Key 创建 UX 修复 — Token 展示 + 复制确认 | P0 |
-| Stage 29 | ⏳ 待开始 | 用户/组织/团队管理前端页面 | P1 |
-| Stage 30 | ⏳ 待开始 | Dashboard 数据接入 + 移动端图表 | P2 |
-
-**依赖关系**:
 ```
-Stage 25 (BDD 基础设施)
-  ├── Stage 26 (登录安全)
-  ├── Stage 27 (移动端)
-  │     └── Stage 29 (用户管理页面)
-  ├── Stage 28 (Key UX)
-  └── Stage 30 (Dashboard 数据)
+Phase 0-4:  ████████████████████ 100% (6/6)  ✅ 项目基础设施 + 功能对等 + 部署就绪
+Phase 5:    ████████████████████ 100% (6/6)  ✅ 最小化后端 + BDD 测试
+Phase 7:    ████████████████████ 100% (5/5)  ✅ 生产 litellm 迁移
+Phase 8:    ████████████████████ 100% (3/3)  ✅ 生产化基础（日志/多租户/健康检查）
+Phase 9:    ████████████████████ 100% (4/4)  ✅ 前端管理控制台
+Phase 11:   ████████████████████ 100% (6/6)  ✅ 前端质量加固 + 安全达标
 ```
 
-详见各 Stage 文档：`docs/stages/stage-{25..30}.md` 和 `docs/stages/stage-roadmap.md`
+### 测试状态
 
----
-## 立即行动：Stage 25 — 前端 BDD 测试基础设施
+| 层 | 框架 | 通过 |
+|---|------|------|
+| 后端 BDD | cucumber-rust + libtest | 72 scenarios (63 mock + 9 real_api) |
+| 前端 BDD | Playwright + playwright-bdd | 69 tests (23 scenarios × 3 viewports) |
 
-**问题**：前端没有任何自动化测试。Login 跳转失败、Key 创建 UX bug 等问题因无测试而未被发现。
+## 交付成果
 
-**方案**：Playwright + `playwright-bdd`（Gherkin .feature）覆盖 Login/Dashboard/Keys/Models 4 页面。
+- **30/30 Stages** 全部完成
+- **BDD 72 后端场景 + 69 前端测试** 全部通过
+- **SQLite / MySQL / PostgreSQL** 三数据库支持
+- **Docker Compose** 一键部署
+- **Rust 单二进制部署**（rust-embed 嵌入前端）
+- **前端管理控制台** 6 页面（Dashboard、Keys、Models、Users、Orgs、Teams）
+- **移动端适配** 全页面响应式（375px/768px/1280px）
+- **登录安全** JWT + Cookie + scrypt 密码哈希（对齐 litellm v2/login）
+- **OpenAPI 3.1** 完整规范 + Swagger UI
+- **结构化日志** JSON 格式 + UUID v7 request_id
+- **多租户管理 API** org/team/user CRUD（15 端点）
+- **生产迁移工具** aigw-migrate + pre-check + rollback.sh
 
-**覆盖范围**：
-- 3 种 viewport：375px（手机）、768px（平板）、1280px（桌面）
-- 失败截图 + trace + video（人工复查用）
-- Mock API（Playwright route interception）
+## 后续路线（Phase 10）
 
-**预估**: 4-6h
+| ID | 主题 | 优先级 | 触发条件 |
+|----|------|--------|---------|
+| LT-2 | Redis 缓存 + 性能优化 | P2 | QPS > 1000 |
+| LT-3 | Observability (Prometheus + OTEL) | P2 | 生产环境部署 |
+| LT-5 | SSO/OAuth 鉴权 | P3 | 企业客户需求 |
+| LT-6 | PostgreSQL 生产级支持 + 迁移工具 | P2 | 多实例 + 高可用 |
+| LT-7 | Kubernetes Operator + Helm Chart | P3 | 云原生客户需求 |
 
----
-## 技术债状态
+## 技术债
 
 | 编号 | 状态 | 说明 |
 |------|------|------|
-| TD-001 | ✅ 已解决 | Dead code cleanup |
-| TD-002 | ✅ 已解决 | @real_api step bindings 实现 |
-| TD-003 | ⏳ 待处理 | BDD 覆盖率报告自动化（P3） |
-| TD-004 | 🔴 新增 | 登录裸 sk 存 localStorage（P0，Stage 26 修复） |
-| TD-005 | 🔴 新增 | 前端无自动化测试（P0，Stage 25 修复） |
-| TD-006 | 🟡 新增 | Key 创建后 token 不可见（P0，Stage 28 修复） |
+| TD-001 | ✅ | Dead code cleanup |
+| TD-002 | ✅ | @real_api step bindings |
+| TD-003 | ⏳ | BDD 覆盖率报告自动化（P3） |
+| TD-004 | ✅ | 登录裸 sk → Stage 26 JWT+Cookie |
+| TD-005 | ✅ | 前端无测试 → Stage 25 BDD |
+| TD-006 | ✅ | Key token 不可见 → Stage 28 修复 |
 
-## 关键技术成果
+## ADR 记录
 
-- **BDD 72 场景全部通过**（63 @mock + 9 @real_api）
-- **257 步骤**全覆盖
-- **SQLite / MySQL / PostgreSQL** 三数据库支持
-- **OpenAPI 3.1** 完整规范
-- **Docker Compose** 一键部署
-- **双向迁移工具** litellm ↔ aigw（含 pre-check + rollback.sh）
-- **结构化日志** JSON 格式 + UUID v7 request_id
-- **多租户管理 API** org/team/user CRUD（15 端点）
-- **健康检查增强** /health/metrics（DB 连接池、uptime、key/model 计数）
-- **前端管理控制台** React + shadcn/ui（Dashboard、Keys、Models）
-- **ADR-007** 前端技术栈决策记录
-
-## 长期路线（Phase 10）
-
-参见 `docs/stages/stage-roadmap.md` Phase 10 表格
+| 编号 | 决策 | 日期 |
+|------|------|------|
+| ADR-001 | SQLite 默认 + 多数据库支持 | 2026-07-03 |
+| ADR-002 | 纯 DB 迁移方案（非 API 中转） | 2026-07-05 |
+| ADR-003 | NaCl SecretBox 解密 + master_key 重加密 | 2026-07-06 |
+| ADR-004 | aigw-migrate 工具设计 | 2026-07-06 |
+| ADR-005 | 结构化日志方案（tracing + JSON） | 2026-07-08 |
+| ADR-006 | 多租户 API 设计 | 2026-07-08 |
+| ADR-007 | 前端技术栈决策 | 2026-07-08 |

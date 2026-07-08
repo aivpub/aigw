@@ -195,7 +195,7 @@ export function DashboardPage() {
       </div>
 
       {/* Spend Cards */}
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 grid-cols-2 md:grid-cols-3">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium">Total Spend</CardTitle>
@@ -260,29 +260,31 @@ export function DashboardPage() {
                 No data available
               </div>
             ) : (
-              <ResponsiveContainer width="100%" height={280}>
-                <BarChart data={modelChartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                  <XAxis
-                    dataKey="name"
-                    tick={{ fontSize: 11 }}
-                    stroke="hsl(var(--muted-foreground))"
-                  />
-                  <YAxis
-                    tick={{ fontSize: 11 }}
-                    stroke="hsl(var(--muted-foreground))"
-                  />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: "hsl(var(--card))",
-                      border: "1px solid hsl(var(--border))",
-                      borderRadius: "6px",
-                    }}
-                    formatter={(value) => [fmtSpend(value as number), "Spend"]}
-                  />
-                  <Bar dataKey="spend" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+              <div className="h-[200px] md:h-[280px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={modelChartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                    <XAxis
+                      dataKey="name"
+                      tick={{ fontSize: 11 }}
+                      stroke="hsl(var(--muted-foreground))"
+                    />
+                    <YAxis
+                      tick={{ fontSize: 11 }}
+                      stroke="hsl(var(--muted-foreground))"
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: "hsl(var(--card))",
+                        border: "1px solid hsl(var(--border))",
+                        borderRadius: "6px",
+                      }}
+                      formatter={(value) => [fmtSpend(value as number), "Spend"]}
+                    />
+                    <Bar dataKey="spend" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
             )}
           </CardContent>
         </Card>
@@ -301,34 +303,36 @@ export function DashboardPage() {
                 No data available
               </div>
             ) : (
-              <ResponsiveContainer width="100%" height={280}>
-                <PieChart>
-                  <Pie
-                    data={providerChartData}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={60}
-                    outerRadius={100}
-                    paddingAngle={2}
-                    dataKey="value"
-                    label={({ name, value }) => `${name}: ${fmtSpend(value)}`}
-                    labelLine={false}
-                  >
-                    {providerChartData.map((_, i) => (
-                      <Cell key={i} fill={COLORS[i % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: "hsl(var(--card))",
-                      border: "1px solid hsl(var(--border))",
-                      borderRadius: "6px",
-                    }}
-                    formatter={(value) => [fmtSpend(value as number), "Spend"]}
-                  />
-                  <Legend />
-                </PieChart>
-              </ResponsiveContainer>
+              <div className="h-[200px] md:h-[280px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={providerChartData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={50}
+                      outerRadius={80}
+                      paddingAngle={2}
+                      dataKey="value"
+                      label={({ name, value }) => `${name}: ${fmtSpend(value)}`}
+                      labelLine={false}
+                    >
+                      {providerChartData.map((_, i) => (
+                        <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: "hsl(var(--card))",
+                        border: "1px solid hsl(var(--border))",
+                        borderRadius: "6px",
+                      }}
+                      formatter={(value) => [fmtSpend(value as number), "Spend"]}
+                    />
+                    <Legend />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
             )}
           </CardContent>
         </Card>
@@ -337,28 +341,28 @@ export function DashboardPage() {
       {/* Date Filter + Spend Logs Table */}
       <Card>
         <CardHeader className="pb-2">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
             <CardTitle className="text-sm font-medium">Spend Logs</CardTitle>
-            <div className="flex items-center gap-3">
-              <Calendar className="h-4 w-4 text-muted-foreground" />
-              <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <Calendar className="h-4 w-4 text-muted-foreground hidden sm:block" />
+              <div className="flex items-center gap-1.5">
                 <Label className="text-xs" htmlFor="start-date">From</Label>
                 <Input
                   id="start-date"
                   type="date"
                   value={startDate}
                   onChange={(e) => setStartDate(e.target.value)}
-                  className="h-8 w-36 text-xs"
+                  className="h-8 w-32 text-xs"
                 />
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5">
                 <Label className="text-xs" htmlFor="end-date">To</Label>
                 <Input
                   id="end-date"
                   type="date"
                   value={endDate}
                   onChange={(e) => setEndDate(e.target.value)}
-                  className="h-8 w-36 text-xs"
+                  className="h-8 w-32 text-xs"
                 />
               </div>
             </div>
@@ -376,46 +380,91 @@ export function DashboardPage() {
               No spend logs found for this period
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Time</TableHead>
-                  <TableHead>Model</TableHead>
-                  <TableHead className="text-right">Tokens</TableHead>
-                  <TableHead className="text-right">Cost</TableHead>
-                  <TableHead>Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
+            <>
+              {/* Desktop table */}
+              <div className="hidden md:block">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Time</TableHead>
+                      <TableHead>Model</TableHead>
+                      <TableHead className="text-right">Tokens</TableHead>
+                      <TableHead className="text-right">Cost</TableHead>
+                      <TableHead>Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {logs.map((log) => (
+                      <TableRow key={log.request_id}>
+                        <TableCell className="text-xs">
+                          {log.start_time
+                            ? format(new Date(log.start_time), "MM-dd HH:mm")
+                            : "—"}
+                        </TableCell>
+                        <TableCell className="text-sm">{log.model}</TableCell>
+                        <TableCell className="text-right text-sm">
+                          {fmtTokens(log.total_tokens)}
+                        </TableCell>
+                        <TableCell className="text-right text-sm font-mono">
+                          {fmtSpend(log.spend)}
+                        </TableCell>
+                        <TableCell>
+                          <span
+                            className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ${
+                              log.status === "success"
+                                ? "bg-green-50 text-green-700 dark:bg-green-950 dark:text-green-400"
+                                : "bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-400"
+                            }`}
+                          >
+                            {log.status}
+                          </span>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {/* Mobile card list */}
+              <div className="md:hidden space-y-2">
                 {logs.map((log) => (
-                  <TableRow key={log.request_id}>
-                    <TableCell className="text-xs">
-                      {log.start_time
-                        ? format(new Date(log.start_time), "MM-dd HH:mm")
-                        : "—"}
-                    </TableCell>
-                    <TableCell className="text-sm">{log.model}</TableCell>
-                    <TableCell className="text-right text-sm">
-                      {fmtTokens(log.total_tokens)}
-                    </TableCell>
-                    <TableCell className="text-right text-sm font-mono">
-                      {fmtSpend(log.spend)}
-                    </TableCell>
-                    <TableCell>
-                      <span
-                        className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium ${
-                          log.status === "success"
-                            ? "bg-green-50 text-green-700 dark:bg-green-950 dark:text-green-400"
-                            : "bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-400"
-                        }`}
-                      >
-                        {log.status}
-                      </span>
-                    </TableCell>
-                  </TableRow>
+                  <div
+                    key={log.request_id}
+                    className="flex items-center justify-between rounded-md border p-3"
+                  >
+                    <div className="space-y-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium truncate">
+                          {log.model}
+                        </span>
+                        <span
+                          className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-xs font-medium ${
+                            log.status === "success"
+                              ? "bg-green-50 text-green-700 dark:bg-green-950 dark:text-green-400"
+                              : "bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-400"
+                          }`}
+                        >
+                          {log.status}
+                        </span>
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {log.start_time
+                          ? format(new Date(log.start_time), "MM-dd HH:mm")
+                          : "—"}
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0 ml-3">
+                      <div className="text-sm font-mono font-medium">
+                        {fmtSpend(log.spend)}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {fmtTokens(log.total_tokens)} tokens
+                      </div>
+                    </div>
+                  </div>
                 ))}
-              </TableBody>
-            </Table>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>

@@ -1,25 +1,28 @@
 import { createBdd } from "playwright-bdd";
 import { expect } from "@playwright/test";
+import { mockAllApis, mockApisUnauthenticated } from "./api-mocks";
 
 const { Given, When, Then } = createBdd();
 
 Given("I am on the login page", async ({ page }) => {
+  // Mock APIs in unauthenticated mode so /v2/login/check returns 401
+  await mockApisUnauthenticated(page);
   await page.goto("/dash/login");
 });
 
 Given("I am already authenticated via cookie", async ({ page }) => {
+  // Use full mocks (authenticated) — no Background override in Already-authenticated scenario
+  await mockAllApis(page);
   await page.context().addCookies([{
     name: "aigw_master_key",
     value: "sk-master-change-me",
     path: "/",
     domain: "localhost",
   }]);
-  // Must navigate to baseURL first to establish an origin for localStorage
-  await page.goto("/");
-  // Set localStorage so useAuth returns isAuthenticated=true
-  await page.evaluate(() => {
-    localStorage.setItem("aigw_master_key", "sk-master-change-me");
-  });
+  // Auth is cookie-based — the cookie above + mock for /v2/login/check handles it
+  await page.goto("/dash/home");
+  // Wait for React auth check to resolve and dashboard to render
+  await page.waitForTimeout(3000);
 });
 
 When("I type {string} into the username field", async ({ page }, value: string) => {
@@ -36,10 +39,10 @@ When("I type {string} into the username field", async ({ page }, value: string) 
 });
 
 When("I type {string} into the password field", async ({ page }, value: string) => {
-  // Current login page uses a single key input labeled with placeholder "sk-..."
-  const tokenInput = page.getByPlaceholder("sk-...");
-  if (await tokenInput.isVisible()) {
-    await tokenInput.fill(value);
+  // Login page password input has placeholder "Password"
+  const pwdInput = page.getByPlaceholder(/password/i).first();
+  if (await pwdInput.isVisible({ timeout: 2000 }).catch(() => false)) {
+    await pwdInput.fill(value);
   }
 });
 

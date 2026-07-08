@@ -19,6 +19,12 @@ Feature: Key Management
     When I type "prod" into the search box
     Then only keys matching "prod" should be shown
 
+  Scenario: Key token is shown after creation
+    When I click the "New Key" button
+    And I fill in the key creation form
+    And I submit the key creation form
+    Then I should see the generated API key token
+
   Scenario: Delete a key
     When I click the delete button for the first key
     And I confirm the deletion

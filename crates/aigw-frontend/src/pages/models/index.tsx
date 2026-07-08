@@ -150,27 +150,167 @@ export function ModelsPage() {
               {(error as Error).message}
             </p>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-8" />
-                  <TableHead>Model Name</TableHead>
-                  <TableHead>Provider</TableHead>
-                  <TableHead>Upstream Model</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Created</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
+            <>
+              {/* Desktop table */}
+              <div className="hidden md:block">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-8" />
+                      <TableHead>Model Name</TableHead>
+                      <TableHead>Provider</TableHead>
+                      <TableHead>Upstream Model</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Created</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {isLoading
+                      ? Array.from({ length: 3 }).map((_, i) => (
+                          <TableRow key={i}>
+                            {Array.from({ length: 6 }).map((_, j) => (
+                              <TableCell key={j}>
+                                <Skeleton className="h-4 w-full" />
+                              </TableCell>
+                            ))}
+                          </TableRow>
+                        ))
+                      : filteredModels.map((model) => {
+                          const active = isActive(model.model_info);
+                          const provider = extractProvider(model.litellm_params);
+                          const upstream = extractModelType(model.litellm_params);
+                          const isExpanded = expanded.has(model.model_id);
+
+                          return (
+                            <>
+                              <TableRow
+                                key={model.model_id}
+                                className="cursor-pointer hover:bg-muted/50"
+                                onClick={() => toggleExpand(model.model_id)}
+                              >
+                                <TableCell>
+                                  {isExpanded ? (
+                                    <ChevronDown className="h-4 w-4" />
+                                  ) : (
+                                    <ChevronRight className="h-4 w-4" />
+                                  )}
+                                </TableCell>
+                                <TableCell className="font-mono text-sm font-medium">
+                                  {model.model_name}
+                                </TableCell>
+                                <TableCell className="text-sm">{provider}</TableCell>
+                                <TableCell className="text-sm text-muted-foreground">
+                                  {upstream}
+                                </TableCell>
+                                <TableCell>
+                                  <Badge variant={active ? "default" : "secondary"}>
+                                    {active ? "active" : "inactive"}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell className="text-xs text-muted-foreground">
+                                  {model.created_at
+                                    ? new Date(model.created_at).toLocaleDateString()
+                                    : "—"}
+                                </TableCell>
+                              </TableRow>
+                              {isExpanded && (
+                                <TableRow key={`${model.model_id}-detail`}>
+                                  <TableCell colSpan={6} className="bg-muted/30 p-4">
+                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                      <div>
+                                        <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                                          litellm_params
+                                        </h4>
+                                        <div className="rounded-md border bg-card p-3 font-mono text-xs leading-relaxed overflow-auto max-h-64">
+                                          {Object.entries(model.litellm_params).length === 0
+                                            ? "(empty)"
+                                            : Object.entries(model.litellm_params).map(
+                                                ([key, value]) => (
+                                                  <div key={key} className="flex gap-2">
+                                                    <span className="text-muted-foreground shrink-0">
+                                                      {key}:
+                                                    </span>
+                                                    <span>{renderJsonValue(value)}</span>
+                                                  </div>
+                                                ),
+                                              )}
+                                        </div>
+                                      </div>
+                                      <div>
+                                        <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+                                          model_info
+                                        </h4>
+                                        <div className="rounded-md border bg-card p-3 font-mono text-xs leading-relaxed overflow-auto max-h-64">
+                                          {Object.entries(model.model_info).length === 0
+                                            ? "(empty)"
+                                            : Object.entries(model.model_info).map(
+                                                ([key, value]) => (
+                                                  <div key={key} className="flex gap-2">
+                                                    <span className="text-muted-foreground shrink-0">
+                                                      {key}:
+                                                    </span>
+                                                    <span>{renderJsonValue(value)}</span>
+                                                  </div>
+                                                ),
+                                              )}
+                                        </div>
+                                      </div>
+                                    </div>
+                                    <div className="mt-3 flex gap-4 text-xs text-muted-foreground">
+                                      <span>
+                                        ID:{" "}
+                                        <code className="text-foreground">
+                                          {model.model_id}
+                                        </code>
+                                      </span>
+                                      {model.created_by && (
+                                        <span>
+                                          Created by:{" "}
+                                          <span className="text-foreground">
+                                            {model.created_by}
+                                          </span>
+                                        </span>
+                                      )}
+                                      {model.updated_by && (
+                                        <span>
+                                          Updated by:{" "}
+                                          <span className="text-foreground">
+                                            {model.updated_by}
+                                          </span>
+                                        </span>
+                                      )}
+                                    </div>
+                                  </TableCell>
+                                </TableRow>
+                              )}
+                            </>
+                          );
+                        })}
+                    {!isLoading && filteredModels.length === 0 && (
+                      <TableRow>
+                        <TableCell
+                          colSpan={6}
+                          className="text-center text-muted-foreground py-8"
+                        >
+                          {search ? "No models match your search" : "No models configured"}
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {/* Mobile card list */}
+              <div className="md:hidden space-y-3">
                 {isLoading
                   ? Array.from({ length: 3 }).map((_, i) => (
-                      <TableRow key={i}>
-                        {Array.from({ length: 6 }).map((_, j) => (
-                          <TableCell key={j}>
-                            <Skeleton className="h-4 w-full" />
-                          </TableCell>
-                        ))}
-                      </TableRow>
+                      <Card key={i}>
+                        <CardContent className="p-4 space-y-2">
+                          <Skeleton className="h-4 w-3/4" />
+                          <Skeleton className="h-4 w-full" />
+                          <Skeleton className="h-4 w-1/2" />
+                        </CardContent>
+                      </Card>
                     ))
                   : filteredModels.map((model) => {
                       const active = isActive(model.model_info);
@@ -179,127 +319,87 @@ export function ModelsPage() {
                       const isExpanded = expanded.has(model.model_id);
 
                       return (
-                        <>
-                          <TableRow
-                            key={model.model_id}
-                            className="cursor-pointer hover:bg-muted/50"
-                            onClick={() => toggleExpand(model.model_id)}
-                          >
-                            <TableCell>
-                              {isExpanded ? (
-                                <ChevronDown className="h-4 w-4" />
-                              ) : (
-                                <ChevronRight className="h-4 w-4" />
-                              )}
-                            </TableCell>
-                            <TableCell className="font-mono text-sm font-medium">
-                              {model.model_name}
-                            </TableCell>
-                            <TableCell className="text-sm">{provider}</TableCell>
-                            <TableCell className="text-sm text-muted-foreground">
-                              {upstream}
-                            </TableCell>
-                            <TableCell>
-                              <Badge variant={active ? "default" : "secondary"}>
+                        <Card key={model.model_id}>
+                          <CardContent className="p-4 space-y-2">
+                            <div
+                              className="flex items-center justify-between cursor-pointer"
+                              onClick={() => toggleExpand(model.model_id)}
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                {isExpanded ? (
+                                  <ChevronDown className="h-4 w-4 shrink-0" />
+                                ) : (
+                                  <ChevronRight className="h-4 w-4 shrink-0" />
+                                )}
+                                <span className="font-mono text-sm font-medium truncate">
+                                  {model.model_name}
+                                </span>
+                              </div>
+                              <Badge variant={active ? "default" : "secondary"} className="text-xs shrink-0 ml-2">
                                 {active ? "active" : "inactive"}
                               </Badge>
-                            </TableCell>
-                            <TableCell className="text-xs text-muted-foreground">
+                            </div>
+                            <div className="flex items-center justify-between text-xs text-muted-foreground">
+                              <span>Provider: {provider}</span>
+                              <span>Upstream: {upstream}</span>
+                            </div>
+                            <div className="text-xs text-muted-foreground">
                               {model.created_at
-                                ? new Date(model.created_at).toLocaleDateString()
+                                ? `Created ${new Date(model.created_at).toLocaleDateString()}`
                                 : "—"}
-                            </TableCell>
-                          </TableRow>
-                          {isExpanded && (
-                            <TableRow key={`${model.model_id}-detail`}>
-                              <TableCell colSpan={6} className="bg-muted/30 p-4">
-                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                                  {/* litellm_params */}
-                                  <div>
-                                    <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                                      litellm_params
-                                    </h4>
-                                    <div className="rounded-md border bg-card p-3 font-mono text-xs leading-relaxed overflow-auto max-h-64">
-                                      {Object.entries(model.litellm_params).length === 0
-                                        ? "(empty)"
-                                        : Object.entries(model.litellm_params).map(
-                                            ([key, value]) => (
-                                              <div key={key} className="flex gap-2">
-                                                <span className="text-muted-foreground shrink-0">
-                                                  {key}:
-                                                </span>
-                                                <span>{renderJsonValue(value)}</span>
-                                              </div>
-                                            ),
-                                          )}
-                                    </div>
-                                  </div>
-
-                                  {/* model_info */}
-                                  <div>
-                                    <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-                                      model_info
-                                    </h4>
-                                    <div className="rounded-md border bg-card p-3 font-mono text-xs leading-relaxed overflow-auto max-h-64">
-                                      {Object.entries(model.model_info).length === 0
-                                        ? "(empty)"
-                                        : Object.entries(model.model_info).map(
-                                            ([key, value]) => (
-                                              <div key={key} className="flex gap-2">
-                                                <span className="text-muted-foreground shrink-0">
-                                                  {key}:
-                                                </span>
-                                                <span>{renderJsonValue(value)}</span>
-                                              </div>
-                                            ),
-                                          )}
-                                    </div>
+                            </div>
+                            {isExpanded && (
+                              <div className="space-y-3 pt-2 border-t">
+                                <div>
+                                  <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">
+                                    litellm_params
+                                  </h4>
+                                  <div className="rounded-md border bg-muted/30 p-2 font-mono text-xs leading-relaxed max-h-40 overflow-auto">
+                                    {Object.entries(model.litellm_params).length === 0
+                                      ? "(empty)"
+                                      : Object.entries(model.litellm_params).map(
+                                          ([key, value]) => (
+                                            <div key={key} className="flex gap-2">
+                                              <span className="text-muted-foreground shrink-0">{key}:</span>
+                                              <span className="break-all">{renderJsonValue(value)}</span>
+                                            </div>
+                                          ),
+                                        )}
                                   </div>
                                 </div>
-
-                                {/* Metadata row */}
-                                <div className="mt-3 flex gap-4 text-xs text-muted-foreground">
-                                  <span>
-                                    ID:{" "}
-                                    <code className="text-foreground">
-                                      {model.model_id}
-                                    </code>
-                                  </span>
-                                  {model.created_by && (
-                                    <span>
-                                      Created by:{" "}
-                                      <span className="text-foreground">
-                                        {model.created_by}
-                                      </span>
-                                    </span>
-                                  )}
-                                  {model.updated_by && (
-                                    <span>
-                                      Updated by:{" "}
-                                      <span className="text-foreground">
-                                        {model.updated_by}
-                                      </span>
-                                    </span>
-                                  )}
+                                <div>
+                                  <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-1">
+                                    model_info
+                                  </h4>
+                                  <div className="rounded-md border bg-muted/30 p-2 font-mono text-xs leading-relaxed max-h-40 overflow-auto">
+                                    {Object.entries(model.model_info).length === 0
+                                      ? "(empty)"
+                                      : Object.entries(model.model_info).map(
+                                          ([key, value]) => (
+                                            <div key={key} className="flex gap-2">
+                                              <span className="text-muted-foreground shrink-0">{key}:</span>
+                                              <span className="break-all">{renderJsonValue(value)}</span>
+                                            </div>
+                                          ),
+                                        )}
+                                  </div>
                                 </div>
-                              </TableCell>
-                            </TableRow>
-                          )}
-                        </>
+                                <div className="text-xs text-muted-foreground">
+                                  ID: <code className="text-foreground break-all">{model.model_id}</code>
+                                </div>
+                              </div>
+                            )}
+                          </CardContent>
+                        </Card>
                       );
                     })}
                 {!isLoading && filteredModels.length === 0 && (
-                  <TableRow>
-                    <TableCell
-                      colSpan={6}
-                      className="text-center text-muted-foreground py-8"
-                    >
-                      {search ? "No models match your search" : "No models configured"}
-                    </TableCell>
-                  </TableRow>
+                  <div className="text-center text-muted-foreground py-8">
+                    {search ? "No models match your search" : "No models configured"}
+                  </div>
                 )}
-              </TableBody>
-            </Table>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>

@@ -1,8 +1,5 @@
 Feature: Login Authentication
 
-  Background:
-    Given API endpoints are mocked
-
   Scenario: Successful login and redirect
     Given I am on the login page
     When I type "admin" into the username field
@@ -20,6 +17,7 @@ Feature: Login Authentication
     Given I am on the login page
     When I type "admin" into the username field
     And I type "wrong-password" into the password field
+    And I click the Sign In button
     Then I should not be redirected to the home page
 
   Scenario: Already authenticated user is redirected

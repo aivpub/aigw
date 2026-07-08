@@ -101,10 +101,9 @@ export function KeysPage() {
     mutationFn: (body: Record<string, unknown>) =>
       apiPost<KeyItem>("/key/generate", body),
     onSuccess: (resp) => {
-      queryClient.invalidateQueries({ queryKey: ["virtual-keys"] });
-      setCreateOpen(false);
+      // Set token FIRST so the dialog shows it; keep dialog open
       setGeneratedToken(resp.key ?? null);
-      toast.success("Key created successfully");
+      toast.success("Key created. Please save your API key.");
     },
     onError: (err: Error) => toast.error(err.message),
   });
@@ -236,116 +235,204 @@ export function KeysPage() {
               {(error as Error).message}
             </p>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Alias</TableHead>
-                  <TableHead>Token</TableHead>
-                  <TableHead>User</TableHead>
-                  <TableHead>Models</TableHead>
-                  <TableHead className="text-right">Spend</TableHead>
-                  <TableHead className="text-right">Budget</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
+            <>
+              {/* Desktop table */}
+              <div className="hidden md:block">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Alias</TableHead>
+                      <TableHead>Token</TableHead>
+                      <TableHead>User</TableHead>
+                      <TableHead>Models</TableHead>
+                      <TableHead className="text-right">Spend</TableHead>
+                      <TableHead className="text-right">Budget</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {isLoading
+                      ? Array.from({ length: 3 }).map((_, i) => (
+                          <TableRow key={i}>
+                            {Array.from({ length: 8 }).map((_, j) => (
+                              <TableCell key={j}>
+                                <Skeleton className="h-4 w-full" />
+                              </TableCell>
+                            ))}
+                          </TableRow>
+                        ))
+                      : filteredKeys.map((key) => (
+                          <TableRow key={key.token}>
+                            <TableCell className="font-medium">
+                              {key.key_alias ?? key.key_name ?? "—"}
+                            </TableCell>
+                            <TableCell className="font-mono text-xs">
+                              <span className="inline-flex items-center gap-1">
+                                {visibleTokens.has(key.token)
+                                  ? key.token
+                                  : maskToken(key.token)}
+                                <button
+                                  type="button"
+                                  onClick={() => toggleTokenVisible(key.token)}
+                                  className="text-muted-foreground hover:text-foreground"
+                                >
+                                  {visibleTokens.has(key.token) ? (
+                                    <EyeOff className="h-3.5 w-3.5" />
+                                  ) : (
+                                    <Eye className="h-3.5 w-3.5" />
+                                  )}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => copyToClipboard(key.token)}
+                                  className="text-muted-foreground hover:text-foreground"
+                                >
+                                  <Copy className="h-3.5 w-3.5" />
+                                </button>
+                              </span>
+                            </TableCell>
+                            <TableCell className="text-sm">
+                              {key.user_id ?? "—"}
+                            </TableCell>
+                            <TableCell className="text-sm">
+                              {Array.isArray(key.models) && key.models.length > 0
+                                ? key.models.slice(0, 3).join(", ") +
+                                  (key.models.length > 3 ? " ..." : "")
+                                : "—"}
+                            </TableCell>
+                            <TableCell className="text-right text-sm">
+                              ${key.spend.toFixed(4)}
+                            </TableCell>
+                            <TableCell className="text-right text-sm">
+                              {key.max_budget != null
+                                ? `$${key.max_budget.toFixed(2)}`
+                                : "∞"}
+                            </TableCell>
+                            <TableCell>
+                              {key.blocked ? (
+                                <Badge variant="destructive">blocked</Badge>
+                              ) : (
+                                <Badge variant="default">active</Badge>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <div className="flex justify-end gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => openEdit(key)}
+                                >
+                                  <Pencil className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => openDelete(key)}
+                                >
+                                  <Trash2 className="h-4 w-4 text-destructive" />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                  </TableBody>
+                </Table>
+                {!isLoading && filteredKeys.length === 0 && (
+                  <div className="text-center text-muted-foreground py-8">
+                    {search ? "No keys match your search" : "No keys yet"}
+                  </div>
+                )}
+              </div>
+
+              {/* Mobile card list */}
+              <div className="md:hidden space-y-3">
                 {isLoading
                   ? Array.from({ length: 3 }).map((_, i) => (
-                      <TableRow key={i}>
-                        {Array.from({ length: 8 }).map((_, j) => (
-                          <TableCell key={j}>
-                            <Skeleton className="h-4 w-full" />
-                          </TableCell>
-                        ))}
-                      </TableRow>
+                      <Card key={i}>
+                        <CardContent className="p-4 space-y-2">
+                          <Skeleton className="h-4 w-3/4" />
+                          <Skeleton className="h-4 w-full" />
+                          <Skeleton className="h-4 w-1/2" />
+                        </CardContent>
+                      </Card>
                     ))
                   : filteredKeys.map((key) => (
-                      <TableRow key={key.token}>
-                        <TableCell className="font-medium">
-                          {key.key_alias ?? key.key_name ?? "—"}
-                        </TableCell>
-                        <TableCell className="font-mono text-xs">
-                          <span className="inline-flex items-center gap-1">
-                            {visibleTokens.has(key.token)
-                              ? key.token
-                              : maskToken(key.token)}
+                      <Card key={key.token}>
+                        <CardContent className="p-4 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="font-medium text-sm truncate max-w-[70%]">
+                              {key.key_alias ?? key.key_name ?? "—"}
+                            </span>
+                            {key.blocked ? (
+                              <Badge variant="destructive" className="text-xs">blocked</Badge>
+                            ) : (
+                              <Badge variant="default" className="text-xs">active</Badge>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 text-xs font-mono">
+                            <span className="text-muted-foreground truncate max-w-[60%]">
+                              {visibleTokens.has(key.token)
+                                ? key.token
+                                : maskToken(key.token)}
+                            </span>
                             <button
                               type="button"
                               onClick={() => toggleTokenVisible(key.token)}
-                              className="text-muted-foreground hover:text-foreground"
+                              className="text-muted-foreground hover:text-foreground shrink-0"
                             >
                               {visibleTokens.has(key.token) ? (
-                                <EyeOff className="h-3.5 w-3.5" />
+                                <EyeOff className="h-3 w-3" />
                               ) : (
-                                <Eye className="h-3.5 w-3.5" />
+                                <Eye className="h-3 w-3" />
                               )}
                             </button>
                             <button
                               type="button"
                               onClick={() => copyToClipboard(key.token)}
-                              className="text-muted-foreground hover:text-foreground"
+                              className="text-muted-foreground hover:text-foreground shrink-0"
                             >
-                              <Copy className="h-3.5 w-3.5" />
+                              <Copy className="h-3 w-3" />
                             </button>
-                          </span>
-                        </TableCell>
-                        <TableCell className="text-sm">
-                          {key.user_id ?? "—"}
-                        </TableCell>
-                        <TableCell className="text-sm">
-                          {Array.isArray(key.models) && key.models.length > 0
-                            ? key.models.slice(0, 3).join(", ") +
-                              (key.models.length > 3 ? " ..." : "")
-                            : "—"}
-                        </TableCell>
-                        <TableCell className="text-right text-sm">
-                          ${key.spend.toFixed(4)}
-                        </TableCell>
-                        <TableCell className="text-right text-sm">
-                          {key.max_budget != null
-                            ? `$${key.max_budget.toFixed(2)}`
-                            : "∞"}
-                        </TableCell>
-                        <TableCell>
-                          {key.blocked ? (
-                            <Badge variant="destructive">blocked</Badge>
-                          ) : (
-                            <Badge variant="default">active</Badge>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex justify-end gap-1">
+                          </div>
+                          <div className="flex items-center justify-between text-xs text-muted-foreground">
+                            <span>{key.user_id ?? "—"}</span>
+                            <span>
+                              Spent ${key.spend.toFixed(4)}
+                              {" / "}
+                              {key.max_budget != null
+                                ? `$${key.max_budget.toFixed(2)}`
+                                : "∞"}
+                            </span>
+                          </div>
+                          <div className="flex justify-end gap-1 pt-1">
                             <Button
                               variant="ghost"
-                              size="icon"
+                              size="sm"
                               onClick={() => openEdit(key)}
                             >
-                              <Pencil className="h-4 w-4" />
+                              <Pencil className="h-3.5 w-3.5 mr-1" />
+                              Edit
                             </Button>
                             <Button
                               variant="ghost"
-                              size="icon"
+                              size="sm"
                               onClick={() => openDelete(key)}
                             >
-                              <Trash2 className="h-4 w-4 text-destructive" />
+                              <Trash2 className="h-3.5 w-3.5 mr-1 text-destructive" />
+                              Delete
                             </Button>
                           </div>
-                        </TableCell>
-                      </TableRow>
+                        </CardContent>
+                      </Card>
                     ))}
                 {!isLoading && filteredKeys.length === 0 && (
-                  <TableRow>
-                    <TableCell
-                      colSpan={8}
-                      className="text-center text-muted-foreground py-8"
-                    >
-                      {search ? "No keys match your search" : "No keys yet"}
-                    </TableCell>
-                  </TableRow>
+                  <div className="text-center text-muted-foreground py-8">
+                    {search ? "No keys match your search" : "No keys yet"}
+                  </div>
                 )}
-              </TableBody>
-            </Table>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>
@@ -382,9 +469,10 @@ export function KeysPage() {
                 onClick={() => {
                   setCreateOpen(false);
                   setGeneratedToken(null);
+                  queryClient.invalidateQueries({ queryKey: ["virtual-keys"] });
                 }}
               >
-                Done
+                I've saved my key
               </Button>
             </div>
           ) : (
