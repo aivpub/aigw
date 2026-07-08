@@ -1,11 +1,11 @@
 # aigw -- 下一步行动
 
 **上次更新**: 2026-07-08
-**当前阶段**: 全部完成（30/30 Stages）
+**当前阶段**: Phase 12 — 前端导航重构 + Playground
 
 ---
 
-## 当前状态：Phase 0-11 全部完成
+## 当前状态：Phase 12 进行中
 
 ### 项目里程碑
 
@@ -16,6 +16,7 @@ Phase 7:    ████████████████████ 100% (5
 Phase 8:    ████████████████████ 100% (3/3)  ✅ 生产化基础（日志/多租户/健康检查）
 Phase 9:    ████████████████████ 100% (4/4)  ✅ 前端管理控制台
 Phase 11:   ████████████████████ 100% (6/6)  ✅ 前端质量加固 + 安全达标
+Phase 12:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3)  ⏳ 前端导航重构 + Playground
 ```
 
 ### 测试状态
@@ -33,6 +34,16 @@ Phase 11:   ████████████████████ 100% (6
 - **Docker Compose** 一键部署
 - **Rust 单二进制部署**（rust-embed 嵌入前端）
 - **前端管理控制台** 6 页面（Dashboard、Keys、Models、Users、Orgs、Teams）
+
+## Phase 12 待办（Stages 31-33）
+
+| Stage | 目标 | 状态 |
+|-------|------|------|
+| Stage 31 | 侧边栏分组重构 + Usage 重命名（对齐 litellm 5组结构） | ⏳ |
+| Stage 32 | Spend Logs 独立页面 | ⏳ |
+| Stage 33 | Playground Chat 调试页 | ⏳ |
+
+详见 `docs/plans/2026-07-08-sidebar-playground-redesign.md`
 - **移动端适配** 全页面响应式（375px/768px/1280px）
 - **登录安全** JWT + Cookie + scrypt 密码哈希（对齐 litellm v2/login）
 - **OpenAPI 3.1** 完整规范 + Swagger UI
