@@ -487,6 +487,10 @@ fn bind_value_from_row<'q>(
 }
 
 /// Extract litellm master_key from the LiteLLM_Config table.
+///
+/// Tries two strategies:
+/// 1. `param_name = 'litellm_master_key'` — legacy flat key (old litellm versions)
+/// 2. `param_name = 'general_settings'` — JSON with `master_key` field (current litellm)
 async fn extract_source_master_key(
     source: &AnyPool,
     source_url: &str,
@@ -496,12 +500,38 @@ async fn extract_source_master_key(
     } else {
         "param_value"
     };
+
+    // Strategy 1: legacy flat key
     let query = format!(
         "SELECT {} FROM \"LiteLLM_Config\" WHERE param_name = 'litellm_master_key'",
         col
     );
-    let row = sqlx::query(&query).fetch_optional(source).await?;
-    Ok(row.and_then(|r| r.try_get::<String, _>(0).ok()))
+    if let Some(row) = sqlx::query(&query).fetch_optional(source).await? {
+        if let Ok(val) = row.try_get::<String, _>(0) {
+            if !val.is_empty() {
+                return Ok(Some(val));
+            }
+        }
+    }
+
+    // Strategy 2: general_settings JSON
+    let query = format!(
+        "SELECT {} FROM \"LiteLLM_Config\" WHERE param_name = 'general_settings'",
+        col
+    );
+    if let Some(row) = sqlx::query(&query).fetch_optional(source).await? {
+        if let Ok(val) = row.try_get::<String, _>(0) {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&val) {
+                if let Some(mk) = parsed.get("master_key").and_then(|v| v.as_str()) {
+                    if !mk.is_empty() {
+                        return Ok(Some(mk.to_string()));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(None)
 }
 
 /// Tables without encrypted fields (plain copy).
@@ -1212,26 +1242,8 @@ async fn migrate_spend_logs(
 
 /// Run remote import. When `spend_log_limit` is Some(n), only import the first n
 /// spend_log rows (ordered by start_time ASC). None = import all rows.
-pub async fn run(
-    source_url: &str,
-    target_url: &str,
-    source_master_key: Option<&str>,
-    target_master_key: &str,
-    spend_log_limit: Option<usize>,
-) -> anyhow::Result<bool> {
-    run_filtered(
-        source_url,
-        target_url,
-        source_master_key,
-        target_master_key,
-        spend_log_limit,
-        None,
-    )
-    .await
-}
-
-/// Same as `run()` but accepts an optional `step_filter` — when set, only that step executes.
-/// Step numbers: 2=plain, 3=credentials, 4=proxy_models, 5=spend_logs (1 and 6 always run).
+/// `step_filter` (2=plain, 3=credentials, 4=proxy_models, 5=spend_logs) runs only that step;
+/// steps 1 (master_key extraction) and 6 (verification) always execute.
 pub async fn run_filtered(
     source_url: &str,
     target_url: &str,
@@ -1260,7 +1272,7 @@ pub async fn run_filtered(
             None => {
                 anyhow::bail!(
                     "No source master_key found. Provide --source-master-key or \
-                     ensure LiteLLM_Config has param_name='litellm_master_key'"
+                     ensure LiteLLM_Config has param_name='general_settings' with master_key field"
                 );
             }
         },
@@ -1590,7 +1602,7 @@ mod tests {
 
         // Run remote_import (source key from config, not CLI)
         let target_key = "sk-aigw-target-key-99999";
-        let result = run(src_str, tgt_str, None, target_key, None).await;
+        let result = run_filtered(src_str, tgt_str, None, target_key, None, None).await;
         assert!(result.is_ok(), "remote_import failed: {:?}", result.err());
 
         // Verify: credentials should be migrated with re-encryption

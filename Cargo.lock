@@ -96,6 +96,7 @@ dependencies = [
  "aigw-core",
  "anyhow",
  "clap",
+ "dotenvy",
  "serde",
  "serde_json",
  "sqlx",

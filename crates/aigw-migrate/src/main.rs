@@ -1,9 +1,9 @@
 //! aigw-migrate: Bidirectional migration CLI between litellm and aigw databases.
 //!
-//! Supports 3 commands:
-//!   import — copy data from litellm table names to aigw table names
-//!   export — copy data from aigw table names to litellm table names
-//!   verify — compare row counts between the two databases
+//! Environment variables (all optional; CLI flags take precedence):
+//!   AIGW_UPSTREAM_DB_URL — fallback for --source-url
+//!   AIGW_DATABASE_URL    — fallback for --target-url
+//!   AIGW_MASTER_KEY      — fallback for --target-master-key
 //!
 //! Table name mapping (litellm → aigw):
 //!   LiteLLM_VerificationToken      → virtual_keys
@@ -26,6 +26,44 @@ mod verify;
 use clap::{Parser, Subcommand};
 
 use aigw_migrate::TABLE_MAPPINGS;
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Env-resolve helpers — CLI flag > env var, with clear error if both missing
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+fn resolve_source_url(cli: Option<String>) -> anyhow::Result<String> {
+    cli.or_else(|| std::env::var("AIGW_UPSTREAM_DB_URL").ok())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Source URL required. Provide --source-url or set AIGW_UPSTREAM_DB_URL env var."
+            )
+        })
+}
+
+fn resolve_target_url(cli: Option<String>) -> anyhow::Result<String> {
+    cli.or_else(|| std::env::var("AIGW_DATABASE_URL").ok())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Target URL required. Provide --target-url or set AIGW_DATABASE_URL env var."
+            )
+        })
+}
+
+fn resolve_target_master_key(cli: Option<String>) -> anyhow::Result<String> {
+    cli.or_else(|| std::env::var("AIGW_MASTER_KEY").ok())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Target master key required. Provide --target-master-key or set AIGW_MASTER_KEY env var."
+            )
+        })
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// CLI
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 #[derive(Parser)]
 #[command(
@@ -69,40 +107,45 @@ enum Commands {
     },
     /// Full migration: litellm → aigw with encryption key rotation
     RemoteImport {
-
-        /// Source database URL (postgres:// or mysql:// or sqlite://)
+        /// Source database URL (falls back to AIGW_UPSTREAM_DB_URL env var)
         #[arg(long)]
-        source_url: String,
-        /// Target database URL or file path
+        source_url: Option<String>,
+        /// Target database URL or file path (falls back to AIGW_DATABASE_URL env var)
         #[arg(long)]
-        target_url: String,
+        target_url: Option<String>,
         /// Source master key (optional; auto-extracted from LiteLLM_Config if not provided)
         #[arg(long = "source-master-key")]
         source_master_key: Option<String>,
         /// Target master key (falls back to AIGW_MASTER_KEY env var)
         #[arg(long = "target-master-key")]
         target_master_key: Option<String>,
+        /// Limit spend_logs rows (None = import all, ordered by start_time ASC)
+        #[arg(long = "spend-log-limit")]
+        spend_log_limit: Option<usize>,
+        /// Run only a single migration step: 2=plain, 3=credentials, 4=proxy_models, 5=spend_logs
+        #[arg(long = "step-filter")]
+        step_filter: Option<u8>,
     },
     /// Pre-migration checks: verify source/target connectivity, keys, and data
     PreCheck {
-        /// Source database URL (litellm DB)
+        /// Source database URL (falls back to AIGW_UPSTREAM_DB_URL env var)
         #[arg(long)]
-        source_url: String,
-        /// Target database URL (aigw DB)
+        source_url: Option<String>,
+        /// Target database URL (falls back to AIGW_DATABASE_URL env var)
         #[arg(long)]
-        target_url: String,
+        target_url: Option<String>,
         /// Target master key (falls back to AIGW_MASTER_KEY env var)
         #[arg(long = "target-master-key")]
         target_master_key: Option<String>,
     },
     /// Full reverse migration: aigw → litellm with encryption key rotation
     RemoteExport {
-        /// Source database URL (aigw DB)
+        /// Source database URL (falls back to AIGW_DATABASE_URL env var)
         #[arg(long)]
-        source_url: String,
-        /// Target database URL (litellm DB)
+        source_url: Option<String>,
+        /// Target database URL (falls back to AIGW_UPSTREAM_DB_URL env var)
         #[arg(long)]
-        target_url: String,
+        target_url: Option<String>,
         /// Source master key (aigw key; falls back to AIGW_MASTER_KEY env var)
         #[arg(long = "source-master-key")]
         source_master_key: Option<String>,
@@ -114,6 +157,10 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Load .env from cwd (falls back to parent dirs) so all vars can be set
+    // in a .env file instead of shell exports.
+    let _ = dotenvy::dotenv();
+
     let cli = Cli::parse();
 
     match cli.command {
@@ -146,13 +193,9 @@ async fn main() -> anyhow::Result<()> {
             target_url,
             target_master_key,
         } => {
-            let target_key = target_master_key
-                .or_else(|| std::env::var("AIGW_MASTER_KEY").ok())
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Target master key required. Provide --target-master-key or set AIGW_MASTER_KEY env var."
-                    )
-                })?;
+            let source_url = resolve_source_url(source_url)?;
+            let target_url = resolve_target_url(target_url)?;
+            let target_key = resolve_target_master_key(target_master_key)?;
             let all_pass = pre_check::run(&source_url, &target_url, &target_key).await?;
             if all_pass {
                 println!("All checks passed. Ready to migrate.");
@@ -167,24 +210,29 @@ async fn main() -> anyhow::Result<()> {
             target_url,
             source_master_key,
             target_master_key,
+            spend_log_limit,
+            step_filter,
         } => {
-            let target_key = target_master_key
-                .or_else(|| std::env::var("AIGW_MASTER_KEY").ok())
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Target master key required. Provide --target-master-key or set AIGW_MASTER_KEY env var."
-                    )
-                })?;
+            let source_url = resolve_source_url(source_url)?;
+            let target_url = resolve_target_url(target_url)?;
+            let target_key = resolve_target_master_key(target_master_key)?;
 
-            println!(
-                "Remote import: litellm ({source_url}) → aigw ({target_url})"
-            );
-            let all_match = remote_import::run(
+            if let Some(limit) = spend_log_limit {
+                println!(
+                    "Remote import: litellm ({source_url}) → aigw ({target_url}) [spend_logs limit={limit}]"
+                );
+            } else {
+                println!(
+                    "Remote import: litellm ({source_url}) → aigw ({target_url})"
+                );
+            }
+            let all_match = remote_import::run_filtered(
                 &source_url,
                 &target_url,
                 source_master_key.as_deref(),
                 &target_key,
-                None, // import all spend_logs
+                spend_log_limit,
+                step_filter,
             )
             .await?;
             if all_match {
@@ -200,17 +248,11 @@ async fn main() -> anyhow::Result<()> {
             source_master_key,
             target_master_key,
         } => {
-            let source_key = source_master_key
-                .or_else(|| std::env::var("AIGW_MASTER_KEY").ok())
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Source master key required. Provide --source-master-key or set AIGW_MASTER_KEY env var."
-                    )
-                })?;
+            let source_url = resolve_target_url(source_url)?;
+            let target_url = resolve_source_url(target_url)?;
+            let source_key = resolve_target_master_key(source_master_key)?;
 
-            println!(
-                "Remote export: aigw ({source_url}) → litellm ({target_url})"
-            );
+            println!("Remote export: aigw ({source_url}) → litellm ({target_url})");
             let all_match = remote_export::run(
                 &source_url,
                 &target_url,

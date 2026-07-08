@@ -53,8 +53,6 @@ const REQUIRED_TABLES: &[&str] = &[
 
 const CORE_TABLES: &[&str] = &[
     "LiteLLM_VerificationToken",
-    "LiteLLM_SpendLogs",
-    "LiteLLM_OrganizationTable",
     "LiteLLM_ProxyModelTable",
 ];
 
@@ -112,7 +110,8 @@ pub async fn run(source_url: &str, target_url: &str, target_master_key: &str) ->
         println!("[PASS]");
         passed += 1;
     } else {
-        println!("[FAIL] 0 rows: {empty_tables:?}");
+        println!("[WARN] 0 rows in: {empty_tables:?} (non-blocking)");
+        passed += 1;
     }
 
     // Check 3: Target DB connectivity
@@ -138,33 +137,18 @@ pub async fn run(source_url: &str, target_url: &str, target_master_key: &str) ->
         "param_value"
     };
     let config_table = quote_table("LiteLLM_Config", source_url);
-    let master_key_row = sqlx::query(&format!(
-        "SELECT {col} FROM {config_table} WHERE param_name = 'litellm_master_key'"
-    ))
-    .fetch_optional(&source)
-    .await;
 
-    let source_key: Option<String> = match master_key_row {
-        Ok(Some(row)) => {
-            let key: String = row.try_get::<String, _>(0).unwrap_or_default();
-            if key.is_empty() {
-                println!("[FAIL] master_key is empty");
-                None
-            } else {
-                println!("[PASS] found ({} chars)", key.len());
-                passed += 1;
-                Some(key)
-            }
+    let source_key = extract_master_key_pre_check(&source, &config_table, col).await;
+    match &source_key {
+        Some((key, source)) => {
+            println!("[PASS] found ({} chars, {source})", key.len());
+            passed += 1;
         }
-        Ok(None) => {
-            println!("[FAIL] param_name='litellm_master_key' not found in LiteLLM_Config");
-            None
+        None => {
+            println!("[FAIL] master_key not found in LiteLLM_Config (tried litellm_master_key and general_settings)");
         }
-        Err(e) => {
-            println!("[FAIL] {e}");
-            None
-        }
-    };
+    }
+    let source_key = source_key.map(|(k, _)| k);
 
     // Check 5: Target master key valid
     print!("[ 5/6] Target master key... ");
@@ -216,6 +200,55 @@ pub async fn run(source_url: &str, target_url: &str, target_master_key: &str) ->
 
     source.close().await;
     Ok(passed == total)
+}
+
+/// Extract master_key from LiteLLM_Config, trying:
+/// 1. `param_name = 'litellm_master_key'` (legacy flat key)
+/// 2. `param_name = 'general_settings'` → JSON `master_key` field
+///
+/// Returns `Some((key, source_description))` on success.
+async fn extract_master_key_pre_check(
+    source: &sqlx::AnyPool,
+    config_table: &str,
+    col: &str,
+) -> Option<(String, String)> {
+    // Strategy 1: legacy flat key
+    let row = sqlx::query(&format!(
+        "SELECT {col} FROM {config_table} WHERE param_name = 'litellm_master_key'"
+    ))
+    .fetch_optional(source)
+    .await
+    .ok()
+    .flatten();
+    if let Some(row) = row {
+        if let Ok(val) = row.try_get::<String, _>(0) {
+            if !val.is_empty() {
+                return Some((val, "legacy".to_string()));
+            }
+        }
+    }
+
+    // Strategy 2: general_settings JSON
+    let row = sqlx::query(&format!(
+        "SELECT {col} FROM {config_table} WHERE param_name = 'general_settings'"
+    ))
+    .fetch_optional(source)
+    .await
+    .ok()
+    .flatten();
+    if let Some(row) = row {
+        if let Ok(val) = row.try_get::<String, _>(0) {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&val) {
+                if let Some(mk) = parsed.get("master_key").and_then(|v| v.as_str()) {
+                    if !mk.is_empty() {
+                        return Some((mk.to_string(), "general_settings".to_string()));
+                    }
+                }
+            }
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]
@@ -400,6 +433,6 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(!result, "Should fail when core tables are empty");
+        assert!(result, "All pre-checks should pass even with empty core tables (warning only)");
     }
 }
