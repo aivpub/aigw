@@ -161,7 +161,7 @@
   server binary. CI pipelines should build the frontend first. Binary size increases
   by ~840KB (the frontend dist size).
 
-## ADR-008: Complete Core Stages (0-30) — Defer Production Advanced Features
+## ADR-009: Complete Core Stages (0-30) — Defer Production Advanced Features
 
 - **Date**: 2026-07-08
 - **Status**: Accepted
@@ -191,3 +191,38 @@
      sufficient observability for single-instance deployments.
   3. **Build K8s operator proactively**: Rejected — single-binary Docker deployment meets
      current needs; K8s is premature without multi-instance demand.
+
+## ADR-010: Phase 12 Completion — Sidebar Restructure + Playground + Spend Logs
+
+- **Date**: 2026-07-09
+- **Status**: Accepted
+- **Decision**: Complete Phase 12 (Stages 31-33): three-group sidebar navigation matching
+  litellm admin UI structure, standalone Spend Logs page with filters, and Playground Chat
+  debugging page with SSE streaming support. Mark all 33 stages complete as the production-ready
+  baseline.
+- **Background**: Phase 12 aligned the frontend admin console with litellm's production UI
+  patterns. Stage 31 restructured the sidebar into 3 groups (AI GATEWAY / OBSERVABILITY /
+  ACCESS CONTROL) with 8 pages. Stage 32 split Spend Logs from Usage into a dedicated page
+  with date/model filtering and 30s auto-refresh. Stage 33 added a Playground page for
+  interactive model testing with streaming toggle and Markdown response rendering.
+- **Rationale**: The litellm-compatible sidebar structure improves navigation UX for users
+  familiar with the upstream project. A standalone Spend Logs page addresses the unbounded
+  table growth problem on the Usage dashboard. The Playground provides a zero-cost way for
+  admins to test model behavior without leaving the admin console.
+- **Implementation**:
+  - Sidebar: `src/components/layout/sidebar.tsx` — three `<SidebarGroup>` sections with
+    grey uppercase headers, route-aware active state, 8 nav items
+  - Routes: `/dash` redirects to `/dash/usage`; `/dash/home` removed; pages at
+    `/dash/usage`, `/dash/virtual-keys`, `/dash/models`, `/dash/playground`,
+    `/dash/spend-logs`, `/dash/users`, `/dash/teams`, `/dash/organizations`
+  - Playground: Right-sidebar controls (model selector, temperature slider 0-2,
+    max tokens), left main area (System prompt textarea, User message textarea),
+    SSE streaming with abort support, react-markdown response rendering
+  - Spend Logs: Desktop table layout (Time, Model, Tokens, Cost, Status columns),
+    mobile card list layout, date range picker, model name filter, 30s auto-refresh
+- **Test Coverage**: 102 BDD tests passing (34 scenarios × 3 viewports: desktop 1280px,
+  tablet 768px, mobile 375px). playwright-bdd with Gherkin .feature files and TypeScript
+  step definitions. Mock API routes via Playwright route interception.
+- **Consequences**: 33/33 Stages complete. Frontend at 8 admin pages with full mobile
+  responsiveness. Phase 10 (Redis/Prometheus/OTEL/K8s) remains deferred to
+  trigger-based activation as documented in ADR-009.

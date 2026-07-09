@@ -1,11 +1,11 @@
 # aigw -- 下一步行动
 
-**上次更新**: 2026-07-08
-**当前阶段**: Phase 12 — 前端导航重构 + Playground
+**上次更新**: 2026-07-09
+**当前阶段**: Phase 12 — 全部完成（Stages 31-33）
 
 ---
 
-## 当前状态：Phase 12 进行中
+## 当前状态：全部完成 ✅
 
 ### 项目里程碑
 
@@ -16,7 +16,7 @@ Phase 7:    ████████████████████ 100% (5
 Phase 8:    ████████████████████ 100% (3/3)  ✅ 生产化基础（日志/多租户/健康检查）
 Phase 9:    ████████████████████ 100% (4/4)  ✅ 前端管理控制台
 Phase 11:   ████████████████████ 100% (6/6)  ✅ 前端质量加固 + 安全达标
-Phase 12:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3)  ⏳ 前端导航重构 + Playground
+Phase 12:   ████████████████████ 100% (3/3)  ✅ 前端导航重构 + Playground
 ```
 
 ### 测试状态
@@ -24,24 +24,24 @@ Phase 12:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 | 层 | 框架 | 通过 |
 |---|------|------|
 | 后端 BDD | cucumber-rust + libtest | 72 scenarios (63 mock + 9 real_api) |
-| 前端 BDD | Playwright + playwright-bdd | 69 tests (23 scenarios × 3 viewports) |
+| 前端 BDD | Playwright + playwright-bdd | 102 tests (34 scenarios × 3 viewports) |
 
 ## 交付成果
 
-- **30/30 Stages** 全部完成
-- **BDD 72 后端场景 + 69 前端测试** 全部通过
+- **33/33 Stages** 全部完成
+- **BDD 72 后端场景 + 102 前端测试** 全部通过
 - **SQLite / MySQL / PostgreSQL** 三数据库支持
 - **Docker Compose** 一键部署
 - **Rust 单二进制部署**（rust-embed 嵌入前端）
-- **前端管理控制台** 6 页面（Dashboard、Keys、Models、Users、Orgs、Teams）
+- **前端管理控制台** 8 页面（Usage、Keys、Models、Users、Orgs、Teams、Spend Logs、Playground）
 
-## Phase 12 待办（Stages 31-33）
+## Phase 12 完成（Stages 31-33）
 
 | Stage | 目标 | 状态 |
 |-------|------|------|
-| Stage 31 | 侧边栏分组重构 + Usage 重命名（对齐 litellm 5组结构） | ⏳ |
-| Stage 32 | Spend Logs 独立页面 | ⏳ |
-| Stage 33 | Playground Chat 调试页 | ⏳ |
+| Stage 31 | 侧边栏分组重构 + Usage 重命名（对齐 litellm 5组结构） | ✅ |
+| Stage 32 | Spend Logs 独立页面 | ✅ |
+| Stage 33 | Playground Chat 调试页 | ✅ |
 
 详见 `docs/plans/2026-07-08-sidebar-playground-redesign.md`
 - **移动端适配** 全页面响应式（375px/768px/1280px）
@@ -76,10 +76,13 @@ Phase 12:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 | 编号 | 决策 | 日期 |
 |------|------|------|
-| ADR-001 | SQLite 默认 + 多数据库支持 | 2026-07-03 |
-| ADR-002 | 纯 DB 迁移方案（非 API 中转） | 2026-07-05 |
-| ADR-003 | NaCl SecretBox 解密 + master_key 重加密 | 2026-07-06 |
-| ADR-004 | aigw-migrate 工具设计 | 2026-07-06 |
-| ADR-005 | 结构化日志方案（tracing + JSON） | 2026-07-08 |
-| ADR-006 | 多租户 API 设计 | 2026-07-08 |
-| ADR-007 | 前端技术栈决策 | 2026-07-08 |
+| ADR-001 | RDD Framework Adoption | 2026-07-03 |
+| ADR-002 | SQLite 默认 + 多数据库支持 | 2026-07-03 |
+| ADR-003 | litellm Schema 兼容性 | 2026-07-03 |
+| ADR-004 | Dual-Mode SaaS 架构 | 2026-07-03 |
+| ADR-005 | Taskfile.yml 统一工作流入口 | 2026-07-03 |
+| ADR-006 | BDD with cucumber-rust + Mock Upstream | 2026-07-04 |
+| ADR-007 | React + TypeScript + shadcn/ui 前端技术栈 | 2026-07-08 |
+| ADR-008 | rust-embed 单二进制前端部署 | 2026-07-08 |
+| ADR-009 | 核心 Stages 0-30 完成，延迟 Phase 10 | 2026-07-08 |
+| ADR-010 | Phase 12 完成 — Sidebar + Playground + Spend Logs | 2026-07-09 |

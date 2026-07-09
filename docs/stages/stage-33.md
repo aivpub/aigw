@@ -1,7 +1,7 @@
 # Stage 33: Playground Chat 调试页
 
 **Phase**: 12 — 前端导航重构 + Playground
-**状态**: ⏳ 待开始
+**状态**: ✅ 完成
 **预估**: 2.5h
 
 ---
@@ -12,17 +12,17 @@
 
 ## 验收标准
 
-- [ ] `/dash/playground` 页面加载成功
-- [ ] 模型选择 dropdown（从 `/v1/models` 拉取）
-- [ ] System Prompt 输入区（可选 textarea）
-- [ ] User Message 输入区（textarea，必填）
-- [ ] Temperature slider (0-2) + Max Tokens input
-- [ ] Send 按钮调用 `/v1/chat/completions`
-- [ ] Response 展示区（Markdown 渲染）
-- [ ] Streaming toggle + 流式输出支持
-- [ ] 移动端堆叠布局
-- [ ] Loading / Empty / Error 三态覆盖
-- [ ] BDD: page load, send message, streaming response, model select, empty state
+- [x] `/dash/playground` 页面加载成功
+- [x] 模型选择 dropdown（从 `/v1/models` 拉取）
+- [x] System Prompt 输入区（可选 textarea）
+- [x] User Message 输入区（textarea，必填）
+- [x] Temperature slider (0-2) + Max Tokens input
+- [x] Send 按钮调用 `/v1/chat/completions`
+- [x] Response 展示区（Markdown 渲染）
+- [x] Streaming toggle + 流式输出支持
+- [x] 移动端堆叠布局
+- [x] Loading / Empty / Error 三态覆盖
+- [x] BDD: page load, send message, streaming response, model select, empty state
 
 ## API
 

@@ -1,15 +1,15 @@
 # aigw — AI Gateway Stage Roadmap
 
 **项目**: aigw (litellm Rust 最小兼容替代)
-**最后更新**: 2026-07-08 (Phase 0-12，30 完成 + 3 规划中)
+**最后更新**: 2026-07-09 (Phase 0-12，33/33 Stages 全部完成)
 
 ---
 
 ## 当前状态
 
-- **当前 Stage**: Phase 12 — Stage 31 进行中
-- **状态**: Phase 0-11 全部完成（30/30 Stages 完成），Phase 12 开始
-- **下一里程碑**: Phase 12 前端导航重构 + Playground（Stages 31-33）
+- **当前 Stage**: Phase 12 — 全部完成（Stages 31-33）
+- **状态**: 33/33 Stages 全部完成，项目达到生产就绪基线
+- **下一里程碑**: Phase 10（Redis/Prometheus/OTEL/K8s）— 按需触发
 
 ### 整体进度
 
@@ -20,7 +20,7 @@ Phase 7:   ████████████████████ 100% (5/
 Phase 8:   ████████████████████ 100% (3/3 Stages)
 Phase 9:   ████████████████████ 100% (4/4 Stages)
 Phase 11:  ████████████████████ 100% (6/6 Stages)
-Phase 12:  ░░░░░░░░░░░░░░░░░░░░   0% (0/3 Stages)
+Phase 12:  ████████████████████ 100% (3/3 Stages)
 ```
 
 ---
@@ -174,9 +174,9 @@ Stage 25 是基础（所有后续 Stage 需 BDD R-G-R 循环）。Stage 27/28 �
 
 | Stage | 状态 | 目标 | 完成日期 |
 |-------|------|------|----------|
-| Stage 31 | ⏳ 待开始 | 侧边栏分组重构 + Usage 重命名 — litellm 5 组结构（AI GATEWAY/OBSERVABILITY/ACCESS CONTROL）+ Dashboard→Usage + Keys→Virtual Keys | — |
-| Stage 32 | ⏳ 待开始 | Spend Logs 独立页面 — 日期筛选 + 分页 + 移动端 card list + 30s 自动刷新 | — |
-| Stage 33 | ⏳ 待开始 | Playground Chat 调试页 — 模型选择 + System/User 消息 + Temperature/MaxTokens + Streaming | — |
+| Stage 31 | ✅ 完成 | 侧边栏分组重构 + Usage 重命名 — litellm 5 组结构（AI GATEWAY/OBSERVABILITY/ACCESS CONTROL）+ Dashboard→Usage + Keys→Virtual Keys | 2026-07-08 |
+| Stage 32 | ✅ 完成 | Spend Logs 独立页面 — 日期筛选 + 移动端 card list + 30s 自动刷新 | 2026-07-09 |
+| Stage 33 | ✅ 完成 | Playground Chat 调试页 — 模型选择 + System/User 消息 + Temperature/MaxTokens + Streaming + SSE mock | 2026-07-09 |
 
 **Stage 31-33 依赖关系**:
 
@@ -226,3 +226,4 @@ Stage 31 优先完成（路由+侧边栏基础设施），Stage 32/33 可并行�
 | v8.1 | 2026-07-08 | Stage 25-26 标记完成；Phase 11 进度 2/6 (33%) | Claude Code |
 | v9.0 | 2026-07-08 | Stage 27-30 全部完成；Phase 11 进度 6/6 (100%)；30/30 Stages 全部完成；69 BDD 测试通过（3 viewports × 23 scenarios） | Claude Code |
 | v10.0 | 2026-07-08 | 新增 Phase 12（Stage 31-33）：前端导航重构对齐 litellm 5 组结构、Spend Logs 独立页、Playground Chat 调试页 | Claude Code |
+| v11.0 | 2026-07-09 | Phase 12 全部完成（31-33）；33/33 Stages 完成；102 BDD 测试通过（34 scenarios × 3 viewports） | Claude Code |

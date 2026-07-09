@@ -1,7 +1,7 @@
 # Stage 32: Spend Logs 独立页面
 
 **Phase**: 12 — 前端导航重构 + Playground
-**状态**: ⏳ 待开始
+**状态**: ✅ 完成
 **预估**: 1.5h
 
 ---
@@ -12,15 +12,15 @@
 
 ## 验收标准
 
-- [ ] `/dash/spend-logs` 页面加载成功
-- [ ] 日期范围筛选（start_date / end_date），默认当前月
-- [ ] Model 过滤（可选下拉）
-- [ ] 分页或加载更多
-- [ ] 表格列: Time, Model, Tokens, Cost, Status
-- [ ] 30s 自动刷新
-- [ ] 移动端 card list 布局
-- [ ] Loading / Empty / Error 三态覆盖
-- [ ] BDD: page load, date filter, model filter, mobile view
+- [x] `/dash/spend-logs` 页面加载成功
+- [x] 日期范围筛选（start_date / end_date），默认当前月
+- [x] Model 过滤（可选 text input）
+- [x] ~~分页或加载更多~~ 使用 limit=100 不分页
+- [x] 表格列: Time, Model, Tokens, Cost, Status
+- [x] 30s 自动刷新
+- [x] 移动端 card list 布局
+- [x] Loading / Empty / Error 三态覆盖
+- [x] BDD: page load, date filter, model filter, mobile view
 
 ## 关键文件
 
