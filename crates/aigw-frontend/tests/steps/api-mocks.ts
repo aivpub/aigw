@@ -171,6 +171,29 @@ export async function defineMockRoutes(route: Route, request: Request) {
   if (url.pathname === "/v1/models") {
     return route.fulfill({ status: 200, json: { data: [{ id: "gpt-4" }, { id: "claude-sonnet-4-6" }] } });
   }
+  if (url.pathname === "/v1/chat/completions" && route.request().method() === "POST") {
+    const reqBody = JSON.parse(request.postData() ?? "{}");
+    const isStream = reqBody.stream === true;
+    if (isStream) {
+      // Return multiple SSE chunks as a single body; the frontend ReadableStream reader
+      // will process them as individual data: lines.
+      const sseBody = [
+        `data: ${JSON.stringify({ choices: [{ delta: { content: "Hello" } }] })}\n\n`,
+        `data: ${JSON.stringify({ choices: [{ delta: { content: " from" } }] })}\n\n`,
+        `data: ${JSON.stringify({ choices: [{ delta: { content: " mock!" } }] })}\n\n`,
+        "data: [DONE]\n\n",
+      ].join("");
+      return route.fulfill({
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+        body: sseBody,
+      });
+    }
+    return route.fulfill({
+      status: 200,
+      json: { choices: [{ message: { content: "Mock response: I am doing well!" } }] },
+    });
+  }
 
   // Fallback: pass through
   return route.continue();

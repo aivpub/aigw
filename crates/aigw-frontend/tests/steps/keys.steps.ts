@@ -16,7 +16,7 @@ Given("I am logged in as admin", async ({ page }) => {
     domain: "localhost",
   }]);
   // Navigate to establish origin — auth is cookie-based, mock returns 200
-  await page.goto("/dash/home");
+  await page.goto("/dash/usage");
   // Vite HMR keeps WebSocket open so networkidle never fires;
   // React auth check takes ~1 RTT, wait for page to render dashboard content
   await page.waitForTimeout(3000);
@@ -29,8 +29,8 @@ Given("I am on the Keys page", async ({ page }) => {
   await page.waitForTimeout(500); // brief settle for React render
 });
 
-Given("I am on the Dashboard page", async ({ page }) => {
-  await page.goto("/dash/home");
+Given("I am on the Usage page", async ({ page }) => {
+  await page.goto("/dash/usage");
   // Vite HMR keeps a WebSocket open so networkidle never fires; use domcontentloaded instead
   await page.waitForLoadState("domcontentloaded");
   await page.waitForTimeout(500); // brief settle for React render

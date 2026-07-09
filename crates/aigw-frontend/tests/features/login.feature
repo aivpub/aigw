@@ -5,7 +5,7 @@ Feature: Login Authentication
     When I type "admin" into the username field
     And I type "sk-master-change-me" into the password field
     And I click the Sign In button
-    Then I should see the dashboard home page
+    Then I should see the usage page
     And the sidebar should be visible
 
   Scenario: Login with empty fields shows validation
@@ -18,9 +18,9 @@ Feature: Login Authentication
     When I type "admin" into the username field
     And I type "wrong-password" into the password field
     And I click the Sign In button
-    Then I should not be redirected to the home page
+    Then I should not be redirected to the usage page
 
   Scenario: Already authenticated user is redirected
     Given I am already authenticated via cookie
     When I visit "/dash/login"
-    Then I should be redirected to "/dash/home"
+    Then I should be redirected to "/dash/usage"

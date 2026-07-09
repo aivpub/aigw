@@ -20,7 +20,7 @@ Given("I am already authenticated via cookie", async ({ page }) => {
     domain: "localhost",
   }]);
   // Auth is cookie-based — the cookie above + mock for /v2/login/check handles it
-  await page.goto("/dash/home");
+  await page.goto("/dash/usage");
   // Wait for React auth check to resolve and dashboard to render
   await page.waitForTimeout(3000);
 });
@@ -55,8 +55,8 @@ When("I click the Sign In button without entering credentials", async ({ page })
   await page.getByRole("button", { name: /sign in/i }).click({ force: true });
 });
 
-Then("I should see the dashboard home page", async ({ page }) => {
-  await expect(page).toHaveURL(/\/dash\/home/);
+Then("I should see the usage page", async ({ page }) => {
+  await expect(page).toHaveURL(/\/dash\/usage/);
 });
 
 Then("the sidebar should be visible", async ({ page }) => {
@@ -68,7 +68,7 @@ Then("I should see an error message about invalid credentials", async ({ page })
   await expect(page.getByText(/failed|invalid|error|enter/i).first()).toBeVisible();
 });
 
-Then("I should not be redirected to the home page", async ({ page }) => {
+Then("I should not be redirected to the usage page", async ({ page }) => {
   await page.waitForTimeout(1000);
   await expect(page).toHaveURL(/\/dash\/login/);
 });

@@ -2,12 +2,14 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-route
 import { AuthProvider, useAuth } from "@/hooks/use-auth";
 import { Shell } from "@/components/layout/shell";
 import { LoginPage } from "@/pages/login";
-import { DashboardPage } from "@/pages/dashboard";
+import { UsagePage } from "@/pages/usage";
 import { KeysPage } from "@/pages/keys";
 import { ModelsPage } from "@/pages/models";
 import { UsersPage } from "@/pages/users";
 import { OrgsPage } from "@/pages/orgs";
 import { TeamsPage } from "@/pages/teams";
+import { SpendLogsPage } from "@/pages/spend-logs";
+import { PlaygroundPage } from "@/pages/playground";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth();
@@ -17,7 +19,7 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   if (isLoading) return null;
 
   if (!isAuthenticated) {
-    const redirect = location.pathname !== "/dash" ? location.pathname : "/dash/home";
+    const redirect = location.pathname !== "/dash" ? location.pathname : "/dash/usage";
     return <Navigate to={`/dash/login?redirect=${encodeURIComponent(redirect)}`} replace />;
   }
 
@@ -45,13 +47,15 @@ export default function App() {
               </RequireAuth>
             }
           >
-            <Route index element={<Navigate to="home" replace />} />
-            <Route path="home" element={<DashboardPage />} />
+            <Route index element={<Navigate to="usage" replace />} />
+            <Route path="usage" element={<UsagePage />} />
             <Route path="keys" element={<KeysPage />} />
             <Route path="models" element={<ModelsPage />} />
             <Route path="users" element={<UsersPage />} />
             <Route path="orgs" element={<OrgsPage />} />
             <Route path="teams" element={<TeamsPage />} />
+            <Route path="spend-logs" element={<SpendLogsPage />} />
+            <Route path="playground" element={<PlaygroundPage />} />
           </Route>
 
           {/* Catch-all: authenticated pages redirect to /dash; unauthenticated to login */}

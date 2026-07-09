@@ -15,7 +15,7 @@ export function LoginPage() {
   const { login, isAuthenticated } = useAuth();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const redirect = searchParams.get("redirect") ?? "/dash/home";
+  const redirect = searchParams.get("redirect") ?? "/dash/usage";
 
   // Already authenticated → redirect via React Router (SPA navigation)
   if (isAuthenticated) {
