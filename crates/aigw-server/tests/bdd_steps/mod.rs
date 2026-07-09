@@ -9,6 +9,7 @@ pub mod health_steps;
 pub mod keys_steps;
 pub mod messages_steps;
 pub mod migration_steps;
+pub mod model_access_steps;
 pub mod migration_rollback_steps;
 pub mod migration_sync_steps;
 pub mod model_steps;
