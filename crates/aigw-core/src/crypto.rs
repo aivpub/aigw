@@ -4,6 +4,7 @@
 //! compatible with litellm's encrypt_decrypt_utils.py.
 
 use base64::{engine::general_purpose::STANDARD as BASE64_STD, Engine};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 /// Hash a token string using SHA256, returning a hex-encoded string.
@@ -161,26 +162,139 @@ fn derive_gcm_key(master_key: &str, salt: &[u8]) -> [u8; 32] {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Nested field-level decryption
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Recursively walk a JSON value and attempt to decrypt every string leaf.
+///
+/// This handles the common litellm pattern where individual fields inside
+/// a `litellm_params` or `credential_values` JSON object are separately
+/// encrypted (e.g. `api_key`, `api_base`, `litellm_credential_name`).
+///
+/// `decrypt_litellm_value` safely rejects non-encrypted strings (wrong
+/// format / UTF-8 validation), so we can try-then-fallback without
+/// false positives.
+pub fn decrypt_json_fields(value: &Value, master_key: &str) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut out = serde_json::Map::new();
+            for (k, v) in map {
+                out.insert(k.clone(), decrypt_json_fields(v, master_key));
+            }
+            Value::Object(out)
+        }
+        Value::Array(arr) => {
+            Value::Array(arr.iter().map(|v| decrypt_json_fields(v, master_key)).collect())
+        }
+        Value::String(s) if !s.is_empty() && !s.starts_with('{') => {
+            match decrypt_litellm_value(s, master_key) {
+                Ok(decrypted) => {
+                    serde_json::from_str(&decrypted).unwrap_or(Value::String(decrypted))
+                }
+                Err(_) => value.clone(),
+            }
+        }
+        _ => value.clone(),
+    }
+}
+
+/// Recursively walk a JSON value and rotate individually encrypted string leaves
+/// from `source_key` to `target_key`.
+///
+/// Used during `remote-import` when `litellm_params` or `credential_values` is a JSON
+/// object whose individual fields (like `api_key`, `api_base`, `litellm_credential_name`)
+/// are separately encrypted rather than the whole value being a single blob.
+///
+/// Plain-text strings are left untouched.  The resulting serialised JSON string is
+/// returned so the caller can re-encrypt it as a single blob (matching the existing
+/// storage format).
+pub fn rotate_json_fields(
+    value: &Value,
+    source_key: &str,
+    target_key: &str,
+) -> Result<String, String> {
+    let rotated = rotate_fields_inner(value, source_key, target_key)?;
+    Ok(serde_json::to_string(&rotated).unwrap_or_else(|_| "{}".to_string()))
+}
+
+fn rotate_fields_inner(
+    value: &Value,
+    source_key: &str,
+    target_key: &str,
+) -> Result<Value, String> {
+    match value {
+        Value::Object(map) => {
+            let mut out = serde_json::Map::new();
+            for (k, v) in map {
+                out.insert(k.clone(), rotate_fields_inner(v, source_key, target_key)?);
+            }
+            Ok(Value::Object(out))
+        }
+        Value::Array(arr) => {
+            let rotated: Result<Vec<Value>, String> = arr
+                .iter()
+                .map(|v| rotate_fields_inner(v, source_key, target_key))
+                .collect();
+            Ok(Value::Array(rotated?))
+        }
+        Value::String(s) if !s.is_empty() && !s.starts_with('{') => {
+            // Try decrypting with source key; if it succeeds, re-encrypt with target key.
+            // If decrypt fails, it's plain text — leave untouched.
+            match decrypt_litellm_value(s, source_key) {
+                Ok(plaintext) => {
+                    encrypt_litellm_value(&plaintext, target_key).map(Value::String)
+                }
+                Err(_) => Ok(value.clone()),
+            }
+        }
+        _ => Ok(value.clone()),
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Helpers
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /// Base64-decode a string, trying multiple variants.
 ///
-/// First tries standard base64, then falls back to URL-safe base64.
+/// First tries standard base64, then falls back to URL-safe base64
+/// (with and without padding).  Finally tries normalizing URL-safe
+/// characters (`-` → `+`, `_` → `/`) inside a standard-base64 string.
 /// Also strips any "v2:gcm:" prefix before decoding.
 fn decode_base64_safe(input: &str) -> Result<Vec<u8>, String> {
     // Strip v2:gcm: prefix if present
     let encoded = input.strip_prefix("v2:gcm:").unwrap_or(input);
 
-    // Try standard base64 first
+    // 1. Try standard base64 first
     if let Ok(data) = BASE64_STD.decode(encoded) {
         return Ok(data);
     }
 
-    // Try URL-safe base64 (no padding) as fallback
+    // 2. Try URL-safe base64 (with padding)
+    use base64::engine::general_purpose::URL_SAFE;
+    if let Ok(data) = URL_SAFE.decode(encoded) {
+        return Ok(data);
+    }
+
+    // 3. Try URL-safe base64 (no padding)
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-    URL_SAFE_NO_PAD
-        .decode(encoded)
+    if let Ok(data) = URL_SAFE_NO_PAD.decode(encoded) {
+        return Ok(data);
+    }
+
+    // 4. Handle mixed encoding: some litellm deployments mix standard
+    //    and URL-safe characters in the same base64 string.  Normalize
+    //    URL-safe chars → standard, then decode with standard base64.
+    let normalized: String = encoded
+        .chars()
+        .map(|c| match c {
+            '-' => '+',
+            '_' => '/',
+            _ => c,
+        })
+        .collect();
+    BASE64_STD
+        .decode(&normalized)
         .map_err(|e| format!("base64 decode failed: {}", e))
 }
 
@@ -362,5 +476,191 @@ mod tests {
         let short = BASE64_STD.encode(b"short");
         let result = decrypt_litellm_value(&short, "sk-test");
         assert!(result.is_err());
+    }
+
+    // ━━━━━━━━━━━ decrypt_json_fields tests ━━━━━━━━━━━
+
+    fn make_encrypted(value: &str) -> String {
+        encrypt_litellm_value(value, "test-master-key").unwrap()
+    }
+
+    #[test]
+    fn test_decrypt_json_fields_nested_encrypted() {
+        let plain_api_base = "https://api.openai.com";
+        let plain_api_key = "sk-secret-key";
+        let params = serde_json::json!({
+            "model": "gpt-4",
+            "api_base": make_encrypted(plain_api_base),
+            "api_key": make_encrypted(plain_api_key),
+            "custom_llm_provider": "openai",
+        });
+        let result = decrypt_json_fields(&params, "test-master-key");
+        assert_eq!(result["model"], serde_json::json!("gpt-4"));
+        assert_eq!(result["api_base"], serde_json::json!(plain_api_base));
+        assert_eq!(result["api_key"], serde_json::json!("sk-secret-key"));
+        assert_eq!(result["custom_llm_provider"], serde_json::json!("openai"));
+    }
+
+    #[test]
+    fn test_decrypt_json_fields_plaintext_untouched() {
+        let params = serde_json::json!({
+            "model": "gpt-4",
+            "rpm": 100,
+            "tpm": 2000,
+            "api_base": "https://plain.example.com",
+        });
+        let result = decrypt_json_fields(&params, "test-master-key");
+        assert_eq!(result["model"], serde_json::json!("gpt-4"));
+        assert_eq!(result["rpm"], serde_json::json!(100));
+        assert_eq!(result["tpm"], serde_json::json!(2000));
+        assert_eq!(result["api_base"], serde_json::json!("https://plain.example.com"));
+    }
+
+    #[test]
+    fn test_decrypt_json_fields_empty_string_passes_through() {
+        let params = serde_json::json!({"model": "gpt-4", "api_base": ""});
+        let result = decrypt_json_fields(&params, "test-master-key");
+        assert_eq!(result["api_base"], serde_json::json!(""));
+    }
+
+    #[test]
+    fn test_decrypt_json_fields_recursive_in_object() {
+        let plain_deployment = "us-east-1";
+        let params = serde_json::json!({
+            "model": "bedrock",
+            "litellm_params": {
+                "deployment": make_encrypted(plain_deployment),
+                "region": "us-east-1",
+            },
+        });
+        let result = decrypt_json_fields(&params, "test-master-key");
+        assert_eq!(result["model"], serde_json::json!("bedrock"));
+        assert_eq!(result["litellm_params"]["deployment"], serde_json::json!(plain_deployment));
+        assert_eq!(result["litellm_params"]["region"], serde_json::json!("us-east-1"));
+    }
+
+    #[test]
+    fn test_decrypt_json_fields_in_arrays() {
+        let plain1 = "model-a";
+        let plain2 = "model-b";
+        let params = serde_json::json!({
+            "fallbacks": [
+                make_encrypted(plain1),
+                make_encrypted(plain2),
+            ],
+        });
+        let result = decrypt_json_fields(&params, "test-master-key");
+        assert_eq!(result["fallbacks"][0], serde_json::json!(plain1));
+        assert_eq!(result["fallbacks"][1], serde_json::json!(plain2));
+    }
+
+    #[test]
+    fn test_decrypt_json_fields_credential_name_encrypted() {
+        // Simulates the bug scenario: litellm_credential_name is individually encrypted
+        let plain_cred_name = "my-credential-123";
+        let params = serde_json::json!({
+            "model": "gpt-4",
+            "litellm_credential_name": make_encrypted(plain_cred_name),
+        });
+        let result = decrypt_json_fields(&params, "test-master-key");
+        assert_eq!(result["litellm_credential_name"], serde_json::json!(plain_cred_name));
+    }
+
+    #[test]
+    fn test_decrypt_json_fields_whole_encrypted_object_value() {
+        // Simulate whole model params encrypted as a single string
+        let plain = r#"{"model":"gpt-4","api_base":"https://api.openai.com"}"#;
+        let encrypted = make_encrypted(plain);
+        let result = decrypt_json_fields(&serde_json::json!(encrypted), "test-master-key");
+        assert_eq!(result["model"], serde_json::json!("gpt-4"));
+        assert_eq!(result["api_base"], serde_json::json!("https://api.openai.com"));
+    }
+
+    // ━━━━━━━━━━━ rotate_json_fields tests ━━━━━━━━━━━
+
+    const SOURCE_KEY: &str = "sk-source-key-abc";
+    const TARGET_KEY: &str = "sk-target-key-xyz";
+
+    fn make_encrypted_with_key(value: &str, key: &str) -> String {
+        encrypt_litellm_value(value, key).unwrap()
+    }
+
+    #[test]
+    fn test_rotate_json_fields_nested() {
+        let plain_api_key = "sk-secret-123";
+        let plain_api_base = "https://api.openai.com";
+        let params = serde_json::json!({
+            "model": "gpt-4",
+            "api_key": make_encrypted_with_key(plain_api_key, SOURCE_KEY),
+            "api_base": make_encrypted_with_key(plain_api_base, SOURCE_KEY),
+            "custom_llm_provider": "openai",
+        });
+
+        let rotated_str = rotate_json_fields(&params, SOURCE_KEY, TARGET_KEY).unwrap();
+        let rotated: Value = serde_json::from_str(&rotated_str).unwrap();
+
+        // The encrypted fields now decrypt with TARGET_KEY
+        assert_eq!(rotated["custom_llm_provider"], serde_json::json!("openai"));
+        let api_key_enc = rotated["api_key"].as_str().unwrap();
+        let decrypted_key = decrypt_litellm_value(api_key_enc, TARGET_KEY).unwrap();
+        assert_eq!(decrypted_key, plain_api_key);
+        // And they should NOT decrypt with the old SOURCE_KEY
+        assert!(decrypt_litellm_value(api_key_enc, SOURCE_KEY).is_err());
+    }
+
+    #[test]
+    fn test_rotate_json_fields_plaintext_untouched() {
+        let params = serde_json::json!({
+            "model": "gpt-4",
+            "rpm": 100,
+            "api_base": "https://plain.example.com",
+        });
+        let rotated_str = rotate_json_fields(&params, SOURCE_KEY, TARGET_KEY).unwrap();
+        assert_eq!(rotated_str, params.to_string());
+    }
+
+    #[test]
+    fn test_rotate_json_fields_empty_string() {
+        let params = serde_json::json!({"model": "gpt-4", "api_base": ""});
+        let rotated_str = rotate_json_fields(&params, SOURCE_KEY, TARGET_KEY).unwrap();
+        let rotated: Value = serde_json::from_str(&rotated_str).unwrap();
+        assert_eq!(rotated["api_base"], serde_json::json!(""));
+    }
+
+    #[test]
+    fn test_rotate_json_fields_decryptable_with_decrypt_json_fields() {
+        // After rotation, decrypt_json_fields should produce the original plaintext
+        let plain_api_key = "sk-secret-456";
+        let plain_api_base = "https://example.com/v1";
+        let params = serde_json::json!({
+            "api_key": make_encrypted_with_key(plain_api_key, SOURCE_KEY),
+            "api_base": make_encrypted_with_key(plain_api_base, SOURCE_KEY),
+        });
+
+        let rotated_str = rotate_json_fields(&params, SOURCE_KEY, TARGET_KEY).unwrap();
+        let rotated: Value = serde_json::from_str(&rotated_str).unwrap();
+        let decrypted = decrypt_json_fields(&rotated, TARGET_KEY);
+
+        assert_eq!(decrypted["api_key"], serde_json::json!(plain_api_key));
+        assert_eq!(decrypted["api_base"], serde_json::json!(plain_api_base));
+    }
+
+    #[test]
+    fn test_rotate_json_fields_credential_name() {
+        // Simulates credential_values with individually encrypted fields
+        let plain_cred_name = "my-openai-credential";
+        let params = serde_json::json!({
+            "litellm_credential_name": make_encrypted_with_key(plain_cred_name, SOURCE_KEY),
+        });
+
+        let rotated_str = rotate_json_fields(&params, SOURCE_KEY, TARGET_KEY).unwrap();
+        let rotated: Value = serde_json::from_str(&rotated_str).unwrap();
+
+        let name_enc = rotated["litellm_credential_name"].as_str().unwrap();
+        assert_eq!(
+            decrypt_litellm_value(name_enc, TARGET_KEY).unwrap(),
+            plain_cred_name,
+        );
+        assert!(decrypt_litellm_value(name_enc, SOURCE_KEY).is_err());
     }
 }

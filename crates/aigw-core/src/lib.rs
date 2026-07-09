@@ -33,7 +33,10 @@ pub mod tenant;
 // Re-export commonly used types
 pub use auth::{decode_jwt, encode_jwt, JwtClaims};
 pub use config::{AigwConfig, GeneralSettings, ModelInfo, RouterSettings};
-pub use crypto::{decrypt_litellm_value, encrypt_litellm_value, hash_token};
+pub use crypto::{
+    decrypt_json_fields, decrypt_litellm_value, encrypt_litellm_value, hash_token,
+    rotate_json_fields,
+};
 pub use db::CredentialsStore;
 pub use models::{
     Budget, Credential, Organization, OrganizationMembership, Project, ProxyModel, SpendLog, Team,

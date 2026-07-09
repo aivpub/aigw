@@ -147,8 +147,8 @@ pub async fn enforce_limits(
         .map_err(|e| LimitError::Internal(format!("Key lookup failed: {}", e)))?;
 
     if let Some(k) = key_data {
-        let rpm = k.rpm_limit;
-        let tpm = k.tpm_limit;
+        let rpm = k.rpm_limit_i64();
+        let tpm = k.tpm_limit_i64();
 
         rate_limiter
             .check(&key.token_hash, rpm, tpm, token_estimate)

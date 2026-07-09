@@ -42,11 +42,11 @@ pub struct VirtualKey {
     pub agent_id: Option<String>,
     pub project_id: Option<String>,
     pub permissions: serde_json::Value, // Json @default("{}")
-    pub max_parallel_requests: Option<i32>,
+    pub max_parallel_requests: Option<String>,
     pub metadata: serde_json::Value, // Json @default("{}")
     pub blocked: Option<bool>,
-    pub tpm_limit: Option<i64>, // BigInt
-    pub rpm_limit: Option<i64>,
+    pub tpm_limit: Option<String>, // BigInt
+    pub rpm_limit: Option<String>,
     #[sqlx(default)]
     pub max_budget: Option<String>,
     pub budget_duration: Option<String>,
@@ -90,6 +90,21 @@ impl VirtualKey {
         self.auto_rotate
             .as_deref()
             .map(|s| s.eq_ignore_ascii_case("true"))
+    }
+
+    /// Parse `max_parallel_requests` as Option<i32> from TEXT-compatible string.
+    pub fn max_parallel_requests_i32(&self) -> Option<i32> {
+        self.max_parallel_requests.as_deref().and_then(|s| s.parse().ok())
+    }
+
+    /// Parse `tpm_limit` as Option<i64> from TEXT-compatible string.
+    pub fn tpm_limit_i64(&self) -> Option<i64> {
+        self.tpm_limit.as_deref().and_then(|s| s.parse().ok())
+    }
+
+    /// Parse `rpm_limit` as Option<i64> from TEXT-compatible string.
+    pub fn rpm_limit_i64(&self) -> Option<i64> {
+        self.rpm_limit.as_deref().and_then(|s| s.parse().ok())
     }
 }
 
@@ -190,9 +205,9 @@ pub struct Team {
     pub soft_budget: Option<String>,
     pub spend: f64,
     pub models: serde_json::Value, // String[]
-    pub max_parallel_requests: Option<i32>,
-    pub tpm_limit: Option<i64>,
-    pub rpm_limit: Option<i64>,
+    pub max_parallel_requests: Option<String>,
+    pub tpm_limit: Option<String>,
+    pub rpm_limit: Option<String>,
     pub budget_duration: Option<String>,
     pub budget_reset_at: Option<DateTime<Utc>>,
     pub blocked: bool,
@@ -220,6 +235,21 @@ impl Team {
     pub fn soft_budget_f64(&self) -> Option<f64> {
         self.soft_budget.as_deref().and_then(|s| s.parse().ok())
     }
+
+    /// Parse `max_parallel_requests` as Option<i32> from TEXT-compatible string.
+    pub fn max_parallel_requests_i32(&self) -> Option<i32> {
+        self.max_parallel_requests.as_deref().and_then(|s| s.parse().ok())
+    }
+
+    /// Parse `tpm_limit` as Option<i64> from TEXT-compatible string.
+    pub fn tpm_limit_i64(&self) -> Option<i64> {
+        self.tpm_limit.as_deref().and_then(|s| s.parse().ok())
+    }
+
+    /// Parse `rpm_limit` as Option<i64> from TEXT-compatible string.
+    pub fn rpm_limit_i64(&self) -> Option<i64> {
+        self.rpm_limit.as_deref().and_then(|s| s.parse().ok())
+    }
 }
 
 /// User — column-compatible with litellm's `LiteLLM_UserTable`
@@ -240,9 +270,9 @@ pub struct User {
     pub user_email: Option<String>,
     pub models: serde_json::Value, // String[]
     pub metadata: serde_json::Value,
-    pub max_parallel_requests: Option<i32>,
-    pub tpm_limit: Option<i64>,
-    pub rpm_limit: Option<i64>,
+    pub max_parallel_requests: Option<String>,
+    pub tpm_limit: Option<String>,
+    pub rpm_limit: Option<String>,
     pub budget_duration: Option<String>,
     pub budget_reset_at: Option<DateTime<Utc>>,
     pub allowed_cache_controls: serde_json::Value, // String[]
@@ -257,6 +287,21 @@ impl User {
     /// Parse `max_budget` as Option<f64> from TEXT-compatible string.
     pub fn max_budget_f64(&self) -> Option<f64> {
         self.max_budget.as_deref().and_then(|s| s.parse().ok())
+    }
+
+    /// Parse `max_parallel_requests` as Option<i32> from TEXT-compatible string.
+    pub fn max_parallel_requests_i32(&self) -> Option<i32> {
+        self.max_parallel_requests.as_deref().and_then(|s| s.parse().ok())
+    }
+
+    /// Parse `tpm_limit` as Option<i64> from TEXT-compatible string.
+    pub fn tpm_limit_i64(&self) -> Option<i64> {
+        self.tpm_limit.as_deref().and_then(|s| s.parse().ok())
+    }
+
+    /// Parse `rpm_limit` as Option<i64> from TEXT-compatible string.
+    pub fn rpm_limit_i64(&self) -> Option<i64> {
+        self.rpm_limit.as_deref().and_then(|s| s.parse().ok())
     }
 }
 
@@ -290,9 +335,9 @@ pub struct Budget {
     pub max_budget: Option<String>,
     #[sqlx(default)]
     pub soft_budget: Option<String>,
-    pub max_parallel_requests: Option<i32>,
-    pub tpm_limit: Option<i64>,
-    pub rpm_limit: Option<i64>,
+    pub max_parallel_requests: Option<String>,
+    pub tpm_limit: Option<String>,
+    pub rpm_limit: Option<String>,
     pub model_max_budget: serde_json::Value,
     pub budget_duration: Option<String>,
     pub budget_reset_at: Option<DateTime<Utc>>,
@@ -307,6 +352,21 @@ impl Budget {
     /// Parse `max_budget` as Option<f64> from TEXT-compatible string.
     pub fn max_budget_f64(&self) -> Option<f64> {
         self.max_budget.as_deref().and_then(|s| s.parse().ok())
+    }
+
+    /// Parse `max_parallel_requests` as Option<i32> from TEXT-compatible string.
+    pub fn max_parallel_requests_i32(&self) -> Option<i32> {
+        self.max_parallel_requests.as_deref().and_then(|s| s.parse().ok())
+    }
+
+    /// Parse `tpm_limit` as Option<i64> from TEXT-compatible string.
+    pub fn tpm_limit_i64(&self) -> Option<i64> {
+        self.tpm_limit.as_deref().and_then(|s| s.parse().ok())
+    }
+
+    /// Parse `rpm_limit` as Option<i64> from TEXT-compatible string.
+    pub fn rpm_limit_i64(&self) -> Option<i64> {
+        self.rpm_limit.as_deref().and_then(|s| s.parse().ok())
     }
 }
 

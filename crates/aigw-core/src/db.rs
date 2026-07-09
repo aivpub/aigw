@@ -104,6 +104,7 @@ impl Database {
                 .connect_with(options)
                 .await?;
             run_migrations_sqlite(&pool).await?;
+            clean_litellm_data(&pool).await?;
             Ok(Database::Sqlite(pool))
         } else if database_url.starts_with("mysql://") {
             let pool = MySqlPoolOptions::new()
@@ -170,6 +171,130 @@ pub async fn run_migrations_mysql(pool: &MySqlPool) -> Result<()> {
         .run(pool)
         .await
         .map_err(|e| DbError::Sql(e.into()))?;
+    Ok(())
+}
+
+/// Clean up data type inconsistencies in SQLite databases migrated from litellm.
+///
+/// litellm/SQLite is dynamically typed, which causes several problems when
+/// sqlx tries to decode values into strongly-typed Rust types:
+///
+/// 1. `''` instead of NULL for optional datetime/boolean columns
+/// 2. TEXT "false"/"true" for columns defined as INTEGER (blocked)
+/// 3. Zero-length BLOBs instead of NULL for optional JSON columns (budget_limits)
+async fn clean_litellm_data(pool: &SqlitePool) -> Result<()> {
+    // ── Step 1: Empty-string → NULL for nullable columns ──
+    let nullable_cols: &[(&str, &[&str])] = &[
+        (
+            "virtual_keys",
+            &[
+                "budget_reset_at",
+                "expires",
+                "last_active",
+                "last_rotation_at",
+                "key_rotation_at",
+                "blocked",
+            ],
+        ),
+        (
+            "deprecated_keys",
+            &[
+                "budget_reset_at",
+                "expires",
+                "last_active",
+                "last_rotation_at",
+                "key_rotation_at",
+                "deprecated_at",
+                "blocked",
+            ],
+        ),
+        (
+            "deleted_keys",
+            &[
+                "budget_reset_at",
+                "expires",
+                "last_active",
+                "last_rotation_at",
+                "key_rotation_at",
+                "deleted_at",
+                "blocked",
+            ],
+        ),
+        ("teams", &["budget_reset_at", "blocked"]),
+        ("users", &["budget_reset_at"]),
+        ("budgets", &["budget_reset_at"]),
+    ];
+
+    for (table, columns) in nullable_cols {
+        for col in *columns {
+            let sql = format!(
+                "UPDATE \"{}\" SET \"{}\" = NULL WHERE \"{}\" = ''",
+                table, col, col
+            );
+            sqlx::query(&sql).execute(pool).await.ok();
+        }
+    }
+
+    // ── Step 2: TEXT "false"/"true" → INTEGER 0/1 for blocked columns ──
+    let blocked_tables = ["teams", "virtual_keys", "deprecated_keys", "deleted_keys"];
+    for table in blocked_tables {
+        for (text_val, int_val) in [("false", 0), ("true", 1), ("'false'", 0), ("'true'", 1)] {
+            let sql = format!(
+                "UPDATE \"{}\" SET blocked = {} WHERE typeof(blocked) = 'text' AND lower(blocked) = '{}'",
+                table, int_val, text_val.trim_matches('\'')
+            );
+            sqlx::query(&sql).execute(pool).await.ok();
+        }
+    }
+
+    // ── Step 2b: TEXT "false"/"true" → INTEGER 0/1 for allow_team_guardrail_config ──
+    {
+        let sql = "UPDATE teams SET allow_team_guardrail_config = 0 WHERE typeof(allow_team_guardrail_config) = 'text' AND lower(allow_team_guardrail_config) = 'false'";
+        sqlx::query(sql).execute(pool).await.ok();
+        let sql = "UPDATE teams SET allow_team_guardrail_config = 1 WHERE typeof(allow_team_guardrail_config) = 'text' AND lower(allow_team_guardrail_config) = 'true'";
+        sqlx::query(sql).execute(pool).await.ok();
+    }
+
+    // ── Step 2c: Empty-string TEXT → NULL for INTEGER columns (model_id in teams) ──
+    for table in ["teams"] {
+        let sql = format!("UPDATE \"{}\" SET model_id = NULL WHERE typeof(model_id) = 'text' AND model_id = ''", table);
+        sqlx::query(&sql).execute(pool).await.ok();
+    }
+
+    // ── Step 3: Zero-length BLOB → NULL for nullable JSON columns ──
+    let nullable_blob_cols: &[(&str, &[&str])] = &[
+        ("virtual_keys", &["budget_limits", "router_settings"]),
+        ("deprecated_keys", &["budget_limits", "router_settings"]),
+        ("deleted_keys", &["budget_limits", "router_settings"]),
+        ("teams", &["budget_limits", "router_settings"]),
+    ];
+
+    for (table, columns) in nullable_blob_cols {
+        for col in *columns {
+            let sql = format!(
+                "UPDATE \"{}\" SET \"{}\" = NULL WHERE typeof(\"{}\") = 'blob' AND length(\"{}\") = 0",
+                table, col, col, col
+            );
+            sqlx::query(&sql).execute(pool).await.ok();
+        }
+    }
+
+    // ── Step 4: Zero-length BLOB → valid JSON for NOT NULL JSON columns ──
+    // sqlx cannot decode BLOB into serde_json::Value, even if empty.
+    // Convert empty BLOBs to their appropriate JSON empty values.
+    let not_null_json_defaults: &[(&str, &str, &str)] = &[
+        // (table, column, default_json_value)
+        ("teams", "default_team_member_models", "[]"),
+    ];
+
+    for (table, col, default_val) in not_null_json_defaults {
+        let sql = format!(
+            "UPDATE \"{}\" SET \"{}\" = '{}' WHERE typeof(\"{}\") = 'blob'",
+            table, col, default_val, col
+        );
+        sqlx::query(&sql).execute(pool).await.ok();
+    }
+
     Ok(())
 }
 
@@ -342,11 +467,11 @@ impl KeyStore for SqlitePool {
             .bind(&key.agent_id)
             .bind(&key.project_id)
             .bind(&key.permissions)
-            .bind(key.max_parallel_requests)
+            .bind(&key.max_parallel_requests)
             .bind(&key.metadata)
             .bind(key.blocked)
-            .bind(key.tpm_limit)
-            .bind(key.rpm_limit)
+            .bind(&key.tpm_limit)
+            .bind(&key.rpm_limit)
             .bind(key.max_budget.clone())
             .bind(&key.budget_duration)
             .bind(key.budget_reset_at)
@@ -449,11 +574,11 @@ impl KeyStore for SqlitePool {
                 .bind(&k.agent_id)
                 .bind(&k.project_id)
                 .bind(&k.permissions)
-                .bind(k.max_parallel_requests)
+                .bind(&k.max_parallel_requests)
                 .bind(&k.metadata)
                 .bind(k.blocked)
-                .bind(k.tpm_limit)
-                .bind(k.rpm_limit)
+                .bind(&k.tpm_limit)
+                .bind(&k.rpm_limit)
                 .bind(k.max_budget.clone())
                 .bind(&k.budget_duration)
                 .bind(k.budget_reset_at)
@@ -497,14 +622,14 @@ impl KeyStore for SqlitePool {
             .bind(key.spend)
             .bind(&key.models)
             .bind(key.max_budget.clone())
-            .bind(key.tpm_limit)
-            .bind(key.rpm_limit)
+            .bind(&key.tpm_limit)
+            .bind(&key.rpm_limit)
             .bind(key.blocked)
             .bind(&key.metadata)
             .bind(&key.permissions)
             .bind(&key.budget_duration)
             .bind(key.budget_reset_at)
-            .bind(key.max_parallel_requests)
+            .bind(&key.max_parallel_requests)
             .bind(&key.aliases)
             .bind(&key.config)
             .bind(&key.router_settings)
@@ -572,11 +697,11 @@ impl KeyStore for MySqlPool {
             .bind(&key.agent_id)
             .bind(&key.project_id)
             .bind(&key.permissions)
-            .bind(key.max_parallel_requests)
+            .bind(&key.max_parallel_requests)
             .bind(&key.metadata)
             .bind(key.blocked.map(|b| b as i8))
-            .bind(key.tpm_limit)
-            .bind(key.rpm_limit)
+            .bind(&key.tpm_limit)
+            .bind(&key.rpm_limit)
             .bind(key.max_budget.clone())
             .bind(&key.budget_duration)
             .bind(key.budget_reset_at)
@@ -676,11 +801,11 @@ impl KeyStore for MySqlPool {
                 .bind(&k.agent_id)
                 .bind(&k.project_id)
                 .bind(&k.permissions)
-                .bind(k.max_parallel_requests)
+                .bind(&k.max_parallel_requests)
                 .bind(&k.metadata)
                 .bind(k.blocked.map(|b| b as i8))
-                .bind(k.tpm_limit)
-                .bind(k.rpm_limit)
+                .bind(&k.tpm_limit)
+                .bind(&k.rpm_limit)
                 .bind(k.max_budget.clone())
                 .bind(&k.budget_duration)
                 .bind(k.budget_reset_at)
@@ -718,9 +843,9 @@ impl KeyStore for MySqlPool {
         let now = Utc::now();
         sqlx::query("UPDATE virtual_keys SET key_name = ?, key_alias = ?, spend = ?, models = ?, max_budget = ?, tpm_limit = ?, rpm_limit = ?, blocked = ?, metadata = ?, permissions = ?, budget_duration = ?, budget_reset_at = ?, max_parallel_requests = ?, aliases = ?, config = ?, router_settings = ?, user_id = ?, team_id = ?, agent_id = ?, project_id = ?, allowed_cache_controls = ?, allowed_routes = ?, policies = ?, access_group_ids = ?, model_spend = ?, model_max_budget = ?, budget_id = ?, organization_id = ?, object_permission_id = ?, updated_at = ?, updated_by = ?, soft_budget_cooldown = ?, expires = ?, auto_rotate = ?, rotation_interval = ?, budget_limits = ? WHERE token = ?")
             .bind(&key.key_name).bind(&key.key_alias).bind(key.spend).bind(&key.models)
-            .bind(key.max_budget.clone()).bind(key.tpm_limit).bind(key.rpm_limit)
+            .bind(key.max_budget.clone()).bind(&key.tpm_limit).bind(&key.rpm_limit)
             .bind(key.blocked.map(|b| b as i8)).bind(&key.metadata).bind(&key.permissions)
-            .bind(&key.budget_duration).bind(key.budget_reset_at).bind(key.max_parallel_requests)
+            .bind(&key.budget_duration).bind(key.budget_reset_at).bind(&key.max_parallel_requests)
             .bind(&key.aliases).bind(&key.config).bind(&key.router_settings)
             .bind(&key.user_id).bind(&key.team_id).bind(&key.agent_id).bind(&key.project_id)
             .bind(&key.allowed_cache_controls).bind(&key.allowed_routes)
@@ -817,11 +942,11 @@ impl KeyStore for PgPool {
             .bind(&key.agent_id)
             .bind(&key.project_id)
             .bind(&key.permissions)
-            .bind(key.max_parallel_requests)
+            .bind(&key.max_parallel_requests)
             .bind(&key.metadata)
             .bind(key.blocked)
-            .bind(key.tpm_limit)
-            .bind(key.rpm_limit)
+            .bind(&key.tpm_limit)
+            .bind(&key.rpm_limit)
             .bind(key.max_budget.clone())
             .bind(&key.budget_duration)
             .bind(key.budget_reset_at)
@@ -916,11 +1041,11 @@ impl KeyStore for PgPool {
                 .bind(&k.agent_id)
                 .bind(&k.project_id)
                 .bind(&k.permissions)
-                .bind(k.max_parallel_requests)
+                .bind(&k.max_parallel_requests)
                 .bind(&k.metadata)
                 .bind(k.blocked)
-                .bind(k.tpm_limit)
-                .bind(k.rpm_limit)
+                .bind(&k.tpm_limit)
+                .bind(&k.rpm_limit)
                 .bind(k.max_budget.clone())
                 .bind(&k.budget_duration)
                 .bind(k.budget_reset_at)
@@ -958,9 +1083,9 @@ impl KeyStore for PgPool {
         let now = Utc::now();
         sqlx::query("UPDATE virtual_keys SET key_name = $1, key_alias = $2, spend = $3, models = $4, max_budget = $5, tpm_limit = $6, rpm_limit = $7, blocked = $8, metadata = $9, permissions = $10, budget_duration = $11, budget_reset_at = $12, max_parallel_requests = $13, aliases = $14, config = $15, router_settings = $16, user_id = $17, team_id = $18, agent_id = $19, project_id = $20, allowed_cache_controls = $21, allowed_routes = $22, policies = $23, access_group_ids = $24, model_spend = $25, model_max_budget = $26, budget_id = $27, organization_id = $28, object_permission_id = $29, updated_at = $30, updated_by = $31, soft_budget_cooldown = $32, expires = $33, auto_rotate = $34, rotation_interval = $35, budget_limits = $36 WHERE token = $37")
             .bind(&key.key_name).bind(&key.key_alias).bind(key.spend).bind(&key.models)
-            .bind(key.max_budget.clone()).bind(key.tpm_limit).bind(key.rpm_limit)
+            .bind(key.max_budget.clone()).bind(&key.tpm_limit).bind(&key.rpm_limit)
             .bind(key.blocked).bind(&key.metadata).bind(&key.permissions)
-            .bind(&key.budget_duration).bind(key.budget_reset_at).bind(key.max_parallel_requests)
+            .bind(&key.budget_duration).bind(key.budget_reset_at).bind(&key.max_parallel_requests)
             .bind(&key.aliases).bind(&key.config).bind(&key.router_settings)
             .bind(&key.user_id).bind(&key.team_id).bind(&key.agent_id).bind(&key.project_id)
             .bind(&key.allowed_cache_controls).bind(&key.allowed_routes)
@@ -1064,6 +1189,13 @@ pub trait SpendLogStore {
         end_date: Option<&str>,
         limit: Option<i32>,
     ) -> Result<Vec<SpendLog>>;
+    async fn query_spend_logs_count(
+        &self,
+        api_key: Option<&str>,
+        model: Option<&str>,
+        start_date: Option<&str>,
+        end_date: Option<&str>,
+    ) -> Result<i64>;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1291,6 +1423,28 @@ impl SpendLogStore for SqlitePool {
 
         query.fetch_all(self).await.map_err(DbError::from)
     }
+
+    async fn query_spend_logs_count(
+        &self,
+        api_key: Option<&str>,
+        model: Option<&str>,
+        start_date: Option<&str>,
+        end_date: Option<&str>,
+    ) -> Result<i64> {
+        let mut sql = String::from("SELECT COUNT(*) FROM spend_logs WHERE 1=1");
+        if api_key.is_some() { sql.push_str(" AND api_key = ?"); }
+        if model.is_some() { sql.push_str(" AND model = ?"); }
+        if start_date.is_some() { sql.push_str(" AND start_time >= ?"); }
+        if end_date.is_some() { sql.push_str(" AND start_time <= ?"); }
+
+        let mut query = sqlx::query_as::<_, (i64,)>(&sql);
+        if let Some(k) = api_key { query = query.bind(k); }
+        if let Some(m) = model { query = query.bind(m); }
+        if let Some(sd) = start_date { query = query.bind(sd); }
+        if let Some(ed) = end_date { query = query.bind(ed); }
+
+        query.fetch_one(self).await.map(|row: (i64,)| row.0).map_err(DbError::from)
+    }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1470,6 +1624,28 @@ impl SpendLogStore for MySqlPool {
         }).collect();
         Ok(filtered)
     }
+
+    async fn query_spend_logs_count(
+        &self,
+        api_key: Option<&str>,
+        model: Option<&str>,
+        start_date: Option<&str>,
+        end_date: Option<&str>,
+    ) -> Result<i64> {
+        let mut sql = String::from("SELECT COUNT(*) FROM spend_logs WHERE 1=1");
+        if api_key.is_some() { sql.push_str(" AND api_key = ?"); }
+        if model.is_some() { sql.push_str(" AND model = ?"); }
+        if start_date.is_some() { sql.push_str(" AND start_time >= ?"); }
+        if end_date.is_some() { sql.push_str(" AND start_time <= ?"); }
+
+        let mut query = sqlx::query_as::<_, (i64,)>(&sql);
+        if let Some(k) = api_key { query = query.bind(k); }
+        if let Some(m) = model { query = query.bind(m); }
+        if let Some(sd) = start_date { query = query.bind(sd); }
+        if let Some(ed) = end_date { query = query.bind(ed); }
+
+        query.fetch_one(self).await.map(|row: (i64,)| row.0).map_err(DbError::from)
+    }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1625,6 +1801,29 @@ impl SpendLogStore for PgPool {
         }).collect();
         Ok(filtered)
     }
+
+    async fn query_spend_logs_count(
+        &self,
+        api_key: Option<&str>,
+        model: Option<&str>,
+        start_date: Option<&str>,
+        end_date: Option<&str>,
+    ) -> Result<i64> {
+        let mut sql = String::from("SELECT COUNT(*) FROM spend_logs WHERE 1=1");
+        let mut i = 1;
+        if api_key.is_some() { sql.push_str(&format!(" AND api_key = ${}", i)); i += 1; }
+        if model.is_some() { sql.push_str(&format!(" AND model = ${}", i)); i += 1; }
+        if start_date.is_some() { sql.push_str(&format!(" AND start_time >= ${}", i)); i += 1; }
+        if end_date.is_some() { sql.push_str(&format!(" AND start_time <= ${}", i)); }
+
+        let mut query = sqlx::query_as::<_, (i64,)>(&sql);
+        if let Some(k) = api_key { query = query.bind(k); }
+        if let Some(m) = model { query = query.bind(m); }
+        if let Some(sd) = start_date { query = query.bind(sd); }
+        if let Some(ed) = end_date { query = query.bind(ed); }
+
+        query.fetch_one(self).await.map(|row: (i64,)| row.0).map_err(DbError::from)
+    }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1725,6 +1924,20 @@ impl Database {
                 pool.query_spend_logs_filtered(api_key, model, provider, start_date, end_date, limit)
                     .await
             }
+        }
+    }
+
+    pub async fn query_spend_logs_count(
+        &self,
+        api_key: Option<&str>,
+        model: Option<&str>,
+        start_date: Option<&str>,
+        end_date: Option<&str>,
+    ) -> Result<i64> {
+        match self {
+            Database::Sqlite(pool) => pool.query_spend_logs_count(api_key, model, start_date, end_date).await,
+            Database::Mysql(pool) => pool.query_spend_logs_count(api_key, model, start_date, end_date).await,
+            Database::Postgres(pool) => pool.query_spend_logs_count(api_key, model, start_date, end_date).await,
         }
     }
 }
@@ -2390,7 +2603,7 @@ impl TeamStore for SqlitePool {
             .bind(&t.team_id).bind(&t.team_alias).bind(&t.organization_id).bind(&t.object_permission_id)
             .bind(&t.admins).bind(&t.members).bind(&t.members_with_roles).bind(&t.metadata)
             .bind(t.max_budget.clone()).bind(t.soft_budget.clone()).bind(t.spend).bind(&t.models)
-            .bind(t.max_parallel_requests).bind(t.tpm_limit).bind(t.rpm_limit)
+            .bind(&t.max_parallel_requests).bind(&t.tpm_limit).bind(&t.rpm_limit)
             .bind(&t.budget_duration).bind(t.budget_reset_at).bind(t.blocked)
             .bind(t.created_at).bind(t.updated_at)
             .bind(&t.model_spend).bind(&t.model_max_budget).bind(&t.router_settings)
@@ -2417,7 +2630,7 @@ impl TeamStore for SqlitePool {
             .bind(&t.team_alias).bind(&t.organization_id).bind(&t.object_permission_id)
             .bind(&t.admins).bind(&t.members).bind(&t.members_with_roles).bind(&t.metadata)
             .bind(t.max_budget.clone()).bind(t.soft_budget.clone()).bind(t.spend).bind(&t.models)
-            .bind(t.max_parallel_requests).bind(t.tpm_limit).bind(t.rpm_limit)
+            .bind(&t.max_parallel_requests).bind(&t.tpm_limit).bind(&t.rpm_limit)
             .bind(&t.budget_duration).bind(t.budget_reset_at).bind(t.blocked)
             .bind(t.updated_at)
             .bind(&t.model_spend).bind(&t.model_max_budget).bind(&t.router_settings)
@@ -2448,7 +2661,7 @@ impl TeamStore for MySqlPool {
             .bind(&t.team_id).bind(&t.team_alias).bind(&t.organization_id).bind(&t.object_permission_id)
             .bind(&t.admins).bind(&t.members).bind(&t.members_with_roles).bind(&t.metadata)
             .bind(t.max_budget.clone()).bind(t.soft_budget.clone()).bind(t.spend).bind(&t.models)
-            .bind(t.max_parallel_requests).bind(t.tpm_limit).bind(t.rpm_limit)
+            .bind(&t.max_parallel_requests).bind(&t.tpm_limit).bind(&t.rpm_limit)
             .bind(&t.budget_duration).bind(t.budget_reset_at).bind(t.blocked)
             .bind(t.created_at).bind(t.updated_at)
             .bind(&t.model_spend).bind(&t.model_max_budget).bind(&t.router_settings)
@@ -2478,7 +2691,7 @@ impl TeamStore for MySqlPool {
             .bind(&t.team_alias).bind(&t.organization_id).bind(&t.object_permission_id)
             .bind(&t.admins).bind(&t.members).bind(&t.members_with_roles).bind(&t.metadata)
             .bind(t.max_budget.clone()).bind(t.soft_budget.clone()).bind(t.spend).bind(&t.models)
-            .bind(t.max_parallel_requests).bind(t.tpm_limit).bind(t.rpm_limit)
+            .bind(&t.max_parallel_requests).bind(&t.tpm_limit).bind(&t.rpm_limit)
             .bind(&t.budget_duration).bind(t.budget_reset_at).bind(t.blocked)
             .bind(t.updated_at)
             .bind(&t.model_spend).bind(&t.model_max_budget).bind(&t.router_settings)
@@ -2509,7 +2722,7 @@ impl TeamStore for PgPool {
             .bind(&t.team_id).bind(&t.team_alias).bind(&t.organization_id).bind(&t.object_permission_id)
             .bind(&t.admins).bind(&t.members).bind(&t.members_with_roles).bind(&t.metadata)
             .bind(t.max_budget.clone()).bind(t.soft_budget.clone()).bind(t.spend).bind(&t.models)
-            .bind(t.max_parallel_requests).bind(t.tpm_limit).bind(t.rpm_limit)
+            .bind(&t.max_parallel_requests).bind(&t.tpm_limit).bind(&t.rpm_limit)
             .bind(&t.budget_duration).bind(t.budget_reset_at).bind(t.blocked)
             .bind(t.created_at).bind(t.updated_at)
             .bind(&t.model_spend).bind(&t.model_max_budget).bind(&t.router_settings)
@@ -2539,7 +2752,7 @@ impl TeamStore for PgPool {
             .bind(&t.team_alias).bind(&t.organization_id).bind(&t.object_permission_id)
             .bind(&t.admins).bind(&t.members).bind(&t.members_with_roles).bind(&t.metadata)
             .bind(t.max_budget.clone()).bind(t.soft_budget.clone()).bind(t.spend).bind(&t.models)
-            .bind(t.max_parallel_requests).bind(t.tpm_limit).bind(t.rpm_limit)
+            .bind(&t.max_parallel_requests).bind(&t.tpm_limit).bind(&t.rpm_limit)
             .bind(&t.budget_duration).bind(t.budget_reset_at).bind(t.blocked)
             .bind(t.updated_at)
             .bind(&t.model_spend).bind(&t.model_max_budget).bind(&t.router_settings)
@@ -2613,7 +2826,7 @@ impl UserStore for SqlitePool {
             .bind(&u.organization_id).bind(&u.object_permission_id).bind(&u.password)
             .bind(&u.teams).bind(&u.user_role).bind(u.max_budget.clone()).bind(u.spend)
             .bind(&u.user_email).bind(&u.models).bind(&u.metadata)
-            .bind(u.max_parallel_requests).bind(u.tpm_limit).bind(u.rpm_limit)
+            .bind(&u.max_parallel_requests).bind(&u.tpm_limit).bind(&u.rpm_limit)
             .bind(&u.budget_duration).bind(u.budget_reset_at)
             .bind(&u.allowed_cache_controls).bind(&u.policies)
             .bind(&u.model_spend).bind(&u.model_max_budget)
@@ -2643,7 +2856,7 @@ impl UserStore for SqlitePool {
             .bind(&u.organization_id).bind(&u.object_permission_id).bind(&u.password)
             .bind(&u.teams).bind(&u.user_role).bind(u.max_budget.clone()).bind(u.spend)
             .bind(&u.user_email).bind(&u.models).bind(&u.metadata)
-            .bind(u.max_parallel_requests).bind(u.tpm_limit).bind(u.rpm_limit)
+            .bind(&u.max_parallel_requests).bind(&u.tpm_limit).bind(&u.rpm_limit)
             .bind(&u.budget_duration).bind(u.budget_reset_at)
             .bind(&u.allowed_cache_controls).bind(&u.policies)
             .bind(&u.model_spend).bind(&u.model_max_budget)
@@ -2673,7 +2886,7 @@ impl UserStore for MySqlPool {
             .bind(&u.organization_id).bind(&u.object_permission_id).bind(&u.password)
             .bind(&u.teams).bind(&u.user_role).bind(u.max_budget.clone()).bind(u.spend)
             .bind(&u.user_email).bind(&u.models).bind(&u.metadata)
-            .bind(u.max_parallel_requests).bind(u.tpm_limit).bind(u.rpm_limit)
+            .bind(&u.max_parallel_requests).bind(&u.tpm_limit).bind(&u.rpm_limit)
             .bind(&u.budget_duration).bind(u.budget_reset_at)
             .bind(&u.allowed_cache_controls).bind(&u.policies)
             .bind(&u.model_spend).bind(&u.model_max_budget)
@@ -2707,7 +2920,7 @@ impl UserStore for MySqlPool {
             .bind(&u.organization_id).bind(&u.object_permission_id).bind(&u.password)
             .bind(&u.teams).bind(&u.user_role).bind(u.max_budget.clone()).bind(u.spend)
             .bind(&u.user_email).bind(&u.models).bind(&u.metadata)
-            .bind(u.max_parallel_requests).bind(u.tpm_limit).bind(u.rpm_limit)
+            .bind(&u.max_parallel_requests).bind(&u.tpm_limit).bind(&u.rpm_limit)
             .bind(&u.budget_duration).bind(u.budget_reset_at)
             .bind(&u.allowed_cache_controls).bind(&u.policies)
             .bind(&u.model_spend).bind(&u.model_max_budget)
@@ -2737,7 +2950,7 @@ impl UserStore for PgPool {
             .bind(&u.organization_id).bind(&u.object_permission_id).bind(&u.password)
             .bind(&u.teams).bind(&u.user_role).bind(u.max_budget.clone()).bind(u.spend)
             .bind(&u.user_email).bind(&u.models).bind(&u.metadata)
-            .bind(u.max_parallel_requests).bind(u.tpm_limit).bind(u.rpm_limit)
+            .bind(&u.max_parallel_requests).bind(&u.tpm_limit).bind(&u.rpm_limit)
             .bind(&u.budget_duration).bind(u.budget_reset_at)
             .bind(&u.allowed_cache_controls).bind(&u.policies)
             .bind(&u.model_spend).bind(&u.model_max_budget)
@@ -2771,7 +2984,7 @@ impl UserStore for PgPool {
             .bind(&u.organization_id).bind(&u.object_permission_id).bind(&u.password)
             .bind(&u.teams).bind(&u.user_role).bind(u.max_budget.clone()).bind(u.spend)
             .bind(&u.user_email).bind(&u.models).bind(&u.metadata)
-            .bind(u.max_parallel_requests).bind(u.tpm_limit).bind(u.rpm_limit)
+            .bind(&u.max_parallel_requests).bind(&u.tpm_limit).bind(&u.rpm_limit)
             .bind(&u.budget_duration).bind(u.budget_reset_at)
             .bind(&u.allowed_cache_controls).bind(&u.policies)
             .bind(&u.model_spend).bind(&u.model_max_budget)
@@ -2923,6 +3136,77 @@ impl Database {
         }
     }
 
+    // ── Config ──
+
+    /// Retrieve master_key from the `config` table.
+    ///
+    /// Follows litellm's fallback logic:
+    /// 1. Query `general_settings` JSON → `master_key` field
+    /// 2. Fall back to `litellm_master_key` legacy flat key
+    pub async fn get_master_key_from_db(&self) -> Result<Option<String>> {
+        // Strategy 1: general_settings JSON → master_key
+        let general_settings: Option<String> = match self {
+            Database::Sqlite(p) => {
+                sqlx::query_scalar("SELECT param_value FROM config WHERE param_name = ?")
+                    .bind("general_settings")
+                    .fetch_optional(p)
+                    .await?
+            }
+            Database::Mysql(p) => {
+                sqlx::query_scalar("SELECT param_value FROM config WHERE param_name = ?")
+                    .bind("general_settings")
+                    .fetch_optional(p)
+                    .await?
+            }
+            Database::Postgres(p) => {
+                sqlx::query_scalar("SELECT param_value FROM config WHERE param_name = $1")
+                    .bind("general_settings")
+                    .fetch_optional(p)
+                    .await?
+            }
+        };
+
+        if let Some(val) = general_settings {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&val) {
+                if let Some(mk) = parsed.get("master_key").and_then(|v| v.as_str()) {
+                    if !mk.is_empty() {
+                        return Ok(Some(mk.to_string()));
+                    }
+                }
+            }
+        }
+
+        // Strategy 2: legacy litellm_master_key flat key
+        let legacy_key: Option<String> = match self {
+            Database::Sqlite(p) => {
+                sqlx::query_scalar("SELECT param_value FROM config WHERE param_name = ?")
+                    .bind("litellm_master_key")
+                    .fetch_optional(p)
+                    .await?
+            }
+            Database::Mysql(p) => {
+                sqlx::query_scalar("SELECT param_value FROM config WHERE param_name = ?")
+                    .bind("litellm_master_key")
+                    .fetch_optional(p)
+                    .await?
+            }
+            Database::Postgres(p) => {
+                sqlx::query_scalar("SELECT param_value FROM config WHERE param_name = $1")
+                    .bind("litellm_master_key")
+                    .fetch_optional(p)
+                    .await?
+            }
+        };
+
+        if let Some(val) = legacy_key {
+            if !val.is_empty() {
+                return Ok(Some(val));
+            }
+        }
+
+        Ok(None)
+    }
+
     // ── Health / Metrics ──
 
     pub fn pool_size(&self) -> u32 {
@@ -3019,8 +3303,8 @@ mod tests {
             max_parallel_requests: None,
             metadata: serde_json::json!({}),
             blocked: None,
-            tpm_limit: Some(1000),
-            rpm_limit: Some(100),
+            tpm_limit: Some("1000".to_string()),
+            rpm_limit: Some("100".to_string()),
             max_budget: Some("100.0".to_string()),
             budget_duration: None,
             budget_reset_at: None,
@@ -3125,7 +3409,7 @@ mod tests {
         assert!(retrieved.is_some());
         let k = retrieved.unwrap();
         assert_eq!(k.key_alias.as_deref(), Some("test-key"));
-        assert_eq!(k.tpm_limit, Some(1000));
+        assert_eq!(k.tpm_limit, Some("1000".to_string()));
         assert_eq!(k.spend, 0.0);
     }
 
@@ -3235,7 +3519,7 @@ mod tests {
         let mut updated = key.clone();
         updated.key_alias = Some("updated-alias".to_string());
         updated.spend = 42.0;
-        updated.tpm_limit = Some(5000);
+        updated.tpm_limit = Some("5000".to_string());
         updated.blocked = None;
 
         db.update_key(&hash, &updated)
@@ -3248,7 +3532,7 @@ mod tests {
         let k = retrieved.unwrap();
         assert_eq!(k.key_alias.as_deref(), Some("updated-alias"));
         assert_eq!(k.spend, 42.0);
-        assert_eq!(k.tpm_limit, Some(5000));
+        assert_eq!(k.tpm_limit, Some("5000".to_string()));
         assert_eq!(k.blocked, None);
     }
 
@@ -3689,5 +3973,102 @@ mod tests {
         db.delete_model(&m.model_id).await.expect("delete");
 
         assert!(db.get_model_by_id(&m.model_id).await.unwrap().is_none());
+    }
+
+    // ━━━━ get_master_key_from_db tests ━━━━
+
+    #[tokio::test]
+    async fn test_get_master_key_from_config_general_settings() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let general_settings = r#"{"master_key": "sk-from-config-table"}"#;
+        // Insert via raw SQL (no dedicated insert_config method yet)
+        match &db {
+            Database::Sqlite(pool) => {
+                sqlx::query("INSERT INTO config (id, param_name, param_value) VALUES (?1, ?2, ?3)")
+                    .bind("id-1")
+                    .bind("general_settings")
+                    .bind(general_settings)
+                    .execute(pool)
+                    .await
+                    .expect("insert");
+            }
+            _ => unreachable!(),
+        }
+        let result = db.get_master_key_from_db().await.expect("query");
+        assert_eq!(result, Some("sk-from-config-table".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_get_master_key_from_config_legacy() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        match &db {
+            Database::Sqlite(pool) => {
+                sqlx::query("INSERT INTO config (id, param_name, param_value) VALUES (?1, ?2, ?3)")
+                    .bind("id-2")
+                    .bind("litellm_master_key")
+                    .bind("sk-legacy-key")
+                    .execute(pool)
+                    .await
+                    .expect("insert");
+            }
+            _ => unreachable!(),
+        }
+        let result = db.get_master_key_from_db().await.expect("query");
+        assert_eq!(result, Some("sk-legacy-key".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_get_master_key_not_found() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let result = db.get_master_key_from_db().await.expect("query");
+        assert_eq!(result, None);
+    }
+
+    #[tokio::test]
+    async fn test_get_master_key_malformed_json() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        match &db {
+            Database::Sqlite(pool) => {
+                sqlx::query("INSERT INTO config (id, param_name, param_value) VALUES (?1, ?2, ?3)")
+                    .bind("id-3")
+                    .bind("general_settings")
+                    .bind("not-valid-json{{{")
+                    .execute(pool)
+                    .await
+                    .expect("insert");
+            }
+            _ => unreachable!(),
+        }
+        // Malformed JSON → general_settings doesn't parse → falls through to legacy → returns None
+        let result = db.get_master_key_from_db().await.expect("query");
+        assert_eq!(result, None);
+    }
+
+    #[tokio::test]
+    async fn test_general_settings_has_precedence_over_legacy() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        match &db {
+            Database::Sqlite(pool) => {
+                // Insert both general_settings and legacy
+                sqlx::query("INSERT INTO config (id, param_name, param_value) VALUES (?1, ?2, ?3)")
+                    .bind("id-4")
+                    .bind("general_settings")
+                    .bind(r#"{"master_key": "sk-from-json"}"#)
+                    .execute(pool)
+                    .await
+                    .expect("insert general_settings");
+                sqlx::query("INSERT INTO config (id, param_name, param_value) VALUES (?1, ?2, ?3)")
+                    .bind("id-5")
+                    .bind("litellm_master_key")
+                    .bind("sk-from-legacy")
+                    .execute(pool)
+                    .await
+                    .expect("insert legacy");
+            }
+            _ => unreachable!(),
+        }
+        // general_settings should take precedence
+        let result = db.get_master_key_from_db().await.expect("query");
+        assert_eq!(result, Some("sk-from-json".to_string()));
     }
 }
