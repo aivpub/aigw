@@ -5,8 +5,9 @@
 //! - GET  /v1/models           — List available models for the authenticated key
 
 use aigw_core::auth::decode_jwt;
-use aigw_core::crypto::{decrypt_litellm_value, hash_token};
+use aigw_core::crypto::{decrypt_json_fields, decrypt_litellm_value, hash_token};
 use aigw_core::middleware::KeyIdentity;
+use aigw_core::models::{Team, VirtualKey};
 use axum::{
     extract::State,
     http::{self, StatusCode},
@@ -41,7 +42,8 @@ async fn resolve_upstream_params(
 
     match model {
         Some(m) => {
-            let litellm_params_str = m.litellm_params.to_string();
+            // Use as_str() for string values to avoid JSON quoting from to_string()
+            let litellm_params_str = m.litellm_params.as_str().map(String::from).unwrap_or_else(|| m.litellm_params.to_string());
 
             // Detect whether litellm_params is encrypted (base64) or plaintext JSON
             let params_json: Value = if litellm_params_str.starts_with('{') {
@@ -75,6 +77,14 @@ async fn resolve_upstream_params(
                 })?;
 
                 serde_json::from_str(&decrypted).unwrap_or_else(|_| json!({}))
+            };
+
+            // Decrypt individually encrypted fields inside the JSON object
+            // (e.g. api_key, api_base, litellm_credential_name, model).
+            let params_json = if let Some(key) = state.aigw_master_key.as_deref() {
+                decrypt_json_fields(&params_json, key)
+            } else {
+                params_json
             };
 
             // Resolve credential reference if present
@@ -135,6 +145,13 @@ async fn resolve_upstream_params(
                             )
                         })?;
                     serde_json::from_str(&decrypted).unwrap_or_else(|_| json!({}))
+                };
+
+                // Decrypt individually encrypted fields inside credential_values
+                let cred_values = if let Some(key) = state.aigw_master_key.as_deref() {
+                    decrypt_json_fields(&cred_values, key)
+                } else {
+                    cred_values
                 };
 
                 // Merge: credential values take precedence for api_key/api_base,
@@ -406,6 +423,135 @@ pub struct ModelEntry {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Sentinels — litellm-compatible model-list expansion
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const SENTINEL_ALL_TEAM_MODELS: &str = "all-team-models";
+const SENTINEL_ALL_PROXY_MODELS: &str = "all-proxy-models";
+
+/// Resolve a key's model allow-list, expanding litellm-compatible sentinel values.
+///
+/// Returns:
+/// - `Ok(None)` — allow all models (null/empty list or `all-proxy-models` sentinel)
+/// - `Ok(Some(list))` — restrict to these model names
+/// - `Err(...)` — sentinel expansion failed (missing team, etc.)
+async fn resolve_key_model_list(
+    state: &SharedState,
+    key: &VirtualKey,
+) -> Result<Option<Vec<String>>, (StatusCode, Json<Value>)> {
+    let models = &key.models;
+    if models.is_null() {
+        return Ok(None);
+    }
+    let model_list = match models.as_array() {
+        Some(a) => a,
+        None => return Ok(None),
+    };
+    if model_list.is_empty() {
+        return Ok(None);
+    }
+
+    // "all-proxy-models" sentinel → allow everything
+    if model_list
+        .iter()
+        .any(|m| m.as_str() == Some(SENTINEL_ALL_PROXY_MODELS))
+    {
+        return Ok(None);
+    }
+
+    // "all-team-models" sentinel → expand from team
+    if model_list
+        .iter()
+        .any(|m| m.as_str() == Some(SENTINEL_ALL_TEAM_MODELS))
+    {
+        let team_id = key.team_id.as_deref().ok_or_else(|| {
+            (
+                StatusCode::FORBIDDEN,
+                Json(json!({
+                    "error": {
+                        "message": "all-team-models requires team_id",
+                        "type": "auth_error"
+                    }
+                })),
+            )
+        })?;
+        let team = state
+            .db
+            .get_team_by_id(team_id)
+            .await
+            .map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "error": {
+                            "message": format!("Team lookup failed: {}", e),
+                            "type": "db_error"
+                        }
+                    })),
+                )
+            })?
+            .ok_or_else(|| {
+                (
+                    StatusCode::FORBIDDEN,
+                    Json(json!({
+                        "error": {
+                            "message": "Team not found",
+                            "type": "auth_error"
+                        }
+                    })),
+                )
+            })?;
+
+        // Recursive: team.models may also contain sentinels
+        return resolve_team_model_list(state, &team).await;
+    }
+
+    // Literal model list
+    Ok(Some(
+        model_list
+            .iter()
+            .filter_map(|m| m.as_str().map(String::from))
+            .collect(),
+    ))
+}
+
+/// Resolve team-level model list with sentinel expansion (recursive).
+async fn resolve_team_model_list(
+    _state: &SharedState,
+    team: &Team,
+) -> Result<Option<Vec<String>>, (StatusCode, Json<Value>)> {
+    let models = &team.models;
+    if models.is_null() {
+        return Ok(None);
+    }
+    let model_list = match models.as_array() {
+        Some(a) => a,
+        None => return Ok(None),
+    };
+    if model_list.is_empty() {
+        return Ok(None);
+    }
+
+    if model_list
+        .iter()
+        .any(|m| m.as_str() == Some(SENTINEL_ALL_PROXY_MODELS))
+        || model_list
+            .iter()
+            .any(|m| m.as_str() == Some(SENTINEL_ALL_TEAM_MODELS))
+    {
+        // Sentinel in team.models → expand to all proxy models
+        return Ok(None);
+    }
+
+    Ok(Some(
+        model_list
+            .iter()
+            .filter_map(|m| m.as_str().map(String::from))
+            .collect(),
+    ))
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Chat completions handler
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -482,12 +628,10 @@ pub async fn chat_completions(
             })?;
 
         if let Some(key) = key_record {
-            // Check if the requested model is in the key's allowed models
-            let models = key.models.clone();
-            if !models.is_null() {
-                if let Some(model_list) = models.as_array() {
-                    let allowed = model_list.iter().any(|m| m.as_str() == Some(_model));
-                    if !allowed && !model_list.is_empty() {
+            // Resolve model list with sentinel expansion
+            match resolve_key_model_list(&state, &key).await? {
+                Some(allowed_models) => {
+                    if !allowed_models.iter().any(|m| m == _model) {
                         return Err((
                             StatusCode::FORBIDDEN,
                             Json(json!({
@@ -503,6 +647,7 @@ pub async fn chat_completions(
                         ));
                     }
                 }
+                None => { /* allow all models */ }
             }
 
             // Check budget
@@ -1057,5 +1202,261 @@ mod tests {
         let model_ids: Vec<&str> = models.iter().filter_map(|m| m["id"].as_str()).collect();
         assert!(model_ids.contains(&"gpt-4"));
         assert!(model_ids.contains(&"gpt-3.5-turbo"));
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // Sentinel resolution tests
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    fn make_test_state(db: Database) -> SharedState {
+        Arc::new(AppState {
+            db,
+            master_key: Some("sk-master-test".to_string()),
+            aigw_master_key: None,
+            provider_registry: ProviderRegistry::new(),
+            router_state: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            rate_limiter: Arc::new(RateLimiter::new()),
+            deployment_mode: "onprem".to_string(),
+            started_at: std::time::Instant::now(),
+        })
+    }
+
+    fn make_key(models_json: Value, team_id: Option<&str>) -> VirtualKey {
+        VirtualKey {
+            token: "hash".into(),
+            key_name: None,
+            key_alias: None,
+            soft_budget_cooldown: "false".into(),
+            spend: 0.0,
+            expires: None,
+            models: models_json,
+            aliases: json!({}),
+            config: json!({}),
+            router_settings: None,
+            user_id: None,
+            team_id: team_id.map(String::from),
+            agent_id: None,
+            project_id: None,
+            permissions: json!({}),
+            max_parallel_requests: None,
+            metadata: json!({}),
+            blocked: None,
+            tpm_limit: None,
+            rpm_limit: None,
+            max_budget: None,
+            budget_duration: None,
+            budget_reset_at: None,
+            allowed_cache_controls: json!([]),
+            allowed_routes: json!([]),
+            policies: json!([]),
+            access_group_ids: json!([]),
+            model_spend: json!({}),
+            model_max_budget: json!({}),
+            budget_id: None,
+            organization_id: None,
+            object_permission_id: None,
+            created_at: None,
+            created_by: None,
+            updated_at: None,
+            updated_by: None,
+            last_active: None,
+            rotation_count: None,
+            auto_rotate: None,
+            rotation_interval: None,
+            last_rotation_at: None,
+            key_rotation_at: None,
+            budget_limits: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_resolve_null_models_returns_none() {
+        let db = Database::init("sqlite::memory:").await.unwrap();
+        let state = make_test_state(db);
+        let key = make_key(Value::Null, None);
+
+        let result = resolve_key_model_list(&state, &key).await.unwrap();
+        assert!(result.is_none(), "null models should allow all");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_empty_array_returns_none() {
+        let db = Database::init("sqlite::memory:").await.unwrap();
+        let state = make_test_state(db);
+        let key = make_key(json!([]), None);
+
+        let result = resolve_key_model_list(&state, &key).await.unwrap();
+        assert!(result.is_none(), "empty array should allow all");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_literal_list() {
+        let db = Database::init("sqlite::memory:").await.unwrap();
+        let state = make_test_state(db);
+        let key = make_key(json!(["gpt-4", "gpt-3.5-turbo"]), None);
+
+        let result = resolve_key_model_list(&state, &key).await.unwrap();
+        let list = result.expect("should be Some");
+        assert_eq!(list, vec!["gpt-4", "gpt-3.5-turbo"]);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_all_proxy_models_returns_none() {
+        let db = Database::init("sqlite::memory:").await.unwrap();
+        let state = make_test_state(db);
+        let key = make_key(json!(["all-proxy-models"]), None);
+
+        let result = resolve_key_model_list(&state, &key).await.unwrap();
+        assert!(result.is_none(), "all-proxy-models should allow all");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_all_team_models_no_team_id_returns_error() {
+        let db = Database::init("sqlite::memory:").await.unwrap();
+        let state = make_test_state(db);
+        let key = make_key(json!(["all-team-models"]), None);
+
+        let result = resolve_key_model_list(&state, &key).await;
+        assert!(result.is_err(), "missing team_id should error");
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_all_team_models_with_valid_team() {
+        let db = Database::init("sqlite::memory:").await.unwrap();
+        let state = make_test_state(db);
+
+        // Insert a team with specific models
+        let team = Team {
+            team_id: "team-1".into(),
+            team_alias: Some("test-team".into()),
+            organization_id: None,
+            object_permission_id: None,
+            admins: json!([]),
+            members: json!([]),
+            members_with_roles: json!([]),
+            metadata: json!({}),
+            max_budget: None,
+            soft_budget: None,
+            spend: 0.0,
+            models: json!(["team-model-a", "team-model-b"]),
+            max_parallel_requests: None,
+            tpm_limit: None,
+            rpm_limit: None,
+            budget_duration: None,
+            budget_reset_at: None,
+            blocked: false,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            model_spend: json!({}),
+            model_max_budget: json!({}),
+            router_settings: None,
+            team_member_permissions: json!([]),
+            access_group_ids: json!([]),
+            policies: json!([]),
+            default_team_member_models: json!([]),
+            budget_limits: None,
+            model_id: None,
+            allow_team_guardrail_config: false,
+        };
+        state.db.insert_team(&team).await.unwrap();
+
+        let key = make_key(json!(["all-team-models"]), Some("team-1"));
+        let result = resolve_key_model_list(&state, &key).await.unwrap();
+        let list = result.expect("should be Some");
+        assert_eq!(list, vec!["team-model-a", "team-model-b"]);
+    }
+
+    #[tokio::test]
+    async fn test_resolve_all_team_models_recursive_expansion() {
+        let db = Database::init("sqlite::memory:").await.unwrap();
+        let state = make_test_state(db);
+
+        // Team whose models also contains "all-team-models" sentinel
+        let team = Team {
+            team_id: "team-2".into(),
+            team_alias: Some("recursive-team".into()),
+            organization_id: None,
+            object_permission_id: None,
+            admins: json!([]),
+            members: json!([]),
+            members_with_roles: json!([]),
+            metadata: json!({}),
+            max_budget: None,
+            soft_budget: None,
+            spend: 0.0,
+            models: json!(["all-team-models"]),
+            max_parallel_requests: None,
+            tpm_limit: None,
+            rpm_limit: None,
+            budget_duration: None,
+            budget_reset_at: None,
+            blocked: false,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            model_spend: json!({}),
+            model_max_budget: json!({}),
+            router_settings: None,
+            team_member_permissions: json!([]),
+            access_group_ids: json!([]),
+            policies: json!([]),
+            default_team_member_models: json!([]),
+            budget_limits: None,
+            model_id: None,
+            allow_team_guardrail_config: false,
+        };
+        state.db.insert_team(&team).await.unwrap();
+
+        let key = make_key(json!(["all-team-models"]), Some("team-2"));
+        let result = resolve_key_model_list(&state, &key).await.unwrap();
+        // Recursive sentinel in team.models → allow all
+        assert!(result.is_none(), "recursive sentinel should allow all");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_mixed_list_with_sentinel() {
+        let db = Database::init("sqlite::memory:").await.unwrap();
+        let state = make_test_state(db);
+
+        let team = Team {
+            team_id: "team-3".into(),
+            team_alias: Some("mixed-team".into()),
+            organization_id: None,
+            object_permission_id: None,
+            admins: json!([]),
+            members: json!([]),
+            members_with_roles: json!([]),
+            metadata: json!({}),
+            max_budget: None,
+            soft_budget: None,
+            spend: 0.0,
+            models: json!(["team-model-x"]),
+            max_parallel_requests: None,
+            tpm_limit: None,
+            rpm_limit: None,
+            budget_duration: None,
+            budget_reset_at: None,
+            blocked: false,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            model_spend: json!({}),
+            model_max_budget: json!({}),
+            router_settings: None,
+            team_member_permissions: json!([]),
+            access_group_ids: json!([]),
+            policies: json!([]),
+            default_team_member_models: json!([]),
+            budget_limits: None,
+            model_id: None,
+            allow_team_guardrail_config: false,
+        };
+        state.db.insert_team(&team).await.unwrap();
+
+        // Key with ["all-team-models", "extra-model"] — sentinel takes priority
+        let key = make_key(json!(["all-team-models", "extra-model"]), Some("team-3"));
+        let result = resolve_key_model_list(&state, &key).await.unwrap();
+        let list = result.expect("should expand from team");
+        assert_eq!(list, vec!["team-model-x"]);
     }
 }

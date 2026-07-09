@@ -148,7 +148,29 @@ async fn main() -> anyhow::Result<()> {
     let rate_limiter = Arc::new(RateLimiter::new());
 
     // Determine aigw master key for runtime decryption (CREDENTIALS/encrypted fields)
-    let aigw_master_key = std::env::var("AIGW_MASTER_KEY").ok();
+    // Priority: AIGW_MASTER_KEY env var → config table (general_settings.master_key)
+    let aigw_master_key = match std::env::var("AIGW_MASTER_KEY").ok() {
+        Some(key) if !key.is_empty() => Some(key),
+        _ => match db.get_master_key_from_db().await {
+            Ok(Some(key)) => {
+                tracing::info!("AIGW_MASTER_KEY loaded from config table");
+                Some(key)
+            }
+            Ok(None) => {
+                tracing::warn!(
+                    "AIGW_MASTER_KEY not configured (env or config table) — encrypted fields will not be decrypted"
+                );
+                None
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to query config table for master_key: {} — encrypted fields will not be decrypted",
+                    e
+                );
+                None
+            }
+        },
+    };
 
     // Build shared state
     let state: SharedState = Arc::new(AppState {

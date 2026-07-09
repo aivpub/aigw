@@ -7,6 +7,7 @@
 //! - PUT    /credential/update    — Update existing credential
 //! - DELETE /credential/delete    — Delete a credential
 
+use aigw_core::crypto::{decrypt_json_fields, decrypt_litellm_value};
 use aigw_core::models::Credential;
 use axum::{
     extract::{Query, State},
@@ -15,6 +16,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use tracing::warn;
 
 use crate::routes::keys::SharedState;
 use super::spend::{require_admin, SpendAuth};
@@ -62,17 +64,50 @@ pub struct CredentialResponse {
     pub updated_by: Option<String>,
 }
 
-impl From<Credential> for CredentialResponse {
-    fn from(c: Credential) -> Self {
+impl CredentialResponse {
+    /// Build a CredentialResponse, decrypting `credential_values` if needed.
+    ///
+    /// Mirrors `ModelResponse::from_model()` / `decrypt_params()`: handles both
+    /// plain JSON object fields and the single-blob encryption produced by
+    /// `aigw-migrate remote-import`.
+    fn from_credential(c: Credential, master_key: Option<&str>) -> Self {
+        let credential_values = Self::decrypt_credential_values(&c.credential_values, master_key);
         Self {
             credential_id: c.credential_id,
             credential_name: c.credential_name,
-            credential_values: c.credential_values,
+            credential_values,
             credential_info: c.credential_info,
             created_at: c.created_at,
             created_by: c.created_by,
             updated_at: c.updated_at,
             updated_by: c.updated_by,
+        }
+    }
+
+    fn decrypt_credential_values(params: &Value, master_key: Option<&str>) -> Value {
+        let key = match master_key {
+            Some(k) => k,
+            None => {
+                warn!("AIGW_MASTER_KEY not configured — returning encrypted credential_values as-is");
+                return params.clone();
+            }
+        };
+        match params {
+            Value::Object(_) => decrypt_json_fields(params, key),
+            Value::String(s) => {
+                if s.starts_with('{') {
+                    return params.clone();
+                }
+                let decrypted = match decrypt_litellm_value(s, key) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        warn!("Failed to decrypt credential_values: {} — returning encrypted value as-is", e);
+                        return params.clone();
+                    }
+                };
+                serde_json::from_str(&decrypted).unwrap_or_else(|_| params.clone())
+            }
+            _ => params.clone(),
         }
     }
 }
@@ -130,7 +165,7 @@ pub async fn credential_new(
             )
         })?;
 
-    let resp = CredentialResponse::from(credential);
+    let resp = CredentialResponse::from_credential(credential, state.aigw_master_key.as_deref());
     Ok(Json(serde_json::to_value(resp).unwrap_or(json!({}))))
 }
 
@@ -154,7 +189,7 @@ pub async fn credential_info(
 
     match credential {
         Some(c) => {
-            let resp = CredentialResponse::from(c);
+            let resp = CredentialResponse::from_credential(c, state.aigw_master_key.as_deref());
             Ok(Json(serde_json::to_value(resp).unwrap_or(json!({}))))
         }
         None => Err((
@@ -177,9 +212,10 @@ pub async fn credential_list(
         )
     })?;
 
+    let master_key = state.aigw_master_key.as_deref();
     let data: Vec<Value> = credentials
         .into_iter()
-        .map(|c| serde_json::to_value(CredentialResponse::from(c)).unwrap_or(json!({})))
+        .map(|c| serde_json::to_value(CredentialResponse::from_credential(c, master_key)).unwrap_or(json!({})))
         .collect();
 
     Ok(Json(json!({"object": "list", "data": data})))
@@ -229,7 +265,7 @@ pub async fn credential_update(
             )
         })?;
 
-    let resp = CredentialResponse::from(credential);
+    let resp = CredentialResponse::from_credential(credential, state.aigw_master_key.as_deref());
     Ok(Json(serde_json::to_value(resp).unwrap_or(json!({}))))
 }
 

@@ -69,9 +69,9 @@ pub async fn user_new(
         user_email: body.get("user_email").and_then(|v| v.as_str()).map(String::from),
         models: body.get("models").cloned().unwrap_or(json!([])),
         metadata: body.get("metadata").cloned().unwrap_or(json!({})),
-        max_parallel_requests: body.get("max_parallel_requests").and_then(|v| v.as_i64()).map(|v| v as i32),
-        tpm_limit: body.get("tpm_limit").and_then(|v| v.as_i64()),
-        rpm_limit: body.get("rpm_limit").and_then(|v| v.as_i64()),
+        max_parallel_requests: body.get("max_parallel_requests").and_then(|v| v.as_i64()).map(|v| v.to_string()),
+        tpm_limit: body.get("tpm_limit").and_then(|v| v.as_i64()).map(|v| v.to_string()),
+        rpm_limit: body.get("rpm_limit").and_then(|v| v.as_i64()).map(|v| v.to_string()),
         budget_duration: body.get("budget_duration").and_then(|v| v.as_str()).map(String::from),
         budget_reset_at: None,
         allowed_cache_controls: body.get("allowed_cache_controls").cloned().unwrap_or(json!([])),
@@ -146,6 +146,7 @@ pub async fn user_list(
                 if let Some(ref budget_str) = u.max_budget {
                     obj["max_budget"] = json!(u.max_budget_f64());
                 }
+                obj["max_parallel_requests"] = json!(u.max_parallel_requests_i32());
             }
             v
         })
@@ -221,13 +222,13 @@ pub async fn user_update(
         existing.metadata = v.clone();
     }
     if let Some(v) = body.get("tpm_limit") {
-        existing.tpm_limit = v.as_i64();
+        existing.tpm_limit = v.as_i64().map(|v| v.to_string());
     }
     if let Some(v) = body.get("rpm_limit") {
-        existing.rpm_limit = v.as_i64();
+        existing.rpm_limit = v.as_i64().map(|v| v.to_string());
     }
     if let Some(v) = body.get("max_parallel_requests") {
-        existing.max_parallel_requests = v.as_i64().map(|v| v as i32);
+        existing.max_parallel_requests = v.as_i64().map(|v| v.to_string());
     }
     if let Some(v) = body.get("budget_duration") {
         existing.budget_duration = v.as_str().map(String::from);

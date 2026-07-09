@@ -14,7 +14,7 @@
 //! - GET /global/spend/providers — Spend aggregated by provider (admin only)
 
 use aigw_core::auth::decode_jwt;
-use aigw_core::crypto::hash_token;
+use aigw_core::crypto::{decrypt_litellm_value, hash_token};
 use aigw_core::middleware::{AuthError, KeyIdentity};
 use axum::{
     extract::{FromRequestParts, Query, State},
@@ -217,23 +217,28 @@ pub async fn spend_logs(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let api_key = query.api_key.unwrap_or_else(|| auth.token_hash.clone());
 
-    let logs = state
-        .db
-        .query_spend_logs_filtered(
+    let (logs, total_count) = tokio::try_join!(
+        state.db.query_spend_logs_filtered(
             Some(&api_key),
             query.model.as_deref(),
             query.provider.as_deref(),
             query.start_date.as_deref(),
             query.end_date.as_deref(),
             query.limit,
+        ),
+        state.db.query_spend_logs_count(
+            Some(&api_key),
+            query.model.as_deref(),
+            query.start_date.as_deref(),
+            query.end_date.as_deref(),
+        ),
+    )
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
         )
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
-            )
-        })?;
+    })?;
 
     let data: Vec<Value> = logs
         .iter()
@@ -256,7 +261,7 @@ pub async fn spend_logs(
         })
         .collect();
 
-    Ok(Json(json!({ "data": data, "count": data.len() })))
+    Ok(Json(json!({ "data": data, "count": data.len(), "total_count": total_count })))
 }
 
 /// GET /spend/keys — Get spend per key summary for the authenticated key
@@ -368,23 +373,28 @@ pub async fn global_spend_logs(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&auth)?;
 
-    let logs = state
-        .db
-        .query_spend_logs_filtered(
+    let (logs, total_count) = tokio::try_join!(
+        state.db.query_spend_logs_filtered(
             query.api_key.as_deref(),
             query.model.as_deref(),
             query.provider.as_deref(),
             query.start_date.as_deref(),
             query.end_date.as_deref(),
             query.limit,
+        ),
+        state.db.query_spend_logs_count(
+            query.api_key.as_deref(),
+            query.model.as_deref(),
+            query.start_date.as_deref(),
+            query.end_date.as_deref(),
+        ),
+    )
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
         )
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
-            )
-        })?;
+    })?;
 
     let data: Vec<Value> = logs
         .iter()
@@ -407,7 +417,7 @@ pub async fn global_spend_logs(
         })
         .collect();
 
-    Ok(Json(json!({ "data": data, "count": data.len() })))
+    Ok(Json(json!({ "data": data, "count": data.len(), "total_count": total_count })))
 }
 
 /// GET /global/spend/keys — Get spend for all keys (admin only)
@@ -484,6 +494,23 @@ pub async fn spend_providers(
     State(state): State<SharedState>,
     _auth: SpendAuth,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    spend_providers_inner(&state).await
+}
+
+/// GET /global/spend/providers — Spend by provider (admin only)
+pub async fn global_spend_providers(
+    State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    require_admin(&auth)?;
+    spend_providers_inner(&state).await
+}
+
+/// Shared implementation: aggregate spend by provider, post-process with decrypted
+/// proxy_models litellm_params to resolve encrypted model→provider mappings.
+async fn spend_providers_inner(
+    state: &SharedState,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let aggs = state
         .db
         .aggregate_spend_by_provider()
@@ -495,11 +522,21 @@ pub async fn spend_providers(
             )
         })?;
 
+    // Post-process: build model_name → decrypted provider name map from proxy_models
+    let provider_map = build_decrypted_provider_map(state).await;
+
     let data: Vec<Value> = aggs
         .iter()
         .map(|a| {
+            // The raw "provider" from DB joins proxy_models on model_name.
+            // If litellm_params is encrypted, json_extract returns NULL and falls back to sl.model.
+            // Use the decrypted map to resolve the real provider name.
+            let provider = provider_map
+                .get(&a.provider)
+                .cloned()
+                .unwrap_or_else(|| a.provider.clone());
             json!({
-                "provider": a.provider,
+                "provider": provider,
                 "total_tokens": a.total_tokens,
                 "total_spend": a.total_spend,
                 "requests": a.requests,
@@ -508,6 +545,46 @@ pub async fn spend_providers(
         .collect();
 
     Ok(Json(json!({ "data": data, "count": data.len() })))
+}
+
+/// Build a map from model_name → decrypted provider name by listing proxy_models
+/// and decrypting their litellm_params.
+async fn build_decrypted_provider_map(
+    state: &SharedState,
+) -> HashMap<String, String> {
+    let mk = match state.aigw_master_key.as_deref() {
+        Some(k) => k,
+        None => return HashMap::new(),
+    };
+
+    let models = match state.db.list_models().await {
+        Ok(m) => m,
+        Err(_) => return HashMap::new(),
+    };
+
+    let mut map = HashMap::new();
+    for m in &models {
+        // litellm_params is a JSON value; extract the "model" field (provider name)
+        let provider = if let Some(s) = m.litellm_params.as_str() {
+            // Encrypted string — decrypt first, then parse JSON
+            decrypt_litellm_value(s, mk)
+                .ok()
+                .and_then(|decrypted| {
+                    serde_json::from_str::<Value>(&decrypted).ok()
+                })
+                .and_then(|v| v.get("model").and_then(|mv| mv.as_str().map(String::from)))
+        } else if let Some(obj) = m.litellm_params.as_object() {
+            obj.get("model").and_then(|v| v.as_str().map(String::from))
+        } else {
+            None
+        };
+
+        if let Some(provider) = provider {
+            map.insert(m.model_name.clone(), provider);
+        }
+    }
+
+    map
 }
 
 /// GET /global/spend/models — Spend by model (admin only, all keys)
@@ -533,39 +610,6 @@ pub async fn global_spend_models(
         .map(|a| {
             json!({
                 "model": a.model,
-                "total_tokens": a.total_tokens,
-                "total_spend": a.total_spend,
-                "requests": a.requests,
-            })
-        })
-        .collect();
-
-    Ok(Json(json!({ "data": data, "count": data.len() })))
-}
-
-/// GET /global/spend/providers — Spend by provider (admin only)
-pub async fn global_spend_providers(
-    State(state): State<SharedState>,
-    SpendAuth(auth): SpendAuth,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    require_admin(&auth)?;
-
-    let aggs = state
-        .db
-        .aggregate_spend_by_provider()
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
-            )
-        })?;
-
-    let data: Vec<Value> = aggs
-        .iter()
-        .map(|a| {
-            json!({
-                "provider": a.provider,
                 "total_tokens": a.total_tokens,
                 "total_spend": a.total_spend,
                 "requests": a.requests,

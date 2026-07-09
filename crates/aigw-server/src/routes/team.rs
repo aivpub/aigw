@@ -67,9 +67,9 @@ pub async fn team_new(
         soft_budget: body.get("soft_budget").and_then(|v| v.as_f64()).map(|v| v.to_string()),
         spend: 0.0,
         models: body.get("models").cloned().unwrap_or(json!([])),
-        max_parallel_requests: body.get("max_parallel_requests").and_then(|v| v.as_i64()).map(|v| v as i32),
-        tpm_limit: body.get("tpm_limit").and_then(|v| v.as_i64()),
-        rpm_limit: body.get("rpm_limit").and_then(|v| v.as_i64()),
+        max_parallel_requests: body.get("max_parallel_requests").and_then(|v| v.as_i64()).map(|v| v.to_string()),
+        tpm_limit: body.get("tpm_limit").and_then(|v| v.as_i64()).map(|v| v.to_string()),
+        rpm_limit: body.get("rpm_limit").and_then(|v| v.as_i64()).map(|v| v.to_string()),
         budget_duration: body.get("budget_duration").and_then(|v| v.as_str()).map(String::from),
         budget_reset_at: None,
         blocked: body.get("blocked").and_then(|v| v.as_bool()).unwrap_or(false),
@@ -151,6 +151,7 @@ pub async fn team_list(
                 if let Some(ref budget_str) = t.max_budget {
                     obj["max_budget"] = json!(t.max_budget_f64());
                 }
+                obj["max_parallel_requests"] = json!(t.max_parallel_requests_i32());
             }
             v
         })
@@ -211,10 +212,10 @@ pub async fn team_update(
         existing.models = v.clone();
     }
     if let Some(v) = body.get("tpm_limit") {
-        existing.tpm_limit = v.as_i64();
+        existing.tpm_limit = v.as_i64().map(|v| v.to_string());
     }
     if let Some(v) = body.get("rpm_limit") {
-        existing.rpm_limit = v.as_i64();
+        existing.rpm_limit = v.as_i64().map(|v| v.to_string());
     }
     if let Some(v) = body.get("blocked") {
         existing.blocked = v.as_bool().unwrap_or(existing.blocked);

@@ -7,7 +7,7 @@
 //! - PUT    /model/update    — Update existing model
 //! - DELETE /model/delete    — Delete a model
 
-use aigw_core::crypto::decrypt_litellm_value;
+use aigw_core::crypto::{decrypt_json_fields, decrypt_litellm_value};
 use aigw_core::models::ProxyModel;
 use axum::{
     extract::{Query, State},
@@ -16,6 +16,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use tracing::warn;
 
 use crate::routes::keys::SharedState;
 use super::spend::{require_admin, SpendAuth};
@@ -85,20 +86,36 @@ impl ModelResponse {
     }
 
     fn decrypt_params(params: &Value, master_key: Option<&str>) -> Value {
-        let s = params.to_string();
-        if s.starts_with('{') {
-            return params.clone();
-        }
         let key = match master_key {
             Some(k) => k,
-            None => return params.clone(),
+            None => {
+                warn!("AIGW_MASTER_KEY not configured — returning encrypted litellm_params as-is");
+                return params.clone();
+            }
         };
-        let decrypted = match decrypt_litellm_value(&s, key) {
-            Ok(d) => d,
-            Err(_) => return params.clone(),
-        };
-        serde_json::from_str(&decrypted).unwrap_or_else(|_| params.clone())
+        match params {
+            Value::Object(_) => {
+                // Walk each field: individually encrypted values like api_base,
+                // api_key, custom_llm_provider live inside the JSON object.
+                decrypt_json_fields(params, key)
+            }
+            Value::String(s) => {
+                if s.starts_with('{') {
+                    return params.clone();
+                }
+                let decrypted = match decrypt_litellm_value(s, key) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        warn!("Failed to decrypt litellm_params: {} — returning encrypted value as-is", e);
+                        return params.clone();
+                    }
+                };
+                serde_json::from_str(&decrypted).unwrap_or_else(|_| params.clone())
+            }
+            _ => params.clone(),
+        }
     }
+
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -257,4 +274,125 @@ pub async fn model_delete(
     })?;
 
     Ok(Json(json!({"status": "deleted"})))
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Tests
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_encrypted(value: &str) -> String {
+        aigw_core::crypto::encrypt_litellm_value(value, "test-master-key").unwrap()
+    }
+
+    // ━━━━ decrypt_params — whole-value encrypted ━━━━
+
+    #[test]
+    fn decrypt_whole_object_encrypted_string() {
+        let plain = r#"{"model":"gpt-4","api_base":"https://api.openai.com"}"#;
+        let encrypted = make_encrypted(plain);
+        let result = ModelResponse::decrypt_params(&json!(encrypted), Some("test-master-key"));
+        assert_eq!(result["model"], json!("gpt-4"));
+        assert_eq!(result["api_base"], json!("https://api.openai.com"));
+    }
+
+    #[test]
+    fn decrypt_already_plain_json_passes_through() {
+        let params = json!({"model": "gpt-4", "api_base": "https://api.openai.com"});
+        let result = ModelResponse::decrypt_params(&params, Some("test-master-key"));
+        assert_eq!(result, params);
+    }
+
+    #[test]
+    fn decrypt_no_master_key_returns_as_is() {
+        let params = json!("some-encrypted-blob");
+        let result = ModelResponse::decrypt_params(&params, None);
+        assert_eq!(result, params);
+    }
+
+    // ━━━━ decrypt_params — nested field decryption ━━━━
+
+    #[test]
+    fn decrypt_nested_encrypted_fields() {
+        let plain_api_base = "https://api.openai.com";
+        let plain_api_key = "sk-secret-key";
+        let params = json!({
+            "model": "gpt-4",
+            "api_base": make_encrypted(plain_api_base),
+            "api_key": make_encrypted(plain_api_key),
+            "custom_llm_provider": "openai",
+        });
+        let result = ModelResponse::decrypt_params(&params, Some("test-master-key"));
+        assert_eq!(result["model"], json!("gpt-4"));
+        assert_eq!(result["api_base"], json!(plain_api_base));
+        assert_eq!(result["api_key"], json!("sk-secret-key"));
+        assert_eq!(result["custom_llm_provider"], json!("openai"));
+    }
+
+    #[test]
+    fn decrypt_nested_plaintext_values_untouched() {
+        let params = json!({
+            "model": "gpt-4",
+            "rpm": 100,
+            "tpm": 2000,
+            "api_base": "https://plain.example.com",
+        });
+        let result = ModelResponse::decrypt_params(&params, Some("test-master-key"));
+        assert_eq!(result["model"], json!("gpt-4"));
+        assert_eq!(result["rpm"], json!(100));
+        assert_eq!(result["tpm"], json!(2000));
+        assert_eq!(result["api_base"], json!("https://plain.example.com"));
+    }
+
+    #[test]
+    fn decrypt_nested_empty_string_passes_through() {
+        let params = json!({"model": "gpt-4", "api_base": ""});
+        let result = ModelResponse::decrypt_params(&params, Some("test-master-key"));
+        assert_eq!(result["api_base"], json!(""));
+    }
+
+    #[test]
+    fn decrypt_nested_recursive_in_object() {
+        let plain_deployment = "us-east-1";
+        let params = json!({
+            "model": "bedrock",
+            "litellm_params": {
+                "deployment": make_encrypted(plain_deployment),
+                "region": "us-east-1",
+            },
+        });
+        let result = ModelResponse::decrypt_params(&params, Some("test-master-key"));
+        assert_eq!(result["model"], json!("bedrock"));
+        assert_eq!(result["litellm_params"]["deployment"], json!(plain_deployment));
+        assert_eq!(result["litellm_params"]["region"], json!("us-east-1"));
+    }
+
+    #[test]
+    fn decrypt_nested_in_arrays() {
+        let plain1 = "model-a";
+        let plain2 = "model-b";
+        let params = json!({
+            "fallbacks": [
+                make_encrypted(plain1),
+                make_encrypted(plain2),
+            ],
+        });
+        let result = ModelResponse::decrypt_params(&params, Some("test-master-key"));
+        assert_eq!(result["fallbacks"][0], json!(plain1));
+        assert_eq!(result["fallbacks"][1], json!(plain2));
+    }
+
+    #[test]
+    fn decrypt_nested_no_master_key_returns_as_is() {
+        let params = json!({
+            "model": "gpt-4",
+            "api_base": make_encrypted("secret"),
+        });
+        let result = ModelResponse::decrypt_params(&params, None);
+        // All values unchanged — master_key missing
+        assert_eq!(result, params);
+    }
 }
