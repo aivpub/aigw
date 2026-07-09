@@ -395,6 +395,7 @@ impl ChatAuth {
                 )
             })?;
 
+        let is_admin = claims.user_role == "proxy_admin";
         match key {
             Some(k) => Ok(ChatAuth(KeyIdentity {
                 token_hash,
@@ -402,7 +403,7 @@ impl ChatAuth {
                 user_id: k.user_id,
                 team_id: k.team_id,
                 organization_id: k.organization_id,
-                is_master_key: false,
+                is_master_key: is_admin,
                 user_role: Some(claims.user_role.clone()),
             })),
             None => Err((
@@ -855,15 +856,18 @@ pub async fn models_list(
     let mut model_ids: Vec<String> = Vec::new();
 
     if auth.is_master_key {
-        // Master key sees all available models
-        // In a real deployment, this would come from provider config
-        model_ids = vec![
-            "gpt-4".to_string(),
-            "gpt-4-turbo".to_string(),
-            "gpt-3.5-turbo".to_string(),
-            "gpt-4o".to_string(),
-            "gpt-4o-mini".to_string(),
-        ];
+        // Master key sees all models registered in proxy_models table
+        let models = state
+            .db
+            .list_models()
+            .await
+            .map_err(|_| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": {"message": "Failed to list models", "type": "db_error"}})),
+                )
+            })?;
+        model_ids = models.into_iter().map(|m| m.model_name).collect();
     } else {
         let key_record = state
             .db
@@ -915,7 +919,7 @@ mod tests {
     use super::*;
     use crate::routes::keys::AppState;
     use aigw_core::db::Database;
-    use aigw_core::models::VirtualKey;
+    use aigw_core::models::{ProxyModel, VirtualKey};
     use aigw_core::provider::ProviderRegistry;
     use aigw_core::rate_limiter::RateLimiter;
     use axum::{
@@ -1049,7 +1053,39 @@ mod tests {
 
     #[tokio::test]
     async fn test_models_list_with_auth() {
-        let app = test_app().await;
+        let db = Database::init("sqlite::memory:").await.expect("init sqlite");
+
+        // Insert a model so the models_list endpoint has data to return
+        let model = ProxyModel {
+            model_id: uuid::Uuid::new_v4().to_string(),
+            model_name: "gpt-4".to_string(),
+            litellm_params: json!({"model": "gpt-4"}),
+            model_info: json!({}),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            created_by: None,
+            updated_at: chrono::Utc::now().to_rfc3339(),
+            updated_by: None,
+        };
+        db.insert_model(&model).await.expect("insert model");
+
+        let state = Arc::new(AppState {
+            db,
+            master_key: Some("sk-master-chat-test".to_string()),
+            aigw_master_key: None,
+            provider_registry: ProviderRegistry::new(),
+            router_state: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            rate_limiter: Arc::new(RateLimiter::new()),
+            deployment_mode: "onprem".to_string(),
+            started_at: std::time::Instant::now(),
+        });
+
+        let app = Router::new()
+            .route(
+                "/v1/chat/completions",
+                axum::routing::post(chat_completions),
+            )
+            .route("/v1/models", axum::routing::get(models_list))
+            .with_state(state);
 
         let request = Request::builder()
             .method(Method::GET)
