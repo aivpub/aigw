@@ -50,6 +50,7 @@ interface SpendLog {
 interface SpendLogsResponse {
   data: SpendLog[];
   count: number;
+  total_count: number;
 }
 
 interface ModelAgg {
@@ -223,7 +224,7 @@ export function UsagePage() {
             {isLoading ? (
               <Skeleton className="h-8 w-16" />
             ) : (
-              <div className="text-2xl font-bold">{logsData?.count ?? 0}</div>
+              <div className="text-2xl font-bold">{logsData?.total_count ?? 0}</div>
             )}
           </CardContent>
         </Card>
