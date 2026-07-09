@@ -11,6 +11,7 @@
 //! For PostgreSQL sources, we use native PgPool to avoid AnyPool's limited
 //! support for PG-native types (TextArray, Jsonb, Timestamp, Name, etc.).
 
+use serde_json::Value;
 use sqlx::any::AnyPoolOptions;
 use sqlx::Row as _;
 use sqlx::{AnyPool, Column};
@@ -832,6 +833,35 @@ async fn migrate_credentials(
                         if let Ok(encrypted) = row.try_get::<String, _>(*idx) {
                             if encrypted.is_empty() || encrypted == "{}" {
                                 q = q.bind(encrypted);
+                            } else if encrypted.starts_with('{') {
+                                // JSON object with potentially individually encrypted fields —
+                                // rotate each encrypted field then re-encrypt the whole thing
+                                match serde_json::from_str::<Value>(&encrypted) {
+                                    Ok(json_val) => {
+                                        match aigw_core::rotate_json_fields(
+                                            &json_val, source_key, target_key,
+                                        ) {
+                                            Ok(rotated) => {
+                                                match aigw_core::encrypt_litellm_value(
+                                                    &rotated, target_key,
+                                                ) {
+                                                    Ok(re_encrypted) => q = q.bind(re_encrypted),
+                                                    Err(_e) => {
+                                                        q = q.bind(encrypted);
+                                                        skipped += 1;
+                                                    }
+                                                }
+                                            }
+                                            Err(_e) => {
+                                                q = q.bind(encrypted);
+                                                skipped += 1;
+                                            }
+                                        }
+                                    }
+                                    Err(_) => {
+                                        q = q.bind(encrypted);
+                                    }
+                                }
                             } else {
                                 match aigw_core::decrypt_litellm_value(&encrypted, source_key) {
                                     Ok(plaintext) => {
@@ -872,6 +902,33 @@ async fn migrate_credentials(
                     if let Ok(encrypted) = row.try_get::<String, _>(i) {
                         if encrypted.is_empty() || encrypted == "{}" {
                             q = q.bind(encrypted);
+                        } else if encrypted.starts_with('{') {
+                            match serde_json::from_str::<Value>(&encrypted) {
+                                Ok(json_val) => {
+                                    match aigw_core::rotate_json_fields(
+                                        &json_val, source_key, target_key,
+                                    ) {
+                                        Ok(rotated) => {
+                                            match aigw_core::encrypt_litellm_value(
+                                                &rotated, target_key,
+                                            ) {
+                                                Ok(re_encrypted) => q = q.bind(re_encrypted),
+                                                Err(_e) => {
+                                                    q = q.bind(encrypted);
+                                                    skipped += 1;
+                                                }
+                                            }
+                                        }
+                                        Err(_e) => {
+                                            q = q.bind(encrypted);
+                                            skipped += 1;
+                                        }
+                                    }
+                                }
+                                Err(_) => {
+                                    q = q.bind(encrypted);
+                                }
+                            }
                         } else {
                             match aigw_core::decrypt_litellm_value(&encrypted, source_key) {
                                 Ok(plaintext) => {
@@ -1014,8 +1071,37 @@ async fn migrate_proxy_models(
                 if let Some(idx) = src_idx {
                     if params_merged_idx == Some(mi) {
                         if let Ok(value) = row.try_get::<String, _>(*idx) {
-                            if value.is_empty() || value.starts_with('{') {
+                            if value.is_empty() {
                                 q = q.bind(value);
+                            } else if value.starts_with('{') {
+                                // JSON object with potentially individually encrypted fields —
+                                // rotate each encrypted field then re-encrypt the whole thing
+                                match serde_json::from_str::<Value>(&value) {
+                                    Ok(json_val) => {
+                                        match aigw_core::rotate_json_fields(
+                                            &json_val, source_key, target_key,
+                                        ) {
+                                            Ok(rotated) => {
+                                                match aigw_core::encrypt_litellm_value(
+                                                    &rotated, target_key,
+                                                ) {
+                                                    Ok(re_encrypted) => q = q.bind(re_encrypted),
+                                                    Err(_e) => {
+                                                        q = q.bind(value);
+                                                        skipped += 1;
+                                                    }
+                                                }
+                                            }
+                                            Err(_e) => {
+                                                q = q.bind(value);
+                                                skipped += 1;
+                                            }
+                                        }
+                                    }
+                                    Err(_) => {
+                                        q = q.bind(value);
+                                    }
+                                }
                             } else {
                                 match aigw_core::decrypt_litellm_value(&value, source_key) {
                                     Ok(plaintext) => {
@@ -1054,8 +1140,35 @@ async fn migrate_proxy_models(
             for i in 0..columns.len() {
                 if i == params_col {
                     if let Ok(value) = row.try_get::<String, _>(i) {
-                        if value.is_empty() || value.starts_with('{') {
+                        if value.is_empty() {
                             q = q.bind(value);
+                        } else if value.starts_with('{') {
+                            match serde_json::from_str::<Value>(&value) {
+                                Ok(json_val) => {
+                                    match aigw_core::rotate_json_fields(
+                                        &json_val, source_key, target_key,
+                                    ) {
+                                        Ok(rotated) => {
+                                            match aigw_core::encrypt_litellm_value(
+                                                &rotated, target_key,
+                                            ) {
+                                                Ok(re_encrypted) => q = q.bind(re_encrypted),
+                                                Err(_e) => {
+                                                    q = q.bind(value);
+                                                    skipped += 1;
+                                                }
+                                            }
+                                        }
+                                        Err(_e) => {
+                                            q = q.bind(value);
+                                            skipped += 1;
+                                        }
+                                    }
+                                }
+                                Err(_) => {
+                                    q = q.bind(value);
+                                }
+                            }
                         } else {
                             match aigw_core::decrypt_litellm_value(&value, source_key) {
                                 Ok(plaintext) => {
