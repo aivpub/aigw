@@ -13,6 +13,7 @@ export default defineConfig({
   server: {
     proxy: {
       "/v1": "http://localhost:4000",
+      "/v2": "http://localhost:4000",
       "/key": "http://localhost:4000",
       "/spend": "http://localhost:4000",
       "/global": "http://localhost:4000",

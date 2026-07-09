@@ -143,7 +143,19 @@ pub async fn team_list(
         )
     })?;
 
-    Ok(Json(serde_json::to_value(&teams).unwrap_or(json!([]))))
+    let teams: Vec<Value> = teams
+        .iter()
+        .map(|t| {
+            let mut v = serde_json::to_value(t).unwrap_or(json!({}));
+            if let Some(obj) = v.as_object_mut() {
+                if let Some(ref budget_str) = t.max_budget {
+                    obj["max_budget"] = json!(t.max_budget_f64());
+                }
+            }
+            v
+        })
+        .collect();
+    Ok(Json(json!({ "data": teams })))
 }
 
 /// PUT /team/update

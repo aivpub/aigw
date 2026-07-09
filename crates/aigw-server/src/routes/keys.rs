@@ -342,7 +342,7 @@ pub async fn key_list(
                 "user_id": k.user_id,
                 "team_id": k.team_id,
                 "spend": k.spend,
-                "max_budget": k.max_budget,
+                "max_budget": k.max_budget_f64(),
                 "tpm_limit": k.tpm_limit,
                 "rpm_limit": k.rpm_limit,
                 "blocked": k.blocked,

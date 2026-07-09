@@ -138,7 +138,19 @@ pub async fn user_list(
         )
     })?;
 
-    Ok(Json(serde_json::to_value(&users).unwrap_or(json!([]))))
+    let users: Vec<Value> = users
+        .iter()
+        .map(|u| {
+            let mut v = serde_json::to_value(u).unwrap_or(json!({}));
+            if let Some(obj) = v.as_object_mut() {
+                if let Some(ref budget_str) = u.max_budget {
+                    obj["max_budget"] = json!(u.max_budget_f64());
+                }
+            }
+            v
+        })
+        .collect();
+    Ok(Json(json!({ "data": users })))
 }
 
 /// PUT /user/update
