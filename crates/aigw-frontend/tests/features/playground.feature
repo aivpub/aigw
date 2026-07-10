@@ -5,38 +5,24 @@ Feature: Playground Chat
     And I am logged in as admin
     And I am on the Playground page
 
-  Scenario: Page loads with all controls
-    Then I should see the model selector dropdown
-    And I should see the system prompt textarea
-    And I should see the user message textarea
-    And I should see the send button
-    And I should see the streaming toggle
+  Scenario: Page loads with chat layout
+    Then I should see the message input area
+    And I should see a send button
 
-  Scenario: Empty state shows placeholder text
-    Then the response area should show "Enter a message and click Send to test"
+  Scenario: Empty state shows start conversation prompt
+    Then the chat area should show "Start a conversation"
 
-  Scenario: Select a model from dropdown
-    When I select model "gpt-4" from the dropdown
-    Then the model "gpt-4" should be selected
+  Scenario: Select a model from settings
+    When I select model "gpt-4" from the settings panel
+    Then the model "gpt-4" should be shown as the active model
 
-  Scenario: Send a message and see response
-    When I type "Hello, how are you?" into the user message
+  Scenario: Send a message and see chat response
+    When I type "Hello" into the chat input
     And I click the Send button
-    Then I should see a response in the response area
+    Then I should see a chat response message
 
-  Scenario: Send with system prompt
-    When I type "You are a helpful assistant" into the system prompt
-    And I type "What is 2+2?" into the user message
+  Scenario: New Chat clears conversation
+    When I type "Hello" into the chat input
     And I click the Send button
-    Then I should see a response in the response area
-
-  Scenario: Stream response toggle
-    When I toggle streaming on
-    And I type "Hello" into the user message
-    And I click the Send button
-    Then I should see a response in the response area
-
-  Scenario: Mobile playground stacks layout
-    Given the viewport is mobile size 375x667
-    When I visit "/dash/playground"
-    Then the playground should be displayed in a mobile-friendly format
+    And I click the New Chat button
+    Then the chat messages should be cleared
