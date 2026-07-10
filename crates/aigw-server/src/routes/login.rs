@@ -258,6 +258,7 @@ pub async fn login(
 }
 
 /// POST /v2/logout
+#[allow(dead_code)]
 pub async fn logout(
     State(_state): State<SharedState>,
 ) -> Result<(StatusCode, [(String, String); 1], Json<Value>), (StatusCode, Json<Value>)> {

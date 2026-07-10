@@ -17,6 +17,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 /// A pending daily_spend record waiting to be flushed to the database.
+#[derive(Debug)]
 pub struct PendingDailySpend {
     pub log: DailySpendLog,
 }

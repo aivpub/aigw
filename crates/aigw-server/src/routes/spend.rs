@@ -32,6 +32,7 @@ use super::keys::SharedState;
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct SpendLogsQuery {
     pub api_key: Option<String>,
     pub model: Option<String>,
