@@ -370,6 +370,7 @@ mod tests {
             rate_limiter: Arc::new(RateLimiter::new()),
             deployment_mode: "onprem".to_string(),
             started_at: std::time::Instant::now(),
+            daily_spend_queue: None,
         });
         Router::new()
             .route("/v2/login", axum::routing::post(login))

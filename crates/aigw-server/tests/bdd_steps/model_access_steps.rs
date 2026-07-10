@@ -28,6 +28,7 @@ async fn ensure_global_state() -> aigw_server::routes::keys::SharedState {
             rate_limiter: Arc::new(aigw_core::rate_limiter::RateLimiter::new()),
             deployment_mode: "test".to_string(),
             started_at: std::time::Instant::now(),
+            daily_spend_queue: None,
         },
     );
     // Set it — if another thread beat us, use theirs

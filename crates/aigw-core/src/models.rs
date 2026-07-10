@@ -149,6 +149,40 @@ pub struct SpendLog {
     pub proxy_server_request: Option<serde_json::Value>,
 }
 
+/// Daily spend pre-aggregation record — maps to one of 6 daily_*_spend tables.
+/// The entity_id field maps to user_id/team_id/organization_id/end_user_id/agent_id/tag
+/// depending on the target table.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DailySpendLog {
+    pub entity_id: String,
+    pub date: String,           // YYYY-MM-DD
+    pub api_key: String,
+    pub model: String,
+    pub model_group: String,
+    pub custom_llm_provider: String,
+    pub mcp_namespaced_tool_name: String,
+    pub endpoint: String,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub spend: f64,
+    pub api_requests: i64,
+    pub successful_requests: i64,
+    pub failed_requests: i64,
+    /// Which table this belongs to
+    pub kind: DailySpendKind,
+}
+
+/// Enum identifying which daily_spend table a record targets.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DailySpendKind {
+    User,
+    Team,
+    Organization,
+    EndUser,
+    Agent,
+    Tag { tag: String, request_id: String },
+}
+
 /// Spend aggregation by model
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct SpendModelAgg {

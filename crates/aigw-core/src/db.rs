@@ -48,6 +48,8 @@ pub enum DbError {
     NotFound(String),
     #[error("Invalid database URL: {0}")]
     InvalidUrl(String),
+    #[error("{0}")]
+    Other(String),
 }
 
 pub type Result<T> = std::result::Result<T, DbError>;
@@ -57,7 +59,7 @@ pub type Result<T> = std::result::Result<T, DbError>;
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /// Multi-database pool supporting SQLite, MySQL, PostgreSQL
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Database {
     Sqlite(SqlitePool),
     Mysql(MySqlPool),
@@ -3312,7 +3314,7 @@ mod tests {
     use super::*;
     use crate::crypto::hash_token;
 
-    /// All 14 tables defined in the migrations (aigw names)
+    /// All 20 tables defined in the migrations (aigw names)
     const ALL_TABLES: &[&str] = &[
         "virtual_keys",
         "spend_logs",
@@ -3328,6 +3330,12 @@ mod tests {
         "proxy_models",
         "config",
         "credentials",
+        "daily_user_spend",
+        "daily_team_spend",
+        "daily_organization_spend",
+        "daily_end_user_spend",
+        "daily_agent_spend",
+        "daily_tag_spend",
     ];
 
     fn make_test_key(token_hash: &str, key_alias: &str) -> VirtualKey {

@@ -20,6 +20,7 @@ pub mod auth;
 pub mod budget;
 pub mod config;
 pub mod crypto;
+pub mod daily_spend_queue;
 pub mod db;
 pub mod instance;
 pub mod middleware;
@@ -39,7 +40,7 @@ pub use crypto::{
 };
 pub use db::CredentialsStore;
 pub use models::{
-    Budget, Credential, Organization, OrganizationMembership, Project, ProxyModel, SpendLog, Team,
-    TeamMembership, User, VirtualKey,
+    Budget, Credential, DailySpendKind, DailySpendLog, Organization, OrganizationMembership,
+    Project, ProxyModel, SpendLog, Team, TeamMembership, User, VirtualKey,
 };
 pub use password::{hash_password, verify_password};

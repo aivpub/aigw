@@ -9,6 +9,7 @@
 //! - POST   /key/regenerate   — Regenerate key (new token, copy config)
 
 use aigw_core::crypto::hash_token;
+use aigw_core::daily_spend_queue::DailySpendQueue;
 use aigw_core::db::Database;
 use aigw_core::models::{GenerateKeyRequest, VirtualKey};
 use aigw_core::provider::ProviderRegistry;
@@ -44,6 +45,8 @@ pub struct AppState {
     pub rate_limiter: Arc<RateLimiter>,
     pub deployment_mode: String, // "onprem" or "saas"
     pub started_at: std::time::Instant,
+    #[allow(dead_code)]
+    pub daily_spend_queue: Option<Arc<DailySpendQueue>>,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -662,6 +665,7 @@ mod tests {
             rate_limiter: Arc::new(RateLimiter::new()),
             deployment_mode: "onprem".to_string(),
             started_at: std::time::Instant::now(),
+            daily_spend_queue: None,
         });
         Router::new()
             .route("/key/generate", axum::routing::post(generate_key))

@@ -13,6 +13,7 @@ mod openapi;
 mod routes;
 
 use aigw_core::config::AigwConfig;
+use aigw_core::daily_spend_queue::DailySpendQueue;
 use aigw_core::db::Database;
 use aigw_core::provider::ProviderRegistry;
 use aigw_core::rate_limiter::RateLimiter;
@@ -173,8 +174,11 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // Build shared state
+    let db_arc = Arc::new(db);
+    let daily_spend_queue = Arc::new(DailySpendQueue::new(Arc::clone(&db_arc)));
+
     let state: SharedState = Arc::new(AppState {
-        db,
+        db: (*db_arc).clone(),
         master_key: Some(master_key.clone()),
         aigw_master_key,
         provider_registry,
@@ -182,6 +186,7 @@ async fn main() -> anyhow::Result<()> {
         rate_limiter,
         deployment_mode: cli.deployment_mode.clone(),
         started_at: std::time::Instant::now(),
+        daily_spend_queue: Some(daily_spend_queue),
     });
 
     // Build router

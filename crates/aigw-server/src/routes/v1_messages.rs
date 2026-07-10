@@ -7,7 +7,7 @@
 
 use aigw_core::adapter::{DefaultAdapter, ProviderAdapter};
 use aigw_core::crypto::hash_token;
-use aigw_core::models::{ClaudeMessageRequest, SpendLog};
+use aigw_core::models::{ClaudeMessageRequest, DailySpendKind, DailySpendLog, SpendLog};
 use axum::{
     extract::State,
     http::{self, StatusCode},
@@ -441,6 +441,40 @@ pub async fn messages_handler(
 
         let _ = state.db.insert_spend_log(&spend_log).await;
 
+        // Queue daily_spend update
+        if let Some(ref queue) = state.daily_spend_queue {
+            let date = now.format("%Y-%m-%d").to_string();
+            let is_success = spend_log
+                .status
+                .as_deref()
+                .unwrap_or("success")
+                == "success";
+            let ds_log = DailySpendLog {
+                entity_id: spend_log.user.clone().unwrap_or_default(),
+                date,
+                api_key: spend_log.api_key.clone(),
+                model: spend_log.model.clone(),
+                model_group: spend_log.model_group.clone().unwrap_or_default(),
+                custom_llm_provider: spend_log
+                    .custom_llm_provider
+                    .clone()
+                    .unwrap_or_default(),
+                mcp_namespaced_tool_name: spend_log
+                    .mcp_namespaced_tool_name
+                    .clone()
+                    .unwrap_or_default(),
+                endpoint: "/v1/messages".to_string(),
+                prompt_tokens: spend_log.prompt_tokens as i64,
+                completion_tokens: spend_log.completion_tokens as i64,
+                spend: spend_log.spend,
+                api_requests: 1,
+                successful_requests: if is_success { 1 } else { 0 },
+                failed_requests: if is_success { 0 } else { 1 },
+                kind: DailySpendKind::User,
+            };
+            queue.queue(ds_log);
+        }
+
         Ok(Json(serde_json::to_value(&claude_response).map_err(
             |_| {
                 anthropic_error(
@@ -481,6 +515,7 @@ mod tests {
             rate_limiter: Arc::new(RateLimiter::new()),
             deployment_mode: "onprem".to_string(),
             started_at: std::time::Instant::now(),
+            daily_spend_queue: None,
         });
 
         Router::new()

@@ -151,6 +151,7 @@ mod tests {
             rate_limiter: Arc::new(RateLimiter::new()),
             deployment_mode: deployment_mode.to_string(),
             started_at: std::time::Instant::now(),
+            daily_spend_queue: None,
         })
     }
 

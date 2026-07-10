@@ -187,6 +187,7 @@ mod tests {
             rate_limiter: std::sync::Arc::new(Default::default()),
             deployment_mode: "test".to_string(),
             started_at: std::time::Instant::now(),
+            daily_spend_queue: None,
         });
 
         let app = Router::new()

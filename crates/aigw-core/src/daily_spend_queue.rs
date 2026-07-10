@@ -1,0 +1,285 @@
+//! In-memory queue for daily_spend pre-aggregation.
+//!
+//! Provides a non-blocking queue that collects `DailySpendLog` records
+//! on every request completion. A background task drains the queue every
+//! 10 seconds, aggregates by composite key, and batch-upserts into the
+//! corresponding `daily_*_spend` tables via `ON CONFLICT DO UPDATE`.
+//!
+//! Multi-instance safety: `col = col + EXCLUDED.col` SQL is atomic at
+//! the database level — two instances updating the same row concurrently
+//! both get their increments applied correctly.
+
+use crate::db::Database;
+use crate::db::DbError;
+use crate::models::{DailySpendKind, DailySpendLog};
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::mpsc;
+
+/// A pending daily_spend record waiting to be flushed to the database.
+pub struct PendingDailySpend {
+    pub log: DailySpendLog,
+}
+
+/// The daily_spend queue that collects records and flushes them periodically.
+#[derive(Debug)]
+pub struct DailySpendQueue {
+    tx: mpsc::UnboundedSender<PendingDailySpend>,
+}
+
+impl DailySpendQueue {
+    /// Create a new queue and start the background drain task.
+    ///
+    /// The drain task runs every 10 seconds, aggregating all queued
+    /// records and upserting them in a single batch per table.
+    pub fn new(db: Arc<Database>) -> Self {
+        let (tx, mut rx) = mpsc::unbounded_channel::<PendingDailySpend>();
+
+        tokio::spawn(async move {
+            loop {
+                // Drain all pending records
+                let mut pending: Vec<PendingDailySpend> = Vec::new();
+                // Collect available records (non-blocking)
+                while let Ok(item) = rx.try_recv() {
+                    pending.push(item);
+                }
+                // If queue was empty, wait for at least one item
+                if pending.is_empty() {
+                    match rx.recv().await {
+                        Some(item) => pending.push(item),
+                        None => break, // channel closed
+                    }
+                }
+
+                // After first item, drain any additional queued items
+                while let Ok(item) = rx.try_recv() {
+                    pending.push(item);
+                }
+
+                // Aggregate by (kind, composite key)
+                let grouped = aggregate_daily_spend(pending);
+
+                // Batch upsert each group
+                for (table_name, entries) in &grouped {
+                    if let Err(e) = batch_upsert_daily_spend(&db, table_name, entries).await {
+                        tracing::warn!(
+                            table = %table_name,
+                            count = entries.len(),
+                            error = %e,
+                            "daily_spend batch upsert failed"
+                        );
+                    }
+                }
+
+                // Wait 10 seconds before next drain
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            }
+        });
+
+        Self { tx }
+    }
+
+    /// Queue a daily_spend record for the next flush. Non-blocking.
+    pub fn queue(&self, log: DailySpendLog) {
+        let _ = self.tx.send(PendingDailySpend { log });
+    }
+}
+
+/// Aggregate pending records by table name and composite key.
+///
+/// Returns a map of table_name → vec of aggregated entries.
+/// Each entry is (key_fields..., accumulated_metrics).
+type AggEntry = (
+    String, // entity_id
+    String, // date
+    String, // api_key
+    String, // model
+    String, // custom_llm_provider
+    String, // mcp_namespaced_tool_name
+    String, // endpoint
+    String, // model_group
+    i64,    // prompt_tokens
+    i64,    // completion_tokens
+    f64,    // spend
+    i64,    // api_requests
+    i64,    // successful_requests
+    i64,    // failed_requests
+);
+
+fn aggregate_daily_spend(
+    pending: Vec<PendingDailySpend>,
+) -> HashMap<String, Vec<AggEntry>> {
+    let mut tables: HashMap<String, HashMap<String, AggEntry>> = HashMap::new();
+
+    for item in pending {
+        let log = &item.log;
+        let table_name = match &log.kind {
+            DailySpendKind::User => "daily_user_spend".to_string(),
+            DailySpendKind::Team => "daily_team_spend".to_string(),
+            DailySpendKind::Organization => "daily_organization_spend".to_string(),
+            DailySpendKind::EndUser => "daily_end_user_spend".to_string(),
+            DailySpendKind::Agent => "daily_agent_spend".to_string(),
+            DailySpendKind::Tag { .. } => "daily_tag_spend".to_string(),
+        };
+
+        let key = format!(
+            "{}|{}|{}|{}|{}|{}|{}",
+            log.entity_id,
+            log.date,
+            log.api_key,
+            log.model,
+            log.custom_llm_provider,
+            log.mcp_namespaced_tool_name,
+            log.endpoint,
+        );
+
+        let table_map = tables.entry(table_name).or_default();
+        let entry = table_map.entry(key).or_insert_with(|| {
+            (
+                log.entity_id.clone(),
+                log.date.clone(),
+                log.api_key.clone(),
+                log.model.clone(),
+                log.custom_llm_provider.clone(),
+                log.mcp_namespaced_tool_name.clone(),
+                log.endpoint.clone(),
+                log.model_group.clone(),
+                0,     // prompt_tokens
+                0,     // completion_tokens
+                0.0,   // spend
+                0,     // api_requests
+                0,     // successful_requests
+                0,     // failed_requests
+            )
+        });
+
+        entry.7 = log.model_group.clone();  // model_group — take last value
+        entry.8 += log.prompt_tokens;
+        entry.9 += log.completion_tokens;
+        entry.10 += log.spend;
+        entry.11 += log.api_requests;
+        entry.12 += log.successful_requests;
+        entry.13 += log.failed_requests;
+    }
+
+    tables
+        .into_iter()
+        .map(|(table_name, map)| {
+            (table_name, map.into_values().collect())
+        })
+        .collect()
+}
+
+/// Batch upsert aggregated daily_spend entries into the target table.
+///
+/// Uses `ON CONFLICT DO UPDATE SET col = col + EXCLUDED.col` for
+/// atomic increment semantics across multiple instances.
+async fn batch_upsert_daily_spend(
+    db: &Database,
+    table_name: &str,
+    entries: &[AggEntry],
+) -> Result<(), DbError> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+
+    // Build the SQL dynamically based on the table name and conflict columns.
+    // All 6 tables share the same structure but differ in entity_id column name
+    // and conflict key column names.
+    let (entity_col, conflict_cols) = match table_name {
+        "daily_user_spend" => ("user_id", "user_id, date, api_key, model, custom_llm_provider, mcp_namespaced_tool_name, endpoint"),
+        "daily_team_spend" => ("team_id", "team_id, date, api_key, model, custom_llm_provider, mcp_namespaced_tool_name, endpoint"),
+        "daily_organization_spend" => ("organization_id", "organization_id, date, api_key, model, custom_llm_provider, mcp_namespaced_tool_name, endpoint"),
+        "daily_end_user_spend" => ("end_user_id", "end_user_id, date, api_key, model, custom_llm_provider, mcp_namespaced_tool_name, endpoint"),
+        "daily_agent_spend" => ("agent_id", "agent_id, date, api_key, model, custom_llm_provider, mcp_namespaced_tool_name, endpoint"),
+        "daily_tag_spend" => ("tag", "request_id, tag, date, api_key, model, custom_llm_provider, mcp_namespaced_tool_name, endpoint"),
+        _ => return Err(crate::db::DbError::Other(format!("unknown daily_spend table: {}", table_name))),
+    };
+
+    for entry in entries {
+        let id = uuid::Uuid::new_v4().to_string();
+        let sql = format!(
+            "INSERT INTO {} (id, {}, date, api_key, model, model_group, custom_llm_provider, \
+             mcp_namespaced_tool_name, endpoint, prompt_tokens, completion_tokens, spend, \
+             api_requests, successful_requests, failed_requests) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT ({}) DO UPDATE SET \
+             prompt_tokens = {}.prompt_tokens + EXCLUDED.prompt_tokens, \
+             completion_tokens = {}.completion_tokens + EXCLUDED.completion_tokens, \
+             spend = {}.spend + EXCLUDED.spend, \
+             api_requests = {}.api_requests + EXCLUDED.api_requests, \
+             successful_requests = {}.successful_requests + EXCLUDED.successful_requests, \
+             failed_requests = {}.failed_requests + EXCLUDED.failed_requests, \
+             updated_at = CURRENT_TIMESTAMP",
+            table_name, entity_col,
+            conflict_cols,
+            table_name, table_name, table_name, table_name, table_name, table_name,
+        );
+
+        match db {
+            Database::Sqlite(pool) => {
+                sqlx::query(&sql)
+                    .bind(&id)
+                    .bind(&entry.0)
+                    .bind(&entry.1)
+                    .bind(&entry.2)
+                    .bind(&entry.3)
+                    .bind(&entry.7)
+                    .bind(&entry.4)
+                    .bind(&entry.5)
+                    .bind(&entry.6)
+                    .bind(entry.8)
+                    .bind(entry.9)
+                    .bind(entry.10)
+                    .bind(entry.11)
+                    .bind(entry.12)
+                    .bind(entry.13)
+                    .execute(pool)
+                    .await?;
+            }
+            Database::Mysql(pool) => {
+                sqlx::query(&sql)
+                    .bind(&id)
+                    .bind(&entry.0)
+                    .bind(&entry.1)
+                    .bind(&entry.2)
+                    .bind(&entry.3)
+                    .bind(&entry.7)
+                    .bind(&entry.4)
+                    .bind(&entry.5)
+                    .bind(&entry.6)
+                    .bind(entry.8)
+                    .bind(entry.9)
+                    .bind(entry.10)
+                    .bind(entry.11)
+                    .bind(entry.12)
+                    .bind(entry.13)
+                    .execute(pool)
+                    .await?;
+            }
+            Database::Postgres(pool) => {
+                // PG uses $N placeholders — keep the ? syntax for sqlx which handles it
+                sqlx::query(&sql)
+                    .bind(&id)
+                    .bind(&entry.0)
+                    .bind(&entry.1)
+                    .bind(&entry.2)
+                    .bind(&entry.3)
+                    .bind(&entry.7)
+                    .bind(&entry.4)
+                    .bind(&entry.5)
+                    .bind(&entry.6)
+                    .bind(entry.8)
+                    .bind(entry.9)
+                    .bind(entry.10)
+                    .bind(entry.11)
+                    .bind(entry.12)
+                    .bind(entry.13)
+                    .execute(pool)
+                    .await?;
+            }
+        }
+    }
+
+    Ok(())
+}
