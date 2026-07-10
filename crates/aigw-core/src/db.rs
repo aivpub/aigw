@@ -2055,8 +2055,8 @@ impl Database {
                 COUNT(request_id)
             FROM spend_logs
             WHERE start_time >= ? AND start_time <= ? {}
-            GROUP BY DATE(start_time)
-            ORDER BY date ASC"#,
+            GROUP BY 1
+            ORDER BY 1 ASC"#,
             filter_clause
         );
 

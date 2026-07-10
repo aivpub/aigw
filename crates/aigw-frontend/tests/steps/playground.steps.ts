@@ -71,6 +71,9 @@ When("I select model {string} from the settings panel", async ({ page }, model: 
   await page.getByRole("combobox").first().click();
   await page.waitForTimeout(300);
   await page.getByRole("option", { name: model }).click();
+  // Close sheet if on mobile
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(300);
 });
 
 Then("the model {string} should be shown as the active model", async ({ page }, model: string) => {
@@ -89,6 +92,28 @@ When("I click the New Chat button", async ({ page }) => {
 
 Then("the chat messages should be cleared", async ({ page }) => {
   await expect(page.getByText(/start a conversation/i)).toBeVisible({ timeout: 5000 });
+});
+
+When("I toggle streaming on", async ({ page }) => {
+  // Check if streaming toggle is visible (desktop sidebar) or in dialog
+  let switchBtn = page.locator("button[role='switch']").first();
+  if (!(await switchBtn.isVisible().catch(() => false))) {
+    const settingsBtn = page.getByRole("button", { name: /settings/i });
+    if (await settingsBtn.isVisible().catch(() => false)) {
+      await settingsBtn.click();
+      await page.waitForTimeout(400);
+    }
+    switchBtn = page.locator("button[role='switch']").first();
+  }
+  // Only toggle if not already checked
+  const isChecked = await switchBtn.getAttribute("aria-checked");
+  if (isChecked !== "true") {
+    await switchBtn.click();
+    await page.waitForTimeout(300);
+  }
+  // Close settings sheet if opened
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(400);
 });
 
 When("I click the Send button", async ({ page }) => {

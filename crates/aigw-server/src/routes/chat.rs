@@ -10,8 +10,8 @@ use aigw_core::middleware::KeyIdentity;
 use aigw_core::models::{DailySpendKind, DailySpendLog, SpendLog, Team, VirtualKey};
 use axum::{
     extract::State,
-    http::{self, StatusCode},
-    response::{sse::{Event, Sse}, IntoResponse},
+    http::{self, StatusCode, header},
+    response::IntoResponse,
     Json,
 };
 use serde::Serialize;
@@ -852,12 +852,17 @@ pub async fn chat_completions(
         });
 
         let sse_stream = tokio_stream::wrappers::UnboundedReceiverStream::new(rx)
-            .map(|data: Vec<u8>| {
-                let data_str = String::from_utf8_lossy(&data).to_string();
-                Ok::<_, Infallible>(Event::default().data(data_str))
-            });
+            .map(|data: Vec<u8>| Ok::<_, Infallible>(data));
 
-        Ok(Sse::new(sse_stream).into_response())
+        let body = axum::body::Body::from_stream(sse_stream);
+        let response = axum::response::Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/event-stream")
+            .header(header::CACHE_CONTROL, "no-cache")
+            .header(header::CONNECTION, "keep-alive")
+            .body(body)
+            .unwrap();
+        Ok(response)
     } else {
         // Non-streaming: parse upstream response
         let resp_body: Value = upstream_resp.json().await.map_err(|e| {

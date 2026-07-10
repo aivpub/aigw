@@ -16,13 +16,22 @@ Feature: Playground Chat
     When I select model "gpt-4" from the settings panel
     Then the model "gpt-4" should be shown as the active model
 
-  Scenario: Send a message and see chat response
-    When I type "Hello" into the chat input
+  Scenario: Send a streaming message and see response render
+    When I select model "gpt-4" from the settings panel
+    And I toggle streaming on
+    And I type "Hello" into the chat input
+    And I click the Send button
+    Then I should see a chat response message
+
+  Scenario: Send a non-streaming message and see response render
+    When I select model "gpt-4" from the settings panel
+    And I type "Hello" into the chat input
     And I click the Send button
     Then I should see a chat response message
 
   Scenario: New Chat clears conversation
-    When I type "Hello" into the chat input
+    When I select model "gpt-4" from the settings panel
+    And I type "Hello" into the chat input
     And I click the Send button
     And I click the New Chat button
     Then the chat messages should be cleared
