@@ -29,3 +29,26 @@ async fn then_json_contains_field(world: &mut TestWorld, field: String) {
         serde_json::to_string_pretty(body).unwrap_or_default()
     );
 }
+
+#[then(regex = r#"^响应 JSON 包含 "(.+)" 字段值为 (-?\d+)$"#)]
+async fn then_json_contains_field_int(
+    world: &mut TestWorld,
+    field: String,
+    expected: i64,
+) {
+    let body = world.last_body.as_ref().expect("no response body");
+    let actual = body
+        .get(&field)
+        .and_then(|v| v.as_i64())
+        .unwrap_or_else(|| panic!(
+            "Expected JSON field '{}' to be integer {}, got: {}",
+            field,
+            expected,
+            serde_json::to_string_pretty(body).unwrap_or_default()
+        ));
+    assert_eq!(
+        actual, expected,
+        "Expected field '{}' = {}, got {}",
+        field, expected, actual
+    );
+}

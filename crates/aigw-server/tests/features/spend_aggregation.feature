@@ -52,3 +52,29 @@ Feature: Spend 用量聚合查询
     Given 一个普通 key "spend-date-user" 已生成
     When 使用 key "spend-date-user" 发送 GET /spend/logs 请求带时间过滤
     Then 响应状态码为 200
+
+  Scenario: /spend/logs 响应包含分页元数据
+    Given 一个普通 key "spend-paginate-user" 已生成
+    When 使用 key "spend-paginate-user" 发送 GET /spend/logs 请求带 page=1&page_size=10
+    Then 响应状态码为 200
+    And 响应 JSON 包含 "page" 字段值为 1
+    And 响应 JSON 包含 "page_size" 字段值为 10
+    And 响应 JSON 包含 "total_count" 字段
+    And 响应 JSON 包含 "total_pages" 字段
+
+  Scenario: /spend/logs 响应包含请求耗时和TTFT字段
+    Given 一个普通 key "spend-ttft-user" 已生成
+    When 使用 key "spend-ttft-user" 发送 GET /spend/logs 请求带 page=1&page_size=10
+    Then 响应状态码为 200
+    And 响应 JSON 包含 "data" 字段
+
+  Scenario: /spend/logs 支持 request_id 过滤
+    Given 一个普通 key "spend-rid-user" 已生成
+    When 使用 key "spend-rid-user" 发送 GET /spend/logs 请求带 request_id 过滤
+    Then 响应状态码为 200
+
+  Scenario: /global/spend/logs 分页和 request_id 过滤
+    Given 一个普通 key "gsl-paginate-user" 已生成
+    When 使用 master-key 发送 GET /global/spend/logs 请求带 page=1&page_size=5&request_id=nonexistent
+    Then 响应状态码为 200
+    And 响应 JSON 包含 "total_pages" 字段

@@ -7,13 +7,17 @@
 
 use aigw_core::adapter::{DefaultAdapter, ProviderAdapter};
 use aigw_core::crypto::hash_token;
-use aigw_core::models::ClaudeMessageRequest;
+use aigw_core::models::{ClaudeMessageRequest, SpendLog};
 use axum::{
     extract::State,
     http::{self, StatusCode},
+    response::{sse::{Event, Sse}, IntoResponse},
     Json,
 };
 use serde_json::{json, Value};
+use std::convert::Infallible;
+use std::sync::Arc;
+use tokio_stream::StreamExt;
 
 use super::keys::SharedState;
 
@@ -55,7 +59,7 @@ pub async fn messages_handler(
         ..
     }: http::request::Parts,
     body: String,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+) -> Result<axum::response::Response, (StatusCode, Json<Value>)> {
     // 1. Auth check (must happen before body parsing to catch missing auth early)
     let extracted = headers
         .get("x-api-key")
@@ -269,19 +273,90 @@ pub async fn messages_handler(
     let upstream_status = upstream_resp.status();
 
     if is_stream {
-        // For streaming, we return a simplified response since full SSE proxy
-        // is handled by the proxy module. BDD tests verify the header/status.
-        let response_id = format!("msg_{}", uuid::Uuid::new_v4());
-        Ok(Json(json!({
-            "id": response_id,
-            "type": "message",
-            "role": "assistant",
-            "content": [{"type": "text", "text": ""}],
-            "model": model,
-            "stop_reason": null,
-            "stop_sequence": null,
-            "usage": {"input_tokens": 0, "output_tokens": 0}
-        })))
+        if !upstream_status.is_success() {
+            let error_body = upstream_resp.text().await.unwrap_or_default();
+            return Err(anthropic_error(
+                StatusCode::from_u16(upstream_status.as_u16())
+                    .unwrap_or(StatusCode::BAD_GATEWAY),
+                "upstream_error",
+                &format!("Upstream returned {}: {}", upstream_status.as_u16(), error_body),
+            ));
+        }
+
+        // SSE streaming proxy: forward upstream SSE chunks to client via axum Sse.
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+        let state_clone = Arc::clone(&state);
+        let model_clone = model.clone();
+        let upstream_base_url_clone = upstream_base_url.clone();
+
+        tokio::spawn(async move {
+            use tokio_stream::StreamExt;
+            let mut stream = upstream_resp.bytes_stream();
+            let mut first_chunk_time: Option<chrono::DateTime<chrono::Utc>> = None;
+
+            while let Some(chunk_result) = stream.next().await {
+                match chunk_result {
+                    Ok(chunk) => {
+                        if first_chunk_time.is_none() && !chunk.is_empty() {
+                            first_chunk_time = Some(chrono::Utc::now());
+                        }
+                        if tx.send(chunk.to_vec()).is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+
+            let now = chrono::Utc::now();
+            let spend_log = SpendLog {
+                request_id: uuid::Uuid::new_v4().to_string(),
+                call_type: "completion".to_string(),
+                api_key: "claude-message".to_string(),
+                spend: 0.0,
+                total_tokens: 0,
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                start_time,
+                end_time: now,
+                request_duration_ms: Some(
+                    now.signed_duration_since(start_time).num_milliseconds() as i32,
+                ),
+                completion_start_time: Some(first_chunk_time.unwrap_or(now)),
+                model: model_clone,
+                model_id: None,
+                model_group: None,
+                custom_llm_provider: None,
+                api_base: Some(upstream_base_url_clone),
+                user: None,
+                metadata: None,
+                cache_hit: None,
+                cache_key: None,
+                request_tags: None,
+                team_id: None,
+                organization_id: None,
+                end_user: None,
+                requester_ip_address: None,
+                messages: Some(upstream_body),
+                response: None,
+                session_id: None,
+                status: Some("success".to_string()),
+                mcp_namespaced_tool_name: None,
+                agent_id: None,
+                proxy_server_request: None,
+            };
+            let _ = state_clone.db.insert_spend_log(&spend_log).await;
+        });
+
+        // Claude streams use "text/event-stream" — we're forwarding raw SSE bytes.
+        // The upstream already sends SSE-formatted data.
+        let sse_stream = tokio_stream::wrappers::UnboundedReceiverStream::new(rx)
+            .map(|data: Vec<u8>| {
+                let data_str = String::from_utf8_lossy(&data).to_string();
+                Ok::<_, Infallible>(Event::default().data(data_str))
+            });
+
+        Ok(Sse::new(sse_stream).into_response())
     } else {
         // Non-streaming: parse upstream OpenAI response and convert to Claude format
         if !upstream_status.is_success() {
@@ -340,7 +415,7 @@ pub async fn messages_handler(
             request_duration_ms: Some(
                 now.signed_duration_since(start_time).num_milliseconds() as i32,
             ),
-            completion_start_time: None,
+            completion_start_time: Some(now), // non-streaming sentinel = end_time
             model: model.to_string(),
             model_id: None,
             model_group: None,
@@ -374,7 +449,7 @@ pub async fn messages_handler(
                     "Failed to serialize response",
                 )
             },
-        )?))
+        )?).into_response())
     }
 }
 

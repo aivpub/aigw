@@ -38,7 +38,10 @@ pub struct SpendLogsQuery {
     pub provider: Option<String>,
     pub start_date: Option<String>,
     pub end_date: Option<String>,
+    pub request_id: Option<String>,
     pub limit: Option<i32>,
+    pub page: Option<i32>,
+    pub page_size: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -216,6 +219,9 @@ pub async fn spend_logs(
     Query(query): Query<SpendLogsQuery>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let api_key = query.api_key.unwrap_or_else(|| auth.token_hash.clone());
+    let page = query.page.unwrap_or(1).max(1);
+    let page_size = query.page_size.unwrap_or(30).max(1).min(100);
+    let offset = (page - 1) * page_size;
 
     let (logs, total_count) = tokio::try_join!(
         state.db.query_spend_logs_filtered(
@@ -224,13 +230,16 @@ pub async fn spend_logs(
             query.provider.as_deref(),
             query.start_date.as_deref(),
             query.end_date.as_deref(),
-            query.limit,
+            query.request_id.as_deref(),
+            Some(page_size),
+            Some(offset),
         ),
         state.db.query_spend_logs_count(
             Some(&api_key),
             query.model.as_deref(),
             query.start_date.as_deref(),
             query.end_date.as_deref(),
+            query.request_id.as_deref(),
         ),
     )
     .map_err(|e| {
@@ -240,9 +249,16 @@ pub async fn spend_logs(
         )
     })?;
 
+    let total_pages = if total_count > 0 {
+        ((total_count as f64) / (page_size as f64)).ceil() as i64
+    } else {
+        0
+    };
+
     let data: Vec<Value> = logs
         .iter()
         .map(|log| {
+            let ttft_ms = compute_ttft(log);
             json!({
                 "request_id": log.request_id,
                 "call_type": log.call_type,
@@ -253,6 +269,8 @@ pub async fn spend_logs(
                 "completion_tokens": log.completion_tokens,
                 "start_time": log.start_time.to_rfc3339(),
                 "end_time": log.end_time.to_rfc3339(),
+                "request_duration_ms": log.request_duration_ms,
+                "ttft_ms": ttft_ms,
                 "model": log.model,
                 "user": log.user,
                 "request_tags": log.request_tags,
@@ -261,7 +279,29 @@ pub async fn spend_logs(
         })
         .collect();
 
-    Ok(Json(json!({ "data": data, "count": data.len(), "total_count": total_count })))
+    Ok(Json(json!({
+        "data": data,
+        "count": data.len(),
+        "total_count": total_count,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+    })))
+}
+
+/// Compute TTFT (time to first token) in milliseconds.
+/// Returns Some(ms) for streaming requests where completion_start_time is a real timestamp
+/// (not the sentinel end_time value used for non-streaming requests).
+/// Returns None for non-streaming requests.
+fn compute_ttft(log: &aigw_core::models::SpendLog) -> Option<f64> {
+    match log.completion_start_time {
+        Some(cst) if cst != log.end_time => {
+            let duration = cst.signed_duration_since(log.start_time);
+            // Convert to float milliseconds (with microsecond precision)
+            Some(duration.num_microseconds().unwrap_or(0) as f64 / 1000.0)
+        }
+        _ => None,
+    }
 }
 
 /// GET /spend/keys — Get spend per key summary for the authenticated key
@@ -373,6 +413,10 @@ pub async fn global_spend_logs(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&auth)?;
 
+    let page = query.page.unwrap_or(1).max(1);
+    let page_size = query.page_size.unwrap_or(30).max(1).min(100);
+    let offset = (page - 1) * page_size;
+
     let (logs, total_count) = tokio::try_join!(
         state.db.query_spend_logs_filtered(
             query.api_key.as_deref(),
@@ -380,13 +424,16 @@ pub async fn global_spend_logs(
             query.provider.as_deref(),
             query.start_date.as_deref(),
             query.end_date.as_deref(),
-            query.limit,
+            query.request_id.as_deref(),
+            Some(page_size),
+            Some(offset),
         ),
         state.db.query_spend_logs_count(
             query.api_key.as_deref(),
             query.model.as_deref(),
             query.start_date.as_deref(),
             query.end_date.as_deref(),
+            query.request_id.as_deref(),
         ),
     )
     .map_err(|e| {
@@ -396,9 +443,16 @@ pub async fn global_spend_logs(
         )
     })?;
 
+    let total_pages = if total_count > 0 {
+        ((total_count as f64) / (page_size as f64)).ceil() as i64
+    } else {
+        0
+    };
+
     let data: Vec<Value> = logs
         .iter()
         .map(|log| {
+            let ttft_ms = compute_ttft(log);
             json!({
                 "request_id": log.request_id,
                 "call_type": log.call_type,
@@ -409,6 +463,8 @@ pub async fn global_spend_logs(
                 "completion_tokens": log.completion_tokens,
                 "start_time": log.start_time.to_rfc3339(),
                 "end_time": log.end_time.to_rfc3339(),
+                "request_duration_ms": log.request_duration_ms,
+                "ttft_ms": ttft_ms,
                 "model": log.model,
                 "user": log.user,
                 "request_tags": log.request_tags,
@@ -417,7 +473,14 @@ pub async fn global_spend_logs(
         })
         .collect();
 
-    Ok(Json(json!({ "data": data, "count": data.len(), "total_count": total_count })))
+    Ok(Json(json!({
+        "data": data,
+        "count": data.len(),
+        "total_count": total_count,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+    })))
 }
 
 /// GET /global/spend/keys — Get spend for all keys (admin only)

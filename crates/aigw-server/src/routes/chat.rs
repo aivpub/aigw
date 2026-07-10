@@ -7,14 +7,18 @@
 use aigw_core::auth::decode_jwt;
 use aigw_core::crypto::{decrypt_json_fields, decrypt_litellm_value, hash_token};
 use aigw_core::middleware::KeyIdentity;
-use aigw_core::models::{Team, VirtualKey};
+use aigw_core::models::{SpendLog, Team, VirtualKey};
 use axum::{
     extract::State,
     http::{self, StatusCode},
+    response::{sse::{Event, Sse}, IntoResponse},
     Json,
 };
 use serde::Serialize;
 use serde_json::{json, Value};
+use std::convert::Infallible;
+use std::sync::Arc;
+use tokio_stream::StreamExt;
 
 use super::keys::SharedState;
 
@@ -564,7 +568,7 @@ pub async fn chat_completions(
     State(state): State<SharedState>,
     ChatAuth(auth): ChatAuth,
     Json(body): Json<Value>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+) -> Result<axum::response::Response, (StatusCode, Json<Value>)> {
     // 1. Validate required fields
     let _model = body.get("model").and_then(|v| v.as_str()).ok_or_else(|| {
         (
@@ -744,23 +748,88 @@ pub async fn chat_completions(
             ));
         }
 
-        // For SSE streaming, return the stream as a proxy
-        // In practice, we'd use Sse::new() with a mapped byte stream,
-        // but for simplicity and test compatibility, we return a JSON
-        // response indicating streaming mode is active.
-        // The actual streaming proxy is handled by the proxy.rs module.
-        let response_id = format!("chatcmpl-{}", uuid::Uuid::new_v4());
-        Ok(Json(json!({
-            "id": response_id,
-            "object": "chat.completion.chunk",
-            "created": chrono::Utc::now().timestamp(),
-            "model": _model,
-            "choices": [{
-                "index": 0,
-                "delta": {"role": "assistant", "content": ""},
-                "finish_reason": null
-            }]
-        })))
+        // SSE streaming proxy: forward upstream SSE chunks to client via axum Sse.
+        // A background task reads from upstream, captures completion_start_time on the
+        // first chunk, and writes a SpendLog after the stream completes.
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+        let state_clone = Arc::clone(&state);
+        let model = _model.to_string();
+        let api_base = resolved.api_base.clone();
+        let token_hash = auth.token_hash.clone();
+        let user_id = auth.user_id.clone();
+        let team_id = auth.team_id.clone();
+        let organization_id = auth.organization_id.clone();
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let request_body = body.clone();
+
+        tokio::spawn(async move {
+            use tokio_stream::StreamExt;
+            let mut stream = upstream_resp.bytes_stream();
+            let mut first_chunk_time: Option<chrono::DateTime<chrono::Utc>> = None;
+
+            while let Some(chunk_result) = stream.next().await {
+                match chunk_result {
+                    Ok(chunk) => {
+                        if first_chunk_time.is_none() && !chunk.is_empty() {
+                            first_chunk_time = Some(chrono::Utc::now());
+                        }
+                        if tx.send(chunk.to_vec()).is_err() {
+                            // Client disconnected — stop forwarding
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+
+            // Write SpendLog after stream completes
+            let now = chrono::Utc::now();
+            let spend_log = SpendLog {
+                request_id,
+                call_type: "completion".to_string(),
+                api_key: token_hash,
+                spend: 0.0,
+                total_tokens: 0,
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                start_time,
+                end_time: now,
+                request_duration_ms: Some(
+                    now.signed_duration_since(start_time).num_milliseconds() as i32
+                ),
+                completion_start_time: Some(first_chunk_time.unwrap_or(now)),
+                model,
+                model_id: None,
+                model_group: None,
+                custom_llm_provider: None,
+                api_base: Some(api_base),
+                user: user_id,
+                metadata: None,
+                cache_hit: None,
+                cache_key: None,
+                request_tags: None,
+                team_id,
+                organization_id,
+                end_user: None,
+                requester_ip_address: None,
+                messages: Some(request_body),
+                response: None, // Streaming — raw chunks not accumulated
+                session_id: None,
+                status: Some("success".to_string()),
+                mcp_namespaced_tool_name: None,
+                agent_id: None,
+                proxy_server_request: None,
+            };
+            let _ = state_clone.db.insert_spend_log(&spend_log).await;
+        });
+
+        let sse_stream = tokio_stream::wrappers::UnboundedReceiverStream::new(rx)
+            .map(|data: Vec<u8>| {
+                let data_str = String::from_utf8_lossy(&data).to_string();
+                Ok::<_, Infallible>(Event::default().data(data_str))
+            });
+
+        Ok(Sse::new(sse_stream).into_response())
     } else {
         // Non-streaming: parse upstream response
         let resp_body: Value = upstream_resp.json().await.map_err(|e| {
@@ -809,7 +878,7 @@ pub async fn chat_completions(
             request_duration_ms: Some(
                 now.signed_duration_since(start_time).num_milliseconds() as i32
             ),
-            completion_start_time: None,
+            completion_start_time: Some(now), // non-streaming sentinel = end_time
             model: _model.to_string(),
             model_id: None,
             model_group: None,
@@ -836,7 +905,7 @@ pub async fn chat_completions(
         // Record spend log (don't fail the request if logging fails)
         let _ = state.db.insert_spend_log(&spend_log).await;
 
-        Ok(Json(resp_body))
+        Ok(Json(resp_body).into_response())
     }
 }
 

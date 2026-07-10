@@ -193,7 +193,7 @@ Stage 31 优先完成（路由+侧边栏基础设施），Stage 32/33 可并行�
 
 | Stage | 状态 | 目标 | 预估 |
 |-------|------|------|------|
-| Stage 34 | ⏳ 待开始 | SSE Streaming + completion_start_time + Spend Logs 增强（分页+request_id+TTFT） | 5h |
+| Stage 34 | ✅ 完成 | SSE Streaming + completion_start_time + Spend Logs 增强（分页+request_id+TTFT） | 2026-07-10 |
 | Stage 35 | ⏳ 待开始 | daily_spend 聚合表迁移 + 定时写入 | 3.5h |
 | Stage 36 | ⏳ 待开始 | 前端 Spend Logs 重构（Live Tail+时间预设+分页+详情抽屉） | 5h |
 | Stage 37 | ⏳ 待开始 | Users/Orgs 端到端修复 + Provider 解密 | 4.5h |

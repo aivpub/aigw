@@ -1187,7 +1187,9 @@ pub trait SpendLogStore {
         provider: Option<&str>,
         start_date: Option<&str>,
         end_date: Option<&str>,
+        request_id: Option<&str>,
         limit: Option<i32>,
+        offset: Option<i32>,
     ) -> Result<Vec<SpendLog>>;
     async fn query_spend_logs_count(
         &self,
@@ -1195,6 +1197,7 @@ pub trait SpendLogStore {
         model: Option<&str>,
         start_date: Option<&str>,
         end_date: Option<&str>,
+        request_id: Option<&str>,
     ) -> Result<i64>;
 }
 
@@ -1392,9 +1395,12 @@ impl SpendLogStore for SqlitePool {
         _provider: Option<&str>,
         start_date: Option<&str>,
         end_date: Option<&str>,
+        request_id: Option<&str>,
         limit: Option<i32>,
+        offset: Option<i32>,
     ) -> Result<Vec<SpendLog>> {
-        let limit_val = limit.unwrap_or(100);
+        let limit_val = limit.unwrap_or(30);
+        let offset_val = offset.unwrap_or(0);
         let mut sql = String::from(
             r#"SELECT
                 request_id, call_type, api_key, spend, total_tokens,
@@ -1411,15 +1417,18 @@ impl SpendLogStore for SqlitePool {
         if model.is_some() { sql.push_str(" AND model = ?"); }
         if start_date.is_some() { sql.push_str(" AND start_time >= ?"); }
         if end_date.is_some() { sql.push_str(" AND start_time <= ?"); }
+        if request_id.is_some() { sql.push_str(" AND request_id = ?"); }
 
-        sql.push_str(" ORDER BY start_time DESC LIMIT ?");
+        sql.push_str(" ORDER BY start_time DESC LIMIT ? OFFSET ?");
 
         let mut query = sqlx::query_as(&sql);
         if let Some(k) = api_key { query = query.bind(k); }
         if let Some(m) = model { query = query.bind(m); }
         if let Some(sd) = start_date { query = query.bind(sd); }
         if let Some(ed) = end_date { query = query.bind(ed); }
+        if let Some(rid) = request_id { query = query.bind(rid); }
         query = query.bind(limit_val);
+        query = query.bind(offset_val);
 
         query.fetch_all(self).await.map_err(DbError::from)
     }
@@ -1430,18 +1439,21 @@ impl SpendLogStore for SqlitePool {
         model: Option<&str>,
         start_date: Option<&str>,
         end_date: Option<&str>,
+        request_id: Option<&str>,
     ) -> Result<i64> {
         let mut sql = String::from("SELECT COUNT(*) FROM spend_logs WHERE 1=1");
         if api_key.is_some() { sql.push_str(" AND api_key = ?"); }
         if model.is_some() { sql.push_str(" AND model = ?"); }
         if start_date.is_some() { sql.push_str(" AND start_time >= ?"); }
         if end_date.is_some() { sql.push_str(" AND start_time <= ?"); }
+        if request_id.is_some() { sql.push_str(" AND request_id = ?"); }
 
         let mut query = sqlx::query_as::<_, (i64,)>(&sql);
         if let Some(k) = api_key { query = query.bind(k); }
         if let Some(m) = model { query = query.bind(m); }
         if let Some(sd) = start_date { query = query.bind(sd); }
         if let Some(ed) = end_date { query = query.bind(ed); }
+        if let Some(rid) = request_id { query = query.bind(rid); }
 
         query.fetch_one(self).await.map(|row: (i64,)| row.0).map_err(DbError::from)
     }
@@ -1602,10 +1614,16 @@ impl SpendLogStore for MySqlPool {
 
     async fn query_spend_logs_filtered(
         &self, api_key: Option<&str>, model: Option<&str>, _provider: Option<&str>,
-        start_date: Option<&str>, end_date: Option<&str>, limit: Option<i32>,
+        start_date: Option<&str>, end_date: Option<&str>,
+        request_id: Option<&str>,
+        limit: Option<i32>, offset: Option<i32>,
     ) -> Result<Vec<SpendLog>> {
         // Fallback: use basic query and do in-memory filter
-        let result = self.query_spend_logs(api_key, Some(limit.unwrap_or(100))).await?;
+        let limit_val = limit.unwrap_or(30);
+        let offset_val = offset.unwrap_or(0);
+        // MySQL fallback: fetch up to N rows + apply in-memory filter + pagination
+        let fetch_limit = std::cmp::min(limit_val + offset_val, 10000);
+        let result = self.query_spend_logs(api_key, Some(fetch_limit)).await?;
         let filtered: Vec<SpendLog> = result.into_iter().filter(|log| {
             if let Some(m) = model { if log.model != m { return false; } }
             if let Some(sd) = start_date {
@@ -1620,9 +1638,16 @@ impl SpendLogStore for MySqlPool {
                     if let Some(dt) = dt { if log.start_time > dt { return false; } }
                 }
             }
+            if let Some(rid) = request_id { if log.request_id != rid { return false; } }
             true
         }).collect();
-        Ok(filtered)
+        let start = offset_val as usize;
+        let end = std::cmp::min(start + limit_val as usize, filtered.len());
+        if start >= filtered.len() {
+            Ok(vec![])
+        } else {
+            Ok(filtered[start..end].to_vec())
+        }
     }
 
     async fn query_spend_logs_count(
@@ -1631,18 +1656,21 @@ impl SpendLogStore for MySqlPool {
         model: Option<&str>,
         start_date: Option<&str>,
         end_date: Option<&str>,
+        request_id: Option<&str>,
     ) -> Result<i64> {
         let mut sql = String::from("SELECT COUNT(*) FROM spend_logs WHERE 1=1");
         if api_key.is_some() { sql.push_str(" AND api_key = ?"); }
         if model.is_some() { sql.push_str(" AND model = ?"); }
         if start_date.is_some() { sql.push_str(" AND start_time >= ?"); }
         if end_date.is_some() { sql.push_str(" AND start_time <= ?"); }
+        if request_id.is_some() { sql.push_str(" AND request_id = ?"); }
 
         let mut query = sqlx::query_as::<_, (i64,)>(&sql);
         if let Some(k) = api_key { query = query.bind(k); }
         if let Some(m) = model { query = query.bind(m); }
         if let Some(sd) = start_date { query = query.bind(sd); }
         if let Some(ed) = end_date { query = query.bind(ed); }
+        if let Some(rid) = request_id { query = query.bind(rid); }
 
         query.fetch_one(self).await.map(|row: (i64,)| row.0).map_err(DbError::from)
     }
@@ -1780,9 +1808,15 @@ impl SpendLogStore for PgPool {
 
     async fn query_spend_logs_filtered(
         &self, api_key: Option<&str>, model: Option<&str>, _provider: Option<&str>,
-        start_date: Option<&str>, end_date: Option<&str>, limit: Option<i32>,
+        start_date: Option<&str>, end_date: Option<&str>,
+        request_id: Option<&str>,
+        limit: Option<i32>, offset: Option<i32>,
     ) -> Result<Vec<SpendLog>> {
-        let result = self.query_spend_logs(api_key, Some(limit.unwrap_or(100))).await?;
+        let limit_val = limit.unwrap_or(30);
+        let offset_val = offset.unwrap_or(0);
+        // PG fallback: fetch up to N rows + in-memory filter + pagination
+        let fetch_limit = std::cmp::min(limit_val + offset_val, 10000);
+        let result = self.query_spend_logs(api_key, Some(fetch_limit)).await?;
         let filtered: Vec<SpendLog> = result.into_iter().filter(|log| {
             if let Some(m) = model { if log.model != m { return false; } }
             if let Some(sd) = start_date {
@@ -1797,9 +1831,16 @@ impl SpendLogStore for PgPool {
                     if let Some(dt) = dt { if log.start_time > dt { return false; } }
                 }
             }
+            if let Some(rid) = request_id { if log.request_id != rid { return false; } }
             true
         }).collect();
-        Ok(filtered)
+        let start = offset_val as usize;
+        let end = std::cmp::min(start + limit_val as usize, filtered.len());
+        if start >= filtered.len() {
+            Ok(vec![])
+        } else {
+            Ok(filtered[start..end].to_vec())
+        }
     }
 
     async fn query_spend_logs_count(
@@ -1808,19 +1849,22 @@ impl SpendLogStore for PgPool {
         model: Option<&str>,
         start_date: Option<&str>,
         end_date: Option<&str>,
+        request_id: Option<&str>,
     ) -> Result<i64> {
         let mut sql = String::from("SELECT COUNT(*) FROM spend_logs WHERE 1=1");
         let mut i = 1;
         if api_key.is_some() { sql.push_str(&format!(" AND api_key = ${}", i)); i += 1; }
         if model.is_some() { sql.push_str(&format!(" AND model = ${}", i)); i += 1; }
         if start_date.is_some() { sql.push_str(&format!(" AND start_time >= ${}", i)); i += 1; }
-        if end_date.is_some() { sql.push_str(&format!(" AND start_time <= ${}", i)); }
+        if end_date.is_some() { sql.push_str(&format!(" AND start_time <= ${}", i)); i += 1; }
+        if request_id.is_some() { sql.push_str(&format!(" AND request_id = ${}", i)); }
 
         let mut query = sqlx::query_as::<_, (i64,)>(&sql);
         if let Some(k) = api_key { query = query.bind(k); }
         if let Some(m) = model { query = query.bind(m); }
         if let Some(sd) = start_date { query = query.bind(sd); }
         if let Some(ed) = end_date { query = query.bind(ed); }
+        if let Some(rid) = request_id { query = query.bind(rid); }
 
         query.fetch_one(self).await.map(|row: (i64,)| row.0).map_err(DbError::from)
     }
@@ -1909,19 +1953,21 @@ impl Database {
         provider: Option<&str>,
         start_date: Option<&str>,
         end_date: Option<&str>,
+        request_id: Option<&str>,
         limit: Option<i32>,
+        offset: Option<i32>,
     ) -> Result<Vec<SpendLog>> {
         match self {
             Database::Sqlite(pool) => {
-                pool.query_spend_logs_filtered(api_key, model, provider, start_date, end_date, limit)
+                pool.query_spend_logs_filtered(api_key, model, provider, start_date, end_date, request_id, limit, offset)
                     .await
             }
             Database::Mysql(pool) => {
-                pool.query_spend_logs_filtered(api_key, model, provider, start_date, end_date, limit)
+                pool.query_spend_logs_filtered(api_key, model, provider, start_date, end_date, request_id, limit, offset)
                     .await
             }
             Database::Postgres(pool) => {
-                pool.query_spend_logs_filtered(api_key, model, provider, start_date, end_date, limit)
+                pool.query_spend_logs_filtered(api_key, model, provider, start_date, end_date, request_id, limit, offset)
                     .await
             }
         }
@@ -1933,11 +1979,12 @@ impl Database {
         model: Option<&str>,
         start_date: Option<&str>,
         end_date: Option<&str>,
+        request_id: Option<&str>,
     ) -> Result<i64> {
         match self {
-            Database::Sqlite(pool) => pool.query_spend_logs_count(api_key, model, start_date, end_date).await,
-            Database::Mysql(pool) => pool.query_spend_logs_count(api_key, model, start_date, end_date).await,
-            Database::Postgres(pool) => pool.query_spend_logs_count(api_key, model, start_date, end_date).await,
+            Database::Sqlite(pool) => pool.query_spend_logs_count(api_key, model, start_date, end_date, request_id).await,
+            Database::Mysql(pool) => pool.query_spend_logs_count(api_key, model, start_date, end_date, request_id).await,
+            Database::Postgres(pool) => pool.query_spend_logs_count(api_key, model, start_date, end_date, request_id).await,
         }
     }
 }

@@ -185,6 +185,61 @@ async fn when_key_get_spend_logs_filtered_date(world: &mut TestWorld, alias: Str
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Stage 34: pagination, request_id, page_size
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[when(expr = "使用 key {string} 发送 GET \\/spend\\/logs 请求带 page=1&page_size=10")]
+async fn when_key_get_spend_logs_paginated(world: &mut TestWorld, alias: String) {
+    let state = world.ensure_state().await;
+    let app = build_spend_router(state);
+    let token = world.created_keys.get(&alias).expect("key not found");
+    let (s, b) = make_request(
+        &app,
+        Method::GET,
+        "/spend/logs?page=1&page_size=10",
+        Some(token),
+        None,
+    )
+    .await;
+    world.last_status = Some(s);
+    world.last_body = b;
+}
+
+#[when(expr = "使用 key {string} 发送 GET \\/spend\\/logs 请求带 request_id 过滤")]
+async fn when_key_get_spend_logs_request_id(world: &mut TestWorld, alias: String) {
+    let state = world.ensure_state().await;
+    let app = build_spend_router(state);
+    let token = world.created_keys.get(&alias).expect("key not found");
+    let (s, b) = make_request(
+        &app,
+        Method::GET,
+        "/spend/logs?request_id=test-req-123",
+        Some(token),
+        None,
+    )
+    .await;
+    world.last_status = Some(s);
+    world.last_body = b;
+}
+
+#[when(expr = "使用 master-key 发送 GET \\/global\\/spend\\/logs 请求带 page=1&page_size=5&request_id=nonexistent")]
+async fn when_master_get_global_spend_logs_paginated(world: &mut TestWorld) {
+    let state = world.ensure_state().await;
+    let app = build_spend_router(state);
+    let mk = world.master_key.clone();
+    let (s, b) = make_request(
+        &app,
+        Method::GET,
+        "/global/spend/logs?page=1&page_size=5&request_id=nonexistent",
+        Some(&mk),
+        None,
+    )
+    .await;
+    world.last_status = Some(s);
+    world.last_body = b;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // When: admin / master-key requests
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

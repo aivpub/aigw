@@ -1,7 +1,7 @@
 # Stage 34: SSE Streaming + completion_start_time + Spend Logs 增强
 
 **Phase**: 13 — 前端反馈改进 + SSE Streaming + TTFT
-**状态**: ⏳ 待开始
+**状态**: ✅ 完成
 **预估**: 5h
 
 ---
@@ -34,16 +34,16 @@ litellm 的方式：
 
 ## 验收标准
 
-- [ ] `stream: true` 的 chat completions 请求正确代理上游 SSE chunk 到客户端
-- [ ] 首个 chunk 到达时 `completion_start_time` 被记录
-- [ ] streaming 完成后正确创建 SpendLog（含 `completion_start_time`）
-- [ ] 非 streaming 路径 `completion_start_time = Some(end_time)`（哨兵值）
-- [ ] `stream: true` 的 `/v1/messages` 请求同样改造
-- [ ] `/global/spend/logs` 支持 `request_id` 查询参数
-- [ ] `/global/spend/logs` 支持 `page` / `page_size` 分页（默认 page=1, page_size=30）
-- [ ] SQL 查询返回 `ttft_ms`（streaming 行有值，非 streaming 行为 null）
-- [ ] 响应包含 `page, page_size, total_pages, total_count`
-- [ ] BDD: SSE streaming proxying, completion_start_time capture, TTFT in response, pagination
+- [x] `stream: true` 的 chat completions 请求正确代理上游 SSE chunk 到客户端
+- [x] 首个 chunk 到达时 `completion_start_time` 被记录
+- [x] streaming 完成后正确创建 SpendLog（含 `completion_start_time`）
+- [x] 非 streaming 路径 `completion_start_time = Some(end_time)`（哨兵值）
+- [x] `stream: true` 的 `/v1/messages` 请求同样改造
+- [x] `/global/spend/logs` 支持 `request_id` 查询参数
+- [x] `/global/spend/logs` 支持 `page` / `page_size` 分页（默认 page=1, page_size=30）
+- [x] SQL 查询返回 `ttft_ms`（streaming 行有值，非 streaming 行为 null）
+- [x] 响应包含 `page, page_size, total_pages, total_count`
+- [x] BDD: SSE streaming proxying, completion_start_time capture, TTFT in response, pagination
 
 ## 关键文件
 
