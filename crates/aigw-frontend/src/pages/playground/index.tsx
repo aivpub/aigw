@@ -20,6 +20,13 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import {
   Gamepad2,
@@ -36,6 +43,8 @@ import {
   Bot,
   Zap,
   Sparkles,
+  Eraser,
+  Code2,
 } from "lucide-react";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -105,12 +114,12 @@ function MessageBubble({
     <div className={`flex gap-3 ${isUser ? "flex-row-reverse" : ""}`}>
       {/* Avatar */}
       <div
-        className={`shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${
+        className={`shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold border-2 ${
           isSystem
-            ? "bg-violet-100 text-violet-700 dark:bg-violet-900 dark:text-violet-300"
+            ? "bg-violet-100 text-violet-700 border-violet-300 dark:bg-violet-900 dark:text-violet-300 dark:border-violet-700"
             : isUser
-            ? "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300"
-            : "bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-300"
+            ? "bg-blue-100 text-blue-700 border-blue-300 dark:bg-blue-900 dark:text-blue-300 dark:border-blue-700"
+            : "bg-emerald-100 text-emerald-700 border-emerald-300 dark:bg-emerald-900 dark:text-emerald-300 dark:border-emerald-700"
         }`}
       >
         {isSystem ? <Settings2 className="h-4 w-4" /> : isUser ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
@@ -153,12 +162,12 @@ function MessageBubble({
           </div>
         ) : (
           <div
-            className={`rounded-lg px-3 py-2 text-sm ${
+            className={`rounded-lg px-3 py-2.5 text-sm border ${
               isSystem
-                ? "bg-violet-50 dark:bg-violet-950 border border-violet-200 dark:border-violet-800"
+                ? "bg-violet-50 dark:bg-violet-950 border-violet-300 dark:border-violet-700"
                 : isUser
-                ? "bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800"
-                : ""
+                ? "bg-blue-50 dark:bg-blue-950 border-blue-300 dark:border-blue-700"
+                : "bg-white dark:bg-zinc-900 border-gray-200 dark:border-zinc-700"
             }`}
           >
             {isAsst ? (
@@ -169,17 +178,44 @@ function MessageBubble({
           </div>
         )}
 
-        {/* Action buttons */}
-        {!editing && !msg.error && (
+        {/* Bottom stats bar for assistant messages */}
+        {isAsst && !msg.error && msg.content && (
+          <div className="flex items-center gap-2 mt-1 text-[10px] text-muted-foreground">
+            {msg.tokens && (
+              <>
+                <span>{msg.tokens.prompt}+{msg.tokens.completion} tokens</span>
+                <span className="text-muted-foreground/50">|</span>
+              </>
+            )}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-5 w-5"
+              onClick={() => onCopy?.(msg.content)}
+              title="Copy"
+            >
+              <Copy className="h-2.5 w-2.5" />
+            </Button>
+            {onDelete && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-5 w-5"
+                onClick={() => onDelete(msg.id)}
+                title="Delete"
+              >
+                <Trash2 className="h-2.5 w-2.5" />
+              </Button>
+            )}
+          </div>
+        )}
+
+        {/* Action buttons for user/system */}
+        {!isAsst && !editing && !msg.error && (
           <div className="flex items-center gap-1 mt-1 opacity-0 hover:opacity-100 transition-opacity">
             {(isUser || isSystem) && onEdit && (
               <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => { setEditText(msg.content); setEditing(true); }}>
                 <Pencil className="h-3 w-3" />
-              </Button>
-            )}
-            {isAsst && onCopy && msg.content && (
-              <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => onCopy(msg.content)}>
-                <Copy className="h-3 w-3" />
               </Button>
             )}
             {onDelete && (
@@ -206,6 +242,9 @@ interface SettingsData {
   topP: number;
   freqPenalty: number;
   presPenalty: number;
+  virtualKey: "session" | "custom";
+  customApiKey: string;
+  endpointType: "chat" | "messages";
 }
 
 const DEFAULT_SETTINGS: SettingsData = {
@@ -216,6 +255,9 @@ const DEFAULT_SETTINGS: SettingsData = {
   topP: 1.0,
   freqPenalty: 0,
   presPenalty: 0,
+  virtualKey: "session",
+  customApiKey: "",
+  endpointType: "chat",
 };
 
 function SettingsPanel({
@@ -277,6 +319,44 @@ function SettingsPanel({
         <Label className="text-xs">Streaming</Label>
         <Switch checked={settings.streaming} onCheckedChange={(v) => onChange({ ...settings, streaming: v })} />
       </div>
+
+      <div className="border-t pt-4 mt-2">
+        <Label className="text-xs font-semibold mb-2 block">Virtual Key</Label>
+        <Select value={settings.virtualKey} onValueChange={(v) => onChange({ ...settings, virtualKey: v as "session" | "custom" })}>
+          <SelectTrigger className="h-8 text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="session">Current UI Session (Cookie)</SelectItem>
+            <SelectItem value="custom">Custom Virtual Key (SK)</SelectItem>
+          </SelectContent>
+        </Select>
+        {settings.virtualKey === "custom" && (
+          <Input
+            type="password"
+            placeholder="sk-..."
+            value={settings.customApiKey}
+            onChange={(e) => onChange({ ...settings, customApiKey: e.target.value })}
+            className="h-8 text-xs mt-2"
+          />
+        )}
+      </div>
+
+      <div className="border-t pt-4 mt-2">
+        <Label className="text-xs font-semibold mb-2 block">Endpoint Type</Label>
+        <Select value={settings.endpointType} onValueChange={(v) => onChange({ ...settings, endpointType: v as "chat" | "messages" })}>
+          <SelectTrigger className="h-8 text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="chat">Chat Completions (/v1/chat/completions)</SelectItem>
+            <SelectItem value="messages">Claude Messages (/v1/messages)</SelectItem>
+          </SelectContent>
+        </Select>
+        {settings.endpointType === "messages" && (
+          <p className="text-[10px] text-muted-foreground mt-1">Uses Anthropic Messages API format</p>
+        )}
+      </div>
     </div>
   );
 }
@@ -291,6 +371,7 @@ export function PlaygroundPage() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [getCodeOpen, setGetCodeOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -317,6 +398,12 @@ export function PlaygroundPage() {
   }, []);
 
   const clearChat = () => {
+    setMessages([]);
+    setInput("");
+    setSettings(DEFAULT_SETTINGS);
+  };
+
+  const clearSession = () => {
     setMessages([]);
     setInput("");
   };
@@ -366,18 +453,32 @@ export function PlaygroundPage() {
     abortRef.current = controller;
 
     try {
-      const apiMessages: { role: string; content: string }[] = [];
-      for (const msg of newMessages) {
-        if (msg.role === "system" || msg.role === "user" || (msg.role === "assistant" && msg.id !== asstId)) {
-          apiMessages.push({ role: msg.role, content: msg.content });
-        }
+      const isMessages = settings.endpointType === "messages";
+      const endpoint = isMessages ? "/v1/messages" : "/v1/chat/completions";
+
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (isMessages) {
+        headers["anthropic-version"] = "2023-06-01";
+      }
+      if (settings.virtualKey === "custom" && settings.customApiKey) {
+        headers["x-api-key"] = settings.customApiKey;
       }
 
-      const res = await fetch(`/v1/chat/completions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
+      let body: Record<string, unknown>;
+      if (isMessages) {
+        const systemMsg = apiMessages.find((m) => m.role === "system");
+        const convMsgs = apiMessages.filter((m) => m.role !== "system");
+        body = {
+          model: settings.model,
+          messages: convMsgs.map((m) => ({ role: m.role, content: m.content })),
+          max_tokens: settings.maxTokens,
+          stream: settings.streaming,
+          ...(systemMsg ? { system: systemMsg.content } : {}),
+          ...(settings.temperature > 0 ? { temperature: settings.temperature } : {}),
+          ...(settings.topP < 1.0 ? { top_p: settings.topP } : {}),
+        };
+      } else {
+        body = {
           model: settings.model,
           messages: apiMessages,
           temperature: settings.temperature,
@@ -386,7 +487,14 @@ export function PlaygroundPage() {
           frequency_penalty: settings.freqPenalty,
           presence_penalty: settings.presPenalty,
           stream: settings.streaming,
-        }),
+        };
+      }
+
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers,
+        credentials: settings.virtualKey === "session" ? "include" : undefined as unknown as RequestCredentials,
+        body: JSON.stringify(body),
         signal: controller.signal,
       });
 
@@ -413,9 +521,15 @@ export function PlaygroundPage() {
             if (!trimmed || !trimmed.startsWith("data: ")) continue;
             const data = trimmed.slice(6);
             if (data === "[DONE]") continue;
+            // Skip Anthropic SSE event: lines
+            if (trimmed.startsWith("event: ")) continue;
             try {
               const parsed = JSON.parse(data);
-              const chunk = parsed.choices?.[0]?.delta?.content;
+              // Extract content: OpenAI uses choices[0].delta.content,
+              // Anthropic SSE uses content_block_delta.delta.text
+              const chunk = isMessages
+                ? (parsed.delta?.text ?? undefined)
+                : parsed.choices?.[0]?.delta?.content;
               if (chunk) {
                 fullContent += chunk;
                 updateMessage(asstId, { content: fullContent });
@@ -425,11 +539,19 @@ export function PlaygroundPage() {
         }
       } else {
         const json = await res.json();
-        const respContent = json.choices?.[0]?.message?.content ?? "";
-        const usage = json.usage;
+        const respContent = isMessages
+          ? (json.content?.filter((c: { type: string }) => c.type === "text").map((c: { text: string }) => c.text).join("") ?? "")
+          : json.choices?.[0]?.message?.content ?? "";
+        const usage = isMessages
+          ? json.usage
+          : json.usage;
         updateMessage(asstId, {
           content: respContent,
-          tokens: usage ? { prompt: usage.prompt_tokens ?? 0, completion: usage.completion_tokens ?? 0 } : undefined,
+          tokens: usage
+            ? isMessages
+              ? { prompt: usage.input_tokens ?? 0, completion: usage.output_tokens ?? 0 }
+              : { prompt: usage.prompt_tokens ?? 0, completion: usage.completion_tokens ?? 0 }
+            : undefined,
         });
       }
     } catch (err: unknown) {
@@ -482,6 +604,12 @@ export function PlaygroundPage() {
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={clearChat} className="h-8 text-xs">
             <Plus className="h-3.5 w-3.5 mr-1" /> New Chat
+          </Button>
+          <Button variant="ghost" size="sm" onClick={clearSession} className="h-8 text-xs" disabled={messages.length === 0}>
+            <Eraser className="h-3.5 w-3.5 mr-1" /> Clear Session
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setGetCodeOpen(true)} className="h-8 text-xs">
+            <Code2 className="h-3.5 w-3.5 mr-1" /> Get Code
           </Button>
           {/* Mobile settings toggle */}
           <Button variant="outline" size="sm" className="h-8 text-xs lg:hidden" onClick={() => setSettingsOpen(true)}>
@@ -571,6 +699,7 @@ export function PlaygroundPage() {
         </div>
 
         {/* Mobile settings sheet */}
+        {/* Mobile settings sheet */}
         <Sheet open={settingsOpen} onOpenChange={setSettingsOpen}>
           <SheetContent side="right">
             <SheetHeader>
@@ -581,6 +710,88 @@ export function PlaygroundPage() {
             </div>
           </SheetContent>
         </Sheet>
+
+        {/* Get Code Dialog */}
+        <Dialog open={getCodeOpen} onOpenChange={setGetCodeOpen}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Get Code</DialogTitle>
+            </DialogHeader>
+            <Tabs defaultValue="curl">
+              <TabsList>
+                <TabsTrigger value="curl">curl</TabsTrigger>
+                <TabsTrigger value="openai">OpenAI SDK</TabsTrigger>
+                <TabsTrigger value="enio">Enio</TabsTrigger>
+              </TabsList>
+              <TabsContent value="curl">
+                <pre className="bg-muted p-4 rounded-md text-xs overflow-auto max-h-96">
+                  <code>{(() => {
+                    const isMsg = settings.endpointType === "messages";
+                    const ep = isMsg ? "/v1/messages" : "/v1/chat/completions";
+                    const hdrs = [
+                      '  -H "Content-Type: application/json" \\',
+                      isMsg ? '  -H "anthropic-version: 2023-06-01" \\' : null,
+                      '  -H "x-api-key: sk-xxx" \\',
+                    ].filter(Boolean).join("\n");
+                    const bd = isMsg
+                      ? JSON.stringify({
+                          model: settings.model,
+                          max_tokens: settings.maxTokens,
+                          stream: settings.streaming,
+                          messages: [{ role: "user", content: "Hello" }],
+                        }, null, 2)
+                      : JSON.stringify({
+                          model: settings.model,
+                          messages: [{ role: "user", content: "Hello" }],
+                          temperature: settings.temperature,
+                          max_tokens: settings.maxTokens,
+                          stream: settings.streaming,
+                        }, null, 2);
+                    return `curl -X POST http://localhost:3000${ep} \\\n${hdrs}\n  -d '${bd}'`;
+                  })()}</code>
+                </pre>
+              </TabsContent>
+              <TabsContent value="openai">
+                <pre className="bg-muted p-4 rounded-md text-xs overflow-auto max-h-96">
+                  <code>{`from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:3000/v1",
+    api_key="sk-xxx",
+)
+
+response = client.chat.completions.create(
+    model="${settings.model}",
+    messages=[{"role": "user", "content": "Hello"}],
+    temperature=${settings.temperature},
+    max_tokens=${settings.maxTokens},
+    stream=${settings.streaming ? "True" : "False"},
+)
+print(response.choices[0].message.content)`}</code>
+                </pre>
+              </TabsContent>
+              <TabsContent value="enio">
+                <pre className="bg-muted p-4 rounded-md text-xs overflow-auto max-h-96">
+                  <code>{`import { EnioAI } from "enio";
+
+const enio = new EnioAI({
+    baseURL: "http://localhost:3000/v1",
+    apiKey: "sk-xxx",
+});
+
+const response = await enio.chat.completions.create({
+    model: "${settings.model}",
+    messages: [{ role: "user", content: "Hello" }],
+    temperature: ${settings.temperature},
+    maxTokens: ${settings.maxTokens},
+});
+
+console.log(response.content);`}</code>
+                </pre>
+              </TabsContent>
+            </Tabs>
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );
