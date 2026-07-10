@@ -1,10 +1,10 @@
-import { useState, useMemo } from "react";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
 import {
   BarChart,
   Bar,
@@ -24,33 +24,36 @@ import {
   BarChart3,
   PieChart as PieChartIcon,
   Calendar,
+  CheckCircle,
+  XCircle,
+  Sparkles,
 } from "lucide-react";
-import { format } from "date-fns";
+import { format, subDays } from "date-fns";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Types
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-interface SpendLog {
-  request_id: string;
-  call_type: string;
-  api_key: string;
-  spend: number;
+interface ActivityMetadata {
+  total_spend: number;
+  total_requests: number;
+  successful_requests: number;
+  failed_requests: number;
   total_tokens: number;
   prompt_tokens: number;
   completion_tokens: number;
-  start_time: string;
-  end_time: string;
-  model: string;
-  user: string;
-  request_tags: unknown;
-  status: string;
 }
 
-interface SpendLogsResponse {
-  data: SpendLog[];
-  count: number;
-  total_count: number;
+interface DailyRow {
+  date: string;
+  spend: number;
+  tokens: number;
+  requests: number;
+}
+
+interface ActivityResponse {
+  metadata: ActivityMetadata;
+  daily: DailyRow[];
 }
 
 interface ModelAgg {
@@ -67,10 +70,6 @@ interface ProviderAgg {
   requests: number;
 }
 
-interface SpendResponse {
-  spend: number;
-}
-
 interface AggResponse {
   data: (ModelAgg | ProviderAgg)[];
   count: number;
@@ -84,12 +83,30 @@ function fmtSpend(v: number): string {
   return `$${v.toFixed(4)}`;
 }
 
+function fmtTokens(v: number): string {
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000) return `${(v / 1_000).toFixed(1)}K`;
+  return v.toString();
+}
+
 function todayStr(): string {
   return format(new Date(), "yyyy-MM-dd");
 }
 
-function monthStartStr(): string {
-  return format(new Date(), "yyyy-MM-01");
+type DatePreset = "3d" | "7d" | "30d" | "custom";
+
+function presetRange(p: DatePreset): { start: string; end: string } {
+  const now = new Date();
+  const end = format(now, "yyyy-MM-dd");
+  switch (p) {
+    case "3d":
+      return { start: format(subDays(now, 3), "yyyy-MM-dd"), end };
+    case "7d":
+      return { start: format(subDays(now, 7), "yyyy-MM-dd"), end };
+    case "30d":
+    default:
+      return { start: format(subDays(now, 30), "yyyy-MM-dd"), end };
+  }
 }
 
 const COLORS = [
@@ -105,30 +122,40 @@ const COLORS = [
   "#ec4899",
 ];
 
+const PRESETS: { key: DatePreset; label: string }[] = [
+  { key: "3d", label: "3 days" },
+  { key: "7d", label: "7 days" },
+  { key: "30d", label: "30 days" },
+  { key: "custom", label: "Custom" },
+];
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Component
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 export function UsagePage() {
-  const [startDate, setStartDate] = useState(monthStartStr());
-  const [endDate, setEndDate] = useState(todayStr());
+  const [preset, setPreset] = useState<DatePreset>("30d");
+  const [startDate, setStartDate] = useState(presetRange("30d").start);
+  const [endDate, setEndDate] = useState(presetRange("30d").end);
 
-  // Total global spend
-  const { data: totalSpend, isLoading: totalLoading } = useQuery<SpendResponse>({
-    queryKey: ["global-spend"],
-    queryFn: () => apiGet("/global/spend"),
-    refetchInterval: 30_000,
-  });
+  const handlePreset = (p: DatePreset) => {
+    setPreset(p);
+    if (p !== "custom") {
+      const r = presetRange(p);
+      setStartDate(r.start);
+      setEndDate(r.end);
+    }
+  };
 
-  // Spend logs (for period spend calculation)
-  const { data: logsData, isLoading: logsLoading } = useQuery<SpendLogsResponse>({
-    queryKey: ["global-spend-logs", startDate, endDate],
+  // Activity overview (metadata + daily)
+  const { data: activity, isLoading: activityLoading } = useQuery<ActivityResponse>({
+    queryKey: ["global-spend-activity", startDate, endDate],
     queryFn: () =>
-      apiGet(
-        `/global/spend/logs?start_date=${startDate}&end_date=${endDate}&limit=100`,
-      ),
+      apiGet(`/global/spend/activity?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`),
     refetchInterval: 30_000,
   });
+
+  const metadata = activity?.metadata;
 
   // Model aggregation
   const { data: modelData, isLoading: modelLoading } = useQuery<AggResponse>({
@@ -144,32 +171,21 @@ export function UsagePage() {
     refetchInterval: 30_000,
   });
 
-  // Compute period spend from logs
-  const periodSpend = useMemo(() => {
-    if (!logsData?.data) return 0;
-    return logsData.data.reduce((sum, l) => sum + l.spend, 0);
-  }, [logsData]);
+  const modelChartData = (modelData?.data ?? []) as ModelAgg[];
+  const providerChartData = ((providerData?.data ?? []) as ProviderAgg[]).map((a) => ({
+    name: a.provider,
+    value: Math.round(a.total_spend * 10000) / 10000,
+    tokens: a.total_tokens,
+  }));
 
-  const modelChartData = useMemo(() => {
-    if (!modelData?.data) return [];
-    return (modelData.data as ModelAgg[]).map((a) => ({
-      name: a.model,
-      spend: Math.round(a.total_spend * 10000) / 10000,
-      tokens: a.total_tokens,
-      requests: a.requests,
-    }));
-  }, [modelData]);
+  const dailyChartData = (activity?.daily ?? []).map((d) => ({
+    date: d.date,
+    spend: Math.round(d.spend * 10000) / 10000,
+    tokens: d.tokens,
+    requests: d.requests,
+  }));
 
-  const providerChartData = useMemo(() => {
-    if (!providerData?.data) return [];
-    return (providerData.data as ProviderAgg[]).map((a) => ({
-      name: a.provider,
-      value: Math.round(a.total_spend * 10000) / 10000,
-      tokens: a.total_tokens,
-    }));
-  }, [providerData]);
-
-  const isLoading = totalLoading || logsLoading || modelLoading || providerLoading;
+  const isLoading = activityLoading || modelLoading || providerLoading;
 
   return (
     <div className="space-y-6">
@@ -180,7 +196,49 @@ export function UsagePage() {
         </p>
       </div>
 
-      {/* Spend Cards */}
+      {/* Date presets */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm font-medium flex items-center gap-2">
+            <Calendar className="h-4 w-4" />
+            Time Range
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-wrap items-center gap-2">
+            {PRESETS.map((p) => (
+              <Button
+                key={p.key}
+                variant={preset === p.key ? "default" : "outline"}
+                size="sm"
+                onClick={() => handlePreset(p.key)}
+                className="h-7 text-xs"
+              >
+                {p.label}
+              </Button>
+            ))}
+            {preset === "custom" && (
+              <div className="flex items-center gap-2 ml-2">
+                <Input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="h-7 w-36 text-xs"
+                />
+                <span className="text-xs text-muted-foreground">–</span>
+                <Input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  className="h-7 w-36 text-xs"
+                />
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Metric Cards */}
       <div className="grid gap-4 grid-cols-2 md:grid-cols-3">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
@@ -188,26 +246,10 @@ export function UsagePage() {
             <DollarSign className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            {totalLoading ? (
+            {activityLoading ? (
               <Skeleton className="h-8 w-24" />
             ) : (
-              <div className="text-2xl font-bold">
-                {fmtSpend(totalSpend?.spend ?? 0)}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Period Spend</CardTitle>
-            <TrendingUp className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            {isLoading ? (
-              <Skeleton className="h-8 w-24" />
-            ) : (
-              <div className="text-2xl font-bold">{fmtSpend(periodSpend)}</div>
+              <div className="text-2xl font-bold">{fmtSpend(metadata?.total_spend ?? 0)}</div>
             )}
             <p className="text-xs text-muted-foreground mt-1">
               {startDate} — {endDate}
@@ -221,16 +263,131 @@ export function UsagePage() {
             <BarChart3 className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            {isLoading ? (
+            {activityLoading ? (
               <Skeleton className="h-8 w-16" />
             ) : (
-              <div className="text-2xl font-bold">{logsData?.total_count ?? 0}</div>
+              <div className="text-2xl font-bold">{metadata?.total_requests?.toLocaleString() ?? "—"}</div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium">Successful</CardTitle>
+            <CheckCircle className="h-4 w-4 text-green-500" />
+          </CardHeader>
+          <CardContent>
+            {activityLoading ? (
+              <Skeleton className="h-8 w-16" />
+            ) : (
+              <div className="text-2xl font-bold text-green-600 dark:text-green-400">
+                {metadata?.successful_requests?.toLocaleString() ?? "—"}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium">Failed</CardTitle>
+            <XCircle className="h-4 w-4 text-red-500" />
+          </CardHeader>
+          <CardContent>
+            {activityLoading ? (
+              <Skeleton className="h-8 w-16" />
+            ) : (
+              <div className="text-2xl font-bold text-red-600 dark:text-red-400">
+                {metadata?.failed_requests?.toLocaleString() ?? "—"}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium">Total Tokens</CardTitle>
+            <Sparkles className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            {activityLoading ? (
+              <Skeleton className="h-8 w-20" />
+            ) : (
+              <div className="text-2xl font-bold">{fmtTokens(metadata?.total_tokens ?? 0)}</div>
+            )}
+            <p className="text-xs text-muted-foreground mt-1">
+              prompt {fmtTokens(metadata?.prompt_tokens ?? 0)} / completion {fmtTokens(metadata?.completion_tokens ?? 0)}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium">Success Rate</CardTitle>
+            <TrendingUp className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            {activityLoading ? (
+              <Skeleton className="h-8 w-16" />
+            ) : (
+              <div className="text-2xl font-bold">
+                {metadata && metadata.total_requests > 0
+                  ? `${((metadata.successful_requests / metadata.total_requests) * 100).toFixed(1)}%`
+                  : "—"}
+              </div>
             )}
           </CardContent>
         </Card>
       </div>
 
-      {/* Charts Row */}
+      {/* Daily Spend Bar Chart */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between pb-2">
+          <CardTitle className="text-sm font-medium">Daily Spend</CardTitle>
+          <BarChart3 className="h-4 w-4 text-muted-foreground" />
+        </CardHeader>
+        <CardContent>
+          {activityLoading ? (
+            <Skeleton className="h-64 w-full" />
+          ) : dailyChartData.length === 0 ? (
+            <div className="flex items-center justify-center h-64 text-sm text-muted-foreground">
+              No data available
+            </div>
+          ) : (
+            <div className="h-[200px] md:h-[280px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={dailyChartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                  <XAxis
+                    dataKey="date"
+                    tick={{ fontSize: 11 }}
+                    stroke="hsl(var(--muted-foreground))"
+                  />
+                  <YAxis
+                    tick={{ fontSize: 11 }}
+                    stroke="hsl(var(--muted-foreground))"
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: "hsl(var(--card))",
+                      border: "1px solid hsl(var(--border))",
+                      borderRadius: "6px",
+                    }}
+                    formatter={(value, name) => {
+                      if (name === "spend") return [fmtSpend(value as number), "Spend"];
+                      if (name === "tokens") return [fmtTokens(value as number), "Tokens"];
+                      if (name === "requests") return [value, "Requests"];
+                      return [value, name];
+                    }}
+                  />
+                  <Bar dataKey="spend" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Model / Provider Charts */}
       <div className="grid gap-4 lg:grid-cols-2">
         {/* Model Bar Chart */}
         <Card>
@@ -251,7 +408,7 @@ export function UsagePage() {
                   <BarChart data={modelChartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
                     <XAxis
-                      dataKey="name"
+                      dataKey="model"
                       tick={{ fontSize: 11 }}
                       stroke="hsl(var(--muted-foreground))"
                     />
@@ -267,7 +424,7 @@ export function UsagePage() {
                       }}
                       formatter={(value) => [fmtSpend(value as number), "Spend"]}
                     />
-                    <Bar dataKey="spend" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="total_spend" name="Spend" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>

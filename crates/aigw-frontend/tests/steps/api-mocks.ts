@@ -102,6 +102,27 @@ export async function defineMockRoutes(route: Route, request: Request) {
   if (url.pathname === "/global/spend/logs") {
     return route.fulfill({ status: 200, json: { data: sampleSpendLogs, count: sampleSpendLogs.length, total_count: sampleSpendLogs.length, page: 1, page_size: 30, total_pages: 1 } });
   }
+  if (url.pathname === "/global/spend/activity") {
+    return route.fulfill({
+      status: 200,
+      json: {
+        metadata: {
+          total_spend: 42.50,
+          total_requests: 423,
+          successful_requests: 401,
+          failed_requests: 22,
+          total_tokens: 2300000,
+          prompt_tokens: 1400000,
+          completion_tokens: 900000,
+        },
+        daily: [
+          { date: "2026-07-08", spend: 12.5, tokens: 500000, requests: 100 },
+          { date: "2026-07-09", spend: 18.3, tokens: 800000, requests: 150 },
+          { date: "2026-07-10", spend: 11.7, tokens: 1000000, requests: 173 },
+        ],
+      },
+    });
+  }
   if (url.pathname === "/global/spend/models") {
     return route.fulfill({ status: 200, json: { data: sampleSpendModels, count: sampleSpendModels.length } });
   }

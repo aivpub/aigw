@@ -1989,6 +1989,126 @@ impl Database {
             Database::Postgres(pool) => pool.query_spend_logs_count(api_key, model, start_date, end_date, request_id).await,
         }
     }
+
+    /// Query activity metadata: aggregate spend/tokens/requests for a time range
+    /// with optional user/team/org filters.
+    pub async fn query_activity_metadata(
+        &self,
+        start_date: &str,
+        end_date: &str,
+        user_id: Option<&str>,
+        team_id: Option<&str>,
+        organization_id: Option<&str>,
+    ) -> Result<(f64, i64, i64, i64, i64, i64, i64)> {
+        let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id);
+        let sql = format!(
+            r#"SELECT
+                COALESCE(SUM(spend), 0),
+                COUNT(request_id),
+                COUNT(CASE WHEN status = 'success' THEN 1 END),
+                COUNT(CASE WHEN status = 'failure' THEN 1 END),
+                COALESCE(SUM(total_tokens), 0),
+                COALESCE(SUM(prompt_tokens), 0),
+                COALESCE(SUM(completion_tokens), 0)
+            FROM spend_logs
+            WHERE start_time >= ? AND start_time <= ? {}"#,
+            filter_clause
+        );
+
+        match self {
+            Database::Sqlite(pool) => {
+                let mut q = sqlx::query_as(&sql)
+                    .bind(start_date).bind(end_date);
+                for p in &params { q = q.bind(p); }
+                q.fetch_one(pool).await.map_err(DbError::from)
+            }
+            Database::Mysql(pool) => {
+                let mut q = sqlx::query_as(&sql)
+                    .bind(start_date).bind(end_date);
+                for p in &params { q = q.bind(p); }
+                q.fetch_one(pool).await.map_err(DbError::from)
+            }
+            Database::Postgres(pool) => {
+                let mut q = sqlx::query_as(&sql)
+                    .bind(start_date).bind(end_date);
+                for p in &params { q = q.bind(p); }
+                q.fetch_one(pool).await.map_err(DbError::from)
+            }
+        }
+    }
+
+    /// Query daily spend aggregation for a time range with optional filters.
+    pub async fn query_activity_daily(
+        &self,
+        start_date: &str,
+        end_date: &str,
+        user_id: Option<&str>,
+        team_id: Option<&str>,
+        organization_id: Option<&str>,
+    ) -> Result<Vec<(String, f64, i64, i64)>> {
+        let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id);
+        let sql = format!(
+            r#"SELECT
+                DATE(start_time),
+                COALESCE(SUM(spend), 0),
+                COALESCE(SUM(total_tokens), 0),
+                COUNT(request_id)
+            FROM spend_logs
+            WHERE start_time >= ? AND start_time <= ? {}
+            GROUP BY DATE(start_time)
+            ORDER BY date ASC"#,
+            filter_clause
+        );
+
+        match self {
+            Database::Sqlite(pool) => {
+                let mut q = sqlx::query_as(&sql)
+                    .bind(start_date).bind(end_date);
+                for p in &params { q = q.bind(p); }
+                q.fetch_all(pool).await.map_err(DbError::from)
+            }
+            Database::Mysql(pool) => {
+                let mut q = sqlx::query_as(&sql)
+                    .bind(start_date).bind(end_date);
+                for p in &params { q = q.bind(p); }
+                q.fetch_all(pool).await.map_err(DbError::from)
+            }
+            Database::Postgres(pool) => {
+                let mut q = sqlx::query_as(&sql)
+                    .bind(start_date).bind(end_date);
+                for p in &params { q = q.bind(p); }
+                q.fetch_all(pool).await.map_err(DbError::from)
+            }
+        }
+    }
+}
+
+/// Build WHERE filter clause and parameter list for activity queries.
+fn build_activity_filter<'a>(
+    user_id: Option<&'a str>,
+    team_id: Option<&'a str>,
+    organization_id: Option<&'a str>,
+) -> (String, Vec<&'a str>) {
+    let mut clauses = Vec::new();
+    let mut params = Vec::new();
+    if let Some(uid) = user_id {
+        clauses.push(format!(r#""user" = ?"#));
+        params.push(uid);
+    }
+    if let Some(tid) = team_id {
+        clauses.push("team_id = ?".to_string());
+        params.push(tid);
+    }
+    if let Some(oid) = organization_id {
+        clauses.push("organization_id = ?".to_string());
+        params.push(oid);
+    }
+    let filter = if clauses.is_empty() {
+        String::new()
+    } else {
+        format!("AND {}", clauses.join(" AND "))
+    };
+    (filter, params)
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

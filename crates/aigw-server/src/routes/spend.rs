@@ -21,8 +21,9 @@ use axum::{
     http::{self, request::Parts, StatusCode},
     Json,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use aigw_core::db::{Database, DbError};
 use std::collections::HashMap;
 
 use super::keys::SharedState;
@@ -685,6 +686,113 @@ pub async fn global_spend_models(
         .collect();
 
     Ok(Json(json!({ "data": data, "count": data.len() })))
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// /global/spend/activity — aggregated overview (Stage 38)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[derive(Debug, Deserialize)]
+pub struct ActivityQuery {
+    pub start_date: String,
+    pub end_date: String,
+    pub user_id: Option<String>,
+    pub team_id: Option<String>,
+    pub organization_id: Option<String>,
+}
+
+/// GET /global/spend/activity?start_date=X&end_date=Y[&user_id=...]
+///
+/// Returns metadata (summary metrics) + daily (per-day aggregation)
+/// for the given time range. Optional filters for user/team/organization.
+pub async fn global_spend_activity(
+    State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
+    Query(query): Query<ActivityQuery>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    require_admin(&auth)?;
+
+    let activity = query_activity(&state.db, &query).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
+        )
+    })?;
+
+    Ok(Json(activity))
+}
+
+#[derive(Debug, Serialize)]
+struct ActivityMetadata {
+    total_spend: f64,
+    total_requests: i64,
+    successful_requests: i64,
+    failed_requests: i64,
+    total_tokens: i64,
+    prompt_tokens: i64,
+    completion_tokens: i64,
+}
+
+#[derive(Debug, Serialize)]
+struct DailyRow {
+    date: String,
+    spend: f64,
+    tokens: i64,
+    requests: i64,
+}
+
+#[derive(Debug, Serialize)]
+struct ActivityResult {
+    metadata: ActivityMetadata,
+    daily: Vec<DailyRow>,
+}
+
+async fn query_activity(
+    db: &Database,
+    query: &ActivityQuery,
+) -> Result<Value, DbError> {
+    let (metadata, daily): ((f64, i64, i64, i64, i64, i64, i64), Vec<(String, f64, i64, i64)>) = tokio::try_join!(
+        db.query_activity_metadata(
+            &query.start_date,
+            &query.end_date,
+            query.user_id.as_deref(),
+            query.team_id.as_deref(),
+            query.organization_id.as_deref(),
+        ),
+        db.query_activity_daily(
+            &query.start_date,
+            &query.end_date,
+            query.user_id.as_deref(),
+            query.team_id.as_deref(),
+            query.organization_id.as_deref(),
+        ),
+    )?;
+
+    let metadata_val = ActivityMetadata {
+        total_spend: metadata.0,
+        total_requests: metadata.1,
+        successful_requests: metadata.2,
+        failed_requests: metadata.3,
+        total_tokens: metadata.4,
+        prompt_tokens: metadata.5,
+        completion_tokens: metadata.6,
+    };
+
+    let daily_vals: Vec<DailyRow> = daily
+        .iter()
+        .map(|(date, spend, tokens, requests)| DailyRow {
+            date: date.clone(),
+            spend: *spend,
+            tokens: *tokens,
+            requests: *requests,
+        })
+        .collect();
+
+    Ok(serde_json::to_value(ActivityResult {
+        metadata: metadata_val,
+        daily: daily_vals,
+    })
+    .unwrap_or(json!({})))
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
