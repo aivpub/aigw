@@ -24,8 +24,8 @@ const sampleModels = [
 ];
 
 const sampleSpendLogs = [
-  { request_id: "req-001", model: "gpt-4", api_key: "sk-abc***", total_tokens: 1234, spend: 0.42, start_time: "2026-07-08T10:00:00Z", end_time: "2026-07-08T10:00:05Z" },
-  { request_id: "req-002", model: "claude-sonnet-4-6", api_key: "sk-def***", total_tokens: 567, spend: 1.23, start_time: "2026-07-08T10:05:00Z", end_time: "2026-07-08T10:05:03Z" },
+  { request_id: "req-001", call_type: "completion", model: "gpt-4", api_key: "sk-abc***", total_tokens: 1234, prompt_tokens: 800, completion_tokens: 434, spend: 0.42, start_time: "2026-07-08T10:00:00Z", end_time: "2026-07-08T10:00:05Z", request_duration_ms: 5123, ttft_ms: 234.5, status: "success" },
+  { request_id: "req-002", call_type: "completion", model: "claude-sonnet-4-6", api_key: "sk-def***", total_tokens: 567, prompt_tokens: 300, completion_tokens: 267, spend: 1.23, start_time: "2026-07-08T10:05:00Z", end_time: "2026-07-08T10:05:03Z", request_duration_ms: 2890, ttft_ms: 456.7, status: "success" },
 ];
 
 const sampleSpendModels = [
@@ -100,7 +100,7 @@ export async function defineMockRoutes(route: Route, request: Request) {
     return route.fulfill({ status: 200, json: { data: [{ provider: "openai", total_spend: 25.0, total_tokens: 50000, requests: 12 }, { provider: "anthropic", total_spend: 17.5, total_tokens: 30000, requests: 8 }], count: 2 } });
   }
   if (url.pathname === "/global/spend/logs") {
-    return route.fulfill({ status: 200, json: { data: sampleSpendLogs, count: sampleSpendLogs.length } });
+    return route.fulfill({ status: 200, json: { data: sampleSpendLogs, count: sampleSpendLogs.length, total_count: sampleSpendLogs.length, page: 1, page_size: 30, total_pages: 1 } });
   }
   if (url.pathname === "/global/spend/models") {
     return route.fulfill({ status: 200, json: { data: sampleSpendModels, count: sampleSpendModels.length } });

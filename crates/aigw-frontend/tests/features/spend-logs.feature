@@ -9,14 +9,26 @@ Feature: Spend Logs
     Then I should see the spend logs table or card list
     And I should see spend log entries with model names and costs
 
-  Scenario: Filter by date range
-    When I change the start date to "2026-07-01"
-    And I change the end date to "2026-07-08"
+  Scenario: Time presets change the date range
+    When I click the "24 hours" time preset button
+    Then the spend logs list should update
+    And I should see a table with multiple columns including Time Type Model and Cost
+
+  Scenario: Live Tail toggle enables auto-refresh
+    When I toggle the Live Tail switch on
+    Then I should see an auto-refresh banner indicating 15 second refresh
+
+  Scenario: Page size selector changes rows per page
+    When I change the page size to 50
+    Then the spend logs query should include page_size=50
+
+  Scenario: Request ID search filters logs
+    When I type "req-001" into the request ID search
     Then the spend logs list should update
 
-  Scenario: Filter by model name
-    When I type "gpt-4" into the model filter
-    Then the spend logs list should update
+  Scenario: Click row opens detail drawer
+    When I click on the first spend log row
+    Then I should see a detail drawer with request metadata
 
   Scenario: Mobile spend logs uses card layout
     Given the viewport is mobile size 375x667
