@@ -28,6 +28,8 @@ pub struct UserInfoQuery {
 #[derive(Debug, Deserialize)]
 pub struct UserListQuery {
     pub organization_id: Option<String>,
+    pub page: Option<i32>,
+    pub page_size: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -123,7 +125,7 @@ pub async fn user_info(
     Ok(Json(serde_json::to_value(&user).unwrap_or(json!({}))))
 }
 
-/// GET /user/list?organization_id=...
+/// GET /user/list?organization_id=...&page=...&page_size=...
 pub async fn user_list(
     State(state): State<SharedState>,
     SpendAuth(auth): SpendAuth,
@@ -131,14 +133,31 @@ pub async fn user_list(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&auth)?;
 
-    let users = state.db.list_users(query.organization_id.as_deref()).await.map_err(|e| {
+    let page = query.page.unwrap_or(1).max(1);
+    let page_size = query.page_size.unwrap_or(10).max(1).min(100);
+
+    let all_users = state.db.list_users(query.organization_id.as_deref()).await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": {"message": format!("{}", e), "type": "internal"}})),
         )
     })?;
 
-    let users: Vec<Value> = users
+    let total_count = all_users.len() as i64;
+    let total_pages = if total_count > 0 {
+        ((total_count as f64) / (page_size as f64)).ceil() as i64
+    } else {
+        0
+    };
+
+    let offset = (page - 1) as usize * page_size as usize;
+    let paged: Vec<&User> = all_users
+        .iter()
+        .skip(offset)
+        .take(page_size as usize)
+        .collect();
+
+    let users: Vec<Value> = paged
         .iter()
         .map(|u| {
             let mut v = serde_json::to_value(u).unwrap_or(json!({}));
@@ -151,7 +170,14 @@ pub async fn user_list(
             v
         })
         .collect();
-    Ok(Json(json!({ "data": users })))
+
+    Ok(Json(json!({
+        "data": users,
+        "total_count": total_count,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+    })))
 }
 
 /// PUT /user/update

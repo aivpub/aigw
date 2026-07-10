@@ -131,7 +131,7 @@ pub async fn org_list(
         )
     })?;
 
-    Ok(Json(serde_json::to_value(&orgs).unwrap_or(json!([]))))
+    Ok(Json(json!({ "data": serde_json::to_value(&orgs).unwrap_or(json!([])) })))
 }
 
 /// PUT /org/update

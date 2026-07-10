@@ -16,7 +16,14 @@ import {
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { toast } from "sonner";
-import { Plus, Search, Pencil, Trash2, Users } from "lucide-react";
+import { Plus, Search, Pencil, Trash2, Users, ChevronLeft, ChevronRight } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface UserItem {
   user_id: string;
@@ -33,11 +40,17 @@ interface UserItem {
 
 interface UserListResponse {
   data: UserItem[];
+  total_count: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
 }
 
 export function UsersPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -52,11 +65,13 @@ export function UsersPage() {
   const [formRPM, setFormRPM] = useState("");
 
   const { data, isLoading, error } = useQuery<UserListResponse>({
-    queryKey: ["users"],
-    queryFn: () => apiGet("/user/list"),
+    queryKey: ["users", page, pageSize],
+    queryFn: () => apiGet(`/user/list?page=${page}&page_size=${pageSize}`),
   });
 
   const users = data?.data ?? [];
+  const totalCount = data?.total_count ?? 0;
+  const totalPages = data?.total_pages ?? 0;
 
   const filtered = useMemo(() => {
     if (!search.trim()) return users;
@@ -148,7 +163,7 @@ export function UsersPage() {
 
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle>All Users ({filtered.length})</CardTitle>
+          <CardTitle>All Users ({totalCount})</CardTitle>
         </CardHeader>
         <CardContent>
           {error ? (
@@ -256,6 +271,37 @@ export function UsersPage() {
                   </div>
                 )}
               </div>
+              {/* Pagination */}
+              {totalCount > 0 && (
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 mt-4 pt-3 border-t">
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-muted-foreground">
+                      Showing {Math.min((page - 1) * pageSize + 1, totalCount)}–{Math.min(page * pageSize, totalCount)} of {totalCount}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      Page {page} of {Math.max(totalPages, 1)}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setPage(1); }}>
+                      <SelectTrigger className="h-7 w-[70px] text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="10">10</SelectItem>
+                        <SelectItem value="25">25</SelectItem>
+                        <SelectItem value="50">50</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)} className="h-7 px-2">
+                      <ChevronLeft className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button variant="outline" size="sm" disabled={page >= totalPages || totalPages === 0} onClick={() => setPage(page + 1)} className="h-7 px-2">
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              )}
             </>
           )}
         </CardContent>

@@ -618,7 +618,10 @@ async fn build_decrypted_provider_map(
 ) -> HashMap<String, String> {
     let mk = match state.aigw_master_key.as_deref() {
         Some(k) => k,
-        None => return HashMap::new(),
+        None => {
+            tracing::warn!("AIGW_MASTER_KEY not set — provider names may be raw model names instead of decrypted provider identifiers");
+            return HashMap::new();
+        }
     };
 
     let models = match state.db.list_models().await {
