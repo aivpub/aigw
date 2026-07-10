@@ -274,9 +274,21 @@ pub async fn spend_logs(
                 "request_duration_ms": log.request_duration_ms,
                 "ttft_ms": ttft_ms,
                 "model": log.model,
+                "model_id": log.model_id,
+                "model_group": log.model_group,
+                "custom_llm_provider": log.custom_llm_provider,
+                "api_base": log.api_base,
                 "user": log.user,
+                "team_id": log.team_id,
+                "organization_id": log.organization_id,
+                "end_user": log.end_user,
+                "session_id": log.session_id,
                 "request_tags": log.request_tags,
+                "metadata": log.metadata,
+                "cache_hit": log.cache_hit,
+                "cache_key": log.cache_key,
                 "status": log.status,
+                "mcp_namespaced_tool_name": log.mcp_namespaced_tool_name,
             })
         })
         .collect();
@@ -468,9 +480,21 @@ pub async fn global_spend_logs(
                 "request_duration_ms": log.request_duration_ms,
                 "ttft_ms": ttft_ms,
                 "model": log.model,
+                "model_id": log.model_id,
+                "model_group": log.model_group,
+                "custom_llm_provider": log.custom_llm_provider,
+                "api_base": log.api_base,
                 "user": log.user,
+                "team_id": log.team_id,
+                "organization_id": log.organization_id,
+                "end_user": log.end_user,
+                "session_id": log.session_id,
                 "request_tags": log.request_tags,
+                "metadata": log.metadata,
+                "cache_hit": log.cache_hit,
+                "cache_key": log.cache_key,
                 "status": log.status,
+                "mcp_namespaced_tool_name": log.mcp_namespaced_tool_name,
             })
         })
         .collect();

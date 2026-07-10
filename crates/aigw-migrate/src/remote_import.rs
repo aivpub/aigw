@@ -1216,10 +1216,19 @@ async fn migrate_spend_logs(
     limit: Option<usize>,
     source_url: &str,
     target_url: &str,
+    skip_body: bool,
+    skip_columns_set: &std::collections::HashSet<(String, String)>,
 ) -> anyhow::Result<usize> {
     let src_table = "LiteLLM_SpendLogs";
     let col_info = source_column_info(source, src_table, source_url).await;
     let tgt_col_info = target_column_info(target, "spend_logs", target_url).await;
+
+    // Build skip set
+    let mut should_skip = skip_columns_set.clone();
+    if skip_body {
+        should_skip.insert(("spend_logs".to_string(), "messages".to_string()));
+        should_skip.insert(("spend_logs".to_string(), "response".to_string()));
+    }
 
     let t_fetch = std::time::Instant::now();
     let query = if !col_info.is_empty() && is_pg(source_url) {
@@ -1258,11 +1267,29 @@ async fn migrate_spend_logs(
         .collect();
 
     // Build column merge: target columns → source indices
-    let merged: Vec<(String, String, Option<usize>)> = if !tgt_col_info.is_empty() {
+    let raw_merged: Vec<(String, String, Option<usize>)> = if !tgt_col_info.is_empty() {
         build_column_merge(&col_info, &tgt_col_info)
     } else {
         Vec::new()
     };
+
+    // Filter skipped columns from merge
+    let mut skipped_list: Vec<String> = Vec::new();
+    let merged: Vec<(String, String, Option<usize>)> = raw_merged
+        .into_iter()
+        .filter(|(col, _, _)| {
+            if should_skip.contains(&("spend_logs".to_string(), col.clone())) {
+                skipped_list.push(format!("spend_logs.{}", col));
+                false
+            } else {
+                true
+            }
+        })
+        .collect();
+
+    if !skipped_list.is_empty() {
+        eprintln!("  [SKIP-COLUMNS] spend_logs: {:?}", skipped_list);
+    }
 
     let do_merge = !merged.is_empty();
     let use_pg = do_merge && is_pg(target_url);
@@ -1364,6 +1391,8 @@ pub async fn run_filtered(
     target_master_key: &str,
     spend_log_limit: Option<usize>,
     step_filter: Option<u8>,
+    skip_body: bool,
+    skip_columns_set: &std::collections::HashSet<(String, String)>,
 ) -> anyhow::Result<bool> {
     let total_start = std::time::Instant::now();
     sqlx::any::install_default_drivers();
@@ -1464,7 +1493,7 @@ pub async fn run_filtered(
         eprintln!("Step 5: Migrating spend_logs...");
         let t0 = std::time::Instant::now();
         let spend_count =
-            migrate_spend_logs(&source, &target, spend_log_limit, source_url, target_url).await?;
+            migrate_spend_logs(&source, &target, spend_log_limit, source_url, target_url, skip_body, &skip_columns_set).await?;
         eprintln!(
             "  LiteLLM_SpendLogs -> spend_logs ({} rows, {:?})",
             spend_count,

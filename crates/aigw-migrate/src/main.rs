@@ -125,6 +125,12 @@ enum Commands {
         /// Run only a single migration step: 2=plain, 3=credentials, 4=proxy_models, 5=spend_logs
         #[arg(long = "step-filter")]
         step_filter: Option<u8>,
+        /// Skip large body columns (messages, response) in spend_logs
+        #[arg(long = "skip-body", default_value = "false")]
+        skip_body: bool,
+        /// Comma-separated table.column pairs to skip during import
+        #[arg(long = "skip-columns", value_delimiter = ',')]
+        skip_columns: Vec<String>,
     },
     /// Pre-migration checks: verify source/target connectivity, keys, and data
     PreCheck {
@@ -212,10 +218,32 @@ async fn main() -> anyhow::Result<()> {
             target_master_key,
             spend_log_limit,
             step_filter,
+            skip_body,
+            skip_columns,
         } => {
             let source_url = resolve_source_url(source_url)?;
             let target_url = resolve_target_url(target_url)?;
             let target_key = resolve_target_master_key(target_master_key)?;
+
+            if skip_body {
+                println!("  --skip-body: will skip messages, response columns in spend_logs");
+            }
+            if !skip_columns.is_empty() {
+                println!("  --skip-columns: {:?}", skip_columns);
+            }
+
+            // Build skip set from --skip-body and --skip-columns
+            let mut skip_columns_set: std::collections::HashSet<(String, String)> =
+                std::collections::HashSet::new();
+            if skip_body {
+                skip_columns_set.insert(("spend_logs".to_string(), "messages".to_string()));
+                skip_columns_set.insert(("spend_logs".to_string(), "response".to_string()));
+            }
+            for spec in &skip_columns {
+                if let Some((table, col)) = spec.split_once('.') {
+                    skip_columns_set.insert((table.to_string(), col.trim().to_string()));
+                }
+            }
 
             if let Some(limit) = spend_log_limit {
                 println!(
@@ -233,6 +261,8 @@ async fn main() -> anyhow::Result<()> {
                 &target_key,
                 spend_log_limit,
                 step_filter,
+                skip_body,
+                &skip_columns_set,
             )
             .await?;
             if all_match {

@@ -83,6 +83,16 @@ function renderJsonValue(value: unknown): ReactNode {
   return String(value);
 }
 
+function extractCost(info: Record<string, unknown>): { input: number | null; output: number | null } {
+  const input = typeof info.input_cost_per_token === "number"
+    ? info.input_cost_per_token * 1_000_000
+    : null;
+  const output = typeof info.output_cost_per_token === "number"
+    ? info.output_cost_per_token * 1_000_000
+    : null;
+  return { input, output };
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Component
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -161,6 +171,7 @@ export function ModelsPage() {
                       <TableHead>Provider</TableHead>
                       <TableHead>Upstream Model</TableHead>
                       <TableHead>Status</TableHead>
+                      <TableHead>Cost (Per 1M)</TableHead>
                       <TableHead>Created</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -168,7 +179,7 @@ export function ModelsPage() {
                     {isLoading
                       ? Array.from({ length: 3 }).map((_, i) => (
                           <TableRow key={i}>
-                            {Array.from({ length: 6 }).map((_, j) => (
+                            {Array.from({ length: 7 }).map((_, j) => (
                               <TableCell key={j}>
                                 <Skeleton className="h-4 w-full" />
                               </TableCell>
@@ -179,6 +190,7 @@ export function ModelsPage() {
                           const active = isActive(model.model_info);
                           const provider = extractProvider(model.litellm_params);
                           const upstream = extractModelType(model.litellm_params);
+                          const cost = extractCost(model.model_info);
                           const isExpanded = expanded.has(model.model_id);
 
                           return (
@@ -207,6 +219,26 @@ export function ModelsPage() {
                                     {active ? "active" : "inactive"}
                                   </Badge>
                                 </TableCell>
+                                <TableCell>
+                                  {cost.input !== null ? (
+                                    <div className="text-xs leading-snug">
+                                      <div>
+                                        <span className="text-muted-foreground">$</span>
+                                        {cost.input.toFixed(4)}{" "}
+                                        <span className="text-muted-foreground">Input</span>
+                                      </div>
+                                      {cost.output !== null && (
+                                        <div>
+                                          <span className="text-muted-foreground">$</span>
+                                          {cost.output.toFixed(4)}{" "}
+                                          <span className="text-muted-foreground">Output</span>
+                                        </div>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <span className="text-sm text-muted-foreground">—</span>
+                                  )}
+                                </TableCell>
                                 <TableCell className="text-xs text-muted-foreground">
                                   {model.created_at
                                     ? new Date(model.created_at).toLocaleDateString()
@@ -215,7 +247,7 @@ export function ModelsPage() {
                               </TableRow>
                               {isExpanded && (
                                 <TableRow key={`${model.model_id}-detail`}>
-                                  <TableCell colSpan={6} className="bg-muted/30 p-4">
+                                  <TableCell colSpan={7} className="bg-muted/30 p-4">
                                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                                       <div>
                                         <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
@@ -289,7 +321,7 @@ export function ModelsPage() {
                     {!isLoading && filteredModels.length === 0 && (
                       <TableRow>
                         <TableCell
-                          colSpan={6}
+                          colSpan={7}
                           className="text-center text-muted-foreground py-8"
                         >
                           {search ? "No models match your search" : "No models configured"}
@@ -316,6 +348,7 @@ export function ModelsPage() {
                       const active = isActive(model.model_info);
                       const provider = extractProvider(model.litellm_params);
                       const upstream = extractModelType(model.litellm_params);
+                      const cost = extractCost(model.model_info);
                       const isExpanded = expanded.has(model.model_id);
 
                       return (
@@ -343,6 +376,12 @@ export function ModelsPage() {
                               <span>Provider: {provider}</span>
                               <span>Upstream: {upstream}</span>
                             </div>
+                            {cost.input !== null && (
+                              <div className="text-xs text-muted-foreground">
+                                Cost: ${cost.input.toFixed(4)} Input
+                                {cost.output !== null && ` / $${cost.output.toFixed(4)} Output`}
+                              </div>
+                            )}
                             <div className="text-xs text-muted-foreground">
                               {model.created_at
                                 ? `Created ${new Date(model.created_at).toLocaleDateString()}`

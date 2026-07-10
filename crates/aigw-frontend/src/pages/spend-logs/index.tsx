@@ -42,6 +42,7 @@ import {
   Clock,
   Zap,
   AlertCircle,
+  Download,
 } from "lucide-react";
 import { format, subMinutes, subHours, subDays, subWeeks } from "date-fns";
 
@@ -132,6 +133,39 @@ function truncate8(s: string): string {
 
 function copyToClipboard(text: string) {
   navigator.clipboard.writeText(text).catch(() => {});
+}
+
+function exportToCSV(logs: SpendLog[], startDate: string, endDate: string) {
+  const headers = [
+    "Request ID", "Time", "Type", "Model", "Status",
+    "Prompt Tokens", "Completion Tokens", "Total Tokens",
+    "TTFT (ms)", "Duration (ms)", "Cost", "User", "API Key",
+  ];
+  const rows = logs.map((log) => [
+    log.request_id,
+    log.start_time,
+    log.call_type,
+    log.model,
+    log.status ?? "",
+    log.prompt_tokens,
+    log.completion_tokens,
+    log.total_tokens,
+    log.ttft_ms ?? "",
+    log.request_duration_ms ?? "",
+    log.spend,
+    log.user ?? "",
+    log.api_key.slice(0, 12) + "…",
+  ]);
+  const csv = [headers, ...rows]
+    .map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","))
+    .join("\n");
+  const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `spend-logs-${startDate.slice(0, 10)}-${endDate.slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -558,6 +592,16 @@ export function SpendLogsPage() {
             <Button variant="outline" size="sm" onClick={handleFetch} className="h-8 shrink-0">
               <RefreshCw className="h-3.5 w-3.5 mr-1" />
               Fetch
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => exportToCSV(logs, startDate, endDate)}
+              disabled={logs.length === 0}
+              className="h-8 shrink-0"
+            >
+              <Download className="h-3.5 w-3.5 mr-1" />
+              CSV
             </Button>
           </div>
         </CardContent>
