@@ -23,14 +23,14 @@ use tokio_stream::StreamExt;
 use super::keys::SharedState;
 
 /// Resolved upstream routing parameters from proxy_models + credentials lookup.
-struct ResolvedUpstream {
-    api_base: String,
-    api_key: Option<String>,
-    model_name: String,
+pub(crate) struct ResolvedUpstream {
+    pub(crate) api_base: String,
+    pub(crate) api_key: Option<String>,
+    pub(crate) model_name: String,
     /// USD per input token (from model_info JSON)
-    input_cost_per_token: Option<f64>,
+    pub(crate) input_cost_per_token: Option<f64>,
     /// USD per output token (from model_info JSON)
-    output_cost_per_token: Option<f64>,
+    pub(crate) output_cost_per_token: Option<f64>,
 }
 
 /// Extract pricing — primary from model_info (litellm-standard cost calculator source),
@@ -53,7 +53,7 @@ fn extract_pricing(model_info: &Value, params_json: &Value) -> (Option<f64>, Opt
 
 /// Calculate spend from token counts and per-token pricing.
 /// Returns 0.0 if no pricing data is available.
-fn calc_spend(prompt_tokens: i32, completion_tokens: i32, input_cost: Option<f64>, output_cost: Option<f64>) -> f64 {
+pub(crate) fn calc_spend(prompt_tokens: i32, completion_tokens: i32, input_cost: Option<f64>, output_cost: Option<f64>) -> f64 {
     let input = prompt_tokens as f64 * input_cost.unwrap_or(0.0);
     let output = completion_tokens as f64 * output_cost.unwrap_or(0.0);
     input + output
@@ -61,7 +61,7 @@ fn calc_spend(prompt_tokens: i32, completion_tokens: i32, input_cost: Option<f64
 
 /// Look up a model by name in proxy_models, decrypt litellm_params if encrypted,
 /// and resolve credential references. Falls back to env vars if model not found.
-async fn resolve_upstream_params(
+pub(crate) async fn resolve_upstream_params(
     state: &SharedState,
     model_name: &str,
 ) -> Result<ResolvedUpstream, (StatusCode, Json<Value>)> {

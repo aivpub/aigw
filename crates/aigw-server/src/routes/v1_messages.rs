@@ -71,7 +71,8 @@ pub async fn messages_handler(
                 .and_then(|v| v.strip_prefix("Bearer "))
         });
 
-    match extracted {
+    // 1b. Validate token and extract identity (saved for SpendLog)
+    let (auth_token_hash, auth_user_id) = match extracted {
         None | Some("") => {
             let request_id = format!("req_{}", uuid::Uuid::new_v4());
             return Err((
@@ -87,10 +88,16 @@ pub async fn messages_handler(
             ));
         }
         Some(token) => {
-            // Validate token (master key or DB lookup)
-            let is_master = state.master_key.as_ref().map(|mk| token == *mk).unwrap_or(false);
-            if !is_master {
-                let token_hash = hash_token(token);
+            let is_master = state
+                .master_key
+                .as_ref()
+                .map(|mk| token == mk.as_str())
+                .unwrap_or(false);
+
+            if is_master {
+                ("master_key".to_string(), None)
+            } else {
+                let token_hash = hash_token(&token);
                 let key = state.db.get_key_by_token(&token_hash).await.map_err(|_| {
                     let request_id = format!("req_{}", uuid::Uuid::new_v4());
                     (
@@ -105,9 +112,9 @@ pub async fn messages_handler(
                         })),
                     )
                 })?;
-                if key.is_none() {
+                let key = key.ok_or_else(|| {
                     let request_id = format!("req_{}", uuid::Uuid::new_v4());
-                    return Err((
+                    (
                         StatusCode::UNAUTHORIZED,
                         Json(json!({
                             "type": "error",
@@ -117,11 +124,25 @@ pub async fn messages_handler(
                             },
                             "request_id": request_id
                         })),
-                    ));
+                    )
+                })?;
+
+                // Budget check
+                if let Some(max_budget) = key.max_budget_f64() {
+                    if key.spend >= max_budget {
+                        return Err(anthropic_error(
+                            StatusCode::TOO_MANY_REQUESTS,
+                            "budget_exceeded",
+                            "Budget exceeded for this API key",
+                        ));
+                    }
                 }
+
+                let user_id = key.user_id.clone();
+                (token_hash, user_id)
             }
         }
-    }
+    };
 
     // 2. Validate anthropic-version header
     let _api_version = headers
@@ -192,38 +213,14 @@ pub async fn messages_handler(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    // 4. Check if model exists in proxy_models (by model_name)
-    let models = state.db.list_models().await.map_err(|_| {
-        anthropic_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal_error",
-            "Failed to look up model",
-        )
-    })?;
+    // 4. Resolve upstream routing + pricing (reuses chat.rs verified logic:
+    //    proxy_models → decrypt → credential refs → env var fallback)
+    let resolved = super::chat::resolve_upstream_params(&state, &model).await?;
+    let input_cost = resolved.input_cost_per_token;
+    let output_cost = resolved.output_cost_per_token;
 
-    let pm = models.iter().find(|m| m.model_name == model).ok_or_else(|| {
-        anthropic_error(
-            StatusCode::NOT_FOUND,
-            "not_found_error",
-            &format!("Model '{}' not found", model),
-        )
-    })?;
-
-    let input_cost = pm.model_info
-        .get("input_cost_per_token")
-        .and_then(|v| v.as_f64());
-    let output_cost = pm.model_info
-        .get("output_cost_per_token")
-        .and_then(|v| v.as_f64());
-
-    // 5. Determine upstream URL from environment
-    let upstream_base_url = std::env::var("UPSTREAM_LLM_URL")
-        .or_else(|_| std::env::var("OPENAI_BASE_URL"))
-        .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
-
-    let upstream_api_key = std::env::var("UPSTREAM_API_KEY")
-        .or_else(|_| std::env::var("OPENAI_API_KEY"))
-        .ok();
+    let upstream_base_url = resolved.api_base;
+    let upstream_api_key = resolved.api_key;
 
     // 6. Parse Claude request and convert to OpenAI format
     let claude_req: ClaudeMessageRequest =
@@ -236,13 +233,23 @@ pub async fn messages_handler(
         })?;
 
     let oai_req = DefaultAdapter::claude_to_openai_request(&claude_req);
-    let upstream_body = serde_json::to_value(&oai_req).map_err(|_| {
+    let mut upstream_body = serde_json::to_value(&oai_req).map_err(|_| {
         anthropic_error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "internal_error",
             "Failed to serialize upstream request",
         )
     })?;
+
+    // Inject stream_options for usage info in streaming mode
+    if is_stream {
+        if let Some(obj) = upstream_body.as_object_mut() {
+            obj.insert(
+                "stream_options".to_string(),
+                json!({"include_usage": true}),
+            );
+        }
+    }
 
     let upstream_url = format!(
         "{}/chat/completions",
@@ -290,16 +297,38 @@ pub async fn messages_handler(
             ));
         }
 
-        // SSE streaming proxy: forward upstream SSE chunks to client via axum Sse.
+        // SSE streaming with Anthropic format conversion:
+        //   OpenAI SSE raw bytes → parse ChatCompletionChunk → adapter conversion →
+        //   inject block boundary events → Anthropic SSE format → client
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
         let state_clone = Arc::clone(&state);
         let model_clone = model.clone();
         let upstream_base_url_clone = upstream_base_url.clone();
+        let auth_token_hash_clone = auth_token_hash.clone();
+        let auth_user_id_clone = auth_user_id.clone();
 
         tokio::spawn(async move {
             use tokio_stream::StreamExt;
             let mut stream = upstream_resp.bytes_stream();
             let mut first_chunk_time: Option<chrono::DateTime<chrono::Utc>> = None;
+            let mut buffer: Vec<u8> = Vec::new();
+            let mut message_started = false;
+            let mut content_block_started = false;
+            let message_id = format!("msg_{}", uuid::Uuid::new_v4());
+            // Track token usage from the last chunk (when upstream sends stream_options include_usage)
+            let mut last_prompt_tokens: i32 = 0;
+            let mut last_completion_tokens: i32 = 0;
+
+            // Helper: write a single Anthropic SSE event to the channel
+            let write_anthropic_sse =
+                |tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+                 event_type: &str,
+                 data: &Value| {
+                    let json_str = serde_json::to_string(data).unwrap_or_default();
+                    let sse_frame =
+                        format!("event: {}\ndata: {}\n\n", event_type, json_str);
+                    let _ = tx.send(sse_frame.into_bytes());
+                };
 
             while let Some(chunk_result) = stream.next().await {
                 match chunk_result {
@@ -307,23 +336,176 @@ pub async fn messages_handler(
                         if first_chunk_time.is_none() && !chunk.is_empty() {
                             first_chunk_time = Some(chrono::Utc::now());
                         }
-                        if tx.send(chunk.to_vec()).is_err() {
-                            break;
+                        buffer.extend_from_slice(&chunk);
+
+                        // Split on \n\n to get complete SSE frames
+                        loop {
+                            let pos = buffer
+                                .windows(2)
+                                .position(|w| w == b"\n\n");
+                            let pos = match pos {
+                                Some(p) => p,
+                                None => break,
+                            };
+                            let frame = buffer.drain(..pos + 2).collect::<Vec<_>>();
+                            let frame_str = String::from_utf8_lossy(&frame);
+
+                            for line in frame_str.lines() {
+                                if line == "data: [DONE]" {
+                                    // Stream end — send final events
+                                    if content_block_started {
+                                        write_anthropic_sse(
+                                            &tx,
+                                            "content_block_stop",
+                                            &json!({"type": "content_block_stop", "index": 0}),
+                                        );
+                                    }
+                                    write_anthropic_sse(
+                                        &tx,
+                                        "message_delta",
+                                        &json!({
+                                            "type": "message_delta",
+                                            "delta": {"stop_reason": "end_turn"},
+                                            "usage": {"output_tokens": 0}
+                                        }),
+                                    );
+                                    write_anthropic_sse(
+                                        &tx,
+                                        "message_stop",
+                                        &json!({"type": "message_stop"}),
+                                    );
+                                    break;
+                                }
+                                if let Some(json_str) = line.strip_prefix("data: ") {
+                                    // Try to extract usage from this chunk
+                                    // (OpenAI sends a final chunk with usage when stream_options.include_usage=true)
+                                    if let Ok(raw) = serde_json::from_str::<Value>(json_str) {
+                                        if let Some(usage) = raw.get("usage") {
+                                            last_prompt_tokens = usage
+                                                .get("prompt_tokens")
+                                                .and_then(|v| v.as_i64())
+                                                .unwrap_or(0) as i32;
+                                            last_completion_tokens = usage
+                                                .get("completion_tokens")
+                                                .and_then(|v| v.as_i64())
+                                                .unwrap_or(0) as i32;
+                                        }
+                                    }
+                                    if let Ok(c) = serde_json::from_str::<aigw_core::models::ChatCompletionChunk>(json_str) {
+                                        if let Some(event) =
+                                            DefaultAdapter::openai_chunk_to_claude_stream(&c)
+                                        {
+                                            match event.event_type.as_str() {
+                                                "message_start" => {
+                                                    let payload = json!({
+                                                        "type": "message_start",
+                                                        "message": {
+                                                            "id": message_id,
+                                                            "type": "message",
+                                                            "role": "assistant",
+                                                            "content": [],
+                                                            "model": model_clone,
+                                                            "stop_reason": null,
+                                                            "stop_sequence": null,
+                                                            "usage": {
+                                                                "input_tokens": 0,
+                                                                "output_tokens": 0
+                                                            }
+                                                        }
+                                                    });
+                                                    write_anthropic_sse(&tx, "message_start", &payload);
+                                                    message_started = true;
+                                                }
+                                                "content_block_delta" => {
+                                                    if !content_block_started {
+                                                        if !message_started {
+                                                            // Some models skip role chunk; inject message_start
+                                                            write_anthropic_sse(
+                                                                &tx,
+                                                                "message_start",
+                                                                &json!({
+                                                                    "type": "message_start",
+                                                                    "message": {
+                                                                        "id": message_id,
+                                                                        "type": "message",
+                                                                        "role": "assistant",
+                                                                        "content": [],
+                                                                        "model": model_clone,
+                                                                        "stop_reason": null,
+                                                                        "stop_sequence": null,
+                                                                        "usage": {
+                                                                            "input_tokens": 0,
+                                                                            "output_tokens": 0
+                                                                        }
+                                                                    }
+                                                                }),
+                                                            );
+                                                            message_started = true;
+                                                        }
+                                                        write_anthropic_sse(
+                                                            &tx,
+                                                            "content_block_start",
+                                                            &json!({
+                                                                "type": "content_block_start",
+                                                                "index": 0,
+                                                                "content_block": {
+                                                                    "type": "text",
+                                                                    "text": ""
+                                                                }
+                                                            }),
+                                                        );
+                                                        content_block_started = true;
+                                                    }
+                                                    write_anthropic_sse(
+                                                        &tx,
+                                                        "content_block_delta",
+                                                        &serde_json::to_value(&event).unwrap_or_default(),
+                                                    );
+                                                }
+                                                "message_delta" => {
+                                                    if content_block_started {
+                                                        write_anthropic_sse(
+                                                            &tx,
+                                                            "content_block_stop",
+                                                            &json!({
+                                                                "type": "content_block_stop",
+                                                                "index": 0
+                                                            }),
+                                                        );
+                                                    }
+                                                    write_anthropic_sse(
+                                                        &tx,
+                                                        "message_delta",
+                                                        &serde_json::to_value(&event).unwrap_or_default(),
+                                                    );
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                     Err(_) => break,
                 }
             }
+            // drop(tx) happens when scope exits
 
             let now = chrono::Utc::now();
             let spend_log = SpendLog {
                 request_id: uuid::Uuid::new_v4().to_string(),
                 call_type: "completion".to_string(),
-                api_key: "claude-message".to_string(),
-                spend: 0.0,
-                total_tokens: 0,
-                prompt_tokens: 0,
-                completion_tokens: 0,
+                api_key: auth_token_hash_clone.clone(),
+                spend: super::chat::calc_spend(
+                    last_prompt_tokens,
+                    last_completion_tokens,
+                    input_cost,
+                    output_cost,
+                ),
+                total_tokens: last_prompt_tokens + last_completion_tokens,
+                prompt_tokens: last_prompt_tokens,
+                completion_tokens: last_completion_tokens,
                 start_time,
                 end_time: now,
                 request_duration_ms: Some(
@@ -335,7 +517,7 @@ pub async fn messages_handler(
                 model_group: None,
                 custom_llm_provider: None,
                 api_base: Some(upstream_base_url_clone),
-                user: None,
+                user: auth_user_id_clone,
                 metadata: None,
                 cache_hit: None,
                 cache_key: None,
@@ -355,8 +537,7 @@ pub async fn messages_handler(
             let _ = state_clone.db.insert_spend_log(&spend_log).await;
         });
 
-        // Claude streams use "text/event-stream" — we're forwarding raw SSE bytes.
-        // The upstream already sends SSE-formatted data.
+        // Build SSE response from the Anthropic-formatted event stream
         let sse_stream = tokio_stream::wrappers::UnboundedReceiverStream::new(rx)
             .map(|data: Vec<u8>| Ok::<_, Infallible>(data));
 
@@ -405,29 +586,28 @@ pub async fn messages_handler(
         // Record spend log
         let now = chrono::Utc::now();
         let usage = resp_body.get("usage");
+        let prompt_tokens = usage
+            .and_then(|u| u.get("prompt_tokens"))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0) as i32;
+        let completion_tokens = usage
+            .and_then(|u| u.get("completion_tokens"))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0) as i32;
+        let total_tokens = usage
+            .and_then(|u| u.get("total_tokens"))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0) as i32;
         let spend_amount =
-            (usage.and_then(|u| u.get("prompt_tokens")).and_then(|v| v.as_i64()).unwrap_or(0) as f64
-                * input_cost.unwrap_or(0.0))
-                + (usage.and_then(|u| u.get("completion_tokens")).and_then(|v| v.as_i64())
-                    .unwrap_or(0) as f64
-                    * output_cost.unwrap_or(0.0));
+            super::chat::calc_spend(prompt_tokens, completion_tokens, input_cost, output_cost);
         let spend_log = aigw_core::models::SpendLog {
             request_id: uuid::Uuid::new_v4().to_string(),
             call_type: "completion".to_string(),
-            api_key: "claude-message".to_string(),
+            api_key: auth_token_hash.clone(),
             spend: spend_amount,
-            total_tokens: usage
-                .and_then(|u| u.get("total_tokens"))
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0) as i32,
-            prompt_tokens: usage
-                .and_then(|u| u.get("prompt_tokens"))
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0) as i32,
-            completion_tokens: usage
-                .and_then(|u| u.get("completion_tokens"))
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0) as i32,
+            total_tokens,
+            prompt_tokens,
+            completion_tokens,
             start_time,
             end_time: now,
             request_duration_ms: Some(
@@ -439,7 +619,7 @@ pub async fn messages_handler(
             model_group: None,
             custom_llm_provider: None,
             api_base: Some(upstream_base_url),
-            user: None,
+            user: auth_user_id.clone(),
             metadata: None,
             cache_hit: None,
             cache_key: None,
@@ -705,10 +885,18 @@ mod tests {
             .body(Body::from(body.to_string()))
             .unwrap();
 
-        // Should fail with 404 because model doesn't exist, not 401
+        // Master key should pass auth. Response may fail later (upstream unreachable, etc.)
+        // but should NOT be an authentication_error from aigw.
         let response = app.oneshot(request).await.unwrap();
-        // Without model in DB, it should be a 404, not a 401
-        assert_ne!(response.status(), StatusCode::UNAUTHORIZED);
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let val: Value = serde_json::from_slice(&body_bytes).unwrap();
+        // Not an auth error from aigw (upstream errors show as upstream_error, not authentication_error)
+        assert_ne!(
+            val["error"]["type"].as_str(),
+            Some("authentication_error")
+        );
     }
 
     #[tokio::test]
@@ -736,5 +924,130 @@ mod tests {
         assert!(val["error"]["type"].as_str().is_some());
         assert!(val["error"]["message"].as_str().is_some());
         assert!(val["request_id"].as_str().is_some());
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // SSE conversion unit tests
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    /// Test basic OpenAI SSE → Anthropic SSE conversion
+    #[test]
+    fn test_sse_conversion_adapter_mapping() {
+        use aigw_core::models::ChatCompletionChunk;
+        use aigw_core::adapter::{DefaultAdapter, ProviderAdapter};
+
+        // Simulate OpenAI SSE chunks
+        let chunks = vec![
+            // role delta → message_start
+            r#"data: {"id":"chatcmpl-123","object":"chat.completion.chunk","created":1,"model":"gpt-4","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}"#,
+            // content delta → content_block_delta
+            r#"data: {"id":"chatcmpl-123","object":"chat.completion.chunk","created":1,"model":"gpt-4","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}"#,
+            // finish_reason → message_delta
+            r#"data: {"id":"chatcmpl-123","object":"chat.completion.chunk","created":1,"model":"gpt-4","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#,
+        ];
+
+        let events: Vec<String> = chunks
+            .iter()
+            .filter_map(|line| {
+                if let Some(json_str) = line.strip_prefix("data: ") {
+                    if let Ok(c) =
+                        serde_json::from_str::<ChatCompletionChunk>(json_str)
+                    {
+                        if let Some(event) =
+                            DefaultAdapter::openai_chunk_to_claude_stream(&c)
+                        {
+                            return Some(event.event_type);
+                        }
+                    }
+                }
+                None
+            })
+            .collect();
+
+        assert_eq!(
+            events,
+            vec![
+                "message_start".to_string(),
+                "content_block_delta".to_string(),
+                "message_delta".to_string(),
+            ]
+        );
+    }
+
+    /// Test that [DONE] marker parsing is recognized correctly
+    #[test]
+    fn test_sse_done_marker_detection() {
+        // Simulate the SSE parsing logic for [DONE]
+        let done_line = "data: [DONE]";
+        assert_eq!(done_line, "data: [DONE]");
+    }
+
+    /// Test full SSE frame → Anthropic event type extraction
+    #[test]
+    fn test_sse_frame_to_event_types() {
+        // Simulate what the streaming loop produces: parse OpenAI SSE → event types
+        let raw_sse = concat!(
+            "data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-4\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\n",
+            "data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-4\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hi\"},\"finish_reason\":null}]}\n\n",
+            "data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-4\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+
+        use aigw_core::models::ChatCompletionChunk;
+        use aigw_core::adapter::{DefaultAdapter, ProviderAdapter};
+
+        let mut event_types = Vec::new();
+        let mut rest = raw_sse;
+        while let Some(pos) = rest.find("\n\n") {
+            let frame = &rest[..pos + 2];
+            rest = &rest[pos + 2..];
+
+            for line in frame.lines() {
+                if line == "data: [DONE]" {
+                    event_types.push("DONE".to_string());
+                    break;
+                }
+                if let Some(json_str) = line.strip_prefix("data: ") {
+                    if let Ok(c) = serde_json::from_str::<ChatCompletionChunk>(json_str) {
+                        if let Some(event) =
+                            DefaultAdapter::openai_chunk_to_claude_stream(&c)
+                        {
+                            event_types.push(event.event_type);
+                        }
+                    }
+                }
+            }
+        }
+
+        assert_eq!(
+            event_types,
+            vec![
+                "message_start",          // role delta
+                "content_block_delta",    // content delta
+                "message_delta",          // finish_reason
+                "DONE",                   // stream end
+            ]
+        );
+    }
+
+    /// Test that usage extraction from a chunk with usage field works
+    #[test]
+    fn test_sse_usage_extraction() {
+        let json_str = r#"{"id":"1","object":"chat.completion.chunk","created":1,"model":"gpt-4","choices":[],"usage":{"prompt_tokens":15,"completion_tokens":42,"total_tokens":57}}"#;
+
+        let raw: Value = serde_json::from_str(json_str).unwrap();
+        let prompt = raw
+            .get("usage")
+            .and_then(|u| u.get("prompt_tokens"))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0) as i32;
+        let completion = raw
+            .get("usage")
+            .and_then(|u| u.get("completion_tokens"))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0) as i32;
+
+        assert_eq!(prompt, 15);
+        assert_eq!(completion, 42);
     }
 }

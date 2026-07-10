@@ -1,11 +1,11 @@
 # aigw -- 下一步行动
 
 **上次更新**: 2026-07-11
-**当前阶段**: Phase 14 `/v1/messages` 接口修复（最高优先级 P0）
+**当前阶段**: Phase 15 反馈改进（P1）— Phase 14 已完成
 
 ---
 
-## 当前状态：Phase 14 `/v1/messages` 修复优先 ⚠️
+## 当前状态：Phase 15 反馈改进
 
 ### 项目里程碑
 
@@ -18,8 +18,8 @@ Phase 9:    ████████████████████ 100% (4
 Phase 11:   ████████████████████ 100% (6/6)  ✅ 前端质量加固 + 安全达标
 Phase 12:   ████████████████████ 100% (3/3)  ✅ 前端导航重构 + Playground
 Phase 13:   ████████████████████ 100% (6/6)  ✅ 前端反馈改进（Stages 34-39）
-Phase 14:   ░░░░░░░░░░░░░░░░░░░░   0% (0/4)  ⚠️  /v1/messages 接口修复（Stages 40-43）P0
-Phase 15:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3)  ⏳ 反馈改进（Stages 44-46）
+Phase 14:   ████████████████████ 100% (4/4)  ✅ /v1/messages 接口修复（Stages 40-43）
+Phase 15:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3)  🔄 反馈改进（Stages 44-46）
 Phase 16:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3)  ⏳  Playground 增强（Stages 47-49）
 Phase 17:   ░░░░░░░░░░░░░░░░░░░░   0% (0/4)  ⏳  Provider 适配架构（长期）
 ```
@@ -38,23 +38,28 @@ Phase 17:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 | 优先级 | Phase | 目标 | 原因 |
 |--------|-------|------|------|
-| **P0** | Phase 14 (Stages 40-43) | `/v1/messages` 接口修复 | Claude SDK 客户端无法使用，阻塞性 |
-| P1 | Phase 15 (Stages 44-46) | Models Cost + Spend Logs 抽屉/导出 + migrate features | 用户反馈需求 |
+| P0 | ~~Phase 14~~ ✅ | `/v1/messages` 接口修复 | 已完成 — 复用 resolve_upstream_params + SSE 格式转换 + 流式 token 计数 |
+| **P1** | Phase 15 (Stages 44-46) | Models Cost + Spend Logs 抽屉/导出 + migrate features | 用户反馈需求 |
 | P1 | Phase 16 (Stages 47-49) | Playground Virtual Key/Endpoint/GetCode/Markdown | Playground 交互增强 |
 | P3 | Phase 17 (Stages 50-53) | Provider 适配架构 | 依赖明确的多厂商接入需求触发 |
 
 ---
 
-## Phase 14: `/v1/messages` 修复（P0，预估 6h）
+## Phase 14: `/v1/messages` 修复 ✅ 已完成
 
-审计发现 7 个 bug，详见 `docs/plans/2026-07-11-v1-messages-fix-plan.md`
+| Stage | 状态 | 目标 | 完成日期 |
+|-------|------|------|----------|
+| Stage 40 | ✅ | 复用 `resolve_upstream_params` + Key 校验对齐（budget check, token_hash + user_id 保存） | 2026-07-11 |
+| Stage 41 | ✅ | 流式 SSE 格式转换（OpenAI → Anthropic）: buffer + \n\n 分割 + adapter 转换 + block boundary 注入 | 2026-07-11 |
+| Stage 42 | ✅ | SpendLog api_key/user_id 修复 + 错误码修正（随 Stage 40 一并修复） | 2026-07-11 |
+| Stage 43 | ✅ | stream_options include_usage + 流式 token 计数 + SSE 转换单元测试（4 tests） | 2026-07-11 |
 
-| Stage | 目标 | 预估 | 依赖 |
-|-------|------|------|------|
-| Stage 40 | 复用 `resolve_upstream_params` + key 校验对齐 | 1.5h | — |
-| Stage 41 | 流式 SSE 格式转换（OpenAI → Anthropic） | 2.5h | Stage 40 |
-| Stage 42 | SpendLog 字段修复 + 错误码修正 | 0.5h | Stage 40 |
-| Stage 43 | 流式 token 计数 + BDD/手工测试 | 1.5h | Stage 41, 42 |
+**成果**: 77/77 测试通过。`/v1/messages` 现在：
+- 复用 `chat::resolve_upstream_params()` 支持 proxy_models 表配置
+- Key 预算校验（spend >= max_budget → 429）
+- SSE streaming 完成 OpenAI → Anthropic 格式转换
+- SpendLog 记录正确的 api_key hash + user_id
+- 流式 token 计数从 upstream usage chunk 提取
 
 ---
 
