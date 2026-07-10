@@ -33,14 +33,21 @@ struct ResolvedUpstream {
     output_cost_per_token: Option<f64>,
 }
 
-/// Extract pricing from model_info JSON (litellm standard fields).
-fn extract_pricing(model_info: &Value) -> (Option<f64>, Option<f64>) {
+/// Extract pricing — primary from model_info (litellm-standard cost calculator source),
+/// fallback to decrypted litellm_params (where custom pricing is defined in proxy config).
+///
+/// In litellm, pricing is mirrored between columns (see docs/litellm-cost-tracing.md):
+///   - model_info is the authoritative cost lookup location
+///   - litellm_params is where users set pricing; Deployment.__init__ mirrors it to model_info
+fn extract_pricing(model_info: &Value, params_json: &Value) -> (Option<f64>, Option<f64>) {
     let input = model_info
         .get("input_cost_per_token")
-        .and_then(|v| v.as_f64());
+        .and_then(|v| v.as_f64())
+        .or_else(|| params_json.get("input_cost_per_token").and_then(|v| v.as_f64()));
     let output = model_info
         .get("output_cost_per_token")
-        .and_then(|v| v.as_f64());
+        .and_then(|v| v.as_f64())
+        .or_else(|| params_json.get("output_cost_per_token").and_then(|v| v.as_f64()));
     (input, output)
 }
 
@@ -69,7 +76,6 @@ async fn resolve_upstream_params(
 
     match model {
         Some(m) => {
-            let (input_cost, output_cost) = extract_pricing(&m.model_info);
             // Use as_str() for string values to avoid JSON quoting from to_string()
             let litellm_params_str = m.litellm_params.as_str().map(String::from).unwrap_or_else(|| m.litellm_params.to_string());
 
@@ -114,6 +120,11 @@ async fn resolve_upstream_params(
             } else {
                 params_json
             };
+
+            // Extract pricing: model_info is the primary source (litellm-standard),
+            // decrypted litellm_params is the fallback for deployments where pricing
+            // was set only in proxy config and not mirrored to model_info.
+            let (input_cost, output_cost) = extract_pricing(&m.model_info, &params_json);
 
             // Resolve credential reference if present
             if let Some(cred_name) = params_json
