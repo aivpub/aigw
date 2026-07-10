@@ -366,15 +366,6 @@ export function PlaygroundPage() {
     abortRef.current = controller;
 
     try {
-      const requestMessages = newMessages
-        .filter((m) => m.role !== "assistant" || newMessages.indexOf(m) < newMessages.length - 1)
-        .map((m) => ({
-          role: m.role as "system" | "user" | "assistant",
-          content: m.content,
-        }))
-        .filter((m) => m.role === "system" || m.role === "user" || (m.role === "assistant" && m !== requestMessages[requestMessages.length - 1]));
-
-      // Build messages array: system (if present) + all user/assistant pairs
       const apiMessages: { role: string; content: string }[] = [];
       for (const msg of newMessages) {
         if (msg.role === "system" || msg.role === "user" || (msg.role === "assistant" && msg.id !== asstId)) {
