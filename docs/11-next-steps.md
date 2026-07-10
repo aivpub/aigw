@@ -1,11 +1,11 @@
 # aigw -- 下一步行动
 
-**上次更新**: 2026-07-10
-**当前阶段**: Phase 13 — 进行中（Stage 34 ✅，Stages 35-39 待开始）
+**上次更新**: 2026-07-11
+**当前阶段**: Phase 14 `/v1/messages` 接口修复（最高优先级 P0）
 
 ---
 
-## 当前状态：Phase 13 待开始 ⏳
+## 当前状态：Phase 14 `/v1/messages` 修复优先 ⚠️
 
 ### 项目里程碑
 
@@ -17,94 +17,106 @@ Phase 8:    ████████████████████ 100% (3
 Phase 9:    ████████████████████ 100% (4/4)  ✅ 前端管理控制台
 Phase 11:   ████████████████████ 100% (6/6)  ✅ 前端质量加固 + 安全达标
 Phase 12:   ████████████████████ 100% (3/3)  ✅ 前端导航重构 + Playground
-Phase 13:   ███░░░░░░░░░░░░░░░░░  17% (1/6)  🔄 前端反馈改进（Stage 34 ✅）
+Phase 13:   ████████████████████ 100% (6/6)  ✅ 前端反馈改进（Stages 34-39）
+Phase 14:   ░░░░░░░░░░░░░░░░░░░░   0% (0/4)  ⚠️  /v1/messages 接口修复（Stages 40-43）P0
+Phase 15:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3)  ⏳ 反馈改进（Stages 44-46）
+Phase 16:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3)  ⏳  Playground 增强（Stages 47-49）
+Phase 17:   ░░░░░░░░░░░░░░░░░░░░   0% (0/4)  ⏳  Provider 适配架构（长期）
 ```
 
 ### 测试状态
 
 | 层 | 框架 | 通过 |
 |---|------|------|
-| 后端 BDD | cucumber-rust + libtest | 72 scenarios (63 mock + 9 real_api) |
-| 前端 BDD | Playwright + playwright-bdd | 102 tests (34 scenarios × 3 viewports) |
+| 后端单元 | libtest | 316 tests |
+| 后端 BDD | cucumber-rust | 92 scenarios (353 steps) |
+| 前端 BDD | Playwright + playwright-bdd | 108 tests (36 scenarios × 3 viewports) |
 
-## 交付成果
+---
 
-- **33/33 Stages** 全部完成
-- **BDD 72 后端场景 + 102 前端测试** 全部通过
-- **SQLite / MySQL / PostgreSQL** 三数据库支持
-- **Docker Compose** 一键部署
-- **Rust 单二进制部署**（rust-embed 嵌入前端）
-- **前端管理控制台** 8 页面（Usage、Keys、Models、Users、Orgs、Teams、Spend Logs、Playground）
+## 优先级排序
 
-## Phase 13 规划（Stages 34-39）
+| 优先级 | Phase | 目标 | 原因 |
+|--------|-------|------|------|
+| **P0** | Phase 14 (Stages 40-43) | `/v1/messages` 接口修复 | Claude SDK 客户端无法使用，阻塞性 |
+| P1 | Phase 15 (Stages 44-46) | Models Cost + Spend Logs 抽屉/导出 + migrate features | 用户反馈需求 |
+| P1 | Phase 16 (Stages 47-49) | Playground Virtual Key/Endpoint/GetCode/Markdown | Playground 交互增强 |
+| P3 | Phase 17 (Stages 50-53) | Provider 适配架构 | 依赖明确的多厂商接入需求触发 |
 
-基于用户使用反馈 + TTFT 实现差距调研 + daily_spend 聚合表迁移，规划 6 个 Stage（每个 3.5-5.5h）：
+---
 
-| Stage | 目标 | 类型 | 预估 | 优先级 |
-|-------|------|------|------|--------|
-| Stage 34 | SSE Streaming + completion_start_time + Spend Logs 增强 | 后端 | 5h | P0 |
-| Stage 35 | daily_spend 聚合表迁移 + 定时写入 | 后端 | 3.5h | P0 |
-| Stage 36 | 前端 Spend Logs 重构（Live Tail+预设+抽屉） | 前端 | 5h | P0 |
-| Stage 37 | Users/Orgs 端到端修复 + Provider 解密 | 前后端 | 4.5h | P0 |
-| Stage 38 | Usage 聚合端点 + 前端 Global 视图重构 | 前后端 | 5.5h | P1 |
-| Stage 39 | Playground 聊天式对话升级 | 前端 | 5h | P2 |
+## Phase 14: `/v1/messages` 修复（P0，预估 6h）
 
-详见 `docs/plans/2026-07-10-phase-13-feedback-improvements.md`
+审计发现 7 个 bug，详见 `docs/plans/2026-07-11-v1-messages-fix-plan.md`
 
-### 关键发现：TTFT 差距
+| Stage | 目标 | 预估 | 依赖 |
+|-------|------|------|------|
+| Stage 40 | 复用 `resolve_upstream_params` + key 校验对齐 | 1.5h | — |
+| Stage 41 | 流式 SSE 格式转换（OpenAI → Anthropic） | 2.5h | Stage 40 |
+| Stage 42 | SpendLog 字段修复 + 错误码修正 | 0.5h | Stage 40 |
+| Stage 43 | 流式 token 计数 + BDD/手工测试 | 1.5h | Stage 41, 42 |
 
-调研发现 `completion_start_time` 列在 schema 中存在但从未被写入（全部硬编码 None），同时 streaming 路径未真正实现 SSE 代理（返回 stub JSON）。Stage 34 将修复这两个问题。
+---
 
-详见 memory `[[ttft-implementation-gap]]`
+## Phase 15: 反馈改进（P1，预估 10h）
 
-## Phase 12 完成（Stages 31-33）
-
-| Stage | 目标 | 状态 |
+| Stage | 目标 | 预估 |
 |-------|------|------|
-| Stage 31 | 侧边栏分组重构 + Usage 重命名（对齐 litellm 5组结构） | ✅ |
-| Stage 32 | Spend Logs 独立页面 | ✅ |
-| Stage 33 | Playground Chat 调试页 | ✅ |
+| Stage 44 | Models Cost 列 | 2h |
+| Stage 45 | Spend Logs 抽屉 + 导出 CSV | 5h |
+| Stage 46 | aigw-migrate --skip-columns | 3h |
 
-详见 `docs/plans/2026-07-08-sidebar-playground-redesign.md`
-- **移动端适配** 全页面响应式（375px/768px/1280px）
-- **登录安全** JWT + Cookie + scrypt 密码哈希（对齐 litellm v2/login）
-- **OpenAPI 3.1** 完整规范 + Swagger UI
-- **结构化日志** JSON 格式 + UUID v7 request_id
-- **多租户管理 API** org/team/user CRUD（15 端点）
-- **生产迁移工具** aigw-migrate + pre-check + rollback.sh
+---
 
-## 后续路线（Phase 10）
+## Phase 16: Playground 增强（P1，预估 10h）
+
+| Stage | 目标 | 预估 |
+|-------|------|------|
+| Stage 47 | Virtual Key 配置 + Endpoint Type 选择 | 3h |
+| Stage 48 | Clear Session + Get Code 弹窗 | 2h |
+| Stage 49 | Markdown + 气泡边框 + 底部统计 | 5h |
+
+---
+
+## 后续路线
 
 | ID | 主题 | 优先级 | 触发条件 |
 |----|------|--------|---------|
+| Phase 17 | Provider 适配架构 | P3 | 非 OpenAI 厂商接入需求 |
 | LT-2 | Redis 缓存 + 性能优化 | P2 | QPS > 1000 |
 | LT-3 | Observability (Prometheus + OTEL) | P2 | 生产环境部署 |
 | LT-5 | SSO/OAuth 鉴权 | P3 | 企业客户需求 |
-| LT-6 | PostgreSQL 生产级支持 + 迁移工具 | P2 | 多实例 + 高可用 |
-| LT-7 | Kubernetes Operator + Helm Chart | P3 | 云原生客户需求 |
+| LT-6 | PostgreSQL 生产级支持 | P2 | 多实例 + 高可用 |
+| LT-7 | Kubernetes Operator | P3 | 云原生需求 |
+
+---
 
 ## 技术债
 
 | 编号 | 状态 | 说明 |
 |------|------|------|
-| TD-001 | ✅ | Dead code cleanup |
-| TD-002 | ✅ | @real_api step bindings |
-| TD-003 | ⏳ | BDD 覆盖率报告自动化（P3） |
-| TD-004 | ✅ | 登录裸 sk → Stage 26 JWT+Cookie |
-| TD-005 | ✅ | 前端无测试 → Stage 25 BDD |
-| TD-006 | ✅ | Key token 不可见 → Stage 28 修复 |
+| TD-001~006 | ✅ | 已解决 |
+| TD-007 | 🆕 P0 | `/v1/messages` 7 bugs → Phase 14 修复中 |
 
 ## ADR 记录
 
 | 编号 | 决策 | 日期 |
 |------|------|------|
-| ADR-001 | RDD Framework Adoption | 2026-07-03 |
-| ADR-002 | SQLite 默认 + 多数据库支持 | 2026-07-03 |
-| ADR-003 | litellm Schema 兼容性 | 2026-07-03 |
-| ADR-004 | Dual-Mode SaaS 架构 | 2026-07-03 |
-| ADR-005 | Taskfile.yml 统一工作流入口 | 2026-07-03 |
-| ADR-006 | BDD with cucumber-rust + Mock Upstream | 2026-07-04 |
-| ADR-007 | React + TypeScript + shadcn/ui 前端技术栈 | 2026-07-08 |
-| ADR-008 | rust-embed 单二进制前端部署 | 2026-07-08 |
-| ADR-009 | 核心 Stages 0-30 完成，延迟 Phase 10 | 2026-07-08 |
-| ADR-010 | Phase 12 完成 — Sidebar + Playground + Spend Logs | 2026-07-09 |
+| ADR-013 | `/v1/messages` 接口审计 — 7 bugs（2 CRITICAL） | 2026-07-11 |
+| ADR-014 | 当前无 Provider 适配架构 — 仅单一 DefaultAdapter | 2026-07-11 |
+
+## 当前审核中的文件（未提交）
+
+等待审核后提交：
+
+```
+新增文件:
+  docs/plans/2026-07-10-phase-14-feedback-round-2.md       (原 Phase 14 → 现 Phase 15 参考)
+  docs/plans/2026-07-11-v1-messages-fix-plan.md             (Phase 14 修复方案)
+  docs/plans/2026-07-11-phase-16-playground-enhancement.md  (Phase 16 需求概述)
+  docs/stages/stage-40.md ~ stage-49.md                      (10 个 Stage 文档)
+
+修改文件:
+  docs/11-next-steps.md
+  docs/stages/stage-roadmap.md
+```
