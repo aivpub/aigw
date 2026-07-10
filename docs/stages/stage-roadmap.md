@@ -191,14 +191,14 @@ Stage 31 优先完成（路由+侧边栏基础设施），Stage 32/33 可并行�
 
 ### Phase 13：前端反馈改进 + SSE Streaming + TTFT
 
-| Stage | 状态 | 目标 | 预估 |
+| Stage | 状态 | 目标 | 日期 |
 |-------|------|------|------|
 | Stage 34 | ✅ 完成 | SSE Streaming + completion_start_time + Spend Logs 增强（分页+request_id+TTFT） | 2026-07-10 |
-| Stage 35 | ⏳ 待开始 | daily_spend 聚合表迁移 + 定时写入 | 3.5h |
+| Stage 35 | ✅ 完成 | daily_spend 聚合表迁移 + 定时写入 | 2026-07-10 |
 | Stage 36 | ✅ 完成 | 前端 Spend Logs 重构（Live Tail+时间预设+分页+细节抽屉） | 2026-07-10 |
-| Stage 37 | ⏳ 待开始 | Users/Orgs 端到端修复 + Provider 解密 | 4.5h |
-| Stage 38 | ⏳ 待开始 | Usage 聚合端点 + 前端 Global 视图重构 | 5.5h |
-| Stage 39 | ⏳ 待开始 | Playground 聊天式对话升级 | 5h |
+| Stage 37 | ✅ 完成 | Users/Orgs 端到端修复 + Provider 解密 | 2026-07-10 |
+| Stage 38 | ✅ 完成 | Usage 聚合端点 + 前端 Global 视图重构 | 2026-07-10 |
+| Stage 39 | ✅ 完成 | Playground 聊天式多轮对话升级 | 2026-07-10 |
 
 **Stage 34-39 依赖关系**:
 
