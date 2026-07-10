@@ -27,6 +27,29 @@ struct ResolvedUpstream {
     api_base: String,
     api_key: Option<String>,
     model_name: String,
+    /// USD per input token (from model_info JSON)
+    input_cost_per_token: Option<f64>,
+    /// USD per output token (from model_info JSON)
+    output_cost_per_token: Option<f64>,
+}
+
+/// Extract pricing from model_info JSON (litellm standard fields).
+fn extract_pricing(model_info: &Value) -> (Option<f64>, Option<f64>) {
+    let input = model_info
+        .get("input_cost_per_token")
+        .and_then(|v| v.as_f64());
+    let output = model_info
+        .get("output_cost_per_token")
+        .and_then(|v| v.as_f64());
+    (input, output)
+}
+
+/// Calculate spend from token counts and per-token pricing.
+/// Returns 0.0 if no pricing data is available.
+fn calc_spend(prompt_tokens: i32, completion_tokens: i32, input_cost: Option<f64>, output_cost: Option<f64>) -> f64 {
+    let input = prompt_tokens as f64 * input_cost.unwrap_or(0.0);
+    let output = completion_tokens as f64 * output_cost.unwrap_or(0.0);
+    input + output
 }
 
 /// Look up a model by name in proxy_models, decrypt litellm_params if encrypted,
@@ -46,6 +69,7 @@ async fn resolve_upstream_params(
 
     match model {
         Some(m) => {
+            let (input_cost, output_cost) = extract_pricing(&m.model_info);
             // Use as_str() for string values to avoid JSON quoting from to_string()
             let litellm_params_str = m.litellm_params.as_str().map(String::from).unwrap_or_else(|| m.litellm_params.to_string());
 
@@ -184,6 +208,8 @@ async fn resolve_upstream_params(
                     api_base,
                     api_key,
                     model_name: upstream_model,
+                    input_cost_per_token: input_cost,
+                    output_cost_per_token: output_cost,
                 })
             } else {
                 let api_base = params_json
@@ -205,6 +231,8 @@ async fn resolve_upstream_params(
                     api_base,
                     api_key,
                     model_name: upstream_model,
+                    input_cost_per_token: input_cost,
+                    output_cost_per_token: output_cost,
                 })
             }
         }
@@ -221,6 +249,8 @@ async fn resolve_upstream_params(
                 api_base,
                 api_key,
                 model_name: model_name.to_string(),
+                input_cost_per_token: None,
+                output_cost_per_token: None,
             })
         }
     }
@@ -784,11 +814,12 @@ pub async fn chat_completions(
 
             // Write SpendLog after stream completes
             let now = chrono::Utc::now();
+            let streaming_spend = calc_spend(0, 0, resolved.input_cost_per_token, resolved.output_cost_per_token);
             let spend_log = SpendLog {
                 request_id,
                 call_type: "completion".to_string(),
                 api_key: token_hash,
-                spend: 0.0,
+                spend: streaming_spend,
                 total_tokens: 0,
                 prompt_tokens: 0,
                 completion_tokens: 0,
@@ -888,12 +919,18 @@ pub async fn chat_completions(
         // 6. Record spend log
         let now = chrono::Utc::now();
         let usage = resp_body.get("usage");
+        let spend_amount = calc_spend(
+            usage.and_then(|u| u.get("prompt_tokens")).and_then(|v| v.as_i64()).unwrap_or(0) as i32,
+            usage.and_then(|u| u.get("completion_tokens")).and_then(|v| v.as_i64()).unwrap_or(0) as i32,
+            resolved.input_cost_per_token,
+            resolved.output_cost_per_token,
+        );
 
         let spend_log = aigw_core::models::SpendLog {
             request_id: uuid::Uuid::new_v4().to_string(),
             call_type: "completion".to_string(),
             api_key: auth.token_hash.clone(),
-            spend: 0.0,
+            spend: spend_amount,
             total_tokens: usage
                 .and_then(|u| u.get("total_tokens"))
                 .and_then(|v| v.as_i64())

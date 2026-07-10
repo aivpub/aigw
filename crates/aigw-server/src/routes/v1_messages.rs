@@ -201,13 +201,20 @@ pub async fn messages_handler(
         )
     })?;
 
-    let _pm = models.iter().find(|m| m.model_name == model).ok_or_else(|| {
+    let pm = models.iter().find(|m| m.model_name == model).ok_or_else(|| {
         anthropic_error(
             StatusCode::NOT_FOUND,
             "not_found_error",
             &format!("Model '{}' not found", model),
         )
     })?;
+
+    let input_cost = pm.model_info
+        .get("input_cost_per_token")
+        .and_then(|v| v.as_f64());
+    let output_cost = pm.model_info
+        .get("output_cost_per_token")
+        .and_then(|v| v.as_f64());
 
     // 5. Determine upstream URL from environment
     let upstream_base_url = std::env::var("UPSTREAM_LLM_URL")
@@ -398,11 +405,17 @@ pub async fn messages_handler(
         // Record spend log
         let now = chrono::Utc::now();
         let usage = resp_body.get("usage");
+        let spend_amount =
+            (usage.and_then(|u| u.get("prompt_tokens")).and_then(|v| v.as_i64()).unwrap_or(0) as f64
+                * input_cost.unwrap_or(0.0))
+                + (usage.and_then(|u| u.get("completion_tokens")).and_then(|v| v.as_i64())
+                    .unwrap_or(0) as f64
+                    * output_cost.unwrap_or(0.0));
         let spend_log = aigw_core::models::SpendLog {
             request_id: uuid::Uuid::new_v4().to_string(),
             call_type: "completion".to_string(),
             api_key: "claude-message".to_string(),
-            spend: 0.0,
+            spend: spend_amount,
             total_tokens: usage
                 .and_then(|u| u.get("total_tokens"))
                 .and_then(|v| v.as_i64())

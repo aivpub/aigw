@@ -18,9 +18,9 @@ const sampleKeys = [
 ];
 
 const sampleModels = [
-  { model_id: "m1", model_name: "gpt-4", litellm_params: { model: "openai/gpt-4", api_base: "https://api.openai.com/v1" }, model_info: { id: "gpt-4", mode: "chat", max_tokens: 8192 }, created_at: "2026-07-01T00:00:00Z", created_by: "admin", updated_at: "2026-07-01T00:00:00Z", updated_by: null },
-  { model_id: "m2", model_name: "claude-sonnet-4-6", litellm_params: { model: "anthropic/claude-sonnet-4-6", api_base: "https://api.anthropic.com" }, model_info: { id: "claude-sonnet-4-6", mode: "chat", max_tokens: 200000 }, created_at: "2026-07-02T00:00:00Z", created_by: "admin", updated_at: "2026-07-02T00:00:00Z", updated_by: null },
-  { model_id: "m3", model_name: "gpt-4o-mini", litellm_params: { model: "openai/gpt-4o-mini", api_base: "https://api.openai.com/v1" }, model_info: { id: "gpt-4o-mini", mode: "chat", max_tokens: 16384 }, created_at: "2026-07-03T00:00:00Z", created_by: "admin", updated_at: "2026-07-03T00:00:00Z", updated_by: null },
+  { model_id: "m1", model_name: "gpt-4", litellm_params: { model: "openai/gpt-4", api_base: "https://api.openai.com/v1" }, model_info: { id: "gpt-4", mode: "chat", max_tokens: 8192, input_cost_per_token: 0.00003, output_cost_per_token: 0.00006 }, created_at: "2026-07-01T00:00:00Z", created_by: "admin", updated_at: "2026-07-01T00:00:00Z", updated_by: null },
+  { model_id: "m2", model_name: "claude-sonnet-4-6", litellm_params: { model: "anthropic/claude-sonnet-4-6", api_base: "https://api.anthropic.com" }, model_info: { id: "claude-sonnet-4-6", mode: "chat", max_tokens: 200000, input_cost_per_token: 0.000003, output_cost_per_token: 0.000015 }, created_at: "2026-07-02T00:00:00Z", created_by: "admin", updated_at: "2026-07-02T00:00:00Z", updated_by: null },
+  { model_id: "m3", model_name: "gpt-4o-mini", litellm_params: { model: "openai/gpt-4o-mini", api_base: "https://api.openai.com/v1" }, model_info: { id: "gpt-4o-mini", mode: "chat", max_tokens: 16384, input_cost_per_token: 0.00000015, output_cost_per_token: 0.0000006 }, created_at: "2026-07-03T00:00:00Z", created_by: "admin", updated_at: "2026-07-03T00:00:00Z", updated_by: null },
 ];
 
 const sampleSpendLogs = [
