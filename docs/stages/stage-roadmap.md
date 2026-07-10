@@ -1,15 +1,15 @@
 # aigw — AI Gateway Stage Roadmap
 
 **项目**: aigw (litellm Rust 最小兼容替代)
-**最后更新**: 2026-07-09 (Phase 0-12，33/33 Stages 全部完成)
+**最后更新**: 2026-07-10 (Phase 13 规划完成，Stages 34-39 待开始)
 
 ---
 
 ## 当前状态
 
-- **当前 Stage**: Phase 12 — 全部完成（Stages 31-33）
-- **状态**: 33/33 Stages 全部完成，项目达到生产就绪基线
-- **下一里程碑**: Phase 10（Redis/Prometheus/OTEL/K8s）— 按需触发
+- **当前 Stage**: Phase 13 — 待开始（Stages 34-39）
+- **状态**: 33/33 Stages 已完成，Phase 13 规划完成（6 Stages 待开发）
+- **下一里程碑**: Phase 13（前端反馈改进：Spend Logs / Usage / Users / Orgs / Playground + SSE streaming + TTFT）
 
 ### 整体进度
 
@@ -21,6 +21,7 @@ Phase 8:   ████████████████████ 100% (3/
 Phase 9:   ████████████████████ 100% (4/4 Stages)
 Phase 11:  ████████████████████ 100% (6/6 Stages)
 Phase 12:  ████████████████████ 100% (3/3 Stages)
+Phase 13:  ░░░░░░░░░░░░░░░░░░░░   0% (0/6 Stages)
 ```
 
 ---
@@ -188,6 +189,37 @@ Stage 31 (侧边栏分组重构 + 路由变更)
 
 Stage 31 优先完成（路由+侧边栏基础设施），Stage 32/33 可并行。
 
+### Phase 13：前端反馈改进 + SSE Streaming + TTFT
+
+| Stage | 状态 | 目标 | 预估 |
+|-------|------|------|------|
+| Stage 34 | ⏳ 待开始 | SSE Streaming + completion_start_time + Spend Logs 增强（分页+request_id+TTFT） | 5h |
+| Stage 35 | ⏳ 待开始 | daily_spend 聚合表迁移 + 定时写入 | 3.5h |
+| Stage 36 | ⏳ 待开始 | 前端 Spend Logs 重构（Live Tail+时间预设+分页+详情抽屉） | 5h |
+| Stage 37 | ⏳ 待开始 | Users/Orgs 端到端修复 + Provider 解密 | 4.5h |
+| Stage 38 | ⏳ 待开始 | Usage 聚合端点 + 前端 Global 视图重构 | 5.5h |
+| Stage 39 | ⏳ 待开始 | Playground 聊天式对话升级 | 5h |
+
+**Stage 34-39 依赖关系**:
+
+```
+Stage 34 (SSE streaming + completion_start_time + 后端分页/TTFT)
+  ├── Stage 35 (daily_spend 聚合表迁移 + 定时写入)
+  │     ├── Stage 38 (Usage 聚合端点 + 前端 Global 视图重构)
+  │
+  ├── Stage 36 (前端 Spend Logs 重构：Live Tail + 时间预设 + 分页 + 详情抽屉)
+
+Stage 37 (Users/Orgs 端到端修复 + Provider 解密)
+
+Stage 39 (Playground 对话升级：Chat UI + 历史 + 上下文) — 独立
+```
+
+Stage 34 是最核心的 Stage。Stage 35 依赖 34（daily_spend 写入在 spend_log 路径中触发）。Stage 36 依赖 34（/global/spend/logs 来自 spend_logs 表）。Stage 38 依赖 35（Usage activity 从 daily_spend 表查，避免扫全量 spend_logs）。Stage 34+37 可并行。Stage 36 可与 35 并行。Stage 39 独立。
+
+Stage 35 迁移 litellm 的 6 张 `LiteLLM_Daily*Spend` 表为 aigw 的 `daily_*_spend` 表，通过内存队列 + 定时 batch upsert 写入，使用 `ON CONFLICT DO UPDATE SET col = col + EXCLUDED.col` 保证多实例原子增量。Stage 38 的 `/global/spend/activity` 端点直接从 daily_spend 表查询聚合数据。
+
+详见 `docs/plans/2026-07-10-phase-13-feedback-improvements.md`
+
 ### Phase 10：生产化进阶（后续路线）
 
 | ID | 主题 | 优先级 | 触发条件 |
@@ -227,3 +259,4 @@ Stage 31 优先完成（路由+侧边栏基础设施），Stage 32/33 可并行�
 | v9.0 | 2026-07-08 | Stage 27-30 全部完成；Phase 11 进度 6/6 (100%)；30/30 Stages 全部完成；69 BDD 测试通过（3 viewports × 23 scenarios） | Claude Code |
 | v10.0 | 2026-07-08 | 新增 Phase 12（Stage 31-33）：前端导航重构对齐 litellm 5 组结构、Spend Logs 独立页、Playground Chat 调试页 | Claude Code |
 | v11.0 | 2026-07-09 | Phase 12 全部完成（31-33）；33/33 Stages 完成；102 BDD 测试通过（34 scenarios × 3 viewports） | Claude Code |
+| v12.0 | 2026-07-10 | 新增 Phase 13（Stage 34-39）：基于用户反馈 + TTFT 调研 + daily_spend 聚合表迁移，规划 SSE streaming 代理、completion_start_time 捕获、Spend Logs/Usage/Users/Orgs/Playground 改进 | Claude Code |

@@ -279,3 +279,4 @@ aigw-migrate export --from aigw --from-db aigw.db --to litellm --to-db litellm-r
 | v1.0 | 2026-07-02 | 初始版本（基于调研结果） | 全栈架构师 |
 | v2.0 | 2026-07-03 | 基于用户反馈重规划：新增多租户兼容、长期路线、OpenAPI/前端、部署模式 | 全栈架构师 |
 | v2.1 | 2026-07-03 | 落实表名决策（aigw 自有表名）+ aigw-migrate 双向迁移工具纳入 Stage 1 | 全栈架构师 |
+| v2.2 | 2026-07-10 | 新增 Phase 13：用户反馈驱动的改进 + TTFT 实现差距修复（SSE streaming 代理、completion_start_time 捕获、Spend Logs/Usage/Users/Orgs/Playground 改进） | Claude Code |

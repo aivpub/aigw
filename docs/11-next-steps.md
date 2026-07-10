@@ -1,11 +1,11 @@
 # aigw -- 下一步行动
 
-**上次更新**: 2026-07-09
-**当前阶段**: Phase 12 — 全部完成（Stages 31-33）
+**上次更新**: 2026-07-10
+**当前阶段**: Phase 13 — 规划完成（Stages 34-39 待开始）
 
 ---
 
-## 当前状态：全部完成 ✅
+## 当前状态：Phase 13 待开始 ⏳
 
 ### 项目里程碑
 
@@ -17,6 +17,7 @@ Phase 8:    ████████████████████ 100% (3
 Phase 9:    ████████████████████ 100% (4/4)  ✅ 前端管理控制台
 Phase 11:   ████████████████████ 100% (6/6)  ✅ 前端质量加固 + 安全达标
 Phase 12:   ████████████████████ 100% (3/3)  ✅ 前端导航重构 + Playground
+Phase 13:   ░░░░░░░░░░░░░░░░░░░░   0% (0/6)  ⏳ 前端反馈改进 + SSE Streaming + TTFT + daily_spend
 ```
 
 ### 测试状态
@@ -34,6 +35,27 @@ Phase 12:   ████████████████████ 100% (3
 - **Docker Compose** 一键部署
 - **Rust 单二进制部署**（rust-embed 嵌入前端）
 - **前端管理控制台** 8 页面（Usage、Keys、Models、Users、Orgs、Teams、Spend Logs、Playground）
+
+## Phase 13 规划（Stages 34-39）
+
+基于用户使用反馈 + TTFT 实现差距调研 + daily_spend 聚合表迁移，规划 6 个 Stage（每个 3.5-5.5h）：
+
+| Stage | 目标 | 类型 | 预估 | 优先级 |
+|-------|------|------|------|--------|
+| Stage 34 | SSE Streaming + completion_start_time + Spend Logs 增强 | 后端 | 5h | P0 |
+| Stage 35 | daily_spend 聚合表迁移 + 定时写入 | 后端 | 3.5h | P0 |
+| Stage 36 | 前端 Spend Logs 重构（Live Tail+预设+抽屉） | 前端 | 5h | P0 |
+| Stage 37 | Users/Orgs 端到端修复 + Provider 解密 | 前后端 | 4.5h | P0 |
+| Stage 38 | Usage 聚合端点 + 前端 Global 视图重构 | 前后端 | 5.5h | P1 |
+| Stage 39 | Playground 聊天式对话升级 | 前端 | 5h | P2 |
+
+详见 `docs/plans/2026-07-10-phase-13-feedback-improvements.md`
+
+### 关键发现：TTFT 差距
+
+调研发现 `completion_start_time` 列在 schema 中存在但从未被写入（全部硬编码 None），同时 streaming 路径未真正实现 SSE 代理（返回 stub JSON）。Stage 34 将修复这两个问题。
+
+详见 memory `[[ttft-implementation-gap]]`
 
 ## Phase 12 完成（Stages 31-33）
 

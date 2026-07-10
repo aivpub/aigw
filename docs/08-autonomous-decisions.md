@@ -226,3 +226,37 @@
 - **Consequences**: 33/33 Stages complete. Frontend at 8 admin pages with full mobile
   responsiveness. Phase 10 (Redis/Prometheus/OTEL/K8s) remains deferred to
   trigger-based activation as documented in ADR-009.
+
+## ADR-011: Phase 13 — User Feedback-Driven Improvements + TTFT Gap Fix
+
+- **Date**: 2026-07-10
+- **Status**: Accepted
+- **Decision**: Initiate Phase 13 (Stages 34-38) to address 4 areas of user feedback:
+  (1) Spend Logs page — Live Tail, pagination, request_id search, detail drawer;
+  (2) Usage page — decoupled from spend logs, daily aggregation, total requests count;
+  (3) Organizations list fix + Users pagination;
+  (4) Playground — upgrade to chat-style multi-turn conversation.
+  Additionally fix the TTFT gap: `completion_start_time` exists in schema but is never populated,
+  and SSE streaming proxy was never implemented (returns stub JSON in `chat.rs`).
+- **Background**: Phase 12 delivered baseline 8 pages, but user feedback identified gaps
+  in functionality depth and correctness. A parallel deep-dive into TTFT compared litellm's
+  approach (streaming handler captures `completion_start_time` on first chunk, SQL computes
+  TTFT at query time with `CASE WHEN` guard for non-streaming sentinel values) with aigw's
+  current state (column exists but is hardcoded `None` at all 3 insert sites).
+- **Key design decisions**:
+  - **TTFT follows litellm pattern**: No `ttft_ms` column. Compute at query time.
+    SQLite: `(julianday(completion_start_time) - julianday(start_time)) * 86400000`.
+    Guard: return NULL when `completion_start_time = end_time` (non-streaming sentinel).
+  - **SSE streaming proxy**: Implement real streaming in `chat.rs` using `reqwest::Response`'s
+    `bytes_stream()` + axum `Sse`. Capture `completion_start_time = Utc::now()` on first chunk.
+    Write SpendLog on stream completion.
+  - **Pagination pattern**: `{ data, count, total_count, page, page_size, total_pages }`
+    consistent across all paginated endpoints.
+  - **Phase 10 remains deferred**: Trigger-based activation unchanged.
+- **Implementation**: 5 stages (34-38), 23.5h total, each 4-5.5h. Stage 34 (SSE streaming + TTFT + spend
+  logs backend) is the critical path. Stage 34+36 parallelizable. Stage 36 merged the
+  original separate backend/frontend stages for Users/Orgs into one end-to-end stage.
+  Stage 38 (Playground) independent of other stages.
+- **Consequences**: ~25 new BDD scenarios. SSE streaming proxy is the riskiest item — first
+  real streaming implementation in the project. Stage 34 gates stages 35 and 38.
+  Stage 36-37 (users/orgs) and Stage 39 (playground) are independent tracks.
