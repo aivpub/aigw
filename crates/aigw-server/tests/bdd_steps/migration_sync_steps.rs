@@ -105,7 +105,7 @@ async fn when_sync_plain_tables(world: &mut TestWorld) {
         source_key.as_deref(),
         &target_key,
         Some(0),
-        migrate_step_filter(),
+        migrate_step_filter(), false, &std::collections::HashSet::new(),
     ).await;
 
     match result {
@@ -157,7 +157,7 @@ async fn when_sync_credentials(world: &mut TestWorld) {
         source_key.as_deref(),
         &target_key,
         Some(0),
-        migrate_step_filter(),
+        migrate_step_filter(), false, &std::collections::HashSet::new(),
     ).await;
 
     match result {
@@ -196,7 +196,7 @@ async fn when_sync_proxy_models(world: &mut TestWorld) {
         source_key.as_deref(),
         &target_key,
         Some(0),
-        migrate_step_filter(),
+        migrate_step_filter(), false, &std::collections::HashSet::new(),
     ).await;
 
     match result {
@@ -235,7 +235,7 @@ async fn when_sync_spend_logs_limit_10(world: &mut TestWorld) {
         source_key.as_deref(),
         &target_key,
         Some(10),
-        migrate_step_filter(),
+        migrate_step_filter(), false, &std::collections::HashSet::new(),
     ).await;
 
     match result {

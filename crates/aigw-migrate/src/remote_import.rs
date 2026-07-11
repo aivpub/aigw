@@ -1744,7 +1744,7 @@ mod tests {
 
         // Run remote_import (source key from config, not CLI)
         let target_key = "sk-aigw-target-key-99999";
-        let result = run_filtered(src_str, tgt_str, None, target_key, None, None).await;
+        let result = run_filtered(src_str, tgt_str, None, target_key, None, None, false, &std::collections::HashSet::new()).await;
         assert!(result.is_ok(), "remote_import failed: {:?}", result.err());
 
         // Verify: credentials should be migrated with re-encryption

@@ -80,6 +80,8 @@ async fn when_rollback_plain_tables(world: &mut TestWorld) {
         &aigw_key,
         Some(0),
         None,
+        false,
+        &std::collections::HashSet::new(),
     )
     .await;
 
@@ -142,6 +144,8 @@ async fn when_rollback_credentials(world: &mut TestWorld) {
         &aigw_key,
         Some(0),
         None,
+        false,
+        &std::collections::HashSet::new(),
     )
     .await;
 

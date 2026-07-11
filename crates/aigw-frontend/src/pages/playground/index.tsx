@@ -452,6 +452,14 @@ export function PlaygroundPage() {
     const controller = new AbortController();
     abortRef.current = controller;
 
+    // Build apiMessages from conversation history (used by both endpoint types)
+    const apiMessages: { role: string; content: string }[] = [];
+    for (const msg of newMessages) {
+      if (msg.role === "system" || msg.role === "user" || (msg.role === "assistant" && msg.id !== asstId)) {
+        apiMessages.push({ role: msg.role, content: msg.content });
+      }
+    }
+
     try {
       const isMessages = settings.endpointType === "messages";
       const endpoint = isMessages ? "/v1/messages" : "/v1/chat/completions";
