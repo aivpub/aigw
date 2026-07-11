@@ -6,6 +6,7 @@
 //! Auth: x-api-key header or Authorization: Bearer header (Claude convention)
 
 use aigw_core::adapter::{DefaultAdapter, ProviderAdapter};
+use aigw_core::auth::decode_jwt;
 use aigw_core::crypto::hash_token;
 use aigw_core::models::{ClaudeMessageRequest, DailySpendKind, DailySpendLog, SpendLog};
 use axum::{
@@ -45,6 +46,37 @@ fn anthropic_error(
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Cookie JWT auth helper (mirrors ChatAuth::try_cookie_jwt)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+async fn try_cookie_jwt_auth(
+    state: &SharedState,
+    headers: &http::HeaderMap,
+) -> Option<(String, Option<String>)> {
+    let master_key = state.master_key.as_deref()?;
+
+    // Extract cookie named "token"
+    let cookie_value = headers
+        .get(http::header::COOKIE)
+        .and_then(|v| v.to_str().ok())?
+        .split(';')
+        .find_map(|c| {
+            let c = c.trim();
+            c.strip_prefix("token=").map(|v| v.to_string())
+        })?;
+
+    // Decode JWT
+    let claims = decode_jwt(&cookie_value, master_key).ok()?;
+
+    // Hash the key from JWT claims and look up in DB
+    let token = claims.key;
+    let token_hash = hash_token(&token);
+    let key = state.db.get_key_by_token(&token_hash).await.ok()??;
+
+    Some((token_hash, key.user_id))
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Handler
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -60,7 +92,7 @@ pub async fn messages_handler(
     }: http::request::Parts,
     body: String,
 ) -> Result<axum::response::Response, (StatusCode, Json<Value>)> {
-    // 1. Auth check (must happen before body parsing to catch missing auth early)
+    // 1. Auth: try x-api-key/Bearer header, fallback to cookie JWT
     let extracted = headers
         .get("x-api-key")
         .and_then(|v| v.to_str().ok())
@@ -72,8 +104,8 @@ pub async fn messages_handler(
         });
 
     // 1b. Validate token and extract identity (saved for SpendLog)
-    let (auth_token_hash, auth_user_id) = match extracted {
-        None | Some("") => {
+    let (auth_token_hash, auth_user_id) = if let Some(token) = extracted {
+        if token.is_empty() {
             let request_id = format!("req_{}", uuid::Uuid::new_v4());
             return Err((
                 StatusCode::UNAUTHORIZED,
@@ -87,59 +119,76 @@ pub async fn messages_handler(
                 })),
             ));
         }
-        Some(token) => {
-            let is_master = state
-                .master_key
-                .as_ref()
-                .map(|mk| token == mk.as_str())
-                .unwrap_or(false);
+        let is_master = state
+            .master_key
+            .as_ref()
+            .map(|mk| token == mk.as_str())
+            .unwrap_or(false);
 
-            if is_master {
-                ("master_key".to_string(), None)
-            } else {
-                let token_hash = hash_token(&token);
-                let key = state.db.get_key_by_token(&token_hash).await.map_err(|_| {
-                    let request_id = format!("req_{}", uuid::Uuid::new_v4());
-                    (
-                        StatusCode::UNAUTHORIZED,
-                        Json(json!({
-                            "type": "error",
-                            "error": {
-                                "type": "authentication_error",
-                                "message": "Invalid API key"
-                            },
-                            "request_id": request_id
-                        })),
-                    )
-                })?;
-                let key = key.ok_or_else(|| {
-                    let request_id = format!("req_{}", uuid::Uuid::new_v4());
-                    (
-                        StatusCode::UNAUTHORIZED,
-                        Json(json!({
-                            "type": "error",
-                            "error": {
-                                "type": "authentication_error",
-                                "message": "Invalid API key"
-                            },
-                            "request_id": request_id
-                        })),
-                    )
-                })?;
+        if is_master {
+            ("master_key".to_string(), None)
+        } else {
+            let token_hash = hash_token(token);
+            let key = state.db.get_key_by_token(&token_hash).await.map_err(|_| {
+                let request_id = format!("req_{}", uuid::Uuid::new_v4());
+                (
+                    StatusCode::UNAUTHORIZED,
+                    Json(json!({
+                        "type": "error",
+                        "error": {
+                            "type": "authentication_error",
+                            "message": "Invalid API key"
+                        },
+                        "request_id": request_id
+                    })),
+                )
+            })?;
+            let key = key.ok_or_else(|| {
+                let request_id = format!("req_{}", uuid::Uuid::new_v4());
+                (
+                    StatusCode::UNAUTHORIZED,
+                    Json(json!({
+                        "type": "error",
+                        "error": {
+                            "type": "authentication_error",
+                            "message": "Invalid API key"
+                        },
+                        "request_id": request_id
+                    })),
+                )
+            })?;
 
-                // Budget check
-                if let Some(max_budget) = key.max_budget_f64() {
-                    if key.spend >= max_budget {
-                        return Err(anthropic_error(
-                            StatusCode::TOO_MANY_REQUESTS,
-                            "budget_exceeded",
-                            "Budget exceeded for this API key",
-                        ));
-                    }
+            // Budget check
+            if let Some(max_budget) = key.max_budget_f64() {
+                if key.spend >= max_budget {
+                    return Err(anthropic_error(
+                        StatusCode::TOO_MANY_REQUESTS,
+                        "budget_exceeded",
+                        "Budget exceeded for this API key",
+                    ));
                 }
+            }
 
-                let user_id = key.user_id.clone();
-                (token_hash, user_id)
+            let user_id = key.user_id.clone();
+            (token_hash, user_id)
+        }
+    } else {
+        // Fallback: try cookie JWT (same pattern as ChatAuth)
+        match try_cookie_jwt_auth(&state, &headers).await {
+            Some((token_hash, user_id)) => (token_hash, user_id),
+            None => {
+                let request_id = format!("req_{}", uuid::Uuid::new_v4());
+                return Err((
+                    StatusCode::UNAUTHORIZED,
+                    Json(json!({
+                        "type": "error",
+                        "error": {
+                            "type": "authentication_error",
+                            "message": "Missing x-api-key or Authorization header"
+                        },
+                        "request_id": request_id
+                    })),
+                ));
             }
         }
     };
@@ -241,6 +290,11 @@ pub async fn messages_handler(
         )
     })?;
 
+    // Override model with resolved upstream model name (not aigw proxy model name)
+    if let Some(obj) = upstream_body.as_object_mut() {
+        obj.insert("model".to_string(), json!(resolved.model_name));
+    }
+
     // Inject stream_options for usage info in streaming mode
     if is_stream {
         if let Some(obj) = upstream_body.as_object_mut() {
@@ -285,10 +339,64 @@ pub async fn messages_handler(
     })?;
 
     let upstream_status = upstream_resp.status();
+    let now = chrono::Utc::now();
+
+    // Helper to record failure SpendLog (on upstream error)
+    let write_failure_spend_log = |error_body: String, resp_json: Option<Value>| {
+        let state = Arc::clone(&state);
+        let upstream_body_clone = upstream_body.clone();
+        let model_clone = model.clone();
+        let upstream_base_url_clone = upstream_base_url.clone();
+        let auth_token_hash_clone = auth_token_hash.clone();
+        let auth_user_id_clone = auth_user_id.clone();
+        let status_code = upstream_status.as_u16();
+        tokio::spawn(async move {
+            let sl = SpendLog {
+                request_id: uuid::Uuid::new_v4().to_string(),
+                call_type: "completion".to_string(),
+                api_key: auth_token_hash_clone,
+                spend: 0.0,
+                total_tokens: 0,
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                start_time,
+                end_time: now,
+                request_duration_ms: Some(
+                    now.signed_duration_since(start_time).num_milliseconds() as i32,
+                ),
+                completion_start_time: None,
+                model: model_clone,
+                model_id: None,
+                model_group: None,
+                custom_llm_provider: None,
+                api_base: Some(upstream_base_url_clone),
+                user: auth_user_id_clone,
+                metadata: None,
+                cache_hit: None,
+                cache_key: None,
+                request_tags: None,
+                team_id: None,
+                organization_id: None,
+                end_user: None,
+                requester_ip_address: None,
+                messages: Some(upstream_body_clone),
+                response: resp_json.or_else(|| Some(json!({"error": error_body}))),
+                session_id: None,
+                status: Some(format!("failure:{}", status_code)),
+                mcp_namespaced_tool_name: None,
+                agent_id: None,
+                proxy_server_request: None,
+            };
+            let _ = state.db.insert_spend_log(&sl).await;
+        });
+    };
+
+    let upstream_status = upstream_resp.status();
 
     if is_stream {
         if !upstream_status.is_success() {
             let error_body = upstream_resp.text().await.unwrap_or_default();
+            write_failure_spend_log(error_body.clone(), None);
             return Err(anthropic_error(
                 StatusCode::from_u16(upstream_status.as_u16())
                     .unwrap_or(StatusCode::BAD_GATEWAY),
@@ -554,6 +662,7 @@ pub async fn messages_handler(
         // Non-streaming: parse upstream OpenAI response and convert to Claude format
         if !upstream_status.is_success() {
             let error_body = upstream_resp.text().await.unwrap_or_default();
+            write_failure_spend_log(error_body.clone(), None);
             return Err(anthropic_error(
                 StatusCode::from_u16(upstream_status.as_u16())
                     .unwrap_or(StatusCode::BAD_GATEWAY),

@@ -773,6 +773,53 @@ pub async fn chat_completions(
     if is_stream {
         if !upstream_status.is_success() {
             let error_body = upstream_resp.text().await.unwrap_or_default();
+            // Record failure spend log before returning error
+            let fail_upstream_body = upstream_body.clone();
+            let fail_model = resolved.model_name.clone();
+            let fail_api_base = resolved.api_base.clone();
+            let fail_token_hash = auth.token_hash.clone();
+            let fail_user_id = auth.user_id.clone();
+            let fail_status = upstream_status.as_u16();
+            let err_body_clone = error_body.clone();
+            tokio::spawn(async move {
+                let sl = SpendLog {
+                    request_id: uuid::Uuid::new_v4().to_string(),
+                    call_type: "completion".to_string(),
+                    api_key: fail_token_hash,
+                    spend: 0.0,
+                    total_tokens: 0,
+                    prompt_tokens: 0,
+                    completion_tokens: 0,
+                    start_time,
+                    end_time: chrono::Utc::now(),
+                    request_duration_ms: Some(
+                        (chrono::Utc::now() - start_time).num_milliseconds() as i32,
+                    ),
+                    completion_start_time: None,
+                    model: fail_model,
+                    model_id: None,
+                    model_group: None,
+                    custom_llm_provider: None,
+                    api_base: Some(fail_api_base),
+                    user: fail_user_id,
+                    metadata: None,
+                    cache_hit: None,
+                    cache_key: None,
+                    request_tags: None,
+                    team_id: None,
+                    organization_id: None,
+                    end_user: None,
+                    requester_ip_address: None,
+                    messages: Some(fail_upstream_body),
+                    response: Some(json!({"error": err_body_clone})),
+                    session_id: None,
+                    status: Some(format!("failure:{}", fail_status)),
+                    mcp_namespaced_tool_name: None,
+                    agent_id: None,
+                    proxy_server_request: None,
+                };
+                let _ = state.db.insert_spend_log(&sl).await;
+            });
             return Err((
                 StatusCode::from_u16(upstream_status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY),
                 Json(json!({
@@ -921,6 +968,53 @@ pub async fn chat_completions(
         })?;
 
         if !upstream_status.is_success() {
+            // Record failure spend log
+            let fail_upstream_body = upstream_body.clone();
+            let fail_model = resolved.model_name.clone();
+            let fail_api_base = resolved.api_base.clone();
+            let fail_token_hash = auth.token_hash.clone();
+            let fail_user_id = auth.user_id.clone();
+            let fail_status = upstream_status.as_u16();
+            let fail_resp = resp_body.clone();
+            tokio::spawn(async move {
+                let sl = SpendLog {
+                    request_id: uuid::Uuid::new_v4().to_string(),
+                    call_type: "completion".to_string(),
+                    api_key: fail_token_hash,
+                    spend: 0.0,
+                    total_tokens: 0,
+                    prompt_tokens: 0,
+                    completion_tokens: 0,
+                    start_time,
+                    end_time: chrono::Utc::now(),
+                    request_duration_ms: Some(
+                        (chrono::Utc::now() - start_time).num_milliseconds() as i32,
+                    ),
+                    completion_start_time: None,
+                    model: fail_model,
+                    model_id: None,
+                    model_group: None,
+                    custom_llm_provider: None,
+                    api_base: Some(fail_api_base),
+                    user: fail_user_id,
+                    metadata: None,
+                    cache_hit: None,
+                    cache_key: None,
+                    request_tags: None,
+                    team_id: None,
+                    organization_id: None,
+                    end_user: None,
+                    requester_ip_address: None,
+                    messages: Some(fail_upstream_body),
+                    response: Some(fail_resp),
+                    session_id: None,
+                    status: Some(format!("failure:{}", fail_status)),
+                    mcp_namespaced_tool_name: None,
+                    agent_id: None,
+                    proxy_server_request: None,
+                };
+                let _ = state.db.insert_spend_log(&sl).await;
+            });
             return Err((
                 StatusCode::from_u16(upstream_status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY),
                 Json(resp_body),

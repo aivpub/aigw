@@ -541,6 +541,8 @@ export function PlaygroundPage() {
               if (chunk) {
                 fullContent += chunk;
                 updateMessage(asstId, { content: fullContent });
+                // Auto-scroll during streaming to keep latest content visible
+                setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "instant" }), 0);
               }
             } catch { /* skip */ }
           }

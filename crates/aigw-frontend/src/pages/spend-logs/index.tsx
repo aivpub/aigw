@@ -63,10 +63,23 @@ interface SpendLog {
   request_duration_ms: number | null;
   ttft_ms: number | null;
   model: string;
+  model_id?: string | null;
+  model_group?: string | null;
+  custom_llm_provider?: string | null;
+  api_base?: string | null;
   user: string | null;
-  request_tags: unknown;
-  status: string | null;
+  team_id?: string | null;
+  organization_id?: string | null;
+  end_user?: string | null;
   session_id?: string | null;
+  request_tags: unknown;
+  metadata?: unknown;
+  cache_hit?: unknown;
+  cache_key?: string | null;
+  mcp_namespaced_tool_name?: string | null;
+  status: string | null;
+  messages?: unknown;
+  response?: unknown;
 }
 
 interface SpendLogsResponse {
@@ -297,108 +310,94 @@ interface DetailDrawerProps {
 
 function DetailDrawer({ log, open, onClose }: DetailDrawerProps) {
   if (!log) return null;
+  const isFailure = (log.status ?? "").startsWith("failure");
+  const ttftText = fmtTtft(log.ttft_ms);
+  const durText = fmtDuration(log.request_duration_ms);
   return (
     <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
-      <SheetContent side="right">
+      <SheetContent side="right" className="overflow-y-auto">
         <SheetHeader>
           <SheetTitle className="text-sm font-mono">Request Details</SheetTitle>
-          <SheetDescription>{log.request_id}</SheetDescription>
+          <SheetDescription className="text-[10px] font-mono break-all">{log.request_id}</SheetDescription>
         </SheetHeader>
         <div className="space-y-4 mt-4">
-          {/* Basic info */}
           <div className="grid grid-cols-2 gap-3 text-sm">
-            <div>
-              <Label className="text-xs text-muted-foreground">Status</Label>
-              <div>
-                <Badge
-                  variant={log.status === "success" ? "default" : "destructive"}
-                  className="mt-0.5"
-                >
-                  {log.status || "—"}
-                </Badge>
-              </div>
+            <div><Label className="text-xs text-muted-foreground">Status</Label>
+              <div><Badge variant={isFailure ? "destructive" : "default"} className="mt-0.5">{log.status || "—"}</Badge></div>
             </div>
-            <div>
-              <Label className="text-xs text-muted-foreground">Type</Label>
-              <div className="text-sm mt-0.5">
-                <Badge variant="outline">{log.call_type || "—"}</Badge>
-              </div>
+            <div><Label className="text-xs text-muted-foreground">Type</Label>
+              <div className="text-sm mt-0.5"><Badge variant="outline">{log.call_type || "—"}</Badge></div>
             </div>
-            <div>
-              <Label className="text-xs text-muted-foreground">Model</Label>
+            <div><Label className="text-xs text-muted-foreground">Model</Label>
               <div className="text-sm font-medium">{log.model}</div>
             </div>
-            <div>
-              <Label className="text-xs text-muted-foreground">Cost</Label>
+            <div><Label className="text-xs text-muted-foreground">Cost</Label>
               <div className="text-sm font-mono">{fmtSpend(log.spend)}</div>
             </div>
           </div>
-
-          {/* Token breakdown */}
+          {(log.model_id || log.model_group || log.custom_llm_provider || log.api_base) && (
+            <div>
+              <Label className="text-xs text-muted-foreground">Model Info</Label>
+              <div className="text-xs space-y-0.5 mt-1 bg-muted/30 rounded p-2">
+                {log.model_id && <div><span className="text-muted-foreground">ID:</span> {log.model_id}</div>}
+                {log.model_group && <div><span className="text-muted-foreground">Group:</span> {log.model_group}</div>}
+                {log.custom_llm_provider && <div><span className="text-muted-foreground">Provider:</span> {log.custom_llm_provider}</div>}
+                {log.api_base && <div><span className="text-muted-foreground">Base:</span> <code className="text-[10px]">{log.api_base}</code></div>}
+              </div>
+            </div>
+          )}
           <div>
             <Label className="text-xs text-muted-foreground">Tokens</Label>
             <div className="grid grid-cols-3 gap-2 mt-1 text-xs">
-              <div className="rounded border p-2">
-                <div className="text-muted-foreground">Prompt</div>
-                <div className="font-medium">{fmtTokens(log.prompt_tokens)}</div>
-              </div>
-              <div className="rounded border p-2">
-                <div className="text-muted-foreground">Completion</div>
-                <div className="font-medium">{fmtTokens(log.completion_tokens)}</div>
-              </div>
-              <div className="rounded border p-2">
-                <div className="text-muted-foreground">Total</div>
-                <div className="font-medium">{fmtTokens(log.total_tokens)}</div>
-              </div>
+              <div className="rounded border p-2"><div className="text-muted-foreground">Prompt</div><div className="font-medium">{fmtTokens(log.prompt_tokens)}</div></div>
+              <div className="rounded border p-2"><div className="text-muted-foreground">Completion</div><div className="font-medium">{fmtTokens(log.completion_tokens)}</div></div>
+              <div className="rounded border p-2"><div className="text-muted-foreground">Total</div><div className="font-medium">{fmtTokens(log.total_tokens)}</div></div>
             </div>
           </div>
-
-          {/* Timing */}
           <div>
             <Label className="text-xs text-muted-foreground">Timing</Label>
             <div className="grid grid-cols-2 gap-2 mt-1 text-xs">
-              <div className="rounded border p-2">
-                <div className="text-muted-foreground">TTFT</div>
-                <div className="font-mono font-medium">{fmtTtft(log.ttft_ms)}</div>
-              </div>
-              <div className="rounded border p-2">
-                <div className="text-muted-foreground">Duration</div>
-                <div className="font-mono font-medium">{fmtDuration(log.request_duration_ms)}</div>
-              </div>
+              <div className="rounded border p-2"><div className="text-muted-foreground">TTFT</div><div className="font-mono font-medium">{ttftText}</div></div>
+              <div className="rounded border p-2"><div className="text-muted-foreground">Duration</div><div className="font-mono font-medium">{durText}</div></div>
             </div>
           </div>
-
-          {/* Timestamps */}
           <div>
             <Label className="text-xs text-muted-foreground">Timestamps</Label>
             <div className="space-y-1 mt-1 text-xs">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Start</span>
-                <span className="font-mono">{log.start_time ? format(new Date(log.start_time), "yyyy-MM-dd HH:mm:ss") : "—"}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">End</span>
-                <span className="font-mono">{log.end_time ? format(new Date(log.end_time), "yyyy-MM-dd HH:mm:ss") : "—"}</span>
-              </div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Start</span><span className="font-mono">{log.start_time ? format(new Date(log.start_time), "yyyy-MM-dd HH:mm:ss") : "—"}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">End</span><span className="font-mono">{log.end_time ? format(new Date(log.end_time), "yyyy-MM-dd HH:mm:ss") : "—"}</span></div>
             </div>
           </div>
-
-          {/* API Key */}
+          <div>
+            <Label className="text-xs text-muted-foreground">Metadata</Label>
+            <div className="text-xs space-y-0.5 mt-1 bg-muted/30 rounded p-2">
+              {log.user && <div><span className="text-muted-foreground">User:</span> {log.user}</div>}
+              {log.team_id && <div><span className="text-muted-foreground">Team:</span> {log.team_id}</div>}
+              {log.organization_id && <div><span className="text-muted-foreground">Org:</span> {log.organization_id}</div>}
+              {log.end_user && <div><span className="text-muted-foreground">End User:</span> {log.end_user}</div>}
+              {log.session_id && <div><span className="text-muted-foreground">Session:</span> {log.session_id}</div>}
+              {log.cache_hit != null && <div><span className="text-muted-foreground">Cache Hit:</span> {String(log.cache_hit)}</div>}
+              {log.cache_key && <div><span className="text-muted-foreground">Cache Key:</span> {log.cache_key}</div>}
+              {log.mcp_namespaced_tool_name && <div><span className="text-muted-foreground">MCP Tool:</span> {log.mcp_namespaced_tool_name}</div>}
+            </div>
+          </div>
           <div>
             <Label className="text-xs text-muted-foreground">API Key</Label>
             <div className="flex items-center gap-1 mt-0.5">
               <code className="text-xs font-mono bg-muted rounded px-1.5 py-0.5">{truncate8(log.api_key)}</code>
-              <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => copyToClipboard(log.api_key)}>
-                <Copy className="h-3 w-3" />
-              </Button>
+              <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => copyToClipboard(log.api_key)}><Copy className="h-3 w-3" /></Button>
             </div>
           </div>
-
-          {/* User/Org info */}
-          {log.user && (
+          {log.messages != null && (
             <div>
-              <Label className="text-xs text-muted-foreground">User</Label>
-              <div className="text-sm mt-0.5">{log.user}</div>
+              <Label className="text-xs text-muted-foreground">Messages (Prompt)</Label>
+              <div className="mt-1"><pre className="text-xs bg-muted/30 rounded p-2 max-h-48 overflow-y-auto whitespace-pre-wrap break-words">{typeof log.messages === "string" ? log.messages : JSON.stringify(log.messages, null, 2)}</pre></div>
+            </div>
+          )}
+          {log.response != null && (
+            <div>
+              <Label className="text-xs text-muted-foreground">Response</Label>
+              <div className="mt-1"><pre className="text-xs bg-muted/30 rounded p-2 max-h-48 overflow-y-auto whitespace-pre-wrap break-words">{typeof log.response === "string" ? log.response : JSON.stringify(log.response, null, 2)}</pre></div>
             </div>
           )}
         </div>
@@ -528,9 +527,12 @@ export function SpendLogsPage() {
         {/* Live Tail toggle */}
         <div className="flex items-center gap-3">
           {effectiveLiveTail && (
-            <div className="flex items-center gap-2 text-xs text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-950 rounded-md px-2 py-1">
-              <Zap className="h-3 w-3" />
-              Auto-refreshing every 15s
+            <div className="flex items-center gap-2 text-xs text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-950 rounded-md px-2 py-1 animate-pulse">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+              </span>
+              ● LIVE
               <Button
                 variant="ghost"
                 size="icon"
@@ -570,8 +572,8 @@ export function SpendLogsPage() {
             onEndDate={setEndDate}
           />
           <div className="flex flex-col sm:flex-row gap-2">
-            <div className="flex-1 flex gap-2">
-              <div className="flex-1 relative">
+            <div className="flex gap-2">
+              <div className="w-44 relative">
                 <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                 <Input
                   placeholder="Request ID…"
