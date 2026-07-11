@@ -257,14 +257,29 @@ pub async fn spend_logs(
         0
     };
 
+    // Resolve key_alias names for display
+    let distinct_keys: Vec<String> = logs.iter().map(|l| l.api_key.clone()).collect::<std::collections::HashSet<_>>().into_iter().collect();
+    let mut key_map: std::collections::HashMap<String, Option<String>> = std::collections::HashMap::new();
+    for key_hash in &distinct_keys {
+        if key_hash == "master_key" {
+            key_map.insert(key_hash.clone(), Some("master".to_string()));
+        } else if let Ok(Some(k)) = state.db.get_key_by_token(key_hash).await {
+            key_map.insert(key_hash.clone(), k.key_alias);
+        } else {
+            key_map.insert(key_hash.clone(), None);
+        }
+    }
+
     let data: Vec<Value> = logs
         .iter()
         .map(|log| {
             let ttft_ms = compute_ttft(log);
+            let key_name: Option<String> = key_map.get(&log.api_key).cloned().flatten();
             json!({
                 "request_id": log.request_id,
                 "call_type": log.call_type,
                 "api_key": log.api_key,
+                "key_name": key_name,
                 "spend": log.spend,
                 "total_tokens": log.total_tokens,
                 "prompt_tokens": log.prompt_tokens,
@@ -466,14 +481,29 @@ pub async fn global_spend_logs(
         0
     };
 
+    // Resolve key_alias names for display
+    let distinct_keys: Vec<String> = logs.iter().map(|l| l.api_key.clone()).collect::<std::collections::HashSet<_>>().into_iter().collect();
+    let mut key_map: std::collections::HashMap<String, Option<String>> = std::collections::HashMap::new();
+    for key_hash in &distinct_keys {
+        if key_hash == "master_key" {
+            key_map.insert(key_hash.clone(), Some("master".to_string()));
+        } else if let Ok(Some(k)) = state.db.get_key_by_token(key_hash).await {
+            key_map.insert(key_hash.clone(), k.key_alias);
+        } else {
+            key_map.insert(key_hash.clone(), None);
+        }
+    }
+
     let data: Vec<Value> = logs
         .iter()
         .map(|log| {
             let ttft_ms = compute_ttft(log);
+            let key_name: Option<String> = key_map.get(&log.api_key).cloned().flatten();
             json!({
                 "request_id": log.request_id,
                 "call_type": log.call_type,
                 "api_key": log.api_key,
+                "key_name": key_name,
                 "spend": log.spend,
                 "total_tokens": log.total_tokens,
                 "prompt_tokens": log.prompt_tokens,

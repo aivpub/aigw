@@ -54,6 +54,7 @@ interface SpendLog {
   request_id: string;
   call_type: string;
   api_key: string;
+  key_name?: string | null;
   spend: number;
   total_tokens: number;
   prompt_tokens: number;
