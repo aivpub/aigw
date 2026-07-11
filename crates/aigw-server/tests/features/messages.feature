@@ -51,22 +51,22 @@ Feature: Claude /v1/messages 端点
     Then 响应状态码为 400
     And 响应体为 Anthropic 错误格式
 
-  Scenario: x-api-key 认证通过
+  Scenario: x-api-key 认证通过（master key 不会报 401）
     When 发送 POST /v1/messages 请求带 x-api-key 认证
       """
       {"model":"claude-3","messages":[{"role":"user","content":"hi"}],"max_tokens":100}
       """
-    Then 响应状态码为 200 或 404
+    Then 响应状态码不为 401
 
-  Scenario: Bearer token 认证通过
+  Scenario: Bearer token 认证通过（master key 不会报 401）
     When 发送 POST /v1/messages 请求带 Bearer 认证
       """
       {"model":"claude-3","messages":[{"role":"user","content":"hi"}],"max_tokens":100}
       """
-    Then 响应状态码为 200 或 404
+    Then 响应状态码不为 401
 
-  Scenario: 模型不存在返回 404
-    Given 已配置 model "existing-model" 在数据库中
-    When 发送 POST /v1/messages 请求带认证 model="nonexistent-model"
-    Then 响应状态码为 404
-    And 错误 type 为 "not_found_error"
+  Scenario: 模型不存在返回 400
+    Given 已配置 model "claude-opus-4-8" 在数据库中
+    When 发送 POST /v1/messages 请求带认证 model="nonexistent-model-xyz"
+    Then 响应状态码为 400
+    And 错误 type 为 "invalid_request_error"

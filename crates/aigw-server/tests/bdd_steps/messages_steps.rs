@@ -243,12 +243,8 @@ async fn then_anthropic_error_format(world: &mut TestWorld) {
     assert!(body.get("request_id").is_some());
 }
 
-#[then(expr = "响应状态码为 200 或 404")]
-async fn then_status_is_200_or_404(world: &mut TestWorld) {
+#[then(expr = "响应状态码不为 401")]
+async fn then_status_not_401(world: &mut TestWorld) {
     let status = world.last_status.expect("no status");
-    assert!(
-        status == 200 || status == 404,
-        "Expected status 200 or 404, got {}",
-        status
-    );
+    assert_ne!(status, 401, "Expected status not 401, got {}", status);
 }

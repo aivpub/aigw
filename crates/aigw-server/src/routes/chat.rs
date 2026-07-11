@@ -118,7 +118,7 @@ pub(crate) async fn resolve_upstream_params(
             let params_json = if let Some(key) = state.aigw_master_key.as_deref() {
                 decrypt_json_fields(&params_json, key)
             } else {
-                params_json
+                params_json.clone()
             };
 
             // Extract pricing: model_info is the primary source (litellm-standard),
@@ -223,6 +223,7 @@ pub(crate) async fn resolve_upstream_params(
                     output_cost_per_token: output_cost,
                 })
             } else {
+                tracing::warn!(%model_name, "resolve_upstream_params: NO credential reference, using litellm_params directly");
                 let api_base = params_json
                     .get("api_base")
                     .and_then(|v| v.as_str())
@@ -238,6 +239,7 @@ pub(crate) async fn resolve_upstream_params(
                     .unwrap_or(model_name)
                     .to_string();
 
+                tracing::warn!(%model_name, %api_base, ?api_key, %upstream_model, "resolve_upstream_params: DIRECT PARAMS RESOLVED");
                 Ok(ResolvedUpstream {
                     api_base,
                     api_key,
@@ -248,21 +250,17 @@ pub(crate) async fn resolve_upstream_params(
             }
         }
         None => {
-            // Model not found in proxy_models — fall back to env vars
-            let api_base = std::env::var("UPSTREAM_LLM_URL")
-                .or_else(|_| std::env::var("OPENAI_BASE_URL"))
-                .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
-            let api_key = std::env::var("UPSTREAM_API_KEY")
-                .or_else(|_| std::env::var("OPENAI_API_KEY"))
-                .ok();
-
-            Ok(ResolvedUpstream {
-                api_base,
-                api_key,
-                model_name: model_name.to_string(),
-                input_cost_per_token: None,
-                output_cost_per_token: None,
-            })
+            tracing::warn!(%model_name, "resolve_upstream_params: model NOT FOUND");
+            Err((
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": {
+                        "message": format!("Model '{}' not found. Add it to proxy_models or check model_name spelling.", model_name),
+                        "type": "invalid_request_error",
+                        "code": "model_not_found"
+                    }
+                })),
+            ))
         }
     }
 }
@@ -1263,6 +1261,44 @@ mod tests {
             "Expected 'model' error, got: {}",
             error_msg
         );
+    }
+
+    #[tokio::test]
+    async fn test_chat_completions_unsupported_model() {
+        let app = test_app().await;
+        // Model not in proxy_models, no env fallback → should get 400
+        let body = json!({
+            "model": "nonexistent-model-xyz",
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/v1/chat/completions")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::AUTHORIZATION, "Bearer sk-master-chat-test")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::BAD_REQUEST,
+            "Expected 400 for unsupported model"
+        );
+
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let val: Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(
+            val["error"]["type"].as_str(),
+            Some("invalid_request_error")
+        );
+        assert!(val["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("not found"));
     }
 
     #[tokio::test]

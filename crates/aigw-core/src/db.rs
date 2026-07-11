@@ -1169,6 +1169,7 @@ impl Database {
 
 /// Trait for spend log operations across all DB backends.
 #[async_trait]
+#[allow(clippy::too_many_arguments)]
 pub trait SpendLogStore {
     async fn insert_spend_log(&self, log: &SpendLog) -> Result<()>;
     async fn query_spend_logs(
@@ -1948,6 +1949,8 @@ impl Database {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     pub async fn query_spend_logs_filtered(
         &self,
         api_key: Option<&str>,
@@ -2092,7 +2095,7 @@ fn build_activity_filter<'a>(
     let mut clauses = Vec::new();
     let mut params = Vec::new();
     if let Some(uid) = user_id {
-        clauses.push(format!(r#""user" = ?"#));
+        clauses.push(r#""user" = ?"#.to_string());
         params.push(uid);
     }
     if let Some(tid) = team_id {

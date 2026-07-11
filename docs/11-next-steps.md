@@ -1,11 +1,11 @@
 # aigw -- 下一步行动
 
 **上次更新**: 2026-07-11
-**当前阶段**: Phase 17 Provider 适配架构（P3，长期）— Phases 14-16 已完成
+**当前阶段**: Phase 17 Usage 多视角聚合（P1）— Provider 适配移入长期
 
 ---
 
-## 当前状态：Phase 14-16 全部完成 ✅
+## 当前状态：Phase 17 Usage 多视角聚合（Stages 50-51）
 
 ### 项目里程碑
 
@@ -21,7 +21,7 @@ Phase 13:   ████████████████████ 100% (6
 Phase 14:   ████████████████████ 100% (4/4)  ✅ /v1/messages 接口修复（Stages 40-43）
 Phase 15:   ████████████████████ 100% (3/3)  ✅ 反馈改进（Stages 44-46）
 Phase 16:   ████████████████████ 100% (3/3)  ✅ Playground 增强（Stages 47-49）
-Phase 17:   ░░░░░░░░░░░░░░░░░░░░   0% (0/4)  ⏳  Provider 适配架构（长期）
+Phase 17:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3)  🔄 Usage 多视角聚合（P1, Stages 50-51）+ Provider 秘钥解密修复
 ```
 
 ### 测试状态
@@ -83,11 +83,22 @@ Phase 17:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 ---
 
+## Phase 17: Usage 多视角聚合（P1，预估 6h）
+
+Stage 38 完成了全局聚合但缺少 Org/Team/Key 多视角切换。补齐：
+
+| Stage | 目标 | 预估 |
+|-------|------|------|
+| Stage 50 | Provider 饼图颜色区分 + key_name 解密（/spend/providers 加解密） | 2h |
+| Stage 51 | 后端聚合端点 + 前端视图切换（Global/Team/Org/Key 下拉框 + 饼图/柱状图联动） | 4h |
+
+---
+
 ## 后续路线
 
 | ID | 主题 | 优先级 | 触发条件 |
 |----|------|--------|---------|
-| Phase 17 | Provider 适配架构 | P3 | 非 OpenAI 厂商接入需求 |
+| Phase 18 (旧 Phase 17) | Provider 适配架构 (Stages 52-55) | P3 | 非 OpenAI 厂商接入需求 |
 | LT-2 | Redis 缓存 + 性能优化 | P2 | QPS > 1000 |
 | LT-3 | Observability (Prometheus + OTEL) | P2 | 生产环境部署 |
 | LT-5 | SSO/OAuth 鉴权 | P3 | 企业客户需求 |

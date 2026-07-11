@@ -265,12 +265,18 @@ pub async fn messages_handler(
 
     // 4. Resolve upstream routing + pricing (reuses chat.rs verified logic:
     //    proxy_models → decrypt → credential refs → env var fallback)
-    let resolved = super::chat::resolve_upstream_params(&state, &model).await?;
+    let resolved = super::chat::resolve_upstream_params(&state, &model).await
+        .map_err(|(status, body)| {
+            // Convert OpenAI-format error to Anthropic format for /v1/messages
+            let msg = body["error"]["message"].as_str().unwrap_or("Unknown error");
+            let err_type = body["error"]["type"].as_str().unwrap_or("invalid_request_error");
+            anthropic_error(status, err_type, msg)
+        })?;
     let input_cost = resolved.input_cost_per_token;
     let output_cost = resolved.output_cost_per_token;
 
     let upstream_base_url = resolved.api_base;
-    let upstream_api_key = resolved.api_key;
+    let upstream_api_key = resolved.api_key.clone();
 
     // 6. Parse Claude request and convert to OpenAI format
     let claude_req: ClaudeMessageRequest =
@@ -1004,6 +1010,77 @@ mod tests {
         let val: Value = serde_json::from_slice(&body_bytes).unwrap();
         // Not an auth error from aigw (upstream errors show as upstream_error, not authentication_error)
         assert_ne!(
+            val["error"]["type"].as_str(),
+            Some("authentication_error")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_model_not_found() {
+        // When model is not in proxy_models, /v1/messages should return Anthropic format error
+        let body = json!({
+            "model": "nonexistent-model-12345",
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 100
+        });
+
+        let request = axum::http::Request::builder()
+            .method(Method::POST)
+            .uri("/v1/messages")
+            .header(http::header::CONTENT_TYPE, "application/json")
+            .header("anthropic-version", "2023-06-01")
+            .header("x-api-key", "sk-master-v1msg")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+
+        let app = test_app().await;
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let val: Value = serde_json::from_slice(&body_bytes).unwrap();
+        // Anthropic error format: {"type":"error","error":{"type":"...","message":"..."}}
+        assert_eq!(val["type"].as_str(), Some("error"));
+        assert_eq!(
+            val["error"]["type"].as_str(),
+            Some("invalid_request_error")
+        );
+        assert!(
+            val["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("not found")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_missing_auth_returns_unauthorized() {
+        let app = test_app().await;
+        let body = json!({
+            "model": "claude-3",
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 100
+        });
+
+        let request = axum::http::Request::builder()
+            .method(Method::POST)
+            .uri("/v1/messages")
+            .header(http::header::CONTENT_TYPE, "application/json")
+            .header("anthropic-version", "2023-06-01")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let val: Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(val["type"].as_str(), Some("error"));
+        assert_eq!(
             val["error"]["type"].as_str(),
             Some("authentication_error")
         );
