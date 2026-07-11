@@ -261,6 +261,7 @@ pub async fn messages_handler(
         .get("stream")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    let call_type = if is_stream { "completion_stream" } else { "completion" };
 
     // 4. Resolve upstream routing + pricing (reuses chat.rs verified logic:
     //    proxy_models → decrypt → credential refs → env var fallback)
@@ -353,7 +354,7 @@ pub async fn messages_handler(
         tokio::spawn(async move {
             let sl = SpendLog {
                 request_id: uuid::Uuid::new_v4().to_string(),
-                call_type: "completion".to_string(),
+                call_type: call_type.to_string(),
                 api_key: auth_token_hash_clone,
                 spend: 0.0,
                 total_tokens: 0,
@@ -603,7 +604,7 @@ pub async fn messages_handler(
             let now = chrono::Utc::now();
             let spend_log = SpendLog {
                 request_id: uuid::Uuid::new_v4().to_string(),
-                call_type: "completion".to_string(),
+                call_type: call_type.to_string(),
                 api_key: auth_token_hash_clone.clone(),
                 spend: super::chat::calc_spend(
                     last_prompt_tokens,

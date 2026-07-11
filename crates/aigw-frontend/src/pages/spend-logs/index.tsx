@@ -664,6 +664,7 @@ export function SpendLogsPage() {
                       </TableHead>
                       <TableHead className="text-xs whitespace-nowrap">Type</TableHead>
                       <TableHead className="text-xs whitespace-nowrap">Model</TableHead>
+                      <TableHead className="text-xs whitespace-nowrap">Key</TableHead>
                       <TableHead className="text-xs whitespace-nowrap">Status</TableHead>
                       <TableHead className="text-xs whitespace-nowrap">Request ID</TableHead>
                       <TableHead className="text-xs whitespace-nowrap text-right">TTFT</TableHead>
@@ -691,6 +692,9 @@ export function SpendLogsPage() {
                         </TableCell>
                         <TableCell className="text-xs whitespace-nowrap font-medium">
                           {log.model}
+                        </TableCell>
+                        <TableCell className="text-xs whitespace-nowrap text-muted-foreground max-w-[100px] truncate">
+                          {log.key_name || log.user || "—"}
                         </TableCell>
                         <TableCell>
                           <Badge
