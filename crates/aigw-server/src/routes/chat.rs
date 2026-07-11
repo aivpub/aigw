@@ -250,7 +250,6 @@ pub(crate) async fn resolve_upstream_params(
             }
         }
         None => {
-            tracing::warn!(%model_name, "resolve_upstream_params: model NOT FOUND");
             Err((
                 StatusCode::BAD_REQUEST,
                 Json(json!({

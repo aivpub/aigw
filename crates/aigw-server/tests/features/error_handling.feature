@@ -31,14 +31,16 @@ Feature: 错误处理
 
   Scenario: 上游 500 错误透传
     Given mock 上游已启动
+    And 已配置 model "gpt-4-mock" 指向 mock 上游
     And mock 上游 "/v1/chat/completions" 返回状态码 500
     And 一个普通 key "err-upstream" 已生成
-    When 使用 key "err-upstream" 发送 POST /chat/completions 请求
+    When 使用 key "err-upstream" 发送 POST /chat/completions 请求用 model "gpt-4-mock"
     Then 响应状态码为 500 或 502
 
   Scenario: 上游 429 限流透传
     Given mock 上游已启动
+    And 已配置 model "gpt-4-mock" 指向 mock 上游
     And mock 上游 "/v1/chat/completions" 返回状态码 429
     And 一个普通 key "err-ratelimit" 已生成
-    When 使用 key "err-ratelimit" 发送 POST /chat/completions 请求
+    When 使用 key "err-ratelimit" 发送 POST /chat/completions 请求用 model "gpt-4-mock"
     Then 响应状态码为 429

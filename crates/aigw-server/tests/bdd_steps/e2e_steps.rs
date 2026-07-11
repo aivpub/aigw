@@ -75,6 +75,15 @@ async fn given_mock_returns_status(_world: &mut TestWorld, path: String, status:
 
 #[when(expr = "使用 key {string} 发送 POST \\/chat\\/completions 请求")]
 async fn when_post_chat_completions(world: &mut TestWorld, alias: String) {
+    when_post_chat_completions_with_model(world, alias, "gpt-4-mock".to_string()).await;
+}
+
+#[when(expr = "使用 key {string} 发送 POST \\/chat\\/completions 请求用 model {string}")]
+async fn when_post_chat_completions_model(world: &mut TestWorld, alias: String, model: String) {
+    when_post_chat_completions_with_model(world, alias, model).await;
+}
+
+async fn when_post_chat_completions_with_model(world: &mut TestWorld, alias: String, model: String) {
     let state = world.ensure_state().await;
     use axum::Router;
     use tower::util::ServiceExt;
@@ -88,7 +97,7 @@ async fn when_post_chat_completions(world: &mut TestWorld, alias: String) {
 
     let token = world.created_keys.get(&alias).expect("key not found");
     let body = serde_json::json!({
-        "model": "gpt-4-mock",
+        "model": model,
         "messages": [{"role": "user", "content": "hi"}]
     }).to_string();
 

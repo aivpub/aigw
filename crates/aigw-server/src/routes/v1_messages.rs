@@ -265,13 +265,59 @@ pub async fn messages_handler(
 
     // 4. Resolve upstream routing + pricing (reuses chat.rs verified logic:
     //    proxy_models → decrypt → credential refs → env var fallback)
-    let resolved = super::chat::resolve_upstream_params(&state, &model).await
-        .map_err(|(status, body)| {
+    // Record failure spend log if resolve_upstream_params fails
+    let resolved = match super::chat::resolve_upstream_params(&state, &model).await {
+        Ok(r) => r,
+        Err((status, body)) => {
+            let now = chrono::Utc::now();
+            let error_body = body.0.clone();
+            let log_state = Arc::clone(&state);
+            let log_model = model.clone();
+            let log_token_hash = auth_token_hash.clone();
+            let log_user_id = auth_user_id.clone();
+            tokio::spawn(async move {
+                let sl = SpendLog {
+                    request_id: uuid::Uuid::new_v4().to_string(),
+                    call_type: call_type.to_string(),
+                    api_key: log_token_hash,
+                    spend: 0.0,
+                    total_tokens: 0,
+                    prompt_tokens: 0,
+                    completion_tokens: 0,
+                    start_time: now,
+                    end_time: now,
+                    request_duration_ms: Some(0),
+                    completion_start_time: None,
+                    model: log_model,
+                    model_id: None,
+                    model_group: None,
+                    custom_llm_provider: None,
+                    api_base: None,
+                    user: log_user_id,
+                    metadata: None,
+                    cache_hit: None,
+                    cache_key: None,
+                    request_tags: None,
+                    team_id: None,
+                    organization_id: None,
+                    end_user: None,
+                    requester_ip_address: None,
+                    messages: Some(error_body.clone()),
+                    response: Some(error_body),
+                    session_id: None,
+                    status: Some(format!("failure:{}", status.as_u16())),
+                    mcp_namespaced_tool_name: None,
+                    agent_id: None,
+                    proxy_server_request: None,
+                };
+                let _ = log_state.db.insert_spend_log(&sl).await;
+            });
             // Convert OpenAI-format error to Anthropic format for /v1/messages
             let msg = body["error"]["message"].as_str().unwrap_or("Unknown error");
             let err_type = body["error"]["type"].as_str().unwrap_or("invalid_request_error");
-            anthropic_error(status, err_type, msg)
-        })?;
+            return Err(anthropic_error(status, err_type, msg));
+        }
+    };
     let input_cost = resolved.input_cost_per_token;
     let output_cost = resolved.output_cost_per_token;
 
