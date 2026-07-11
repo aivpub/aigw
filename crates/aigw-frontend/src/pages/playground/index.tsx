@@ -178,19 +178,28 @@ function MessageBubble({
           </div>
         )}
 
-        {/* Bottom stats bar for assistant messages */}
-        {isAsst && !msg.error && msg.content && (
+        {/* Bottom stats bar for assistant messages — always visible */}
+        {isAsst && !msg.error && (
           <div className="flex items-center gap-2 mt-1 text-[10px] text-muted-foreground">
-            {msg.tokens && (
+            {msg.tokens ? (
               <>
-                <span>{msg.tokens.prompt}+{msg.tokens.completion} tokens</span>
+                <span>In: {msg.tokens.prompt}</span>
+                <span className="text-muted-foreground/50">|</span>
+                <span>Out: {msg.tokens.completion}</span>
+                <span className="text-muted-foreground/50">|</span>
+                <span>Total: {msg.tokens.prompt + msg.tokens.completion}</span>
+                <span className="text-muted-foreground/50">|</span>
+              </>
+            ) : (
+              <>
+                <span>streaming…</span>
                 <span className="text-muted-foreground/50">|</span>
               </>
             )}
             <Button
               variant="ghost"
               size="icon"
-              className="h-5 w-5"
+              className="h-5 w-5 ml-auto"
               onClick={() => onCopy?.(msg.content)}
               title="Copy"
             >
@@ -210,9 +219,9 @@ function MessageBubble({
           </div>
         )}
 
-        {/* Action buttons for user/system */}
+        {/* Action buttons for user/system — always visible */}
         {!isAsst && !editing && !msg.error && (
-          <div className="flex items-center gap-1 mt-1 opacity-0 hover:opacity-100 transition-opacity">
+          <div className="flex items-center gap-1 mt-1">
             {(isUser || isSystem) && onEdit && (
               <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => { setEditText(msg.content); setEditing(true); }}>
                 <Pencil className="h-3 w-3" />
@@ -517,6 +526,8 @@ export function PlaygroundPage() {
         const decoder = new TextDecoder();
         let buf = "";
         let fullContent = "";
+        const ttftStart = Date.now();
+        let ttftMs: number | null = null;
 
         while (true) {
           const { done, value } = await reader.read();
@@ -533,6 +544,15 @@ export function PlaygroundPage() {
             if (trimmed.startsWith("event: ")) continue;
             try {
               const parsed = JSON.parse(data);
+              // Measure TTFT on first content chunk
+              if (ttftMs === null) {
+                const firstText = isMessages
+                  ? (parsed.delta?.text ?? undefined)
+                  : parsed.choices?.[0]?.delta?.content;
+                if (firstText) {
+                  ttftMs = Date.now() - ttftStart;
+                }
+              }
               // Extract content: OpenAI uses choices[0].delta.content,
               // Anthropic SSE uses content_block_delta.delta.text
               const chunk = isMessages
@@ -541,8 +561,18 @@ export function PlaygroundPage() {
               if (chunk) {
                 fullContent += chunk;
                 updateMessage(asstId, { content: fullContent });
-                // Auto-scroll during streaming to keep latest content visible
                 setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "instant" }), 0);
+              }
+              // Extract usage tokens from the final chunk
+              // (OpenAI sends usage when stream_options.include_usage=true;
+              //  Anthropic sends usage in message_delta event)
+              if (parsed.usage && (parsed.usage.prompt_tokens || parsed.usage.input_tokens || parsed.usage.completion_tokens || parsed.usage.output_tokens)) {
+                const prompt = parsed.usage.prompt_tokens ?? parsed.usage.input_tokens ?? 0;
+                const completion = parsed.usage.completion_tokens ?? parsed.usage.output_tokens ?? 0;
+                updateMessage(asstId, {
+                  content: fullContent,
+                  tokens: { prompt, completion },
+                });
               }
             } catch { /* skip */ }
           }
