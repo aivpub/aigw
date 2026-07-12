@@ -250,6 +250,31 @@ pub(crate) async fn resolve_upstream_params(
             }
         }
         None => {
+            // Fallback to env vars when model is not in proxy_models.
+            // Only in non-test deployment modes; test mode (BDD mock) must fail
+            // fast with model_not_found so assertions on error types are stable.
+            if state.deployment_mode != "test" {
+                let api_key_env = std::env::var("OPENAI_API_KEY").ok()
+                    .or_else(|| std::env::var("OPENAPI_KEY").ok());
+                let api_base_env = std::env::var("OPENAI_BASE_URL")
+                    .or_else(|_| std::env::var("OPENAPI_BASE_URL"))
+                    .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
+
+                if api_key_env.is_some() {
+                    tracing::info!(
+                        %model_name,
+                        api_base = %api_base_env,
+                        "Model not in proxy_models, falling back to env vars"
+                    );
+                    return Ok(ResolvedUpstream {
+                        api_base: api_base_env,
+                        api_key: api_key_env,
+                        model_name: model_name.to_string(),
+                        input_cost_per_token: None,
+                        output_cost_per_token: None,
+                    });
+                }
+            }
             Err((
                 StatusCode::BAD_REQUEST,
                 Json(json!({
