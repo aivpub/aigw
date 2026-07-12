@@ -34,30 +34,33 @@ fn derive_key(master_key: &str) -> [u8; 32] {
 
 /// Decrypt a litellm-encrypted value.
 ///
-/// Attempts NaCl SecretBox first, then falls back to AES-256-GCM.
+/// Uses the `v2:gcm:` prefix to disambiguate: GCM-encrypted values always
+/// carry this prefix; all other values use NaCl SecretBox.
 ///
-/// The `v2:gcm:` prefix indicates AES-GCM encrypted values.
-/// Values encrypted with NaCl SecretBox use the raw base64-encoded format
-/// where the nonce is the first 24 bytes and the ciphertext is the rest.
+/// NaCl SecretBox format (base64-decoded):
+///   nonce[0..24] || ciphertext+tag[24..]
 ///
 /// AES-GCM format (base64-decoded):
 ///   salt[0..16] || nonce[16..28] || ciphertext[28..-16] || tag[-16..]
+///
+/// No silent fallback from NaCl to GCM: litellm always prefixes GCM values
+/// with `v2:gcm:`.  Falling through to GCM when NaCl fails only wastes
+/// 600 000 PBKDF2 iterations (several seconds in debug builds) on data that
+/// was never GCM-encrypted.
 pub fn decrypt_litellm_value(encrypted_b64: &str, master_key: &str) -> Result<String, String> {
     let data = decode_base64_safe(encrypted_b64)
         .map_err(|e| format!("base64 decode failed: {}", e))?;
 
-    // Check for v2:gcm: prefix indicating AES-256-GCM encrypted values
+    // Check for v2:gcm: prefix indicating AES-256-GCM encrypted values.
+    // litellm always writes this prefix for GCM-encrypted values.
     if encrypted_b64.starts_with("v2:gcm:") {
         return decrypt_gcm(&data, master_key);
     }
 
-    // Try NaCl SecretBox first (default for litellm)
-    if let Ok(result) = decrypt_nacl(&data, master_key) {
-        return Ok(result);
-    }
-
-    // Fallback: try AES-GCM
-    decrypt_gcm(&data, master_key)
+    // No prefix → NaCl SecretBox only.  GCM fallback is intentionally
+    // skipped: it costs PBKDF2 600 000 iterations per call (~2 s in
+    // debug builds) and was never reached for correctly-prefixed data.
+    decrypt_nacl(&data, master_key)
 }
 
 /// NaCl SecretBox decryption.
