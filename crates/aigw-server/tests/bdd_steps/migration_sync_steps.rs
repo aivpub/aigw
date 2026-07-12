@@ -17,7 +17,13 @@ fn real_api_enabled() -> bool {
 
 /// Returns the upstream litellm database URL.
 fn upstream_db_url() -> Option<String> {
-    std::env::var("AIGW_UPSTREAM_DB_URL").ok()
+    std::env::var("AIGW_UPSTREAM_DB_URL").ok().filter(|s| !s.is_empty())
+}
+
+/// Returns true when migration tests are fully configured.
+/// Requires AIGW_REAL_API=1 AND AIGW_UPSTREAM_DB_URL set.
+fn migration_enabled() -> bool {
+    real_api_enabled() && upstream_db_url().is_some()
 }
 
 /// Returns the upstream litellm master key.
@@ -78,10 +84,12 @@ fn bg_upstream_db_configured(_world: &mut TestWorld) {
     if !real_api_enabled() {
         return;
     }
-    assert!(
-        upstream_db_url().is_some(),
-        "AIGW_UPSTREAM_DB_URL must be set for migration sync tests"
-    );
+    if upstream_db_url().is_none() {
+        eprintln!(
+            "SKIP: AIGW_UPSTREAM_DB_URL not set — skipping migration sync/rollback scenario"
+        );
+        return;
+    }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -91,7 +99,7 @@ fn bg_upstream_db_configured(_world: &mut TestWorld) {
 /// Sync all plain tables and store per-table row counts for verification.
 #[when("从上游同步所有 plain tables 到 aigw")]
 async fn when_sync_plain_tables(world: &mut TestWorld) {
-    if !real_api_enabled() {
+    if !migration_enabled() {
         return;
     }
     let source_url = upstream_db_url().expect("AIGW_UPSTREAM_DB_URL not set");
@@ -143,7 +151,7 @@ async fn when_sync_plain_tables(world: &mut TestWorld) {
 
 #[when("从上游同步 credentials 表到 aigw")]
 async fn when_sync_credentials(world: &mut TestWorld) {
-    if !real_api_enabled() {
+    if !migration_enabled() {
         return;
     }
     let source_url = upstream_db_url().expect("AIGW_UPSTREAM_DB_URL not set");
@@ -182,7 +190,7 @@ async fn when_sync_credentials(world: &mut TestWorld) {
 
 #[when("从上游同步 proxy_models 表到 aigw")]
 async fn when_sync_proxy_models(world: &mut TestWorld) {
-    if !real_api_enabled() {
+    if !migration_enabled() {
         return;
     }
     let source_url = upstream_db_url().expect("AIGW_UPSTREAM_DB_URL not set");
@@ -221,7 +229,7 @@ async fn when_sync_proxy_models(world: &mut TestWorld) {
 
 #[when("从上游同步 spend_logs 表到 aigw（限制 10 条）")]
 async fn when_sync_spend_logs_limit_10(world: &mut TestWorld) {
-    if !real_api_enabled() {
+    if !migration_enabled() {
         return;
     }
     let source_url = upstream_db_url().expect("AIGW_UPSTREAM_DB_URL not set");
@@ -282,7 +290,7 @@ fn assert_counts_match(body: &serde_json::Value, name: &str) {
 
 #[then("同步成功无报错")]
 fn then_sync_ok(world: &mut TestWorld) {
-    if !real_api_enabled() {
+    if !migration_enabled() {
         return;
     }
     let body = world.last_body.as_ref().expect("no sync result");
@@ -291,7 +299,7 @@ fn then_sync_ok(world: &mut TestWorld) {
 
 #[then(expr = "organizations 表行数 >= 0")]
 fn then_org_rows_ge_0(world: &mut TestWorld) {
-    if !real_api_enabled() {
+    if !migration_enabled() {
         return;
     }
     let body = world.last_body.as_ref().expect("no sync result");
@@ -302,7 +310,7 @@ fn then_org_rows_ge_0(world: &mut TestWorld) {
 
 #[then(expr = "teams 表行数 > 0")]
 fn then_teams_rows_gt_0(world: &mut TestWorld) {
-    if !real_api_enabled() {
+    if !migration_enabled() {
         return;
     }
     let body = world.last_body.as_ref().expect("no sync result");
@@ -312,7 +320,7 @@ fn then_teams_rows_gt_0(world: &mut TestWorld) {
 
 #[then("所有 plain tables 与上游行数一致")]
 fn then_all_plain_tables_match(world: &mut TestWorld) {
-    if !real_api_enabled() {
+    if !migration_enabled() {
         return;
     }
     let body = world.last_body.as_ref().expect("no sync result");
@@ -330,7 +338,7 @@ fn then_all_plain_tables_match(world: &mut TestWorld) {
 
 #[then(expr = "credentials 表行数 > 0")]
 fn then_credentials_rows_gt_0(world: &mut TestWorld) {
-    if !real_api_enabled() {
+    if !migration_enabled() {
         return;
     }
     let body = world.last_body.as_ref().expect("no sync result");
@@ -340,7 +348,7 @@ fn then_credentials_rows_gt_0(world: &mut TestWorld) {
 
 #[then("credentials 表行数与上游一致")]
 fn then_credentials_match(world: &mut TestWorld) {
-    if !real_api_enabled() {
+    if !migration_enabled() {
         return;
     }
     let body = world.last_body.as_ref().expect("no sync result");
@@ -350,7 +358,7 @@ fn then_credentials_match(world: &mut TestWorld) {
 
 #[then(expr = "proxy_models 表行数 > 0")]
 fn then_models_rows_gt_0(world: &mut TestWorld) {
-    if !real_api_enabled() {
+    if !migration_enabled() {
         return;
     }
     let body = world.last_body.as_ref().expect("no sync result");
@@ -360,7 +368,7 @@ fn then_models_rows_gt_0(world: &mut TestWorld) {
 
 #[then("proxy_models 表行数与上游一致")]
 fn then_models_match(world: &mut TestWorld) {
-    if !real_api_enabled() {
+    if !migration_enabled() {
         return;
     }
     let body = world.last_body.as_ref().expect("no sync result");
@@ -372,7 +380,7 @@ fn then_models_match(world: &mut TestWorld) {
 
 #[then(expr = "spend_logs 表行数为 10")]
 fn then_spend_logs_count_10(world: &mut TestWorld) {
-    if !real_api_enabled() {
+    if !migration_enabled() {
         return;
     }
     let body = world.last_body.as_ref().expect("no sync result");

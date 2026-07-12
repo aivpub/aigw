@@ -102,9 +102,24 @@ async fn main() {
     // Cucumber run() resolves path relative to Cargo manifest dir.
     // Run scenarios sequentially: the mock upstream uses shared state
     // and concurrent scenarios would interfere with each other.
+    //
+    // tag filter: when AIGW_REAL_API=1, only run @real_api scenarios.
+    // Mock scenarios (63 of 78) are skipped — they would waste time
+    // creating sqlite::memory: DBs and running migrations for nothing,
+    // since their steps become no-ops when AIGW_REAL_API is set.
+    let real_api_mode = std::env::var("AIGW_REAL_API").as_deref() == Ok("1");
     TestWorld::cucumber()
         .max_concurrent_scenarios(1)
-        .run("tests/features")
+        .filter_run("tests/features", move |feature, _rule, scenario| {
+            if real_api_mode {
+                // @real_api is a Feature-level tag (cucumber's custom filter
+                // doesn't auto-inherit Feature tags). Check both levels.
+                feature.tags.iter().chain(scenario.tags.iter())
+                    .any(|t| t == "real_api")
+            } else {
+                true
+            }
+        })
         .await;
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

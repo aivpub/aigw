@@ -14,7 +14,12 @@ fn real_api_enabled() -> bool {
 }
 
 fn upstream_db_url() -> Option<String> {
-    std::env::var("AIGW_UPSTREAM_DB_URL").ok()
+    std::env::var("AIGW_UPSTREAM_DB_URL").ok().filter(|s| !s.is_empty())
+}
+
+/// Returns true when migration tests are fully configured.
+fn migration_enabled() -> bool {
+    real_api_enabled() && upstream_db_url().is_some()
 }
 
 fn target_db_url() -> String {
@@ -64,7 +69,7 @@ async fn get_row_count(url: &str, table: &str) -> anyhow::Result<i64> {
 /// First does a forward sync to ensure aigw has data, then exports back.
 #[when("从 aigw 回滚所有 plain tables 到上游 litellm")]
 async fn when_rollback_plain_tables(world: &mut TestWorld) {
-    if !real_api_enabled() {
+    if !migration_enabled() {
         return;
     }
     let upstream_url = upstream_db_url().expect("AIGW_UPSTREAM_DB_URL not set");
@@ -128,7 +133,7 @@ async fn when_rollback_plain_tables(world: &mut TestWorld) {
 /// Rollback credentials: aigw → litellm with key rotation.
 #[when("从 aigw 回滚 credentials 表到上游 litellm")]
 async fn when_rollback_credentials(world: &mut TestWorld) {
-    if !real_api_enabled() {
+    if !migration_enabled() {
         return;
     }
     let upstream_url = upstream_db_url().expect("AIGW_UPSTREAM_DB_URL not set");
@@ -199,7 +204,7 @@ fn assert_counts_match(body: &serde_json::Value, name: &str) {
 
 #[then("回滚同步成功无报错")]
 fn then_rollback_ok(world: &mut TestWorld) {
-    if !real_api_enabled() {
+    if !migration_enabled() {
         return;
     }
     let body = world.last_body.as_ref().expect("no rollback result");
@@ -208,7 +213,7 @@ fn then_rollback_ok(world: &mut TestWorld) {
 
 #[then("回滚后 plain tables 与源 aigw 行数一致")]
 fn then_rollback_plain_match(world: &mut TestWorld) {
-    if !real_api_enabled() {
+    if !migration_enabled() {
         return;
     }
     let body = world.last_body.as_ref().expect("no rollback result");
@@ -225,7 +230,7 @@ fn then_rollback_plain_match(world: &mut TestWorld) {
 
 #[then("回滚后 credentials 表与源 aigw 行数一致")]
 fn then_rollback_credentials_match(world: &mut TestWorld) {
-    if !real_api_enabled() {
+    if !migration_enabled() {
         return;
     }
     let body = world.last_body.as_ref().expect("no rollback result");
