@@ -120,13 +120,12 @@ fn cast_expr(col_name: &str, col_ty: Option<&str>, ph: &str, target_url: &str) -
         return ph.to_string();
     }
     let ty = col_ty.unwrap_or("").to_lowercase();
-    // Numeric columns: bind_cell() handles type coercion (empty string → NULL::f64,
-    // "100.0" → f64), so no SQL-level cast needed. Plain placeholder is correct.
-    if is_numeric(&ty) && !col_name.starts_with("user_api_key_hash") {
+    // Numeric and boolean columns: bind_cell() handles type coercion
+    // (empty string → NULL::f64 / None::<bool>, "100.0" → f64,
+    // "true"/"1" → true). No SQL-level CAST needed — plain placeholder
+    // is correct because the bound parameter is already the right PG type.
+    if (is_numeric(&ty) || ty == "boolean") && !col_name.starts_with("user_api_key_hash") {
         return ph.to_string();
-    }
-    if ty == "boolean" {
-        return format!("CAST(NULLIF({}, '') AS boolean)", ph);
     }
     if (ty == "jsonb" || ty == "json") && !col_name.starts_with("user_api_key_hash") {
         format!("NULLIF({}, '')::jsonb", ph)
