@@ -33,21 +33,30 @@ fn quote_ident(name: &str, db_url: &str) -> String {
 /// Get column names and data types for a table in the target database.
 async fn target_column_info(target: &AnyPool, table: &str, db_url: &str) -> Vec<(String, String)> {
     if is_pg(db_url) {
-        let rows = sqlx::query(
-            "SELECT column_name::text, data_type::text FROM information_schema.columns \
-             WHERE table_name = $1 AND table_schema = 'public' \
-             ORDER BY ordinal_position",
-        )
-        .bind(table)
+        // Use udt_name for user-defined types (arrays, enums) + data_type for built-in.
+        // information_schema.columns.data_type returns 'ARRAY' for array columns;
+        // udt_name gives the actual type name like '_text' (internal name for text[]).
+        // PG stores unquoted table names in lowercase in information_schema.
+        let pg_table = table.to_lowercase();
+        // Try current schema and PUBLIC fallback (litellm sometimes uses mixed case schema).
+        let query = r#"SELECT column_name::text,
+               CASE WHEN data_type = 'ARRAY' THEN udt_name ELSE data_type END::text
+        FROM information_schema.columns
+        WHERE lower(table_name) = $1
+        ORDER BY ordinal_position"#;
+        let rows = sqlx::query(query)
+        .bind(&pg_table)
         .fetch_all(target)
         .await;
-        match rows {
-            Ok(r) => r
+        let result: Vec<(String, String)> = match rows {
+            Ok(ref r) if !r.is_empty() => r
                 .iter()
                 .map(|row| (row.get::<String, _>(0), row.get::<String, _>(1)))
                 .collect(),
-            Err(_) => Vec::new(),
-        }
+            Ok(_) => { eprintln!("  [DEBUG] target_column_info({table}): empty result"); Vec::new() }
+            Err(ref e) => { eprintln!("  [DEBUG] target_column_info({table}) error: {e}"); Vec::new() }
+        };
+        result
     } else if is_mysql(db_url) {
         // Use INFORMATION_SCHEMA instead of SHOW COLUMNS because sqlx Any driver
         // cannot decode the Type column from SHOW COLUMNS results on MySQL.
@@ -111,17 +120,149 @@ fn cast_expr(col_name: &str, col_ty: Option<&str>, ph: &str, target_url: &str) -
         return ph.to_string();
     }
     let ty = col_ty.unwrap_or("").to_lowercase();
-    if ty == "jsonb" && !col_name.starts_with("user_api_key_hash") {
-        format!("CAST({} AS jsonb)", ph)
+    // Numeric columns: bind_cell() handles type coercion (empty string → NULL::f64,
+    // "100.0" → f64), so no SQL-level cast needed. Plain placeholder is correct.
+    if is_numeric(&ty) && !col_name.starts_with("user_api_key_hash") {
+        return ph.to_string();
+    }
+    if ty == "boolean" {
+        return format!("CAST(NULLIF({}, '') AS boolean)", ph);
+    }
+    if (ty == "jsonb" || ty == "json") && !col_name.starts_with("user_api_key_hash") {
+        format!("NULLIF({}, '')::jsonb", ph)
     } else if ty.contains("timestamp") {
         if ty.contains("with time zone") || ty == "timestamptz" {
-            format!("CAST({} AS timestamptz)", ph)
+            format!("CAST(NULLIF({}, '') AS timestamptz)", ph)
         } else {
-            format!("CAST({} AS timestamp)", ph)
+            format!("CAST(NULLIF({}, '') AS timestamp)", ph)
         }
+    } else if (ty.ends_with("[]") || ty.starts_with("_")) && !col_name.starts_with("user_api_key_hash") {
+        format!("string_to_array(NULLIF({}, ''), ',')", ph)
     } else {
         ph.to_string()
     }
+}
+
+/// Get source column info for a table and build a SELECT expression that casts
+/// non-text columns to TEXT for sqlx::Any compatibility (it cannot decode SQLite DATETIME).
+/// `source_url` is the URL of the DB being queried (source/sqlite DB for plain tables).
+async fn build_select_cols(source: &AnyPool, table: &str, _source_url: &str) -> String {
+    // Probe source table columns. Try SQLite PRAGMA first; fall back to
+    // information_schema for PG/MySQL. sqlx::Any cannot decode SQLite DATETIME
+    // or BOOLEAN — CAST them to TEXT.
+    let sql = format!("PRAGMA table_info(\"{}\")", table);
+    let rows_res = sqlx::query(&sql).fetch_all(source).await;
+
+    let (names, types): (Vec<String>, Vec<String>) = match rows_res {
+        Ok(ref rows) if !rows.is_empty() => {
+            let names: Vec<String> = rows.iter().map(|r| r.try_get::<String, _>(1).unwrap_or_default()).collect();
+            let types: Vec<String> = rows.iter().map(|r| r.try_get::<String, _>(2).unwrap_or_default()).collect();
+            (names, types)
+        }
+        _ => return "*".to_string(),
+    };
+
+    let cols: Vec<String> = names.iter().zip(types.iter()).map(|(name, ty)| {
+        let ty_lower = ty.to_lowercase();
+        if ty_lower.contains("datetime")
+            || ty_lower.contains("timestamp")
+            || ty_lower.contains("date")
+            || ty_lower.contains("bool")
+        {
+            format!("CAST(\"{}\" AS TEXT) AS \"{}\"", name, name)
+        } else {
+            format!("\"{}\"", name)
+        }
+    }).collect();
+
+    cols.join(", ")
+}
+
+/// Normalize a string value for the target column type.
+/// - Empty strings → None for numeric / timestamp / array PG columns
+/// - Empty strings → "{}" for JSON columns
+/// - Otherwise pass through.
+fn normalize_string_value(val: String, col_ty: &str) -> Option<String> {
+    if val.is_empty() {
+        let ty = col_ty.to_lowercase();
+        if ty == "jsonb" || ty == "json" {
+            Some("{}".to_string())
+        } else if ty == "text" || ty == "varchar" || ty == "character varying" || ty == "" {
+            Some(String::new())
+        } else {
+            // Numeric, timestamp, boolean, array, etc. — convert to NULL
+            None
+        }
+    } else {
+        Some(val)
+    }
+}
+
+/// Returns true if the PG column type is numeric (int/float/etc.).
+fn is_numeric(col_ty: &str) -> bool {
+    let ty = col_ty.to_lowercase();
+    ty.contains("int") || ty == "integer" || ty == "bigint" || ty == "smallint"
+        || ty == "tinyint" || ty == "serial" || ty == "bigserial"
+        || ty.contains("numeric") || ty.contains("decimal")
+        || ty.contains("double") || ty.contains("real") || ty.contains("float")
+}
+
+/// Bind a source row value to a sqlx query parameter, with PostgreSQL
+/// numeric-column awareness so that text source values (empty strings,
+/// "100.0") don't cause "text vs double precision" PREPARE errors.
+fn bind_cell<'q>(
+    q: sqlx::query::Query<'q, sqlx::Any, <sqlx::Any as sqlx::Database>::Arguments<'q>>,
+    value: &sqlx::any::AnyRow,
+    idx: usize,
+    col_ty: Option<&str>,
+    target_url: &str,
+) -> sqlx::query::Query<'q, sqlx::Any, <sqlx::Any as sqlx::Database>::Arguments<'q>> {
+    let ty_lower = col_ty.unwrap_or("").to_lowercase();
+    if is_pg(target_url) && is_numeric(&ty_lower) {
+        if let Ok(v) = value.try_get::<String, _>(idx) {
+            if v.is_empty() { return q.bind(None::<f64>); }
+            return q.bind(v.parse::<f64>().ok());
+        }
+        if let Ok(v) = value.try_get::<i64, _>(idx) { return q.bind(v as f64); }
+        if let Ok(v) = value.try_get::<f64, _>(idx) { return q.bind(v); }
+        return q.bind(None::<f64>);
+    }
+    if is_pg(target_url) && ty_lower == "boolean" {
+        if let Ok(v) = value.try_get::<String, _>(idx) {
+            if v.is_empty() { return q.bind(None::<bool>); }
+            let v = v.to_lowercase();
+            return q.bind(v == "true" || v == "1");
+        }
+        if let Ok(v) = value.try_get::<i64, _>(idx) { return q.bind(v != 0); }
+        if let Ok(v) = value.try_get::<bool, _>(idx) { return q.bind(v); }
+        return q.bind(None::<bool>);
+    }
+    if is_pg(target_url) && (ty_lower == "jsonb" || ty_lower == "json") {
+        // PG jsonb/json — bind as String, but cast_expr adds ::jsonb
+        if let Ok(v) = value.try_get::<String, _>(idx) {
+            if v.is_empty() { return q.bind("{}"); }
+            return q.bind(v);
+        }
+        return q.bind("{}");
+    }
+    if is_pg(target_url) && ty_lower.contains("timestamp") {
+        // PG timestamp — bind as String, cast_expr adds CAST(... AS timestamp)
+        if let Ok(v) = value.try_get::<String, _>(idx) {
+            if v.is_empty() { return q.bind(None::<String>); }
+            return q.bind(v);
+        }
+        return q.bind(None::<String>);
+    }
+    // non-PG or text/varchar: bind as-is
+    if let Ok(v) = value.try_get::<String, _>(idx) {
+        if v.is_empty() {
+            return q.bind(None::<String>);
+        }
+        return q.bind(v);
+    }
+    if let Ok(v) = value.try_get::<i64, _>(idx) { return q.bind(v); }
+    if let Ok(v) = value.try_get::<f64, _>(idx) { return q.bind(v); }
+    q.bind(None::<String>)
 }
 
 /// Connect to a database from a file path or URL.
@@ -180,7 +321,12 @@ async fn migrate_plain_table(
     tgt_table: &str,
 ) -> anyhow::Result<usize> {
     let src_quoted = quote_ident(src_table, target_url);
-    let query = format!("SELECT * FROM {}", src_quoted);
+    // Build SELECT with CAST(TEXT) for non-TEXT source columns.
+    // The source pool may be SQLite or PG; probe its column types.
+    // sqlx::Any cannot decode SQLite DATETIME/BOOLEAN types — CAST them to TEXT.
+    // Use a simple PRAGMA/INFORMATION_SCHEMA probe to get column types from source.
+    let select_cols = build_select_cols(source, src_table, target_url).await;
+    let query = format!("SELECT {} FROM {}", select_cols, src_quoted);
     let rows = match sqlx::query(&query).fetch_all(source).await {
         Ok(r) => r,
         Err(e) => {
@@ -254,16 +400,8 @@ async fn migrate_plain_table(
         );
 
         let mut q = sqlx::query(&insert_sql);
-        for &(_name, _col_ty, src_idx) in &insert_cols {
-            if let Ok(v) = row.try_get::<String, _>(src_idx) {
-                q = q.bind(v);
-            } else if let Ok(v) = row.try_get::<i64, _>(src_idx) {
-                q = q.bind(v);
-            } else if let Ok(v) = row.try_get::<f64, _>(src_idx) {
-                q = q.bind(v);
-            } else {
-                q = q.bind(String::new());
-            }
+        for &(_name, col_ty, src_idx) in &insert_cols {
+            q = bind_cell(q, row, src_idx, col_ty, target_url);
         }
         q.execute(target).await?;
         inserted += 1;
@@ -374,21 +512,17 @@ async fn migrate_credentials(
                             }
                         }
                     }
-                } else if let Ok(v) = row.try_get::<i64, _>(i) {
-                    q = q.bind(v);
-                } else if let Ok(v) = row.try_get::<f64, _>(i) {
-                    q = q.bind(v);
                 } else {
-                    q = q.bind(String::new());
+                    q = bind_cell(q, row, i, tgt_type_map.get(src_columns[i].as_str()).copied(), target_url);
                 }
-            } else if let Ok(v) = row.try_get::<String, _>(i) {
-                q = q.bind(v);
-            } else if let Ok(v) = row.try_get::<i64, _>(i) {
-                q = q.bind(v);
-            } else if let Ok(v) = row.try_get::<f64, _>(i) {
-                q = q.bind(v);
+            } else if i == values_col && is_pg(target_url) {
+                // credential_values is always jsonb in litellm PG schema.
+                // bind_cell handles it as text → PG will reject unless we use
+                // explicit ::jsonb cast.  But bind_cell doesn't do jsonb casts;
+                // this is handled by the encrypted branch above.
+                q = bind_cell(q, row, i, tgt_type_map.get(src_columns[i].as_str()).copied(), target_url);
             } else {
-                q = q.bind(String::new());
+                q = bind_cell(q, row, i, tgt_type_map.get(src_columns[i].as_str()).copied(), target_url);
             }
         }
         q.execute(target).await?;
@@ -501,21 +635,11 @@ async fn migrate_proxy_models(
                             }
                         }
                     }
-                } else if let Ok(v) = row.try_get::<i64, _>(i) {
-                    q = q.bind(v);
-                } else if let Ok(v) = row.try_get::<f64, _>(i) {
-                    q = q.bind(v);
                 } else {
-                    q = q.bind(String::new());
+                    q = bind_cell(q, row, i, tgt_type_map.get(src_columns[i].as_str()).copied(), target_url);
                 }
-            } else if let Ok(v) = row.try_get::<String, _>(i) {
-                q = q.bind(v);
-            } else if let Ok(v) = row.try_get::<i64, _>(i) {
-                q = q.bind(v);
-            } else if let Ok(v) = row.try_get::<f64, _>(i) {
-                q = q.bind(v);
             } else {
-                q = q.bind(String::new());
+                q = bind_cell(q, row, i, tgt_type_map.get(src_columns[i].as_str()).copied(), target_url);
             }
         }
         q.execute(target).await?;
@@ -577,15 +701,7 @@ async fn migrate_spend_logs(
 
         let mut q = sqlx::query(&insert_sql);
         for i in 0..col_count {
-            if let Ok(v) = row.try_get::<String, _>(i) {
-                q = q.bind(v);
-            } else if let Ok(v) = row.try_get::<i64, _>(i) {
-                q = q.bind(v);
-            } else if let Ok(v) = row.try_get::<f64, _>(i) {
-                q = q.bind(v);
-            } else {
-                q = q.bind(String::new());
-            }
+            q = bind_cell(q, row, i, None, target_url);
         }
         q.execute(target).await?;
         inserted += 1;
