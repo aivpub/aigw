@@ -148,7 +148,7 @@ pub async fn team_list(
         .map(|t| {
             let mut v = serde_json::to_value(t).unwrap_or(json!({}));
             if let Some(obj) = v.as_object_mut() {
-                if let Some(ref budget_str) = t.max_budget {
+                if let Some(ref _budget_str) = t.max_budget {
                     obj["max_budget"] = json!(t.max_budget_f64());
                 }
                 obj["max_parallel_requests"] = json!(t.max_parallel_requests_i32());
