@@ -30,6 +30,9 @@ tasks:
         set -a
         [ -f .env ] && . ./.env
         set +a
+        # bridge .env naming: OPENAPI_KEY → OPENAI_API_KEY (server reads this)
+        export OPENAI_API_KEY="${OPENAI_API_KEY:-${OPENAPI_KEY:-}}"
+        export OPENAI_BASE_URL="${OPENAI_BASE_URL:-${OPENAPI_BASE_URL:-}}"
         export AIGW_BASE_URL="${AIGW_BASE_URL:-${OPENAPI_BASE_URL:-http://localhost:4000}}"
         export AIGW_MASTER_KEY="${AIGW_MASTER_KEY:-${OPENAPI_KEY:-${MASTER_KEY:-sk-master-test}}}"
         export AIGW_REAL_API=1
