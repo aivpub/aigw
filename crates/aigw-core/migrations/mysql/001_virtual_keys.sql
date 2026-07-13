@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS virtual_keys (
     token VARCHAR(255) NOT NULL,
     key_name VARCHAR(255),
     key_alias VARCHAR(255),
-    soft_budget_cooldown TEXT NOT NULL DEFAULT 'false',
+    soft_budget_cooldown TEXT NOT NULL,
     spend DOUBLE NOT NULL DEFAULT 0.0,
     expires DATETIME(3),
     models JSON NOT NULL,

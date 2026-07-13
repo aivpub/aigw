@@ -379,6 +379,20 @@ fn normalize_mysql_type(raw: &str) -> String {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// MySQL JSON helper — hex-encoded literal to avoid escaping issues
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Encode a string as a MySQL hex-encoded JSON literal.
+/// Bypasses all SQL-string-escaping problems — PG JSONB can contain
+/// arbitrary characters that MySQL's JSON validator rejects when
+/// passed via '…'-quoting.  `X'<hex>'` is a raw binary → `CAST(… AS JSON)`
+/// feeds it directly to MySQL's JSON parser without shell-quoting.
+fn mysql_json_hex_literal(s: &str) -> String {
+    let hex: String = s.as_bytes().iter().map(|b| format!("{:02X}", b)).collect();
+    format!("CAST(X'{}' AS JSON)", hex)
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Value → target DB literal
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -411,10 +425,23 @@ pub fn value_to_target_literal(v: &Value, col_type: &str, target: DbKind) -> Str
                     "double precision" | "float8" | "real" | "float4" | "numeric" | "decimal" => "0".to_string(),
                     _ if ty.ends_with("[]") || ty.starts_with("_") => "'{}'".to_string(),
                     "text" | "character varying" | "varchar" => "''".to_string(),
-                    // FK columns and unknown non-null types: use NULL.
-                    // Foreign key columns (e.g. budget_id) accept NULL but not ''.
-                    _ => "NULL".to_string(),
+                    // Any time/date type not matched above (e.g. "timestamp with local time zone")
+                    _ if ty.contains("time") => "'1970-01-01 00:00:00+00'::timestamptz".to_string(),
+                    _ if ty.contains("date") => "'1970-01-01'::date".to_string(),
+                    _ => "''".to_string(),
                 },
+                // PG fallback: safe default for unknown types instead of NULL
+                DbKind::Postgres => "''".to_string(),
+                // MySQL: safe fallback for unknown types
+                DbKind::Mysql if !ty.is_empty() => match ty.as_str() {
+                    "json" | "blob" | "binary" | "varbinary" => "'{}'".to_string(),
+                    "integer" | "int" | "bigint" | "smallint" | "tinyint" | "float" | "double" | "decimal" | "numeric" | "real" => "0".to_string(),
+                    "timestamp" | "datetime" => "'1970-01-01 00:00:00'".to_string(),
+                    "date" => "'1970-01-01'".to_string(),
+                    "time" => "'00:00:00'".to_string(),
+                    _ => "''".to_string(),
+                },
+                DbKind::Mysql => "''".to_string(),
                 // SQLite INSERT OR IGNORE silently drops rows with NULL in
                 // NOT NULL columns — provide safe defaults so rows land.
                 DbKind::Sqlite if !ty.is_empty() => match ty.as_str() {
@@ -436,6 +463,10 @@ pub fn value_to_target_literal(v: &Value, col_type: &str, target: DbKind) -> Str
                         if *b { "true".into() } else { "false".into() }
                     } else if ty.contains("int") || ty == "smallint" || ty == "bigint" {
                         (if *b { "1" } else { "0" }).into()
+                    } else if ty.contains("timestamp") || ty.contains("date") || ty.contains("time") {
+                        // SQLite stores "false"/"true" as BLOB→JSON→Bool →
+                        // won't convert to timestamp.  Use NULL.
+                        "NULL".to_string()
                     } else {
                         format!("'{}'", if *b { "true" } else { "false" })
                     }
@@ -447,6 +478,8 @@ pub fn value_to_target_literal(v: &Value, col_type: &str, target: DbKind) -> Str
                 DbKind::Mysql => {
                     if ty.contains("int") || ty == "tinyint" || ty.contains("bool") {
                         (if *b { "1" } else { "0" }).into()
+                    } else if ty.contains("timestamp") || ty.contains("date") || ty.contains("time") || ty.contains("datetime") {
+                        "NULL".to_string()
                     } else {
                         format!("'{}'", if *b { "true" } else { "false" })
                     }
@@ -492,6 +525,13 @@ pub fn value_to_target_literal(v: &Value, col_type: &str, target: DbKind) -> Str
                         return match ty.as_str() {
                             "jsonb" | "json" => "'{}'::jsonb".to_string(),
                             "boolean" | "bool" => "false".to_string(),
+                            "timestamp with time zone" | "timestamptz"
+                                => "'1970-01-01 00:00:00+00'::timestamptz".to_string(),
+                            "timestamp without time zone" | "timestamp"
+                                => "'1970-01-01 00:00:00'::timestamp".to_string(),
+                            "date" => "'1970-01-01'::date".to_string(),
+                            "time without time zone" | "time" => "'00:00:00'::time".to_string(),
+                            _ if ty.contains("time") || ty.contains("date") => "'1970-01-01 00:00:00+00'::timestamptz".to_string(),
                             _ if would_reject_empty_string(&ty, target) => "0".to_string(),
                             _ => "''".to_string(),
                         };
@@ -507,7 +547,8 @@ pub fn value_to_target_literal(v: &Value, col_type: &str, target: DbKind) -> Str
                     _ => {
                         return match ty.as_str() {
                             "" => "''".to_string(),
-                            _ if target == DbKind::Mysql && (ty.contains("json") || ty.contains("int") || ty.contains("double") || ty.contains("float")) => "0".to_string(),
+                            _ if target == DbKind::Mysql && ty.contains("json") => "'{}'".to_string(),
+                            _ if target == DbKind::Mysql && (ty.contains("int") || ty.contains("double") || ty.contains("float")) => "0".to_string(),
                             _ => "''".to_string(),
                         };
                     }
@@ -526,8 +567,9 @@ pub fn value_to_target_literal(v: &Value, col_type: &str, target: DbKind) -> Str
                                     format!("'{}'::jsonb", escaped)
                                 }
                                 Err(_) => {
-                                    let escaped = s.replace('\'', "''");
-                                    format!("'{}'", escaped)
+                                    // Not valid JSON (e.g. empty blob, binary data) —
+                                    // use empty JSON object instead of raw text
+                                    "'{}'::jsonb".to_string()
                                 }
                             }
                         }
@@ -566,11 +608,13 @@ pub fn value_to_target_literal(v: &Value, col_type: &str, target: DbKind) -> Str
                 }
                 DbKind::Mysql => {
                     if ty == "json" || ty.contains("json") {
-                        // MySQL strict JSON: validate or fallback to {}
+                        // MySQL strict JSON: validate AND normalize via serde_json
+                        // round-trip to clean up PG-jsonb-specific quirks that
+                        // MySQL's JSON validator rejects.  Use hex encoding to
+                        // avoid any SQL-string-escaping problems.
                         match serde_json::from_str::<Value>(s) {
                             Ok(json_val) => {
-                                let escaped = json_val.to_string().replace('\'', "''");
-                                format!("'{}'", escaped)
+                                mysql_json_hex_literal(&json_val.to_string())
                             }
                             Err(_) => "'{}'".to_string(),
                         }
@@ -584,6 +628,13 @@ pub fn value_to_target_literal(v: &Value, col_type: &str, target: DbKind) -> Str
 
         Value::Array(_) | Value::Object(_) => {
             let json_str = v.to_string();
+            // MySQL JSON is stricter than PG JSONB — validate before inserting.
+            // Invalid JSON (e.g. PG jsonb with trailing garbage) → fall back to '{}'.
+            if target == DbKind::Mysql && (ty == "json" || ty.contains("json"))
+                && serde_json::from_str::<Value>(&json_str).is_err()
+            {
+                return "'{}'".to_string();
+            }
             let escaped = json_str.replace('\'', "''");
             match target {
                 DbKind::Postgres => {
@@ -596,12 +647,11 @@ pub fn value_to_target_literal(v: &Value, col_type: &str, target: DbKind) -> Str
                     }
                 }
                 DbKind::Sqlite => {
-                    // SQLite: store JSON objects/arrays as text
                     format!("'{}'", escaped)
                 }
                 DbKind::Mysql => {
                     if ty == "json" || ty.contains("json") {
-                        format!("'{}'", escaped)
+                        mysql_json_hex_literal(&json_str)
                     } else {
                         format!("'{}'", escaped)
                     }
