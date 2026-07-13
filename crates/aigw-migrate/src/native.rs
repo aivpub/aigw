@@ -593,13 +593,20 @@ pub fn value_to_target_literal(v: &Value, col_type: &str, target: DbKind) -> Str
                     }
                 }
                 DbKind::Sqlite => {
-                    // SQLite: JSON → BLOB bytes; everything else → text/number
                     if ty.contains("json") || ty == "blob" || ty.contains("blob") {
-                        // Serialize to JSON bytes via hex literal
-                        // But actually, for SQLite, we can just store as text —
-                        // the app reads BLOB→Vec<u8>→JSON, and the JSON string
-                        // is perfectly valid.
-                        let escaped = s.replace('\'', "''");
+                        // Store as JSON-compatible string: if the value is NOT
+                        // valid JSON, wrap it in JSON double quotes so sqlx can
+                        // decode it as serde_json::Value::String.  Otherwise
+                        // bare encrypted strings like "v2:gcm:..." cause
+                        // serde_json::from_str to fail when reading back,
+                        // breaking /spend/providers decryption.
+                        let escaped = if serde_json::from_str::<Value>(s).is_ok() {
+                            s.replace('\'', "''")
+                        } else {
+                            // Wrap non-JSON strings as JSON strings
+                            serde_json::to_string(s).unwrap_or_else(|_| s.to_string())
+                                .replace('\'', "''")
+                        };
                         format!("'{}'", escaped)
                     } else {
                         let escaped = s.replace('\'', "''");
