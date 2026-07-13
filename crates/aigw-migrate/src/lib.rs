@@ -21,6 +21,7 @@ pub const TABLE_MAPPINGS: &[(&str, &str)] = &[
 
 pub mod export;
 pub mod import;
+pub mod native;
 pub mod pre_check;
 pub mod remote_export;
 pub mod remote_import;
