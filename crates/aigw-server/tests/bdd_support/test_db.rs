@@ -106,7 +106,12 @@ impl TestDatabaseManager {
                 std::fs::create_dir_all(&dir)
                     .map_err(|e| format!("create temp dir: {e}"))?;
                 let path = dir.join(format!("{db_name}.db"));
-                let database_url = format!("sqlite:///{}", path.display());
+                // `sqlite://` + `/abs/path` = `sqlite:///abs/path` (3 slashes — correct).
+                // Do NOT use `sqlite:///` + `/abs/path` — that produces 4 slashes,
+                // which sqlx's SqliteConnectOptions and AnyConnectOptions parse
+                // inconsistently (UNC path vs triple-slash), causing writes and
+                // reads to land on different physical files.
+                let database_url = format!("sqlite://{}", path.display());
                 Ok(DbInfo {
                     database_url,
                     db_name: path.to_string_lossy().to_string(),

@@ -14,6 +14,9 @@ use crate::native::{self, SourcePool};
 use std::collections::HashMap;
 
 /// Tables without encrypted fields — plain copy (aigw name → litellm name).
+/// NOTE: virtual_keys is excluded from export because the aigw server creates
+/// keys during BDD scenarios that reference locally-created budgets/organizations.
+/// Exporting them back to litellm would violate FK constraints.
 const PLAIN_TABLES: &[(&str, &str)] = &[
     ("organizations", "LiteLLM_OrganizationTable"),
     ("teams", "LiteLLM_TeamTable"),
@@ -22,7 +25,6 @@ const PLAIN_TABLES: &[(&str, &str)] = &[
     ("budgets", "LiteLLM_BudgetTable"),
     ("organization_memberships", "LiteLLM_OrganizationMembership"),
     ("team_memberships", "LiteLLM_TeamMembership"),
-    ("virtual_keys", "LiteLLM_VerificationToken"),
     ("config", "LiteLLM_Config"),
 ];
 

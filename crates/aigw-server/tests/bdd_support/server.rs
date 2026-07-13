@@ -67,9 +67,11 @@ impl ServerGuard {
 
         // Common args for both paths.
         // When using cargo run, the "--" separator is already added above.
+        // Collapse sqlite://// → sqlite:// to prevent driver-level path divergence.
+        let database_url = database_url.replace("sqlite:////", "sqlite://");
         cmd.args([
             "--database-url",
-            database_url,
+            &database_url,
             "--master-key",
             master_key,
             "--bind",

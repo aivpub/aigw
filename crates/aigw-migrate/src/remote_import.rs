@@ -332,18 +332,12 @@ async fn migrate_spend_logs(
     skip_columns_set: &HashSet<(String, String)>,
 ) -> anyhow::Result<usize> {
     let t_fetch = std::time::Instant::now();
-    let rows = match source.read_rows("LiteLLM_SpendLogs").await {
+    let rows = match source.read_rows_with_limit("LiteLLM_SpendLogs", limit).await {
         Ok(r) => r,
         Err(e) => {
             eprintln!("  [SKIP] LiteLLM_SpendLogs: {}", e);
             return Ok(0);
         }
-    };
-
-    let rows = if let Some(lim) = limit {
-        rows.into_iter().take(lim).collect::<Vec<_>>()
-    } else {
-        rows
     };
 
     eprintln!("  [TIMING] spend_logs fetch: {:?} ({} rows)", t_fetch.elapsed(), rows.len());

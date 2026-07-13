@@ -59,20 +59,10 @@ fn quote_table(url: &str, table: &str) -> String {
     }
 }
 
-/// Query row count for a table from the given DB URL.
+/// Query row count using SourcePool (same driver as migration code).
 async fn get_row_count(url: &str, table: &str) -> anyhow::Result<i64> {
-    sqlx::any::install_default_drivers();
-    let pool = AnyPoolOptions::new()
-        .max_connections(1)
-        .connect(url)
-        .await?;
-    let quoted = quote_table(url, table);
-    let count: i64 = sqlx::query(&format!("SELECT COUNT(*) FROM {}", quoted))
-        .fetch_one(&pool)
-        .await
-        .map(|row| row.get(0))?;
-    pool.close().await;
-    Ok(count)
+    let pool = aigw_migrate::native::SourcePool::connect(url).await?;
+    pool.count_rows(table).await
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
