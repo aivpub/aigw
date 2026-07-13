@@ -1375,7 +1375,7 @@ impl SpendLogStore for SqlitePool {
         // at request time and reflects the actual upstream provider (e.g. "openai",
         // "deepseek").  litellm_params.model is the proxied model name, NOT the provider.
         let rows: Vec<(String, i64, f64, i64)> = sqlx::query_as(
-            r#"SELECT COALESCE(NULLIF(sl.custom_llm_provider, ''), sl.model) as provider,
+            r#"SELECT COALESCE(NULLIF(sl.custom_llm_provider, ''), 'unknown') as provider,
                COALESCE(SUM(sl.total_tokens), 0) as total_tokens,
                COALESCE(SUM(sl.spend), 0) as total_spend,
                COUNT(sl.request_id) as requests
@@ -1600,7 +1600,7 @@ impl SpendLogStore for MySqlPool {
         // Use sl.custom_llm_provider — populated at request time, reflects
         // the actual upstream provider, not the proxied model name.
         let rows: Vec<(String, i64, f64, i64)> = sqlx::query_as(
-            r#"SELECT COALESCE(NULLIF(sl.custom_llm_provider, ''), sl.model) as provider,
+            r#"SELECT COALESCE(NULLIF(sl.custom_llm_provider, ''), 'unknown') as provider,
                COALESCE(SUM(sl.total_tokens), 0) as total_tokens,
                COALESCE(SUM(sl.spend), 0) as total_spend,
                COUNT(sl.request_id) as requests
@@ -1794,7 +1794,7 @@ impl SpendLogStore for PgPool {
     async fn aggregate_spend_by_provider(&self) -> Result<Vec<SpendProviderAgg>> {
         // Use sl.custom_llm_provider — populated at request time by the router.
         let rows: Vec<(String, i64, f64, i64)> = sqlx::query_as(
-            r#"SELECT COALESCE(NULLIF(sl.custom_llm_provider, ''), sl.model) as provider,
+            r#"SELECT COALESCE(NULLIF(sl.custom_llm_provider, ''), 'unknown') as provider,
                COALESCE(SUM(sl.total_tokens), 0) as total_tokens,
                COALESCE(SUM(sl.spend), 0) as total_spend,
                COUNT(sl.request_id) as requests
