@@ -700,7 +700,13 @@ async fn build_decrypted_provider_map(
                 .and_then(|decrypted| {
                     serde_json::from_str::<Value>(&decrypted).ok()
                 })
-                .and_then(|v| v.get("model").and_then(|mv| mv.as_str().map(String::from)))
+                .and_then(|v| {
+                    // litellm_params.custom_llm_provider is the actual provider name
+                    // (e.g. "openai", "deepseek"), NOT the model field.
+                    v.get("custom_llm_provider")
+                        .and_then(|p| p.as_str().map(String::from))
+                        .or_else(|| v.get("model").and_then(|mv| mv.as_str().map(String::from)))
+                })
         } else if let Some(obj) = m.litellm_params.as_object() {
             obj.get("model").and_then(|v| v.as_str().map(String::from))
         } else {

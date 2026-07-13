@@ -1371,14 +1371,15 @@ impl SpendLogStore for SqlitePool {
     }
 
     async fn aggregate_spend_by_provider(&self) -> Result<Vec<SpendProviderAgg>> {
-        // Join spend_logs with proxy_models to get provider info from litellm_params JSON
+        // Use sl.custom_llm_provider directly — it is populated by the router
+        // at request time and reflects the actual upstream provider (e.g. "openai",
+        // "deepseek").  litellm_params.model is the proxied model name, NOT the provider.
         let rows: Vec<(String, i64, f64, i64)> = sqlx::query_as(
-            r#"SELECT COALESCE(json_extract(pm.litellm_params, '$.model'), sl.model) as provider,
+            r#"SELECT COALESCE(NULLIF(sl.custom_llm_provider, ''), sl.model) as provider,
                COALESCE(SUM(sl.total_tokens), 0) as total_tokens,
                COALESCE(SUM(sl.spend), 0) as total_spend,
                COUNT(sl.request_id) as requests
                FROM spend_logs sl
-               LEFT JOIN proxy_models pm ON sl.model = pm.model_name
                GROUP BY provider
                ORDER BY total_tokens DESC"#
         )
@@ -1596,14 +1597,14 @@ impl SpendLogStore for MySqlPool {
     }
 
     async fn aggregate_spend_by_provider(&self) -> Result<Vec<SpendProviderAgg>> {
-        // MySQL: use JSON_EXTRACT for litellm_params
+        // Use sl.custom_llm_provider — populated at request time, reflects
+        // the actual upstream provider, not the proxied model name.
         let rows: Vec<(String, i64, f64, i64)> = sqlx::query_as(
-            r#"SELECT COALESCE(JSON_UNQUOTE(JSON_EXTRACT(pm.litellm_params, '$.model')), sl.model) as provider,
+            r#"SELECT COALESCE(NULLIF(sl.custom_llm_provider, ''), sl.model) as provider,
                COALESCE(SUM(sl.total_tokens), 0) as total_tokens,
                COALESCE(SUM(sl.spend), 0) as total_spend,
                COUNT(sl.request_id) as requests
                FROM spend_logs sl
-               LEFT JOIN proxy_models pm ON sl.model = pm.model_name
                GROUP BY provider
                ORDER BY total_tokens DESC"#
         )
@@ -1791,13 +1792,13 @@ impl SpendLogStore for PgPool {
     }
 
     async fn aggregate_spend_by_provider(&self) -> Result<Vec<SpendProviderAgg>> {
+        // Use sl.custom_llm_provider — populated at request time by the router.
         let rows: Vec<(String, i64, f64, i64)> = sqlx::query_as(
-            r#"SELECT COALESCE(pm.litellm_params->>'model', sl.model) as provider,
+            r#"SELECT COALESCE(NULLIF(sl.custom_llm_provider, ''), sl.model) as provider,
                COALESCE(SUM(sl.total_tokens), 0) as total_tokens,
                COALESCE(SUM(sl.spend), 0) as total_spend,
                COUNT(sl.request_id) as requests
                FROM spend_logs sl
-               LEFT JOIN proxy_models pm ON sl.model = pm.model_name
                GROUP BY provider
                ORDER BY total_tokens DESC"#
         )
