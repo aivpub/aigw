@@ -54,6 +54,14 @@ pub struct SpendTagQuery {
 #[derive(Debug, Deserialize)]
 pub struct SpendModelQuery {
     pub api_key: Option<String>,
+    pub start_date: Option<String>,
+    pub end_date: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SpendProviderQuery {
+    pub start_date: Option<String>,
+    pub end_date: Option<String>,
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -590,7 +598,11 @@ pub async fn spend_models(
 
     let aggs = state
         .db
-        .aggregate_spend_by_model(Some(&api_key))
+        .aggregate_spend_by_model(
+            Some(&api_key),
+            query.start_date.as_deref(),
+            query.end_date.as_deref(),
+        )
         .await
         .map_err(|e| {
             (
@@ -618,27 +630,39 @@ pub async fn spend_models(
 pub async fn spend_providers(
     State(state): State<SharedState>,
     _auth: SpendAuth,
+    Query(query): Query<SpendProviderQuery>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    spend_providers_inner(&state).await
+    spend_providers_inner(
+        &state,
+        query.start_date.as_deref(),
+        query.end_date.as_deref(),
+    ).await
 }
 
 /// GET /global/spend/providers — Spend by provider (admin only)
 pub async fn global_spend_providers(
     State(state): State<SharedState>,
     SpendAuth(auth): SpendAuth,
+    Query(query): Query<SpendProviderQuery>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&auth)?;
-    spend_providers_inner(&state).await
+    spend_providers_inner(
+        &state,
+        query.start_date.as_deref(),
+        query.end_date.as_deref(),
+    ).await
 }
 
 /// Shared implementation: aggregate spend by provider, post-process with decrypted
 /// proxy_models litellm_params to resolve encrypted model→provider mappings.
 async fn spend_providers_inner(
     state: &SharedState,
+    start_date: Option<&str>,
+    end_date: Option<&str>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let aggs = state
         .db
-        .aggregate_spend_by_provider()
+        .aggregate_spend_by_provider(start_date, end_date)
         .await
         .map_err(|e| {
             (
@@ -725,12 +749,17 @@ async fn build_decrypted_provider_map(
 pub async fn global_spend_models(
     State(state): State<SharedState>,
     SpendAuth(auth): SpendAuth,
+    Query(query): Query<SpendModelQuery>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&auth)?;
 
     let aggs = state
         .db
-        .aggregate_spend_by_model(None)
+        .aggregate_spend_by_model(
+            None,
+            query.start_date.as_deref(),
+            query.end_date.as_deref(),
+        )
         .await
         .map_err(|e| {
             (

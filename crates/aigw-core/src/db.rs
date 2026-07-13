@@ -1181,8 +1181,8 @@ pub trait SpendLogStore {
     async fn get_spend_by_user(&self, user_id: &str) -> Result<f64>;
     async fn get_spend_by_tag(&self, tag: &str) -> Result<f64>;
     async fn get_global_spend(&self) -> Result<f64>;
-    async fn aggregate_spend_by_model(&self, api_key: Option<&str>) -> Result<Vec<SpendModelAgg>>;
-    async fn aggregate_spend_by_provider(&self) -> Result<Vec<SpendProviderAgg>>;
+    async fn aggregate_spend_by_model(&self, api_key: Option<&str>, start_date: Option<&str>, end_date: Option<&str>) -> Result<Vec<SpendModelAgg>>;
+    async fn aggregate_spend_by_provider(&self, start_date: Option<&str>, end_date: Option<&str>) -> Result<Vec<SpendProviderAgg>>;
     async fn query_spend_logs_filtered(
         &self,
         api_key: Option<&str>,
@@ -1346,50 +1346,43 @@ impl SpendLogStore for SqlitePool {
         Ok(row.0.unwrap_or(0.0))
     }
 
-    async fn aggregate_spend_by_model(&self, api_key: Option<&str>) -> Result<Vec<SpendModelAgg>> {
-        match api_key {
-            Some(_key) => {
-                sqlx::query_as(
-                    "SELECT model, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests \
-                     FROM spend_logs WHERE api_key = ? GROUP BY model ORDER BY total_tokens DESC"
-                )
-                .bind(_key)
-                .fetch_all(self)
-                .await
-                .map_err(DbError::from)
-            }
-            None => {
-                sqlx::query_as(
-                    "SELECT model, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests \
-                     FROM spend_logs GROUP BY model ORDER BY total_tokens DESC"
-                )
-                .fetch_all(self)
-                .await
-                .map_err(DbError::from)
-            }
-        }
+    async fn aggregate_spend_by_model(&self, api_key: Option<&str>, start_date: Option<&str>, end_date: Option<&str>) -> Result<Vec<SpendModelAgg>> {
+        let date_filter = if start_date.is_some() && end_date.is_some() {
+            " AND start_time >= ? AND start_time <= ?"
+        } else { "" };
+        let sql = match api_key {
+            Some(_) => format!("SELECT model, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE api_key = ?{date_filter} GROUP BY model ORDER BY total_tokens DESC"),
+            None => format!("SELECT model, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE 1=1{date_filter} GROUP BY model ORDER BY total_tokens DESC"),
+        };
+        let mut q = sqlx::query_as(&sql);
+        if let Some(k) = api_key { q = q.bind(k); }
+        if let Some(s) = start_date { q = q.bind(s); }
+        if let Some(e) = end_date { q = q.bind(e); }
+        q.fetch_all(self).await.map_err(DbError::from)
     }
 
-    async fn aggregate_spend_by_provider(&self) -> Result<Vec<SpendProviderAgg>> {
-        // Use sl.custom_llm_provider directly — it is populated by the router
-        // at request time and reflects the actual upstream provider (e.g. "openai",
-        // "deepseek").  litellm_params.model is the proxied model name, NOT the provider.
-        let rows: Vec<(String, i64, f64, i64)> = sqlx::query_as(
+    async fn aggregate_spend_by_provider(&self, start_date: Option<&str>, end_date: Option<&str>) -> Result<Vec<SpendProviderAgg>> {
+        let date_filter = if start_date.is_some() && end_date.is_some() {
+            " AND sl.start_time >= ? AND sl.start_time <= ?"
+        } else { "" };
+        let sql = format!(
             r#"SELECT COALESCE(NULLIF(sl.custom_llm_provider, ''), 'unknown') as provider,
                COALESCE(SUM(sl.total_tokens), 0) as total_tokens,
                COALESCE(SUM(sl.spend), 0) as total_spend,
                COUNT(sl.request_id) as requests
                FROM spend_logs sl
+               WHERE 1=1{date_filter}
                GROUP BY provider
                ORDER BY total_tokens DESC"#
-        )
-        .fetch_all(self)
-        .await
-        .map_err(DbError::from)?;
-
-        Ok(rows.into_iter().map(|(provider, total_tokens, total_spend, requests)| {
-            SpendProviderAgg { provider, total_tokens, total_spend, requests }
-        }).collect())
+        );
+        let mut q = sqlx::query_as(&sql);
+        if let Some(s) = start_date { q = q.bind(s); }
+        if let Some(e) = end_date { q = q.bind(e); }
+        q.fetch_all(self).await.map_err(DbError::from).map(|rows: Vec<(String, i64, f64, i64)>| {
+            rows.into_iter().map(|(provider, total_tokens, total_spend, requests)| {
+                SpendProviderAgg { provider, total_tokens, total_spend, requests }
+            }).collect()
+        })
     }
 
     async fn query_spend_logs_filtered(
@@ -1585,35 +1578,43 @@ impl SpendLogStore for MySqlPool {
         Ok(row.0.unwrap_or(0.0))
     }
 
-    async fn aggregate_spend_by_model(&self, api_key: Option<&str>) -> Result<Vec<SpendModelAgg>> {
-        // MySQL aggregate — same pattern as SqlitePool but using ? for bind
-        let (sql, bind_key): (&str, Option<&str>) = match api_key {
-            Some(_) => ("SELECT model, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE api_key = ? GROUP BY model ORDER BY total_tokens DESC", api_key),
-            None => ("SELECT model, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs GROUP BY model ORDER BY total_tokens DESC", None),
+    async fn aggregate_spend_by_model(&self, api_key: Option<&str>, start_date: Option<&str>, end_date: Option<&str>) -> Result<Vec<SpendModelAgg>> {
+        let date_filter = if start_date.is_some() && end_date.is_some() {
+            " AND start_time >= ? AND start_time <= ?"
+        } else { "" };
+        let sql = match api_key {
+            Some(_) => format!("SELECT model, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE api_key = ?{date_filter} GROUP BY model ORDER BY total_tokens DESC"),
+            None => format!("SELECT model, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE 1=1{date_filter} GROUP BY model ORDER BY total_tokens DESC"),
         };
-        let mut q = sqlx::query_as(sql);
-        if let Some(key) = bind_key { q = q.bind(key); }
+        let mut q = sqlx::query_as(&sql);
+        if let Some(k) = api_key { q = q.bind(k); }
+        if let Some(s) = start_date { q = q.bind(s); }
+        if let Some(e) = end_date { q = q.bind(e); }
         q.fetch_all(self).await.map_err(DbError::from)
     }
 
-    async fn aggregate_spend_by_provider(&self) -> Result<Vec<SpendProviderAgg>> {
-        // Use sl.custom_llm_provider — populated at request time, reflects
-        // the actual upstream provider, not the proxied model name.
-        let rows: Vec<(String, i64, f64, i64)> = sqlx::query_as(
+    async fn aggregate_spend_by_provider(&self, start_date: Option<&str>, end_date: Option<&str>) -> Result<Vec<SpendProviderAgg>> {
+        let date_filter = if start_date.is_some() && end_date.is_some() {
+            " AND sl.start_time >= ? AND sl.start_time <= ?"
+        } else { "" };
+        let sql = format!(
             r#"SELECT COALESCE(NULLIF(sl.custom_llm_provider, ''), 'unknown') as provider,
                COALESCE(SUM(sl.total_tokens), 0) as total_tokens,
                COALESCE(SUM(sl.spend), 0) as total_spend,
                COUNT(sl.request_id) as requests
                FROM spend_logs sl
+               WHERE 1=1{date_filter}
                GROUP BY provider
                ORDER BY total_tokens DESC"#
-        )
-        .fetch_all(self)
-        .await
-        .map_err(DbError::from)?;
-        Ok(rows.into_iter().map(|(provider, total_tokens, total_spend, requests)| {
-            SpendProviderAgg { provider, total_tokens, total_spend, requests }
-        }).collect())
+        );
+        let mut q = sqlx::query_as(&sql);
+        if let Some(s) = start_date { q = q.bind(s); }
+        if let Some(e) = end_date { q = q.bind(e); }
+        q.fetch_all(self).await.map_err(DbError::from).map(|rows: Vec<(String, i64, f64, i64)>| {
+            rows.into_iter().map(|(provider, total_tokens, total_spend, requests)| {
+                SpendProviderAgg { provider, total_tokens, total_spend, requests }
+            }).collect()
+        })
     }
 
     async fn query_spend_logs_filtered(
@@ -1781,33 +1782,43 @@ impl SpendLogStore for PgPool {
         Ok(row.0.unwrap_or(0.0))
     }
 
-    async fn aggregate_spend_by_model(&self, api_key: Option<&str>) -> Result<Vec<SpendModelAgg>> {
-        let (sql, bind_key): (&str, Option<&str>) = match api_key {
-            Some(_) => ("SELECT model, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE api_key = $1 GROUP BY model ORDER BY total_tokens DESC", api_key),
-            None => ("SELECT model, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs GROUP BY model ORDER BY total_tokens DESC", None),
+    async fn aggregate_spend_by_model(&self, api_key: Option<&str>, start_date: Option<&str>, end_date: Option<&str>) -> Result<Vec<SpendModelAgg>> {
+        let date_filter = if start_date.is_some() && end_date.is_some() {
+            " AND start_time >= $2 AND start_time <= $3"
+        } else { "" };
+        let sql = match api_key {
+            Some(_) => format!("SELECT model, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE api_key = $1{date_filter} GROUP BY model ORDER BY total_tokens DESC"),
+            None => format!("SELECT model, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE 1=1{date_filter} GROUP BY model ORDER BY total_tokens DESC"),
         };
-        let mut q = sqlx::query_as(sql);
-        if let Some(key) = bind_key { q = q.bind(key); }
+        let mut q = sqlx::query_as(&sql);
+        if let Some(k) = api_key { q = q.bind(k); }
+        if let Some(s) = start_date { q = q.bind(s); }
+        if let Some(e) = end_date { q = q.bind(e); }
         q.fetch_all(self).await.map_err(DbError::from)
     }
 
-    async fn aggregate_spend_by_provider(&self) -> Result<Vec<SpendProviderAgg>> {
-        // Use sl.custom_llm_provider — populated at request time by the router.
-        let rows: Vec<(String, i64, f64, i64)> = sqlx::query_as(
+    async fn aggregate_spend_by_provider(&self, start_date: Option<&str>, end_date: Option<&str>) -> Result<Vec<SpendProviderAgg>> {
+        let date_filter = if start_date.is_some() && end_date.is_some() {
+            " AND sl.start_time >= $1 AND sl.start_time <= $2"
+        } else { "" };
+        let sql = format!(
             r#"SELECT COALESCE(NULLIF(sl.custom_llm_provider, ''), 'unknown') as provider,
                COALESCE(SUM(sl.total_tokens), 0) as total_tokens,
                COALESCE(SUM(sl.spend), 0) as total_spend,
                COUNT(sl.request_id) as requests
                FROM spend_logs sl
+               WHERE 1=1{date_filter}
                GROUP BY provider
                ORDER BY total_tokens DESC"#
-        )
-        .fetch_all(self)
-        .await
-        .map_err(DbError::from)?;
-        Ok(rows.into_iter().map(|(provider, total_tokens, total_spend, requests)| {
-            SpendProviderAgg { provider, total_tokens, total_spend, requests }
-        }).collect())
+        );
+        let mut q = sqlx::query_as(&sql);
+        if let Some(s) = start_date { q = q.bind(s); }
+        if let Some(e) = end_date { q = q.bind(e); }
+        q.fetch_all(self).await.map_err(DbError::from).map(|rows: Vec<(String, i64, f64, i64)>| {
+            rows.into_iter().map(|(provider, total_tokens, total_spend, requests)| {
+                SpendProviderAgg { provider, total_tokens, total_spend, requests }
+            }).collect()
+        })
     }
 
     async fn query_spend_logs_filtered(
@@ -1934,19 +1945,25 @@ impl Database {
     pub async fn aggregate_spend_by_model(
         &self,
         api_key: Option<&str>,
+        start_date: Option<&str>,
+        end_date: Option<&str>,
     ) -> Result<Vec<SpendModelAgg>> {
         match self {
-            Database::Sqlite(pool) => pool.aggregate_spend_by_model(api_key).await,
-            Database::Mysql(pool) => pool.aggregate_spend_by_model(api_key).await,
-            Database::Postgres(pool) => pool.aggregate_spend_by_model(api_key).await,
+            Database::Sqlite(pool) => pool.aggregate_spend_by_model(api_key, start_date, end_date).await,
+            Database::Mysql(pool) => pool.aggregate_spend_by_model(api_key, start_date, end_date).await,
+            Database::Postgres(pool) => pool.aggregate_spend_by_model(api_key, start_date, end_date).await,
         }
     }
 
-    pub async fn aggregate_spend_by_provider(&self) -> Result<Vec<SpendProviderAgg>> {
+    pub async fn aggregate_spend_by_provider(
+        &self,
+        start_date: Option<&str>,
+        end_date: Option<&str>,
+    ) -> Result<Vec<SpendProviderAgg>> {
         match self {
-            Database::Sqlite(pool) => pool.aggregate_spend_by_provider().await,
-            Database::Mysql(pool) => pool.aggregate_spend_by_provider().await,
-            Database::Postgres(pool) => pool.aggregate_spend_by_provider().await,
+            Database::Sqlite(pool) => pool.aggregate_spend_by_provider(start_date, end_date).await,
+            Database::Mysql(pool) => pool.aggregate_spend_by_provider(start_date, end_date).await,
+            Database::Postgres(pool) => pool.aggregate_spend_by_provider(start_date, end_date).await,
         }
     }
 
@@ -2010,7 +2027,7 @@ impl Database {
                 COALESCE(SUM(spend), 0),
                 COUNT(request_id),
                 COUNT(CASE WHEN status = 'success' THEN 1 END),
-                COUNT(CASE WHEN status = 'failure' THEN 1 END),
+                COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END),
                 COALESCE(SUM(total_tokens), 0),
                 COALESCE(SUM(prompt_tokens), 0),
                 COALESCE(SUM(completion_tokens), 0)

@@ -145,15 +145,15 @@ export function DashboardPage() {
 
   // Model aggregation
   const { data: modelData, isLoading: modelLoading } = useQuery<AggResponse>({
-    queryKey: ["spend-models"],
-    queryFn: () => apiGet("/global/spend/models"),
+    queryKey: ["spend-models", startDate, endDate],
+    queryFn: () => apiGet(`/global/spend/models?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`),
     refetchInterval: 30_000,
   });
 
   // Provider aggregation
   const { data: providerData, isLoading: providerLoading } = useQuery<AggResponse>({
-    queryKey: ["spend-providers"],
-    queryFn: () => apiGet("/spend/providers"),
+    queryKey: ["spend-providers", startDate, endDate],
+    queryFn: () => apiGet(`/spend/providers?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`),
     refetchInterval: 30_000,
   });
 
