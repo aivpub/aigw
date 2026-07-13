@@ -120,14 +120,22 @@ fn cast_expr(col_name: &str, col_ty: Option<&str>, ph: &str, target_url: &str) -
         return ph.to_string();
     }
     let ty = col_ty.unwrap_or("").to_lowercase();
-    // Numeric and boolean columns: bind_cell() handles type coercion
-    // (empty string → NULL::f64 / None::<bool>, "100.0" → f64,
-    // "true"/"1" → true). No SQL-level CAST needed — plain placeholder
-    // is correct because the bound parameter is already the right PG type.
-    if (is_numeric(&ty) || ty == "boolean") && !col_name.starts_with("user_api_key_hash") {
+    // Numeric columns: bind_cell() handles type coercion
+    // (empty string → NULL::f64, "100.0" → f64). No SQL-level CAST needed.
+    // Boolean columns: use SQL-level CAST to avoid PG binary-protocol binding issues.
+    if is_numeric(&ty) && !col_name.starts_with("user_api_key_hash") {
         return ph.to_string();
     }
-    if (ty == "jsonb" || ty == "json") && !col_name.starts_with("user_api_key_hash") {
+    if ty == "boolean" {
+        // Use NULLIF to handle empty strings: CAST(NULL AS boolean) → NULL
+        format!("CAST(NULLIF({}, '') AS boolean)", ph)
+    } else if (ty == "jsonb" || ty == "json")
+        && !col_name.starts_with("user_api_key_hash")
+        // credential_values and litellm_params store base64-encoded encrypted data,
+        // not JSON — casting to jsonb would fail with "invalid input syntax for type json".
+        && col_name != "credential_values"
+        && col_name != "litellm_params"
+    {
         format!("NULLIF({}, '')::jsonb", ph)
     } else if ty.contains("timestamp") {
         if ty.contains("with time zone") || ty == "timestamptz" {
@@ -161,17 +169,12 @@ async fn build_select_cols(source: &AnyPool, table: &str, _source_url: &str) -> 
         _ => return "*".to_string(),
     };
 
-    let cols: Vec<String> = names.iter().zip(types.iter()).map(|(name, ty)| {
-        let ty_lower = ty.to_lowercase();
-        if ty_lower.contains("datetime")
-            || ty_lower.contains("timestamp")
-            || ty_lower.contains("date")
-            || ty_lower.contains("bool")
-        {
-            format!("CAST(\"{}\" AS TEXT) AS \"{}\"", name, name)
-        } else {
-            format!("\"{}\"", name)
-        }
+    let cols: Vec<String> = names.iter().map(|name| {
+        // CAST all source columns to TEXT for uniform String decoding.
+        // sqlx::Any cannot reliably decode SQLite DATETIME, BOOLEAN, or BLOB
+        // types — casting everything to TEXT avoids "incorrect binary data
+        // format" errors and lets bind_cell handle type conversions for PG/MySQL.
+        format!("CAST(\"{}\" AS TEXT) AS \"{}\"", name, name)
     }).collect();
 
     cols.join(", ")
@@ -227,14 +230,15 @@ fn bind_cell<'q>(
         return q.bind(None::<f64>);
     }
     if is_pg(target_url) && ty_lower == "boolean" {
+        // cast_expr wraps the placeholder in CAST(NULLIF($N, '') AS boolean)
+        // so PG converts the text value server-side. Empty string → NULL,
+        // 'true'/'false'/'1'/'0' are valid boolean text representations.
         if let Ok(v) = value.try_get::<String, _>(idx) {
-            if v.is_empty() { return q.bind(None::<bool>); }
-            let v = v.to_lowercase();
-            return q.bind(v == "true" || v == "1");
+            return q.bind(v);
         }
-        if let Ok(v) = value.try_get::<i64, _>(idx) { return q.bind(v != 0); }
-        if let Ok(v) = value.try_get::<bool, _>(idx) { return q.bind(v); }
-        return q.bind(None::<bool>);
+        if let Ok(v) = value.try_get::<i64, _>(idx) { return q.bind(v.to_string()); }
+        if let Ok(v) = value.try_get::<f64, _>(idx) { return q.bind(v.to_string()); }
+        return q.bind("".to_string());
     }
     if is_pg(target_url) && (ty_lower == "jsonb" || ty_lower == "json") {
         // PG jsonb/json — bind as String, but cast_expr adds ::jsonb
@@ -418,7 +422,8 @@ async fn migrate_credentials(
     target_key: &str,
 ) -> anyhow::Result<usize> {
     let cred_quoted = quote_ident("credentials", target_url);
-    let query = format!("SELECT * FROM {}", cred_quoted);
+    let select_cols = build_select_cols(source, "credentials", target_url).await;
+    let query = format!("SELECT {} FROM {}", select_cols, cred_quoted);
     let rows = match sqlx::query(&query).fetch_all(source).await {
         Ok(r) => r,
         Err(e) => {
@@ -437,20 +442,30 @@ async fn migrate_credentials(
         .map(|c| c.name().to_string())
         .collect();
 
-    // Get target column types for proper CAST (jsonb columns need explicit CAST)
+    // Get target column types and names
     let tgt_col_info = target_column_info(target, "LiteLLM_CredentialsTable", target_url).await;
+    let tgt_set: HashSet<&str> = tgt_col_info.iter().map(|(s, _)| s.as_str()).collect();
     let tgt_type_map: std::collections::HashMap<&str, &str> = tgt_col_info
         .iter()
         .map(|(n, t)| (n.as_str(), t.as_str()))
         .collect();
 
-    let values_col = src_columns
+    // Build column merge: only insert columns that exist in BOTH source and target.
+    let insert_cols: Vec<(usize, &str, Option<&str>)> = src_columns
         .iter()
-        .position(|c| c == "credential_values")
-        .unwrap_or_else(|| {
-            eprintln!("  [WARN] credential_values column not found, using index 2");
-            2
-        });
+        .enumerate()
+        .filter(|(_, name)| tgt_set.contains(name.as_str()))
+        .map(|(idx, name)| (idx, name.as_str(), tgt_type_map.get(name.as_str()).copied()))
+        .collect();
+
+    if insert_cols.is_empty() {
+        eprintln!("  [SKIP] credentials: no intersecting columns with target");
+        return Ok(0);
+    }
+
+    let values_ph_idx = insert_cols
+        .iter()
+        .position(|(_, name, _)| *name == "credential_values");
 
     let mut inserted = 0usize;
     let mut skipped = 0usize;
@@ -460,36 +475,32 @@ async fn migrate_credentials(
         ""
     };
     for row in &rows {
-        let col_count = row.columns().len();
-        let values_expr: Vec<String> = (0..col_count)
-            .map(|i| {
-                let ph = placeholder(i, target_url);
-                let col_name = &src_columns[i];
-                cast_expr(
-                    col_name,
-                    tgt_type_map.get(col_name.as_str()).copied(),
-                    &ph,
-                    target_url,
-                )
+        let values_expr: Vec<String> = insert_cols
+            .iter()
+            .enumerate()
+            .map(|(ph_idx, (_, col_name, col_ty))| {
+                let ph = placeholder(ph_idx, target_url);
+                cast_expr(col_name, *col_ty, &ph, target_url)
             })
             .collect();
 
-        let cred_cols_quoted: Vec<String> = src_columns
-            .iter()
-            .map(|c| quote_ident(c, target_url))
-            .collect();
         let insert_sql = format!(
             "INSERT INTO {} ({}) VALUES ({}){}",
             quote_ident("LiteLLM_CredentialsTable", target_url),
-            cred_cols_quoted.join(", "),
+            insert_cols
+                .iter()
+                .map(|(_, name, _)| quote_ident(name, target_url))
+                .collect::<Vec<_>>()
+                .join(", "),
             values_expr.join(", "),
             pg_conflict,
         );
 
         let mut q = sqlx::query(&insert_sql);
-        for i in 0..col_count {
-            if i == values_col {
-                if let Ok(encrypted) = row.try_get::<String, _>(i) {
+        for (ph_idx, &(src_idx, _col_name, col_ty)) in insert_cols.iter().enumerate() {
+            if values_ph_idx == Some(ph_idx) {
+                // credential_values: decrypt with source key, re-encrypt with target key
+                if let Ok(encrypted) = row.try_get::<String, _>(src_idx) {
                     if encrypted.is_empty() || encrypted == "{}" {
                         q = q.bind(encrypted);
                     } else {
@@ -512,16 +523,10 @@ async fn migrate_credentials(
                         }
                     }
                 } else {
-                    q = bind_cell(q, row, i, tgt_type_map.get(src_columns[i].as_str()).copied(), target_url);
+                    q = bind_cell(q, row, src_idx, col_ty, target_url);
                 }
-            } else if i == values_col && is_pg(target_url) {
-                // credential_values is always jsonb in litellm PG schema.
-                // bind_cell handles it as text → PG will reject unless we use
-                // explicit ::jsonb cast.  But bind_cell doesn't do jsonb casts;
-                // this is handled by the encrypted branch above.
-                q = bind_cell(q, row, i, tgt_type_map.get(src_columns[i].as_str()).copied(), target_url);
             } else {
-                q = bind_cell(q, row, i, tgt_type_map.get(src_columns[i].as_str()).copied(), target_url);
+                q = bind_cell(q, row, src_idx, col_ty, target_url);
             }
         }
         q.execute(target).await?;
@@ -544,7 +549,8 @@ async fn migrate_proxy_models(
     target_key: &str,
 ) -> anyhow::Result<usize> {
     let models_quoted = quote_ident("proxy_models", target_url);
-    let query = format!("SELECT * FROM {}", models_quoted);
+    let select_cols = build_select_cols(source, "proxy_models", target_url).await;
+    let query = format!("SELECT {} FROM {}", select_cols, models_quoted);
     let rows = match sqlx::query(&query).fetch_all(source).await {
         Ok(r) => r,
         Err(e) => {
@@ -563,20 +569,28 @@ async fn migrate_proxy_models(
         .map(|c| c.name().to_string())
         .collect();
 
-    // Get target column types for jsonb CAST
     let tgt_col_info = target_column_info(target, "LiteLLM_ProxyModelTable", target_url).await;
+    let tgt_set: HashSet<&str> = tgt_col_info.iter().map(|(s, _)| s.as_str()).collect();
     let tgt_type_map: std::collections::HashMap<&str, &str> = tgt_col_info
         .iter()
         .map(|(n, t)| (n.as_str(), t.as_str()))
         .collect();
 
-    let params_col = src_columns
+    let insert_cols: Vec<(usize, &str, Option<&str>)> = src_columns
         .iter()
-        .position(|c| c == "litellm_params")
-        .unwrap_or_else(|| {
-            eprintln!("  [WARN] litellm_params column not found, using index 2");
-            2
-        });
+        .enumerate()
+        .filter(|(_, name)| tgt_set.contains(name.as_str()))
+        .map(|(idx, name)| (idx, name.as_str(), tgt_type_map.get(name.as_str()).copied()))
+        .collect();
+
+    if insert_cols.is_empty() {
+        eprintln!("  [SKIP] proxy_models: no intersecting columns with target");
+        return Ok(0);
+    }
+
+    let params_ph_idx = insert_cols
+        .iter()
+        .position(|(_, name, _)| *name == "litellm_params");
 
     let mut inserted = 0usize;
     let mut skipped = 0usize;
@@ -586,17 +600,12 @@ async fn migrate_proxy_models(
         ""
     };
     for row in &rows {
-        let col_count = row.columns().len();
-        let values_expr: Vec<String> = (0..col_count)
-            .map(|i| {
-                let ph = placeholder(i, target_url);
-                let col_name = &src_columns[i];
-                cast_expr(
-                    col_name,
-                    tgt_type_map.get(col_name.as_str()).copied(),
-                    &ph,
-                    target_url,
-                )
+        let values_expr: Vec<String> = insert_cols
+            .iter()
+            .enumerate()
+            .map(|(ph_idx, (_, col_name, col_ty))| {
+                let ph = placeholder(ph_idx, target_url);
+                cast_expr(col_name, *col_ty, &ph, target_url)
             })
             .collect();
 
@@ -604,15 +613,19 @@ async fn migrate_proxy_models(
         let insert_sql = format!(
             "INSERT INTO {} ({}) VALUES ({}){}",
             proxy_table,
-            src_columns.join(", "),
+            insert_cols
+                .iter()
+                .map(|(_, name, _)| quote_ident(name, target_url))
+                .collect::<Vec<_>>()
+                .join(", "),
             values_expr.join(", "),
             pg_conflict,
         );
 
         let mut q = sqlx::query(&insert_sql);
-        for i in 0..col_count {
-            if i == params_col {
-                if let Ok(value) = row.try_get::<String, _>(i) {
+        for (ph_idx, &(src_idx, _col_name, col_ty)) in insert_cols.iter().enumerate() {
+            if params_ph_idx == Some(ph_idx) {
+                if let Ok(value) = row.try_get::<String, _>(src_idx) {
                     if value.is_empty() || value.starts_with('{') {
                         q = q.bind(value);
                     } else {
@@ -635,10 +648,10 @@ async fn migrate_proxy_models(
                         }
                     }
                 } else {
-                    q = bind_cell(q, row, i, tgt_type_map.get(src_columns[i].as_str()).copied(), target_url);
+                    q = bind_cell(q, row, src_idx, col_ty, target_url);
                 }
             } else {
-                q = bind_cell(q, row, i, tgt_type_map.get(src_columns[i].as_str()).copied(), target_url);
+                q = bind_cell(q, row, src_idx, col_ty, target_url);
             }
         }
         q.execute(target).await?;
@@ -659,7 +672,8 @@ async fn migrate_spend_logs(
     target_url: &str,
 ) -> anyhow::Result<usize> {
     let logs_quoted = quote_ident("spend_logs", target_url);
-    let query = format!("SELECT * FROM {}", logs_quoted);
+    let select_cols = build_select_cols(source, "spend_logs", target_url).await;
+    let query = format!("SELECT {} FROM {}", select_cols, logs_quoted);
     let rows = match sqlx::query(&query).fetch_all(source).await {
         Ok(r) => r,
         Err(e) => {
@@ -672,11 +686,30 @@ async fn migrate_spend_logs(
         return Ok(0);
     }
 
-    let columns: Vec<String> = rows[0]
+    let src_columns: Vec<String> = rows[0]
         .columns()
         .iter()
         .map(|c| c.name().to_string())
         .collect();
+
+    let tgt_col_info = target_column_info(target, "LiteLLM_SpendLogs", target_url).await;
+    let tgt_set: HashSet<&str> = tgt_col_info.iter().map(|(s, _)| s.as_str()).collect();
+    let tgt_type_map: std::collections::HashMap<&str, &str> = tgt_col_info
+        .iter()
+        .map(|(n, t)| (n.as_str(), t.as_str()))
+        .collect();
+
+    let insert_cols: Vec<(usize, &str, Option<&str>)> = src_columns
+        .iter()
+        .enumerate()
+        .filter(|(_, name)| tgt_set.contains(name.as_str()))
+        .map(|(idx, name)| (idx, name.as_str(), tgt_type_map.get(name.as_str()).copied()))
+        .collect();
+
+    if insert_cols.is_empty() {
+        eprintln!("  [SKIP] spend_logs: no intersecting columns with target");
+        return Ok(0);
+    }
 
     let mut inserted = 0usize;
     let pg_conflict = if is_pg(target_url) {
@@ -685,22 +718,31 @@ async fn migrate_spend_logs(
         ""
     };
     for row in &rows {
-        let col_count = row.columns().len();
-        let placeholders: Vec<String> =
-            (0..col_count).map(|i| placeholder(i, target_url)).collect();
+        let values_expr: Vec<String> = insert_cols
+            .iter()
+            .enumerate()
+            .map(|(ph_idx, (_, col_name, col_ty))| {
+                let ph = placeholder(ph_idx, target_url);
+                cast_expr(col_name, *col_ty, &ph, target_url)
+            })
+            .collect();
 
         let spend_table = quote_ident("LiteLLM_SpendLogs", target_url);
         let insert_sql = format!(
             "INSERT INTO {} ({}) VALUES ({}){}",
             spend_table,
-            columns.join(", "),
-            placeholders.join(", "),
+            insert_cols
+                .iter()
+                .map(|(_, name, _)| quote_ident(name, target_url))
+                .collect::<Vec<_>>()
+                .join(", "),
+            values_expr.join(", "),
             pg_conflict,
         );
 
         let mut q = sqlx::query(&insert_sql);
-        for i in 0..col_count {
-            q = bind_cell(q, row, i, None, target_url);
+        for &(src_idx, _col_name, col_ty) in &insert_cols {
+            q = bind_cell(q, row, src_idx, col_ty, target_url);
         }
         q.execute(target).await?;
         inserted += 1;
@@ -741,7 +783,9 @@ pub async fn run(
     // Step 2: Migrate plain tables
     println!("Step 2: Exporting plain tables (aigw → litellm)...");
     for &(src, tgt) in PLAIN_TABLES {
-        let count = migrate_plain_table(&source, &target, target_url, src, tgt).await?;
+        let count = migrate_plain_table(&source, &target, target_url, src, tgt)
+            .await
+            .map_err(|e| anyhow::anyhow!("[{src} -> {tgt}] {e}"))?;
         println!("  {} -> {} ({} rows)", src, tgt, count);
     }
 
