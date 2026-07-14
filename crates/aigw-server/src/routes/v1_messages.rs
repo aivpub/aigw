@@ -513,6 +513,8 @@ pub async fn messages_handler(
             // Track token usage from the last chunk (when upstream sends stream_options include_usage)
             let mut last_prompt_tokens: i32 = 0;
             let mut last_completion_tokens: i32 = 0;
+            // Collect upstream raw chunks for assembled completion-style response
+            let mut chunk_jsons: Vec<Value> = Vec::new();
 
             // Helper: write a single Anthropic SSE event to the channel
             let write_anthropic_sse =
@@ -584,6 +586,12 @@ pub async fn messages_handler(
                                                 .get("completion_tokens")
                                                 .and_then(|v| v.as_i64())
                                                 .unwrap_or(0) as i32;
+                                        }
+                                        // Record non-empty-choice chunks for assembled response
+                                        if let Ok(raw2) = serde_json::from_str::<Value>(json_str) {
+                                            if raw2.get("choices").and_then(|c| c.as_array()).map(|a| !a.is_empty()).unwrap_or(false) {
+                                                chunk_jsons.push(raw2);
+                                            }
                                         }
                                     }
                                     if let Ok(c) = serde_json::from_str::<aigw_core::models::ChatCompletionChunk>(json_str) {
@@ -691,12 +699,33 @@ pub async fn messages_handler(
             let streaming_spend = super::chat::calc_spend(
                 last_prompt_tokens, last_completion_tokens, input_cost, output_cost,
             );
-            let streaming_response = json!({
-                "streaming": true,
-                "prompt_tokens": last_prompt_tokens,
-                "completion_tokens": last_completion_tokens,
-                "total_tokens": last_prompt_tokens + last_completion_tokens,
-            });
+            // Assemble a completion-style response from upstream raw chunks
+            let assembled_response = if chunk_jsons.is_empty() {
+                json!({"streaming": true, "prompt_tokens": last_prompt_tokens, "completion_tokens": last_completion_tokens, "total_tokens": last_prompt_tokens + last_completion_tokens})
+            } else {
+                let mut merged_content = String::new();
+                let mut finish_reason: Option<String> = None;
+                for c in &chunk_jsons {
+                    if let Some(choices) = c["choices"].as_array() {
+                        for choice in choices {
+                            if let Some(content) = choice["delta"]["content"].as_str() {
+                                if !content.is_empty() { merged_content.push_str(content); }
+                            }
+                            if let Some(fr) = choice["finish_reason"].as_str() {
+                                finish_reason = Some(fr.to_string());
+                            }
+                        }
+                    }
+                }
+                json!({
+                    "streaming": true,
+                    "id": "chatcmpl-streaming",
+                    "object": "chat.completion",
+                    "model": model_clone,
+                    "choices": [{"index": 0, "message": {"role": "assistant", "content": merged_content}, "finish_reason": finish_reason}],
+                    "usage": {"prompt_tokens": last_prompt_tokens, "completion_tokens": last_completion_tokens, "total_tokens": last_prompt_tokens + last_completion_tokens}
+                })
+            };
 
             // Phase 2: UPDATE the pre-inserted SpendLog row
             let duration_ms = now.signed_duration_since(start_time).num_milliseconds() as i32;
@@ -710,7 +739,7 @@ pub async fn messages_handler(
                 now,
                 duration_ms,
                 cst,
-                streaming_response,
+                assembled_response,
                 "success",
             ).await;
         });
