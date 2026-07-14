@@ -95,7 +95,13 @@ impl MessageAdapter for OpenAIPassthrough {
     fn client_protocol(&self) -> ClientProtocol { ClientProtocol::OpenAI }
 
     fn adapt_request(&self, mut body: Value, deployment: &Deployment) -> Result<Value, AdapterError> {
-        body.as_object_mut().map(|obj| { obj.insert("model".to_string(), json!(deployment.upstream_model)); });
+        body.as_object_mut().map(|obj| {
+            obj.insert("model".to_string(), json!(deployment.upstream_model));
+            // Inject stream_options so upstream returns token usage in the final SSE chunk
+            if obj.get("stream").and_then(|v| v.as_bool()).unwrap_or(false) {
+                obj.insert("stream_options".to_string(), json!({"include_usage": true}));
+            }
+        });
         Ok(body)
     }
 
@@ -124,7 +130,13 @@ impl MessageAdapter for AnthropicToOpenAI {
             .map_err(|e| AdapterError::Parse(format!("Invalid Claude request: {}", e)))?;
         let oai_req = DefaultAdapter::claude_to_openai_request(&req);
         let mut json = serde_json::to_value(&oai_req).map_err(|e| AdapterError::Parse(e.to_string()))?;
-        json.as_object_mut().map(|obj| { obj.insert("model".to_string(), json!(deployment.upstream_model)); });
+        json.as_object_mut().map(|obj| {
+            obj.insert("model".to_string(), json!(deployment.upstream_model));
+            // Inject stream_options so upstream returns token usage in the final SSE chunk
+            if obj.get("stream").and_then(|v| v.as_bool()).unwrap_or(false) {
+                obj.insert("stream_options".to_string(), json!({"include_usage": true}));
+            }
+        });
         Ok(json)
     }
 

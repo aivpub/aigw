@@ -681,7 +681,7 @@ pub async fn messages_handler(
                 requester_ip_address: None,
                 messages: Some(upstream_body),
                 response: Some(json!({
-                    "note": "streaming — final usage chunk captured via stream_options",
+                    "streaming": true,
                     "prompt_tokens": last_prompt_tokens,
                     "completion_tokens": last_completion_tokens
                 })),
