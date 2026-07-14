@@ -539,11 +539,6 @@ pub async fn messages_handler(
                                                 break;
                                             }
                                         }
-                                    } else {
-                                        // [DONE] — send finishing events
-                                        if let Some(final_event) = stream_adapter.finish() {
-                                            let _ = tx.send(final_event);
-                                        }
                                     }
                                 }
                             }
@@ -552,7 +547,8 @@ pub async fn messages_handler(
                     Err(_) => break,
                 }
             }
-            // Send finishing SSE events
+            // Send finishing SSE events once after stream ends (content_block_stop + message_stop).
+            // finish() is idempotent — second call returns None.
             if let Some(final_event) = stream_adapter.finish() {
                 let _ = tx.send(final_event);
             }
@@ -664,18 +660,15 @@ pub async fn messages_handler(
             )
         })?;
 
-        // Convert OpenAI response to Claude format
-        let oai_response: aigw_core::models::ChatCompletionResponse =
-            serde_json::from_value(resp_body.clone()).map_err(|e| {
-                anthropic_error(
-                    StatusCode::BAD_GATEWAY,
-                    "upstream_error",
-                    &format!("Failed to parse upstream response: {}", e),
-                )
-            })?;
-
-        let claude_response =
-            DefaultAdapter::openai_to_claude_response(&oai_response);
+        // Convert upstream OpenAI response to Claude format via the adapter
+        // (handles tool_calls → tool_use conversion correctly)
+        let claude_response = adapter.adapt_response(resp_body.clone()).map_err(|e| {
+            anthropic_error(
+                StatusCode::BAD_GATEWAY,
+                "upstream_error",
+                &format!("Failed to convert response: {}", e),
+            )
+        })?;
 
         // Record spend log
         let now = chrono::Utc::now();

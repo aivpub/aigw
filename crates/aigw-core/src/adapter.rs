@@ -213,6 +213,32 @@ impl AnthropicToOpenAIStream {
         let json = serde_json::to_string(event).ok()?;
         Some(format!("event: {}\ndata: {}\n\n", event.event_type, json).into_bytes())
     }
+
+    /// Build a single SSE frame with content_block_stop followed by message_stop.
+    /// Returns `None` if already finished (idempotent).
+    fn build_finish_events(&mut self) -> Option<Vec<u8>> {
+        if self.current_block.is_none() && self.current_block_index == -1 {
+            return None; // already finished, idempotent
+        }
+        let mut buf = Vec::new();
+        if self.current_block.is_some() {
+            if let Some(cbs) = self.emit_event(&ClaudeStreamEvent {
+                event_type: "content_block_stop".to_string(), index: Some(self.current_block_index - 1),
+                delta: None, content_block: None, message: None, usage: None,
+            }) {
+                buf.extend_from_slice(&cbs);
+            }
+            self.current_block = None;
+        }
+        if let Some(ms) = self.emit_event(&ClaudeStreamEvent {
+            event_type: "message_stop".to_string(), index: None, delta: None,
+            content_block: None, message: None, usage: None,
+        }) {
+            buf.extend_from_slice(&ms);
+        }
+        self.current_block_index = -1; // mark as finished
+        if buf.is_empty() { None } else { Some(buf) }
+    }
 }
 
 impl StreamAdapter for AnthropicToOpenAIStream {
@@ -317,18 +343,7 @@ impl StreamAdapter for AnthropicToOpenAIStream {
     }
 
     fn finish(&mut self) -> Option<Vec<u8>> {
-        // Close the active content block if any — Anthropic protocol requires
-        // content_block_stop before message_delta/message_stop.
-        if self.current_block.is_some() {
-            self.emit_event(&ClaudeStreamEvent {
-                event_type: "content_block_stop".to_string(), index: Some(self.current_block_index - 1),
-                delta: None, content_block: None, message: None, usage: None,
-            });
-        }
-        self.emit_event(&ClaudeStreamEvent {
-            event_type: "message_stop".to_string(), index: None, delta: None,
-            content_block: None, message: None, usage: None,
-        })
+        self.build_finish_events()
     }
 }
 
@@ -399,12 +414,32 @@ impl ProviderAdapter for DefaultAdapter {
             }).collect()
         });
 
+        // Convert Claude tool_choice → OpenAI tool_choice:
+        //   {"type":"auto"}  → "auto"
+        //   {"type":"any"}   → "required"
+        //   {"type":"tool","name":"x"} → {"type":"function","function":{"name":"x"}}
+        //   strings passthrough, null/absent passthrough
+        let tool_choice = req.tool_choice.as_ref().map(|tc| {
+            match tc.get("type").and_then(|v| v.as_str()) {
+                Some("auto") => json!("auto"),
+                Some("any") => json!("required"),
+                Some("tool") => {
+                    let name = tc.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                    json!({"type": "function", "function": {"name": name}})
+                }
+                _ => {
+                    // Already a string? Passthrough (e.g. "auto", "none")
+                    if tc.is_string() { tc.clone() } else { json!("auto") }
+                }
+            }
+        });
+
         ChatCompletionRequest {
             model: req.model.clone(), messages, stream: req.stream.unwrap_or(false),
             temperature: req.temperature, max_tokens: Some(req.max_tokens), top_p: req.top_p,
             frequency_penalty: None, presence_penalty: None, stop: req.stop_sequences.clone(), user: None,
             tools,
-            tool_choice: req.tool_choice.clone(),
+            tool_choice,
         }
     }
 
@@ -773,5 +808,60 @@ mod tests {
         let claude = DefaultAdapter::openai_to_claude_request(&orig, 512);
         let rt = DefaultAdapter::claude_to_openai_request(&claude);
         assert_eq!(rt.model, orig.model);
+    }
+
+    // ── tool_choice conversion tests ──
+
+    #[test]
+    fn test_tool_choice_auto_conversion() {
+        let body = json!({
+            "model": "claude-sonnet", "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "hi"}],
+            "tools": [{"name": "get_weather", "input_schema": {"type": "object", "properties": {}}}],
+            "tool_choice": {"type": "auto"}
+        });
+        let adapted = AnthropicToOpenAI.adapt_request(body, &test_deployment()).unwrap();
+        // Claude {"type":"auto"} → OpenAI "auto"
+        assert_eq!(adapted["tool_choice"].as_str(), Some("auto"));
+    }
+
+    #[test]
+    fn test_tool_choice_any_conversion() {
+        let body = json!({
+            "model": "claude-sonnet", "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "hi"}],
+            "tools": [{"name": "get_weather", "input_schema": {"type": "object", "properties": {}}}],
+            "tool_choice": {"type": "any"}
+        });
+        let adapted = AnthropicToOpenAI.adapt_request(body, &test_deployment()).unwrap();
+        // Claude {"type":"any"} → OpenAI "required"
+        assert_eq!(adapted["tool_choice"].as_str(), Some("required"));
+    }
+
+    #[test]
+    fn test_tool_choice_specific_tool_conversion() {
+        let body = json!({
+            "model": "claude-sonnet", "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "hi"}],
+            "tools": [{"name": "get_weather", "input_schema": {"type": "object", "properties": {}}}],
+            "tool_choice": {"type": "tool", "name": "get_weather"}
+        });
+        let adapted = AnthropicToOpenAI.adapt_request(body, &test_deployment()).unwrap();
+        // Claude {"type":"tool","name":"x"} → OpenAI {"type":"function","function":{"name":"x"}}
+        let tc = &adapted["tool_choice"];
+        assert_eq!(tc["type"].as_str(), Some("function"));
+        assert_eq!(tc["function"]["name"].as_str(), Some("get_weather"));
+    }
+
+    #[test]
+    fn test_tool_choice_string_passthrough() {
+        let body = json!({
+            "model": "claude-sonnet", "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "hi"}],
+            "tools": [{"name": "get_weather", "input_schema": {"type": "object", "properties": {}}}],
+            "tool_choice": "none"
+        });
+        let adapted = AnthropicToOpenAI.adapt_request(body, &test_deployment()).unwrap();
+        assert_eq!(adapted["tool_choice"].as_str(), Some("none"));
     }
 }
