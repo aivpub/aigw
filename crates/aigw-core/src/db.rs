@@ -1173,7 +1173,7 @@ impl Database {
 pub trait SpendLogStore {
     async fn insert_spend_log(&self, log: &SpendLog) -> Result<()>;
     /// Update a spend_log after streaming completes — fills in tokens, spend,
-    /// end_time, response, and status. Uses request_id as the unique key.
+    /// end_time, response, duration, TTFT, and status. Uses request_id as the unique key.
     async fn update_spend_log(
         &self,
         request_id: &str,
@@ -1182,6 +1182,8 @@ pub trait SpendLogStore {
         prompt_tokens: i32,
         completion_tokens: i32,
         end_time: chrono::DateTime<chrono::Utc>,
+        request_duration_ms: i32,
+        completion_start_time: chrono::DateTime<chrono::Utc>,
         response: serde_json::Value,
         status: &str,
     ) -> Result<()>;
@@ -1311,17 +1313,21 @@ impl SpendLogStore for SqlitePool {
         prompt_tokens: i32,
         completion_tokens: i32,
         end_time: chrono::DateTime<chrono::Utc>,
+        request_duration_ms: i32,
+        completion_start_time: chrono::DateTime<chrono::Utc>,
         response: serde_json::Value,
         status: &str,
     ) -> Result<()> {
         sqlx::query(
-            "UPDATE spend_logs SET spend=?, total_tokens=?, prompt_tokens=?, completion_tokens=?, end_time=?, response=?, status=? WHERE request_id=?"
+            "UPDATE spend_logs SET spend=?, total_tokens=?, prompt_tokens=?, completion_tokens=?, end_time=?, request_duration_ms=?, completion_start_time=?, response=?, status=? WHERE request_id=?"
         )
         .bind(spend)
         .bind(total_tokens)
         .bind(prompt_tokens)
         .bind(completion_tokens)
         .bind(end_time)
+        .bind(request_duration_ms)
+        .bind(completion_start_time)
         .bind(response)
         .bind(status)
         .bind(request_id)
@@ -1558,17 +1564,21 @@ impl SpendLogStore for MySqlPool {
         prompt_tokens: i32,
         completion_tokens: i32,
         end_time: chrono::DateTime<chrono::Utc>,
+        request_duration_ms: i32,
+        completion_start_time: chrono::DateTime<chrono::Utc>,
         response: serde_json::Value,
         status: &str,
     ) -> Result<()> {
         sqlx::query(
-            "UPDATE spend_logs SET spend=?, total_tokens=?, prompt_tokens=?, completion_tokens=?, end_time=?, response=?, status=? WHERE request_id=?"
+            "UPDATE spend_logs SET spend=?, total_tokens=?, prompt_tokens=?, completion_tokens=?, end_time=?, request_duration_ms=?, completion_start_time=?, response=?, status=? WHERE request_id=?"
         )
         .bind(spend)
         .bind(total_tokens)
         .bind(prompt_tokens)
         .bind(completion_tokens)
         .bind(end_time)
+        .bind(request_duration_ms)
+        .bind(completion_start_time)
         .bind(response)
         .bind(status)
         .bind(request_id)
@@ -1789,17 +1799,21 @@ impl SpendLogStore for PgPool {
         prompt_tokens: i32,
         completion_tokens: i32,
         end_time: chrono::DateTime<chrono::Utc>,
+        request_duration_ms: i32,
+        completion_start_time: chrono::DateTime<chrono::Utc>,
         response: serde_json::Value,
         status: &str,
     ) -> Result<()> {
         sqlx::query(
-            "UPDATE spend_logs SET spend=$1, total_tokens=$2, prompt_tokens=$3, completion_tokens=$4, end_time=$5, response=$6, status=$7 WHERE request_id=$8"
+            "UPDATE spend_logs SET spend=$1, total_tokens=$2, prompt_tokens=$3, completion_tokens=$4, end_time=$5, request_duration_ms=$6, completion_start_time=$7, response=$8, status=$9 WHERE request_id=$10"
         )
         .bind(spend)
         .bind(total_tokens)
         .bind(prompt_tokens)
         .bind(completion_tokens)
         .bind(end_time)
+        .bind(request_duration_ms)
+        .bind(completion_start_time)
         .bind(response)
         .bind(status)
         .bind(request_id)
@@ -2000,13 +2014,15 @@ impl Database {
         prompt_tokens: i32,
         completion_tokens: i32,
         end_time: chrono::DateTime<chrono::Utc>,
+        request_duration_ms: i32,
+        completion_start_time: chrono::DateTime<chrono::Utc>,
         response: serde_json::Value,
         status: &str,
     ) -> Result<()> {
         match self {
-            Database::Sqlite(pool) => pool.update_spend_log(request_id, spend, total_tokens, prompt_tokens, completion_tokens, end_time, response, status).await,
-            Database::Mysql(pool) => pool.update_spend_log(request_id, spend, total_tokens, prompt_tokens, completion_tokens, end_time, response, status).await,
-            Database::Postgres(pool) => pool.update_spend_log(request_id, spend, total_tokens, prompt_tokens, completion_tokens, end_time, response, status).await,
+            Database::Sqlite(pool) => pool.update_spend_log(request_id, spend, total_tokens, prompt_tokens, completion_tokens, end_time, request_duration_ms, completion_start_time, response, status).await,
+            Database::Mysql(pool) => pool.update_spend_log(request_id, spend, total_tokens, prompt_tokens, completion_tokens, end_time, request_duration_ms, completion_start_time, response, status).await,
+            Database::Postgres(pool) => pool.update_spend_log(request_id, spend, total_tokens, prompt_tokens, completion_tokens, end_time, request_duration_ms, completion_start_time, response, status).await,
         }
     }
 

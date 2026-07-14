@@ -1040,12 +1040,15 @@ pub async fn chat_completions(
                 })
             };
 
+            let duration_ms = now.signed_duration_since(start_time).num_milliseconds() as i32;
+            let cst = first_chunk_time.unwrap_or(now);
+
             // Phase 2: UPDATE the pre-inserted SpendLog row
             match failure {
                 Some((status_code, err)) => {
                     let _ = state_clone.db.update_spend_log(
                         &request_id, 0.0, 0, 0, 0,
-                        now,
+                        now, duration_ms, cst,
                         json!({"error": err, "status_code": status_code}),
                         &format!("failure:{}", status_code),
                     ).await;
@@ -1053,7 +1056,7 @@ pub async fn chat_completions(
                 None => {
                     let _ = state_clone.db.update_spend_log(
                         &request_id, streaming_spend, stream_total_tokens, stream_prompt_tokens, stream_completion_tokens,
-                        now, assembled_response, "success",
+                        now, duration_ms, cst, assembled_response, "success",
                     ).await;
                 }
             }

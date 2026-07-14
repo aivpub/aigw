@@ -699,6 +699,8 @@ pub async fn messages_handler(
             });
 
             // Phase 2: UPDATE the pre-inserted SpendLog row
+            let duration_ms = now.signed_duration_since(start_time).num_milliseconds() as i32;
+            let cst = first_chunk_time.unwrap_or(now);
             let _ = state_clone.db.update_spend_log(
                 &sr_id,
                 streaming_spend,
@@ -706,6 +708,8 @@ pub async fn messages_handler(
                 last_prompt_tokens,
                 last_completion_tokens,
                 now,
+                duration_ms,
+                cst,
                 streaming_response,
                 "success",
             ).await;
