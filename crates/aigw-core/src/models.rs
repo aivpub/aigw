@@ -897,4 +897,7 @@ pub struct ClaudeDelta {
     pub delta_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    /// Used for input_json_delta — Anthropic requires "partial_json", not "text"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub partial_json: Option<String>,
 }

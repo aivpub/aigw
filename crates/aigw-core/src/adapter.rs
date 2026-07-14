@@ -256,7 +256,7 @@ impl StreamAdapter for AnthropicToOpenAIStream {
                         }
                         return self.emit_event(&ClaudeStreamEvent {
                             event_type: "content_block_delta".to_string(), index: Some(self.current_block_index - 1),
-                            delta: Some(ClaudeDelta { delta_type: "text_delta".to_string(), text: Some(text.clone()) }),
+                            delta: Some(ClaudeDelta { delta_type: "text_delta".to_string(), text: Some(text.clone()), partial_json: None }),
                             content_block: None, message: None, usage: None,
                         });
                     }
@@ -282,7 +282,7 @@ impl StreamAdapter for AnthropicToOpenAIStream {
                         if !tc.function.arguments.is_empty() {
                             return self.emit_event(&ClaudeStreamEvent {
                                 event_type: "content_block_delta".to_string(), index: Some(self.current_block_index - 1),
-                                delta: Some(ClaudeDelta { delta_type: "input_json_delta".to_string(), text: Some(tc.function.arguments.clone()) }),
+                                delta: Some(ClaudeDelta { delta_type: "input_json_delta".to_string(), text: None, partial_json: Some(tc.function.arguments.clone()) }),
                                 content_block: None, message: None, usage: None,
                             });
                         }
@@ -298,7 +298,7 @@ impl StreamAdapter for AnthropicToOpenAIStream {
                     };
                     return self.emit_event(&ClaudeStreamEvent {
                         event_type: "message_delta".to_string(), index: None,
-                        delta: Some(ClaudeDelta { delta_type: "stop_reason".to_string(), text: sr }),
+                        delta: Some(ClaudeDelta { delta_type: "stop_reason".to_string(), text: sr, partial_json: None }),
                         content_block: None, message: None, usage: None,
                     });
                 }
@@ -462,7 +462,7 @@ impl ProviderAdapter for DefaultAdapter {
             if let Some(ref text) = choice.delta.content {
                 return Some(ClaudeStreamEvent {
                     event_type: "content_block_delta".to_string(), index: Some(choice.index),
-                    delta: Some(ClaudeDelta { delta_type: "text_delta".to_string(), text: Some(text.clone()) }),
+                    delta: Some(ClaudeDelta { delta_type: "text_delta".to_string(), text: Some(text.clone()), partial_json: None }),
                     content_block: None, message: None, usage: None,
                 });
             }
@@ -470,7 +470,7 @@ impl ProviderAdapter for DefaultAdapter {
                 let stop_reason = openai_stop_to_claude(&Some(finish.clone()));
                 return Some(ClaudeStreamEvent {
                     event_type: "message_delta".to_string(), index: Some(choice.index),
-                    delta: Some(ClaudeDelta { delta_type: "stop_reason".to_string(), text: stop_reason }),
+                    delta: Some(ClaudeDelta { delta_type: "stop_reason".to_string(), text: stop_reason, partial_json: None }),
                     content_block: None, message: None, usage: None,
                 });
             }
