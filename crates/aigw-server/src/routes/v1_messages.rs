@@ -705,6 +705,7 @@ pub async fn messages_handler(
             } else {
                 let mut merged_content = String::new();
                 let mut finish_reason: Option<String> = None;
+                let mut tool_calls: Vec<Value> = Vec::new();
                 for c in &chunk_jsons {
                     if let Some(choices) = c["choices"].as_array() {
                         for choice in choices {
@@ -714,15 +715,38 @@ pub async fn messages_handler(
                             if let Some(fr) = choice["finish_reason"].as_str() {
                                 finish_reason = Some(fr.to_string());
                             }
+                            if let Some(delta_tcs) = choice["delta"]["tool_calls"].as_array() {
+                                for tc in delta_tcs {
+                                    let idx = tc.get("index").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
+                                    while tool_calls.len() <= idx {
+                                        tool_calls.push(json!({"id": "", "type": "function", "function": {"name": "", "arguments": ""}}));
+                                    }
+                                    if let Some(id) = tc.get("id").and_then(|v| v.as_str()) {
+                                        if !id.is_empty() { tool_calls[idx]["id"] = json!(id); }
+                                    }
+                                    if let Some(fn_name) = tc.get("function").and_then(|v| v.get("name")).and_then(|v| v.as_str()) {
+                                        if !fn_name.is_empty() { tool_calls[idx]["function"]["name"] = json!(fn_name); }
+                                    }
+                                    if let Some(args) = tc.get("function").and_then(|v| v.get("arguments")).and_then(|v| v.as_str()) {
+                                        tool_calls[idx]["function"]["arguments"] = json!(format!("{}{}",
+                                            tool_calls[idx]["function"]["arguments"].as_str().unwrap_or(""), args));
+                                    }
+                                }
+                            }
                         }
                     }
                 }
+                let message = if tool_calls.is_empty() {
+                    json!({"role": "assistant", "content": merged_content})
+                } else {
+                    json!({"role": "assistant", "content": if merged_content.is_empty() { Value::Null } else { json!(merged_content) }, "tool_calls": tool_calls})
+                };
                 json!({
                     "streaming": true,
                     "id": "chatcmpl-streaming",
                     "object": "chat.completion",
                     "model": model_clone,
-                    "choices": [{"index": 0, "message": {"role": "assistant", "content": merged_content}, "finish_reason": finish_reason}],
+                    "choices": [{"index": 0, "message": message, "finish_reason": finish_reason}],
                     "usage": {"prompt_tokens": last_prompt_tokens, "completion_tokens": last_completion_tokens, "total_tokens": last_prompt_tokens + last_completion_tokens}
                 })
             };
