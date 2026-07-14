@@ -586,16 +586,23 @@ fn claude_message_to_openai(msg: &ClaudeMessage) -> ChatMessage {
             name: None, tool_calls: None, tool_call_id: None,
         },
         ClaudeContent::Blocks(blocks) => {
-            let parts: Vec<ContentPart> = blocks.iter().map(|b| {
-                if b.content_type == "image" {
-                    ContentPart {
-                        content_type: "image_url".to_string(), text: None,
-                        image_url: b.source.as_ref().map(|s| ImageUrl { url: format!("data:{};base64,{}", s.media_type, s.data) }),
+            // Only emit ContentParts for text/image blocks.
+            // tool_use and tool_result are handled separately below
+            // (tool_calls / tool_call_id); including them would produce
+            // ContentPart { type:"text", text:None } which upstream
+            // rejects as "missing field `text`".
+            let parts: Vec<ContentPart> = blocks.iter()
+                .filter(|b| b.content_type == "text" || b.content_type == "image")
+                .map(|b| {
+                    if b.content_type == "image" {
+                        ContentPart {
+                            content_type: "image_url".to_string(), text: None,
+                            image_url: b.source.as_ref().map(|s| ImageUrl { url: format!("data:{};base64,{}", s.media_type, s.data) }),
+                        }
+                    } else {
+                        ContentPart { content_type: "text".to_string(), text: b.text.clone(), image_url: None }
                     }
-                } else {
-                    ContentPart { content_type: "text".to_string(), text: b.text.clone(), image_url: None }
-                }
-            }).collect();
+                }).collect();
             let tool_calls: Vec<ToolCall> = blocks.iter()
                 .filter(|b| b.content_type == "tool_use")
                 .filter_map(|b| {
@@ -863,5 +870,34 @@ mod tests {
         });
         let adapted = AnthropicToOpenAI.adapt_request(body, &test_deployment()).unwrap();
         assert_eq!(adapted["tool_choice"].as_str(), Some("none"));
+    }
+
+    /// Regression: assistant message with tool_use block must NOT produce
+    /// ContentPart { type:"text", text:None } — upstream rejects "missing field `text`".
+    #[test]
+    fn test_assistant_tool_use_excludes_empty_text() {
+        let body = json!({
+            "model": "claude-sonnet", "max_tokens": 1024,
+            "messages": [
+                {"role": "user", "content": "check hostname"},
+                {"role": "assistant", "content": [
+                    {"type": "text", "text": ""},
+                    {"type": "tool_use", "id": "toolu_01", "name": "hostname", "input": {}}
+                ]}
+            ],
+        });
+        let adapted = AnthropicToOpenAI.adapt_request(body, &test_deployment()).unwrap();
+        let msgs = adapted["messages"].as_array().unwrap();
+        let assistant = msgs.iter().find(|m| m["role"] == "assistant").unwrap();
+        let content = assistant["content"].as_array().unwrap();
+        // Must not contain a {"type":"text"} without text field
+        for part in content {
+            if part["type"] == "text" {
+                assert!(part.get("text").and_then(|v| v.as_str()).is_some(),
+                    "text ContentPart must have a non-null text field: {}", part);
+            }
+        }
+        assert!(assistant["tool_calls"].as_array().unwrap().len() > 0,
+            "tool_calls must be present");
     }
 }
