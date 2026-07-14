@@ -308,6 +308,14 @@ impl StreamAdapter for AnthropicToOpenAIStream {
     }
 
     fn finish(&mut self) -> Option<Vec<u8>> {
+        // Close the active content block if any — Anthropic protocol requires
+        // content_block_stop before message_delta/message_stop.
+        if self.current_block.is_some() {
+            self.emit_event(&ClaudeStreamEvent {
+                event_type: "content_block_stop".to_string(), index: Some(self.current_block_index - 1),
+                delta: None, content_block: None, message: None, usage: None,
+            });
+        }
         self.emit_event(&ClaudeStreamEvent {
             event_type: "message_stop".to_string(), index: None, delta: None,
             content_block: None, message: None, usage: None,
