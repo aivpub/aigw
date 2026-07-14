@@ -904,6 +904,10 @@ pub async fn chat_completions(
             use tokio_stream::StreamExt;
             let mut stream = upstream_resp.bytes_stream();
             let mut first_chunk_time: Option<chrono::DateTime<chrono::Utc>> = None;
+            let mut last_chunk_json: Option<Value> = None;
+            let mut stream_prompt_tokens: i32 = 0;
+            let mut stream_completion_tokens: i32 = 0;
+            let mut stream_total_tokens: i32 = 0;
 
             while let Some(chunk_result) = stream.next().await {
                 match chunk_result {
@@ -911,8 +915,25 @@ pub async fn chat_completions(
                         if first_chunk_time.is_none() && !chunk.is_empty() {
                             first_chunk_time = Some(chrono::Utc::now());
                         }
+                        // Parse chunks to capture usage from the final chunk
+                        // (OpenAI sends a chunk with usage when stream_options.include_usage=true)
+                        if let Ok(text) = std::str::from_utf8(&chunk) {
+                            for line in text.lines() {
+                                if let Some(data) = line.strip_prefix("data: ") {
+                                    if data != "[DONE]" {
+                                        if let Ok(val) = serde_json::from_str::<Value>(data) {
+                                            last_chunk_json = Some(val.clone());
+                                            if let Some(usage) = val.get("usage") {
+                                                stream_prompt_tokens = usage.get("prompt_tokens").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                                                stream_completion_tokens = usage.get("completion_tokens").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                                                stream_total_tokens = usage.get("total_tokens").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         if tx.send(chunk.to_vec()).is_err() {
-                            // Client disconnected — stop forwarding
                             break;
                         }
                     }
@@ -922,15 +943,15 @@ pub async fn chat_completions(
 
             // Write SpendLog after stream completes
             let now = chrono::Utc::now();
-            let streaming_spend = calc_spend(0, 0, deployment.input_cost_per_token, deployment.output_cost_per_token);
+            let streaming_spend = calc_spend(stream_prompt_tokens, stream_completion_tokens, deployment.input_cost_per_token, deployment.output_cost_per_token);
             let spend_log = SpendLog {
                 request_id,
                 call_type: "completion".to_string(),
                 api_key: token_hash,
                 spend: streaming_spend,
-                total_tokens: 0,
-                prompt_tokens: 0,
-                completion_tokens: 0,
+                total_tokens: stream_total_tokens,
+                prompt_tokens: stream_prompt_tokens,
+                completion_tokens: stream_completion_tokens,
                 start_time,
                 end_time: now,
                 request_duration_ms: Some(
@@ -952,7 +973,7 @@ pub async fn chat_completions(
                 end_user: None,
                 requester_ip_address: None,
                 messages: Some(request_body),
-                response: None, // Streaming — raw chunks not accumulated
+                response: last_chunk_json.or_else(|| Some(json!({}))),
                 session_id: None,
                 status: Some("success".to_string()),
                 mcp_namespaced_tool_name: None,

@@ -680,7 +680,11 @@ pub async fn messages_handler(
                 end_user: None,
                 requester_ip_address: None,
                 messages: Some(upstream_body),
-                response: Some(json!({"note": "streaming — raw SSE chunks not accumulated"})),
+                response: Some(json!({
+                    "note": "streaming — final usage chunk captured via stream_options",
+                    "prompt_tokens": last_prompt_tokens,
+                    "completion_tokens": last_completion_tokens
+                })),
                 session_id: None,
                 status: Some("success".to_string()),
                 mcp_namespaced_tool_name: None,
