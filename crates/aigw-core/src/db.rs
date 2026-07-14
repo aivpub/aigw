@@ -1172,6 +1172,19 @@ impl Database {
 #[allow(clippy::too_many_arguments)]
 pub trait SpendLogStore {
     async fn insert_spend_log(&self, log: &SpendLog) -> Result<()>;
+    /// Update a spend_log after streaming completes — fills in tokens, spend,
+    /// end_time, response, and status. Uses request_id as the unique key.
+    async fn update_spend_log(
+        &self,
+        request_id: &str,
+        spend: f64,
+        total_tokens: i32,
+        prompt_tokens: i32,
+        completion_tokens: i32,
+        end_time: chrono::DateTime<chrono::Utc>,
+        response: serde_json::Value,
+        status: &str,
+    ) -> Result<()>;
     async fn query_spend_logs(
         &self,
         api_key: Option<&str>,
@@ -1287,6 +1300,33 @@ impl SpendLogStore for SqlitePool {
             .bind(&log.proxy_server_request)
             .execute(self)
             .await?;
+        Ok(())
+    }
+
+    async fn update_spend_log(
+        &self,
+        request_id: &str,
+        spend: f64,
+        total_tokens: i32,
+        prompt_tokens: i32,
+        completion_tokens: i32,
+        end_time: chrono::DateTime<chrono::Utc>,
+        response: serde_json::Value,
+        status: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE spend_logs SET spend=?, total_tokens=?, prompt_tokens=?, completion_tokens=?, end_time=?, response=?, status=? WHERE request_id=?"
+        )
+        .bind(spend)
+        .bind(total_tokens)
+        .bind(prompt_tokens)
+        .bind(completion_tokens)
+        .bind(end_time)
+        .bind(response)
+        .bind(status)
+        .bind(request_id)
+        .execute(self)
+        .await?;
         Ok(())
     }
 
@@ -1510,6 +1550,33 @@ impl SpendLogStore for MySqlPool {
         Ok(())
     }
 
+    async fn update_spend_log(
+        &self,
+        request_id: &str,
+        spend: f64,
+        total_tokens: i32,
+        prompt_tokens: i32,
+        completion_tokens: i32,
+        end_time: chrono::DateTime<chrono::Utc>,
+        response: serde_json::Value,
+        status: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE spend_logs SET spend=?, total_tokens=?, prompt_tokens=?, completion_tokens=?, end_time=?, response=?, status=? WHERE request_id=?"
+        )
+        .bind(spend)
+        .bind(total_tokens)
+        .bind(prompt_tokens)
+        .bind(completion_tokens)
+        .bind(end_time)
+        .bind(response)
+        .bind(status)
+        .bind(request_id)
+        .execute(self)
+        .await?;
+        Ok(())
+    }
+
     async fn query_spend_logs(
         &self,
         api_key: Option<&str>,
@@ -1714,6 +1781,33 @@ impl SpendLogStore for PgPool {
         Ok(())
     }
 
+    async fn update_spend_log(
+        &self,
+        request_id: &str,
+        spend: f64,
+        total_tokens: i32,
+        prompt_tokens: i32,
+        completion_tokens: i32,
+        end_time: chrono::DateTime<chrono::Utc>,
+        response: serde_json::Value,
+        status: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE spend_logs SET spend=$1, total_tokens=$2, prompt_tokens=$3, completion_tokens=$4, end_time=$5, response=$6, status=$7 WHERE request_id=$8"
+        )
+        .bind(spend)
+        .bind(total_tokens)
+        .bind(prompt_tokens)
+        .bind(completion_tokens)
+        .bind(end_time)
+        .bind(response)
+        .bind(status)
+        .bind(request_id)
+        .execute(self)
+        .await?;
+        Ok(())
+    }
+
     async fn query_spend_logs(
         &self,
         api_key: Option<&str>,
@@ -1895,6 +1989,24 @@ impl Database {
             Database::Sqlite(pool) => pool.insert_spend_log(log).await,
             Database::Mysql(pool) => pool.insert_spend_log(log).await,
             Database::Postgres(pool) => pool.insert_spend_log(log).await,
+        }
+    }
+
+    pub async fn update_spend_log(
+        &self,
+        request_id: &str,
+        spend: f64,
+        total_tokens: i32,
+        prompt_tokens: i32,
+        completion_tokens: i32,
+        end_time: chrono::DateTime<chrono::Utc>,
+        response: serde_json::Value,
+        status: &str,
+    ) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.update_spend_log(request_id, spend, total_tokens, prompt_tokens, completion_tokens, end_time, response, status).await,
+            Database::Mysql(pool) => pool.update_spend_log(request_id, spend, total_tokens, prompt_tokens, completion_tokens, end_time, response, status).await,
+            Database::Postgres(pool) => pool.update_spend_log(request_id, spend, total_tokens, prompt_tokens, completion_tokens, end_time, response, status).await,
         }
     }
 

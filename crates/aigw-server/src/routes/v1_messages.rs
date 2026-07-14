@@ -450,11 +450,53 @@ pub async fn messages_handler(
             ));
         }
 
-        // SSE streaming with Anthropic format conversion:
-        //   OpenAI SSE raw bytes → parse ChatCompletionChunk → adapter conversion →
-        //   inject block boundary events → Anthropic SSE format → client
+        // SSE streaming: two-phase spend-log pattern.
+        // Phase 1: INSERT placeholder SpendLog BEFORE streaming begins.
+        // Phase 2: UPDATE the same row with tokens + response AFTER stream ends.
+        let streaming_request_id = format!("req_{}", uuid::Uuid::new_v4());
+
+        // Phase 1: pre-insert placeholder
+        {
+            let sl = SpendLog {
+                request_id: streaming_request_id.clone(),
+                call_type: call_type.to_string(),
+                api_key: auth_token_hash.clone(),
+                spend: 0.0,
+                total_tokens: 0,
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                start_time,
+                end_time: start_time,
+                request_duration_ms: None,
+                completion_start_time: None,
+                model: model.clone(),
+                model_id: None,
+                model_group: None,
+                custom_llm_provider: None,
+                api_base: Some(upstream_base_url.clone()),
+                user: auth_user_id.clone(),
+                metadata: None,
+                cache_hit: None,
+                cache_key: None,
+                request_tags: None,
+                team_id: None,
+                organization_id: None,
+                end_user: None,
+                requester_ip_address: None,
+                messages: Some(upstream_body.clone()),
+                response: Some(json!({"status": "streaming"})),
+                session_id: None,
+                status: Some("streaming".to_string()),
+                mcp_namespaced_tool_name: None,
+                agent_id: None,
+                proxy_server_request: None,
+            };
+            let _ = state.db.insert_spend_log(&sl).await;
+        }
+
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
         let state_clone = Arc::clone(&state);
+        let sr_id = streaming_request_id.clone();
         let model_clone = model.clone();
         let upstream_base_url_clone = upstream_base_url.clone();
         let auth_token_hash_clone = auth_token_hash.clone();
@@ -646,52 +688,27 @@ pub async fn messages_handler(
             // drop(tx) happens when scope exits
 
             let now = chrono::Utc::now();
-            let spend_log = SpendLog {
-                request_id: uuid::Uuid::new_v4().to_string(),
-                call_type: call_type.to_string(),
-                api_key: auth_token_hash_clone.clone(),
-                spend: super::chat::calc_spend(
-                    last_prompt_tokens,
-                    last_completion_tokens,
-                    input_cost,
-                    output_cost,
-                ),
-                total_tokens: last_prompt_tokens + last_completion_tokens,
-                prompt_tokens: last_prompt_tokens,
-                completion_tokens: last_completion_tokens,
-                start_time,
-                end_time: now,
-                request_duration_ms: Some(
-                    now.signed_duration_since(start_time).num_milliseconds() as i32,
-                ),
-                completion_start_time: Some(first_chunk_time.unwrap_or(now)),
-                model: model_clone,
-                model_id: None,
-                model_group: None,
-                custom_llm_provider: None,
-                api_base: Some(upstream_base_url_clone),
-                user: auth_user_id_clone,
-                metadata: None,
-                cache_hit: None,
-                cache_key: None,
-                request_tags: None,
-                team_id: None,
-                organization_id: None,
-                end_user: None,
-                requester_ip_address: None,
-                messages: Some(upstream_body),
-                response: Some(json!({
-                    "streaming": true,
-                    "prompt_tokens": last_prompt_tokens,
-                    "completion_tokens": last_completion_tokens
-                })),
-                session_id: None,
-                status: Some("success".to_string()),
-                mcp_namespaced_tool_name: None,
-                agent_id: None,
-                proxy_server_request: None,
-            };
-            let _ = state_clone.db.insert_spend_log(&spend_log).await;
+            let streaming_spend = super::chat::calc_spend(
+                last_prompt_tokens, last_completion_tokens, input_cost, output_cost,
+            );
+            let streaming_response = json!({
+                "streaming": true,
+                "prompt_tokens": last_prompt_tokens,
+                "completion_tokens": last_completion_tokens,
+                "total_tokens": last_prompt_tokens + last_completion_tokens,
+            });
+
+            // Phase 2: UPDATE the pre-inserted SpendLog row
+            let _ = state_clone.db.update_spend_log(
+                &sr_id,
+                streaming_spend,
+                last_prompt_tokens + last_completion_tokens,
+                last_prompt_tokens,
+                last_completion_tokens,
+                now,
+                streaming_response,
+                "success",
+            ).await;
         });
 
         // Build SSE response from the Anthropic-formatted event stream

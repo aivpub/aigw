@@ -886,9 +886,9 @@ pub async fn chat_completions(
             ));
         }
 
-        // SSE streaming proxy: forward upstream SSE chunks to client via axum Sse.
-        // A background task reads from upstream, captures completion_start_time on the
-        // first chunk, and writes a SpendLog after the stream completes.
+        // SSE streaming proxy: two-phase spend-log pattern.
+        // Phase 1: INSERT placeholder SpendLog (request_id, api_key, model, messages) BEFORE streaming.
+        // Phase 2: UPDATE the same row with tokens, spend, end_time, and full response AFTER stream ends.
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
         let state_clone = Arc::clone(&state);
         let model = _model.to_string();
@@ -900,15 +900,55 @@ pub async fn chat_completions(
         let request_id = uuid::Uuid::new_v4().to_string();
         let request_body = body.clone();
 
+        // Phase 1: pre-insert placeholder SpendLog
+        {
+            let sl = SpendLog {
+                request_id: request_id.clone(),
+                call_type: "completion".to_string(),
+                api_key: token_hash.clone(),
+                spend: 0.0,
+                total_tokens: 0,
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                start_time,
+                end_time: start_time,
+                request_duration_ms: None,
+                completion_start_time: None,
+                model: model.clone(),
+                model_id: None,
+                model_group: None,
+                custom_llm_provider: None,
+                api_base: Some(api_base.clone()),
+                user: user_id.clone(),
+                metadata: None,
+                cache_hit: None,
+                cache_key: None,
+                request_tags: None,
+                team_id: team_id.clone(),
+                organization_id: organization_id.clone(),
+                end_user: None,
+                requester_ip_address: None,
+                messages: Some(request_body.clone()),
+                response: Some(json!({"status": "streaming"})),
+                session_id: None,
+                status: Some("streaming".to_string()),
+                mcp_namespaced_tool_name: None,
+                agent_id: None,
+                proxy_server_request: None,
+            };
+            let _ = state.db.insert_spend_log(&sl).await;
+        }
+
         tokio::spawn(async move {
             use tokio_stream::StreamExt;
             let mut stream = upstream_resp.bytes_stream();
             let mut first_chunk_time: Option<chrono::DateTime<chrono::Utc>> = None;
-            // Collect all chunk JSON content for spend-log response
+            // Collect chunk choices for reconstructing a completion-style response
             let mut chunk_jsons: Vec<Value> = Vec::new();
-            let mut stream_total_tokens: i32 = 0;
             let mut stream_prompt_tokens: i32 = 0;
             let mut stream_completion_tokens: i32 = 0;
+            let mut stream_total_tokens: i32 = 0;
+            let mut failure: Option<(u16, String)> = None;
 
             while let Some(chunk_result) = stream.next().await {
                 match chunk_result {
@@ -917,8 +957,6 @@ pub async fn chat_completions(
                             first_chunk_time = Some(chrono::Utc::now());
                         }
 
-                        // Parse chunks to capture token usage from the final chunk
-                        // (OpenAI sends a chunk with usage when stream_options.include_usage=true)
                         if let Ok(text) = std::str::from_utf8(&chunk) {
                             for line in text.lines() {
                                 if let Some(data) = line.strip_prefix("data: ") {
@@ -938,10 +976,10 @@ pub async fn chat_completions(
                                                     .and_then(|v| v.as_i64())
                                                     .unwrap_or(0) as i32;
                                             }
-                                            if val.get("choices").and_then(|c| c.as_array()).map(|a| a.is_empty()).unwrap_or(true) {
-                                                // skip the final empty-choice usage-only chunk
-                                            } else {
-                                                chunk_jsons.push(val);
+                                            if let Some(choices) = val.get("choices") {
+                                                if !choices.as_array().map(|a| a.is_empty()).unwrap_or(true) {
+                                                    chunk_jsons.push(val);
+                                                }
                                             }
                                         }
                                     }
@@ -953,79 +991,88 @@ pub async fn chat_completions(
                             break;
                         }
                     }
-                    Err(_) => break,
+                    Err(e) => {
+                        failure = Some((0, e.to_string()));
+                        break;
+                    }
                 }
             }
 
-            // Build streaming response summary for spend_log
-            let streaming_response = json!({
-                "streaming": true,
-                "chunks": chunk_jsons,
-                "prompt_tokens": stream_prompt_tokens,
-                "completion_tokens": stream_completion_tokens,
-                "total_tokens": stream_total_tokens,
-            });
-
-            // Write SpendLog after stream completes
             let now = chrono::Utc::now();
             let streaming_spend = calc_spend(stream_prompt_tokens, stream_completion_tokens, deployment.input_cost_per_token, deployment.output_cost_per_token);
-            let spend_log = SpendLog {
-                request_id,
-                call_type: "completion".to_string(),
-                api_key: token_hash,
-                spend: streaming_spend,
-                total_tokens: stream_total_tokens,
-                prompt_tokens: stream_prompt_tokens,
-                completion_tokens: stream_completion_tokens,
-                start_time,
-                end_time: now,
-                request_duration_ms: Some(
-                    now.signed_duration_since(start_time).num_milliseconds() as i32
-                ),
-                completion_start_time: Some(first_chunk_time.unwrap_or(now)),
-                model,
-                model_id: None,
-                model_group: None,
-                custom_llm_provider: None,
-                api_base: Some(api_base),
-                user: user_id,
-                metadata: None,
-                cache_hit: None,
-                cache_key: None,
-                request_tags: None,
-                team_id,
-                organization_id,
-                end_user: None,
-                requester_ip_address: None,
-                messages: Some(request_body),
-                response: Some(streaming_response),
-                session_id: None,
-                status: Some("success".to_string()),
-                mcp_namespaced_tool_name: None,
-                agent_id: None,
-                proxy_server_request: None,
+
+            // Build a completion-style response JSON from collected chunks
+            let assembled_response = if chunk_jsons.is_empty() {
+                json!({"streaming": true, "prompt_tokens": stream_prompt_tokens, "completion_tokens": stream_completion_tokens, "total_tokens": stream_total_tokens})
+            } else {
+                // Merge choice contents from all chunks into a single choices array
+                let mut merged_content = String::new();
+                let mut finish_reason: Option<String> = None;
+                for c in &chunk_jsons {
+                    if let Some(choices) = c["choices"].as_array() {
+                        for choice in choices {
+                            if let Some(content) = choice["delta"]["content"].as_str() {
+                                if !content.is_empty() {
+                                    merged_content.push_str(content);
+                                }
+                            }
+                            if let Some(fr) = choice["finish_reason"].as_str() {
+                                finish_reason = Some(fr.to_string());
+                            }
+                        }
+                    }
+                }
+                json!({
+                    "streaming": true,
+                    "choices": [{
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": merged_content
+                        },
+                        "finish_reason": finish_reason
+                    }],
+                    "usage": {
+                        "prompt_tokens": stream_prompt_tokens,
+                        "completion_tokens": stream_completion_tokens,
+                        "total_tokens": stream_total_tokens
+                    }
+                })
             };
+
+            // Phase 2: UPDATE the pre-inserted SpendLog row
+            match failure {
+                Some((status_code, err)) => {
+                    let _ = state_clone.db.update_spend_log(
+                        &request_id, 0.0, 0, 0, 0,
+                        now,
+                        json!({"error": err, "status_code": status_code}),
+                        &format!("failure:{}", status_code),
+                    ).await;
+                }
+                None => {
+                    let _ = state_clone.db.update_spend_log(
+                        &request_id, streaming_spend, stream_total_tokens, stream_prompt_tokens, stream_completion_tokens,
+                        now, assembled_response, "success",
+                    ).await;
+                }
+            }
+
             // Queue daily_spend update
             if let Some(ref queue) = state_clone.daily_spend_queue {
                 let date = now.format("%Y-%m-%d").to_string();
                 let ds_log = DailySpendLog {
-                    entity_id: spend_log.user.clone().unwrap_or_default(),
+                    entity_id: user_id.unwrap_or_default(),
                     date,
-                    api_key: spend_log.api_key.clone(),
-                    model: spend_log.model.clone(),
-                    model_group: spend_log.model_group.clone().unwrap_or_default(),
-                    custom_llm_provider: spend_log
-                        .custom_llm_provider
-                        .clone()
-                        .unwrap_or_default(),
-                    mcp_namespaced_tool_name: spend_log
-                        .mcp_namespaced_tool_name
-                        .clone()
-                        .unwrap_or_default(),
+                    api_key: token_hash,
+                    model,
+                    model_group: String::new(),
+                    custom_llm_provider: String::new(),
+                    mcp_namespaced_tool_name: String::new(),
                     endpoint: "/v1/chat/completions".to_string(),
-                    prompt_tokens: spend_log.prompt_tokens as i64,
-                    completion_tokens: spend_log.completion_tokens as i64,
-                    spend: spend_log.spend,
+                    prompt_tokens: stream_prompt_tokens as i64,
+                    completion_tokens: stream_completion_tokens as i64,
+                    spend: streaming_spend,
                     api_requests: 1,
                     successful_requests: 1,
                     failed_requests: 0,
@@ -1033,7 +1080,6 @@ pub async fn chat_completions(
                 };
                 queue.queue(ds_log);
             }
-            let _ = state_clone.db.insert_spend_log(&spend_log).await;
         });
 
         let sse_stream = tokio_stream::wrappers::UnboundedReceiverStream::new(rx)
