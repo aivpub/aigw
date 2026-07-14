@@ -265,11 +265,17 @@ pub async fn messages_handler(
         .unwrap_or(false);
     let call_type = if is_stream { "completion_stream" } else { "completion" };
 
-    // 4. Resolve upstream routing + pricing (reuses chat.rs verified logic:
-    //    proxy_models → decrypt → credential refs → env var fallback)
-    // Record failure spend log if resolve_upstream_params fails
-    let resolved = match super::chat::resolve_upstream_params(&state, &model).await {
-        Ok(r) => r,
+    // 4. Resolve upstream via ModelResolver
+    let resolved_deployment = match state.resolver.resolve(&model).await {
+        Ok(deployments) => {
+            deployments.into_iter().next().ok_or_else(|| {
+                anthropic_error(
+                    StatusCode::BAD_REQUEST,
+                    "invalid_request_error",
+                    &format!("Model '{}' not found", model),
+                )
+            })?
+        }
         Err((status, body)) => {
             let now = chrono::Utc::now();
             let error_body = body.0.clone();
@@ -314,51 +320,35 @@ pub async fn messages_handler(
                 };
                 let _ = log_state.db.insert_spend_log(&sl).await;
             });
-            // Convert OpenAI-format error to Anthropic format for /v1/messages
             let msg = body["error"]["message"].as_str().unwrap_or("Unknown error");
             let err_type = body["error"]["type"].as_str().unwrap_or("invalid_request_error");
             return Err(anthropic_error(status, err_type, msg));
         }
     };
-    let input_cost = resolved.input_cost_per_token;
-    let output_cost = resolved.output_cost_per_token;
+    let input_cost = resolved_deployment.input_cost_per_token;
+    let output_cost = resolved_deployment.output_cost_per_token;
 
-    let upstream_base_url = resolved.api_base;
-    let upstream_api_key = resolved.api_key.clone();
+    let upstream_base_url = resolved_deployment.api_base.clone();
+    let upstream_api_key = resolved_deployment.api_key.clone();
 
-    // 6. Parse Claude request and convert to OpenAI format
-    let claude_req: ClaudeMessageRequest =
-        serde_json::from_value(body_val).map_err(|e| {
+    // Select adapter based on client protocol + provider type
+    let adapter = select_adapter(ClientProtocol::Anthropic, &resolved_deployment.provider_type)
+        .ok_or_else(|| {
             anthropic_error(
                 StatusCode::BAD_REQUEST,
                 "invalid_request_error",
-                &format!("Invalid request format: {}", e),
+                "Unsupported provider type for this endpoint",
             )
         })?;
 
-    let oai_req = DefaultAdapter::claude_to_openai_request(&claude_req);
-    let mut upstream_body = serde_json::to_value(&oai_req).map_err(|_| {
+    // 6. Adapt Claude request to OpenAI format via adapter
+    let upstream_body = adapter.adapt_request(body_val.clone(), &resolved_deployment).map_err(|e| {
         anthropic_error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "internal_error",
-            "Failed to serialize upstream request",
+            &format!("Adapter error: {}", e),
         )
     })?;
-
-    // Override model with resolved upstream model name (not aigw proxy model name)
-    if let Some(obj) = upstream_body.as_object_mut() {
-        obj.insert("model".to_string(), json!(resolved.model_name));
-    }
-
-    // Inject stream_options for usage info in streaming mode
-    if is_stream {
-        if let Some(obj) = upstream_body.as_object_mut() {
-            obj.insert(
-                "stream_options".to_string(),
-                json!({"include_usage": true}),
-            );
-        }
-    }
 
     let upstream_url = format!(
         "{}/chat/completions",

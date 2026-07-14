@@ -4,6 +4,7 @@
 //! - POST /v1/chat/completions — Chat completions (streaming SSE + non-streaming)
 //! - GET  /v1/models           — List available models for the authenticated key
 
+use aigw_core::adapter::{ClientProtocol, select_adapter};
 use aigw_core::auth::decode_jwt;
 use aigw_core::crypto::{decrypt_json_fields, decrypt_litellm_value, hash_token};
 use aigw_core::middleware::KeyIdentity;
@@ -737,18 +738,44 @@ pub async fn chat_completions(
         }
     }
 
-    // 4. Resolve upstream routing: look up model in proxy_models, decrypt if needed,
-    //    resolve credential references. Falls back to env vars if model not found.
-    let resolved = resolve_upstream_params(&state, _model).await?;
+    // 4. Resolve upstream via ModelResolver + select adapter
+    let deployments = state.resolver.resolve(_model).await?;
+    let deployment = deployments.into_iter().next().ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": {
+                    "message": format!("Model '{}' not found", _model),
+                    "type": "invalid_request_error",
+                    "code": "model_not_found"
+                }
+            })),
+        )
+    })?;
+    let adapter = select_adapter(ClientProtocol::OpenAI, &deployment.provider_type)
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": {
+                        "message": format!("Unsupported provider type for model '{}'", _model),
+                        "type": "invalid_request_error",
+                        "code": "unsupported_provider"
+                    }
+                })),
+            )
+        })?;
 
-    // Build upstream request body — inject resolved model name
-    let mut upstream_body = body.clone();
-    if let Some(obj) = upstream_body.as_object_mut() {
-        obj.insert("model".to_string(), json!(resolved.model_name));
-    }
+    // Build upstream request body via adapter
+    let upstream_body_val = adapter.adapt_request(body.clone(), &deployment).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {"message": format!("Adapter error: {}", e), "type": "adapter_error"}})),
+        )
+    })?;
     let upstream_url = format!(
         "{}/chat/completions",
-        resolved.api_base.trim_end_matches('/')
+        deployment.api_base.trim_end_matches('/')
     );
 
     // 5. Build and send upstream request
@@ -768,9 +795,9 @@ pub async fn chat_completions(
             )
         })?;
 
-    let mut upstream_req = client.post(&upstream_url).json(&upstream_body);
+    let mut upstream_req = client.post(&upstream_url).json(&upstream_body_val);
 
-    if let Some(ref api_key) = resolved.api_key {
+    if let Some(ref api_key) = deployment.api_key {
         upstream_req = upstream_req.header("Authorization", format!("Bearer {}", api_key));
     }
 
@@ -797,9 +824,9 @@ pub async fn chat_completions(
         if !upstream_status.is_success() {
             let error_body = upstream_resp.text().await.unwrap_or_default();
             // Record failure spend log before returning error
-            let fail_upstream_body = upstream_body.clone();
-            let fail_model = resolved.model_name.clone();
-            let fail_api_base = resolved.api_base.clone();
+            let fail_upstream_body = upstream_body_val.clone();
+            let fail_model = deployment.upstream_model.clone();
+            let fail_api_base = deployment.api_base.clone();
             let fail_token_hash = auth.token_hash.clone();
             let fail_user_id = auth.user_id.clone();
             let fail_status = upstream_status.as_u16();
@@ -865,7 +892,7 @@ pub async fn chat_completions(
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
         let state_clone = Arc::clone(&state);
         let model = _model.to_string();
-        let api_base = resolved.api_base.clone();
+        let api_base = deployment.api_base.clone();
         let token_hash = auth.token_hash.clone();
         let user_id = auth.user_id.clone();
         let team_id = auth.team_id.clone();
@@ -895,7 +922,7 @@ pub async fn chat_completions(
 
             // Write SpendLog after stream completes
             let now = chrono::Utc::now();
-            let streaming_spend = calc_spend(0, 0, resolved.input_cost_per_token, resolved.output_cost_per_token);
+            let streaming_spend = calc_spend(0, 0, deployment.input_cost_per_token, deployment.output_cost_per_token);
             let spend_log = SpendLog {
                 request_id,
                 call_type: "completion".to_string(),
@@ -992,9 +1019,9 @@ pub async fn chat_completions(
 
         if !upstream_status.is_success() {
             // Record failure spend log
-            let fail_upstream_body = upstream_body.clone();
-            let fail_model = resolved.model_name.clone();
-            let fail_api_base = resolved.api_base.clone();
+            let fail_upstream_body = upstream_body_val.clone();
+            let fail_model = deployment.upstream_model.clone();
+            let fail_api_base = deployment.api_base.clone();
             let fail_token_hash = auth.token_hash.clone();
             let fail_user_id = auth.user_id.clone();
             let fail_status = upstream_status.as_u16();
@@ -1050,8 +1077,8 @@ pub async fn chat_completions(
         let spend_amount = calc_spend(
             usage.and_then(|u| u.get("prompt_tokens")).and_then(|v| v.as_i64()).unwrap_or(0) as i32,
             usage.and_then(|u| u.get("completion_tokens")).and_then(|v| v.as_i64()).unwrap_or(0) as i32,
-            resolved.input_cost_per_token,
-            resolved.output_cost_per_token,
+            deployment.input_cost_per_token,
+            deployment.output_cost_per_token,
         );
 
         let spend_log = aigw_core::models::SpendLog {
@@ -1081,7 +1108,7 @@ pub async fn chat_completions(
             model_id: None,
             model_group: None,
             custom_llm_provider: None,
-            api_base: Some(resolved.api_base.clone()),
+            api_base: Some(deployment.api_base.clone()),
             user: auth.user_id.clone(),
             metadata: None,
             cache_hit: None,
