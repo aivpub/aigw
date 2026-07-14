@@ -195,7 +195,7 @@ enum BlockType {
     ToolUse { id: String, name: String },
 }
 
-struct AnthropicToOpenAIStream {
+pub struct AnthropicToOpenAIStream {
     model: String,
     message_id: String,
     current_block_index: i32,
@@ -204,7 +204,7 @@ struct AnthropicToOpenAIStream {
 }
 
 impl AnthropicToOpenAIStream {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self { model: String::new(), message_id: format!("msg_{}", uuid::Uuid::new_v4()),
                current_block_index: 0, current_block: None, started: false }
     }

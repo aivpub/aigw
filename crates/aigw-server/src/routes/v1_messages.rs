@@ -506,26 +506,13 @@ pub async fn messages_handler(
             use tokio_stream::StreamExt;
             let mut stream = upstream_resp.bytes_stream();
             let mut first_chunk_time: Option<chrono::DateTime<chrono::Utc>> = None;
-            let mut buffer: Vec<u8> = Vec::new();
-            let mut message_started = false;
-            let mut content_block_started = false;
+            let buffer: Vec<u8> = Vec::new();
             let message_id = format!("msg_{}", uuid::Uuid::new_v4());
-            // Track token usage from the last chunk (when upstream sends stream_options include_usage)
             let mut last_prompt_tokens: i32 = 0;
             let mut last_completion_tokens: i32 = 0;
-            // Collect upstream raw chunks for assembled completion-style response
             let mut chunk_jsons: Vec<Value> = Vec::new();
-
-            // Helper: write a single Anthropic SSE event to the channel
-            let write_anthropic_sse =
-                |tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
-                 event_type: &str,
-                 data: &Value| {
-                    let json_str = serde_json::to_string(data).unwrap_or_default();
-                    let sse_frame =
-                        format!("event: {}\ndata: {}\n\n", event_type, json_str);
-                    let _ = tx.send(sse_frame.into_bytes());
-                };
+            // Use AnthropicToOpenAIStream for full SSE→SSE tool_use conversion
+            let mut stream_adapter = AnthropicToOpenAIStream::new();
 
             while let Some(chunk_result) = stream.next().await {
                 match chunk_result {
@@ -533,167 +520,38 @@ pub async fn messages_handler(
                         if first_chunk_time.is_none() && !chunk.is_empty() {
                             first_chunk_time = Some(chrono::Utc::now());
                         }
-                        buffer.extend_from_slice(&chunk);
-
-                        // Split on \n\n to get complete SSE frames
-                        loop {
-                            let pos = buffer
-                                .windows(2)
-                                .position(|w| w == b"\n\n");
-                            let pos = match pos {
-                                Some(p) => p,
-                                None => break,
-                            };
-                            let frame = buffer.drain(..pos + 2).collect::<Vec<_>>();
-                            let frame_str = String::from_utf8_lossy(&frame);
-
-                            for line in frame_str.lines() {
-                                if line == "data: [DONE]" {
-                                    // Stream end — send final events
-                                    if content_block_started {
-                                        write_anthropic_sse(
-                                            &tx,
-                                            "content_block_stop",
-                                            &json!({"type": "content_block_stop", "index": 0}),
-                                        );
-                                    }
-                                    write_anthropic_sse(
-                                        &tx,
-                                        "message_delta",
-                                        &json!({
-                                            "type": "message_delta",
-                                            "delta": {"stop_reason": "end_turn"},
-                                            "usage": {"output_tokens": 0}
-                                        }),
-                                    );
-                                    write_anthropic_sse(
-                                        &tx,
-                                        "message_stop",
-                                        &json!({"type": "message_stop"}),
-                                    );
-                                    break;
-                                }
-                                if let Some(json_str) = line.strip_prefix("data: ") {
-                                    // Try to extract usage from this chunk
-                                    // (OpenAI sends a final chunk with usage when stream_options.include_usage=true)
-                                    if let Ok(raw) = serde_json::from_str::<Value>(json_str) {
-                                        if let Some(usage) = raw.get("usage") {
-                                            last_prompt_tokens = usage
-                                                .get("prompt_tokens")
-                                                .and_then(|v| v.as_i64())
-                                                .unwrap_or(0) as i32;
-                                            last_completion_tokens = usage
-                                                .get("completion_tokens")
-                                                .and_then(|v| v.as_i64())
-                                                .unwrap_or(0) as i32;
-                                        }
-                                        // Record non-empty-choice chunks for assembled response
-                                        if let Ok(raw2) = serde_json::from_str::<Value>(json_str) {
-                                            if raw2.get("choices").and_then(|c| c.as_array()).map(|a| !a.is_empty()).unwrap_or(false) {
-                                                chunk_jsons.push(raw2);
+                        // Extract usage & chunk JSON from SSE data lines
+                        if let Ok(text) = std::str::from_utf8(&chunk) {
+                            for line in text.lines() {
+                                if let Some(data) = line.strip_prefix("data: ") {
+                                    if data != "[DONE]" {
+                                        if let Ok(raw) = serde_json::from_str::<Value>(data) {
+                                            if let Some(usage) = raw.get("usage") {
+                                                last_prompt_tokens = usage.get("prompt_tokens").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                                                last_completion_tokens = usage.get("completion_tokens").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
                                             }
-                                        }
-                                    }
-                                    if let Ok(c) = serde_json::from_str::<aigw_core::models::ChatCompletionChunk>(json_str) {
-                                        if let Some(event) =
-                                            DefaultAdapter::openai_chunk_to_claude_stream(&c)
-                                        {
-                                            match event.event_type.as_str() {
-                                                "message_start" => {
-                                                    let payload = json!({
-                                                        "type": "message_start",
-                                                        "message": {
-                                                            "id": message_id,
-                                                            "type": "message",
-                                                            "role": "assistant",
-                                                            "content": [],
-                                                            "model": model_clone,
-                                                            "stop_reason": null,
-                                                            "stop_sequence": null,
-                                                            "usage": {
-                                                                "input_tokens": 0,
-                                                                "output_tokens": 0
-                                                            }
-                                                        }
-                                                    });
-                                                    write_anthropic_sse(&tx, "message_start", &payload);
-                                                    message_started = true;
-                                                }
-                                                "content_block_delta" => {
-                                                    if !content_block_started {
-                                                        if !message_started {
-                                                            // Some models skip role chunk; inject message_start
-                                                            write_anthropic_sse(
-                                                                &tx,
-                                                                "message_start",
-                                                                &json!({
-                                                                    "type": "message_start",
-                                                                    "message": {
-                                                                        "id": message_id,
-                                                                        "type": "message",
-                                                                        "role": "assistant",
-                                                                        "content": [],
-                                                                        "model": model_clone,
-                                                                        "stop_reason": null,
-                                                                        "stop_sequence": null,
-                                                                        "usage": {
-                                                                            "input_tokens": 0,
-                                                                            "output_tokens": 0
-                                                                        }
-                                                                    }
-                                                                }),
-                                                            );
-                                                            message_started = true;
-                                                        }
-                                                        write_anthropic_sse(
-                                                            &tx,
-                                                            "content_block_start",
-                                                            &json!({
-                                                                "type": "content_block_start",
-                                                                "index": 0,
-                                                                "content_block": {
-                                                                    "type": "text",
-                                                                    "text": ""
-                                                                }
-                                                            }),
-                                                        );
-                                                        content_block_started = true;
-                                                    }
-                                                    write_anthropic_sse(
-                                                        &tx,
-                                                        "content_block_delta",
-                                                        &serde_json::to_value(&event).unwrap_or_default(),
-                                                    );
-                                                }
-                                                "message_delta" => {
-                                                    if content_block_started {
-                                                        write_anthropic_sse(
-                                                            &tx,
-                                                            "content_block_stop",
-                                                            &json!({
-                                                                "type": "content_block_stop",
-                                                                "index": 0
-                                                            }),
-                                                        );
-                                                    }
-                                                    write_anthropic_sse(
-                                                        &tx,
-                                                        "message_delta",
-                                                        &serde_json::to_value(&event).unwrap_or_default(),
-                                                    );
-                                                }
-                                                _ => {}
+                                            if raw.get("choices").and_then(|c| c.as_array()).map(|a| !a.is_empty()).unwrap_or(false) {
+                                                chunk_jsons.push(raw);
                                             }
                                         }
                                     }
                                 }
                             }
                         }
+                        // Forward chunk through AnthropicToOpenAIStream for SSE→SSE conversion
+                        if let Some(sse_event) = stream_adapter.next(&chunk) {
+                            if tx.send(sse_event).is_err() {
+                                break;
+                            }
+                        }
                     }
                     Err(_) => break,
                 }
             }
-            // drop(tx) happens when scope exits
+            // Send finishing SSE events
+            if let Some(final_event) = stream_adapter.finish() {
+                let _ = tx.send(final_event);
+            }
 
             let now = chrono::Utc::now();
             let streaming_spend = super::chat::calc_spend(
