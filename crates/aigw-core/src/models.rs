@@ -451,6 +451,29 @@ pub struct ChatCompletionRequest {
     pub stop: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<ToolDef>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<serde_json::Value>,
+}
+
+/// OpenAI tool definition (request)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolDef {
+    #[serde(rename = "type", default = "default_tool_type")]
+    pub tool_type: String,
+    pub function: ToolDefFunction,
+}
+
+fn default_tool_type() -> String { "function".to_string() }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolDefFunction {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parameters: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -759,6 +782,19 @@ pub struct ClaudeMessageRequest {
     pub stop_sequences: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<ClaudeToolDef>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<serde_json::Value>,
+}
+
+/// Anthropic tool definition (request)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaudeToolDef {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub input_schema: serde_json::Value,
 }
 
 /// System message content type — string or structured content blocks

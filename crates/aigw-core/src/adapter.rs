@@ -331,6 +331,7 @@ impl ProviderAdapter for DefaultAdapter {
             stream: if req.stream { Some(true) } else { None },
             system: system.map(ClaudeSystemMessage::Text), temperature: req.temperature,
             top_p: req.top_p, top_k: None, stop_sequences: req.stop.clone(), metadata: None,
+            tools: None, tool_choice: None,
         }
     }
 
@@ -366,10 +367,27 @@ impl ProviderAdapter for DefaultAdapter {
             }
         }
         for msg in &req.messages { messages.push(claude_message_to_openai(msg)); }
+
+        // Map Claude tools → OpenAI tools
+        let tools = req.tools.as_ref().map(|claude_tools| {
+            claude_tools.iter().map(|ct| {
+                crate::models::ToolDef {
+                    tool_type: "function".to_string(),
+                    function: crate::models::ToolDefFunction {
+                        name: ct.name.clone(),
+                        description: ct.description.clone(),
+                        parameters: Some(ct.input_schema.clone()),
+                    },
+                }
+            }).collect()
+        });
+
         ChatCompletionRequest {
             model: req.model.clone(), messages, stream: req.stream.unwrap_or(false),
             temperature: req.temperature, max_tokens: Some(req.max_tokens), top_p: req.top_p,
             frequency_penalty: None, presence_penalty: None, stop: req.stop_sequences.clone(), user: None,
+            tools,
+            tool_choice: req.tool_choice.clone(),
         }
     }
 
@@ -589,6 +607,7 @@ mod tests {
             }],
             stream: false, temperature: Some(0.7), max_tokens: Some(1024),
             top_p: None, frequency_penalty: None, presence_penalty: None, stop: None, user: None,
+            tools: None, tool_choice: None,
         }
     }
 

@@ -1005,9 +1005,11 @@ pub async fn chat_completions(
             let assembled_response = if chunk_jsons.is_empty() {
                 json!({"streaming": true, "prompt_tokens": stream_prompt_tokens, "completion_tokens": stream_completion_tokens, "total_tokens": stream_total_tokens})
             } else {
-                // Merge choice contents from all chunks into a single choices array
+                // Merge choice contents from chunks into a single choices array
                 let mut merged_content = String::new();
                 let mut finish_reason: Option<String> = None;
+                // Accumulate streamed tool_calls by index
+                let mut tool_calls: Vec<Value> = Vec::new();
                 for c in &chunk_jsons {
                     if let Some(choices) = c["choices"].as_array() {
                         for choice in choices {
@@ -1019,17 +1021,44 @@ pub async fn chat_completions(
                             if let Some(fr) = choice["finish_reason"].as_str() {
                                 finish_reason = Some(fr.to_string());
                             }
+                            // Accumulate streamed tool_calls
+                            if let Some(delta_tcs) = choice["delta"]["tool_calls"].as_array() {
+                                for tc in delta_tcs {
+                                    let idx = tc.get("index").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
+                                    while tool_calls.len() <= idx {
+                                        tool_calls.push(json!({"id": "", "type": "function", "function": {"name": "", "arguments": ""}}));
+                                    }
+                                    if let Some(id) = tc.get("id").and_then(|v| v.as_str()) {
+                                        if !id.is_empty() {
+                                            tool_calls[idx]["id"] = json!(id);
+                                        }
+                                    }
+                                    if let Some(fn_name) = tc.get("function").and_then(|v| v.get("name")).and_then(|v| v.as_str()) {
+                                        if !fn_name.is_empty() {
+                                            tool_calls[idx]["function"]["name"] = json!(fn_name);
+                                        }
+                                    }
+                                    if let Some(args) = tc.get("function").and_then(|v| v.get("arguments")).and_then(|v| v.as_str()) {
+                                        tool_calls[idx]["function"]["arguments"] = json!(format!("{}{}",
+                                            tool_calls[idx]["function"]["arguments"].as_str().unwrap_or(""),
+                                            args
+                                        ));
+                                    }
+                                }
+                            }
                         }
                     }
                 }
+                let message = if tool_calls.is_empty() {
+                    json!({"role": "assistant", "content": merged_content})
+                } else {
+                    json!({"role": "assistant", "content": if merged_content.is_empty() { Value::Null } else { json!(merged_content) }, "tool_calls": tool_calls})
+                };
                 json!({
                     "streaming": true,
                     "choices": [{
                         "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": merged_content
-                        },
+                        "message": message,
                         "finish_reason": finish_reason
                     }],
                     "usage": {
