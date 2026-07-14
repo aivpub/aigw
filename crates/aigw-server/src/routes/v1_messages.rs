@@ -519,7 +519,7 @@ pub async fn messages_handler(
                         if first_chunk_time.is_none() && !chunk.is_empty() {
                             first_chunk_time = Some(chrono::Utc::now());
                         }
-                        // Extract usage & chunk JSON from SSE data lines
+                        // Process each SSE 'data:' line individually through AnthropicToOpenAIStream
                         if let Ok(text) = std::str::from_utf8(&chunk) {
                             for line in text.lines() {
                                 if let Some(data) = line.strip_prefix("data: ") {
@@ -533,14 +533,19 @@ pub async fn messages_handler(
                                                 chunk_jsons.push(raw);
                                             }
                                         }
+                                        // Forward each SSE data line to the streaming adapter for Claude conversion
+                                        if let Some(sse_event) = stream_adapter.next(data.as_bytes()) {
+                                            if tx.send(sse_event).is_err() {
+                                                break;
+                                            }
+                                        }
+                                    } else {
+                                        // [DONE] — send finishing events
+                                        if let Some(final_event) = stream_adapter.finish() {
+                                            let _ = tx.send(final_event);
+                                        }
                                     }
                                 }
-                            }
-                        }
-                        // Forward chunk through AnthropicToOpenAIStream for SSE→SSE conversion
-                        if let Some(sse_event) = stream_adapter.next(&chunk) {
-                            if tx.send(sse_event).is_err() {
-                                break;
                             }
                         }
                     }
