@@ -5,8 +5,7 @@
 //!
 //! Auth: x-api-key header or Authorization: Bearer header (Claude convention)
 
-use aigw_core::adapter::{ClientProtocol, MessageAdapter, ProviderAdapter, select_adapter};
-use aigw_core::adapter::DefaultAdapter;
+use aigw_core::adapter::{AnthropicToOpenAIStream, ClientProtocol, DefaultAdapter, MessageAdapter, ProviderAdapter, StreamAdapter, select_adapter};
 use aigw_core::auth::decode_jwt;
 use aigw_core::crypto::hash_token;
 use aigw_core::models::{ClaudeMessageRequest, DailySpendKind, DailySpendLog, SpendLog};
