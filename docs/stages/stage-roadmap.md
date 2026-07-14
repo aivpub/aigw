@@ -1,15 +1,15 @@
 # aigw — AI Gateway Stage Roadmap
 
 **项目**: aigw (litellm Rust 最小兼容替代)
-**最后更新**: 2026-07-11
+**最后更新**: 2026-07-14
 
 ---
 
 ## 当前状态
 
-- **当前 Phase**: Phase 14 — `/v1/messages` 接口修复（最高优先级）
-- **状态**: 39/39 Stages 已完成，Phase 14-17 规划完成
-- **下一里程碑**: Phase 14 Stage 40-43（Claude SDK 兼容性修复）
+- **当前 Phase**: Phase 17 — 代理转发架构重构（P1）
+- **状态**: 49/52 Stages 已完成，Phase 17 规划完成
+- **下一里程碑**: Phase 17 Stage 50-52（ModelResolver + MessageAdapter + Handler 瘦身）
 
 ### 整体进度
 
@@ -22,65 +22,71 @@ Phase 9:    ████████████████████ 100% (4
 Phase 11:   ████████████████████ 100% (6/6 Stages)
 Phase 12:   ████████████████████ 100% (3/3 Stages)
 Phase 13:   ████████████████████ 100% (6/6 Stages)
-Phase 14:   ░░░░░░░░░░░░░░░░░░░░   0% (0/4 Stages)  ⚠️ /v1/messages 修复
-Phase 15:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3 Stages)  反馈改进
-Phase 16:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3 Stages)  Playground 增强
-Phase 17:   ░░░░░░░░░░░░░░░░░░░░   0% (0/4 Stages)  Provider 适配架构（长期）
+Phase 14:   ████████████████████ 100% (4/4 Stages)
+Phase 15:   ████████████████████ 100% (3/3 Stages)
+Phase 16:   ████████████████████ 100% (3/3 Stages)
+Phase 17:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3 Stages)  🔄 代理转发架构重构
 ```
 
 ---
 
 ## 当前 Phase 详情
 
-### Phase 14：`/v1/messages` 接口修复（最高优先级 P0）
+### Phase 14：`/v1/messages` 接口修复 ✅ 已完成
 
-> **触发**: Claude Code 实测 `/v1/messages` 报错。审计发现 7 个 bug，其中 2 个 Critical。
-
-| Stage | 状态 | 目标 | 类型 | 预估 |
-|-------|------|------|------|------|
-| Stage 40 | ⏳ 待开始 | `/v1/messages` 复用 `resolve_upstream_params` + Key 校验对齐 | 后端 | 1.5h |
-| Stage 41 | ⏳ 待开始 | `/v1/messages` 流式 SSE 格式转换（OpenAI→Anthropic） | 后端 | 2.5h |
-| Stage 42 | ⏳ 待开始 | `/v1/messages` SpendLog 修复（api_key/user_id）+ 错误码修正 | 后端 | 0.5h |
-| Stage 43 | ⏳ 待开始 | `/v1/messages` 流式 Token 计数 + BDD/手工测试 | 后端+测试 | 1.5h |
-
-**依赖关系**: Stage 40 → 41 → 42 → 43（串行，渐进式交付）。预估 6h。
+| Stage | 状态 | 目标 | 完成日期 |
+|-------|------|------|----------|
+| Stage 40 | ✅ 完成 | 复用 `resolve_upstream_params` + Key 校验对齐 | 2026-07-11 |
+| Stage 41 | ✅ 完成 | 流式 SSE 格式转换（OpenAI→Anthropic） | 2026-07-11 |
+| Stage 42 | ✅ 完成 | SpendLog api_key/user_id 修复 + 错误码修正 | 2026-07-11 |
+| Stage 43 | ✅ 完成 | stream_options include_usage + 流式 token 计数 | 2026-07-11 |
 
 参见 `docs/plans/2026-07-11-v1-messages-fix-plan.md`
 
-### Phase 15：第二轮反馈改进（P1）
+### Phase 15：第二轮反馈改进 ✅ 已完成
 
-| Stage | 状态 | 目标 | 类型 | 预估 |
-|-------|------|------|------|------|
-| Stage 44 | ⏳ 待开始 | Models 页面 Cost 列（Input/Output Per Million Tokens） | 前端 | 2h |
-| Stage 45 | ⏳ 待开始 | Spend Logs 抽屉完整内容（messages/response/params/tools）+ CSV 导出 + 布局优化 | 前后端 | 5h |
-| Stage 46 | ⏳ 待开始 | aigw-migrate --skip-columns / --skip-body 选择性迁移 | 后端 | 3h |
+| Stage | 状态 | 目标 | 完成日期 |
+|-------|------|------|----------|
+| Stage 44 | ✅ 完成 | Models 页面 Cost 列 | 2026-07-11 |
+| Stage 45 | ✅ 完成 | Spend Logs 抽屉完整内容 + CSV 导出 + 布局优化 | 2026-07-11 |
+| Stage 46 | ✅ 完成 | aigw-migrate --skip-columns / --skip-body 选择性迁移 | 2026-07-11 |
 
-**依赖关系**: 全部独立。预估 10h。
+参见 `docs/plans/2026-07-10-phase-14-feedback-round-2.md`
 
-参见 `docs/plans/2026-07-10-phase-14-feedback-round-2.md`（注意原 Phase 14 已重编号为 Phase 15）
+### Phase 16：Playground 增强 ✅ 已完成
 
-### Phase 16：Playground 增强（P1）
-
-| Stage | 状态 | 目标 | 类型 | 预估 |
-|-------|------|------|------|------|
-| Stage 47 | ⏳ 待开始 | Playground Virtual Key 配置 + Endpoint Type 选择 | 前端 | 3h |
-| Stage 48 | ⏳ 待开始 | Playground 按钮组：Clean Session + Get Code（curl/OpenAI SDK/Enio） | 前端 | 2h |
-| Stage 49 | ⏳ 待开始 | Playground Markdown 渲染 + 消息气泡边框 + 底部统计栏（原 Stage 41） | 前端 | 5h |
-
-**依赖关系**: Stage 47 → 48；Stage 49 独立。预估 10h。
+| Stage | 状态 | 目标 | 完成日期 |
+|-------|------|------|----------|
+| Stage 47 | ✅ 完成 | Playground Virtual Key 配置 + Endpoint Type 选择 | 2026-07-11 |
+| Stage 48 | ✅ 完成 | Playground Clear Session + Get Code（curl/SDK） | 2026-07-11 |
+| Stage 49 | ✅ 完成 | Playground Markdown 渲染 + 气泡边框 + 底部统计栏 | 2026-07-11 |
 
 参见 `docs/plans/2026-07-11-phase-16-playground-enhancement.md`
 
-### Phase 17：Provider 适配架构（P3，长期）
+### Phase 17：代理转发架构重构（P1）
+
+> **背景**: `chat.rs` 和 `v1_messages.rs` 各自独立 resolve upstream，逻辑重复 ~230 行；`DefaultAdapter` 写死单一实现；`provider_registry`/`router_state` 在 `AppState` 中定义但从未使用。需要先重构架构再继续功能增强。
 
 | Stage | 状态 | 目标 | 类型 | 预估 |
 |-------|------|------|------|------|
-| Stage 50 | ⏳ 待开始 | Provider 协议类型枚举 + Adapter Registry + ProviderAdapter trait 泛化 | 后端 | 4h |
-| Stage 51 | ⏳ 待开始 | chat.rs / v1_messages.rs 协议感知路由（model → protocol → adapter dispatch） | 后端 | 3h |
-| Stage 52 | ⏳ 待开始 | `proxy_models` 表增加 `protocol` 列迁移 + Provider UI 管理 | 前后端 | 3h |
-| Stage 53 | ⏳ 待开始 | Gemini Adapter 实现（验证架构可扩展性） | 后端 | 4h |
+| Stage 50 | ⏳ 待开始 | **ModelResolver + Deployment** — 新建 `deployment.rs` + `resolver.rs`，迁移 `resolve_upstream_params` 为 `ModelResolver::resolve() → Vec<Deployment>`，替换 chat.rs 调用点。TDD: UT 覆盖查表/解密/credential/env fallback。门禁：全量 BDD 回归通过 | 后端+测试 | 4h |
+| Stage 51 | ⏳ 待开始 | **MessageAdapter + tool 转换** — 拆分 adapter trait 为 `MessageAdapter` + `StreamAdapter`，实现 `OpenAIPassthrough` + `AnthropicToOpenAI`（含 tool_use/tool_result ↔ tool_calls 双向转换），新增 `select_adapter()`。TDD: UT 覆盖 4 种转换方向 + 流式 tool chunk。BDD: /v1/messages 含 tool_use 场景 | 后端+测试 | 5h |
+| Stage 52 | ⏳ 待开始 | **Handler 瘦身** — chat.rs / v1_messages.rs 通用逻辑下沉，handler 只做：校验→resolve→adapt→upstream call→spend log。清理死代码。门禁：全量 UT+BDD+前端测试回归 | 后端+测试 | 3h |
 
-**依赖关系**: Stage 50 → 51 → 52 → 53。**触发条件**: 有明确的非 OpenAI 厂商接入需求时启动。
+**依赖关系**: Stage 50 → 51 → 52（串行，渐进式重构）。预估 12h。
+
+**TDD 要求**: 每个 Stage 先写测试（UT + BDD scenario），RED → GREEN → REFACTOR 循环，测试全部通过后才可 commit。
+
+**设计文档**: `docs/plans/2026-07-13-arch-refactor-plan.md`
+
+**新增核心组件**:
+
+| 组件 | 命名 | 职责 |
+|------|------|------|
+| 模型解析层 | `ModelResolver` | model_name → `Vec<Deployment>`（查 proxy_models、解密、解析 credential、提取定价） |
+| 消息格式转换 | `MessageAdapter` trait | OpenAI Chat ↔ Anthropic Messages 双向转换（含 tool_use/tool_result ↔ tool_calls） |
+| 上游配置 | `Deployment` | 纯值对象：api_base / api_key / upstream_model / provider_type / 定价 / raw_params（解密后完整 litellm_params） |
+| 流式转换器 | `StreamAdapter` trait | SSE chunk 逐块转换（`&mut self` 维护跨 chunk 状态如 tool_use index） |
 
 ---
 
@@ -120,8 +126,8 @@ Phase 17:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 ### Phase 5：最小化后端完整版 + BDD 测试（RGR 驱动）
 
-| Stage | 状态 | 目标 | 预估 |
-|-------|------|------|------|
+| Stage | 状态 | 目标 | 完成日期 |
+|-------|------|------|----------|
 | Stage 7 | ✅ 完成 | BDD 框架搭建 + 既有功能 .feature | 2026-07-04 |
 | Stage 8 | ✅ 完成 | 模型管理 CRUD（BDD 驱动） | 2026-07-04 |
 | Stage 9 | ✅ 完成 | Provider 适配转换层（BDD 驱动） | 2026-07-04 |
@@ -158,8 +164,8 @@ Phase 17:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 ### Phase 11：前端质量加固 + 安全达标
 
-| Stage | 状态 | 目标 | 预估 |
-|-------|------|------|------|
+| Stage | 状态 | 目标 | 完成日期 |
+|-------|------|------|----------|
 | Stage 25 | ✅ 完成 | 前端 BDD 测试基础设施 — Playwright + Gherkin + 截图/GIF + Mock API | 2026-07-08 |
 | Stage 26 | ✅ 完成 | 登录安全对齐 Litellm — `/v2/login` JWT + Cookie + scrypt + 数据库用户认证 | 2026-07-08 |
 | Stage 27 | ✅ 完成 | 移动端适配 — 全页面响应式改造 | 2026-07-08 |
@@ -177,8 +183,8 @@ Phase 17:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 ### Phase 13：前端反馈改进 + SSE Streaming + TTFT
 
-| Stage | 状态 | 目标 | 日期 |
-|-------|------|------|------|
+| Stage | 状态 | 目标 | 完成日期 |
+|-------|------|------|----------|
 | Stage 34 | ✅ 完成 | SSE Streaming + completion_start_time + Spend Logs 增强（分页+request_id+TTFT） | 2026-07-10 |
 | Stage 35 | ✅ 完成 | daily_spend 聚合表迁移 + 定时写入 | 2026-07-10 |
 | Stage 36 | ✅ 完成 | 前端 Spend Logs 重构（Live Tail+时间预设+分页+细节抽屉） | 2026-07-10 |
@@ -188,16 +194,18 @@ Phase 17:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 ---
 
-## 长期路线（Phase 10 + Phase 17）
+## 长期路线
 
 | ID | 主题 | 优先级 | 触发条件 |
 |----|------|--------|---------|
-| Phase 17 | Provider 适配架构（Protocol Registry + Gemini Adapter） | P3 | 非 OpenAI 厂商接入需求 |
-| LT-2 | Redis 缓存 + 性能优化 | P2 | QPS > 1000 |
-| LT-3 | Observability (Prometheus + OTEL) | P2 | 生产环境部署 |
-| LT-5 | SSO/OAuth 鉴权 | P3 | 企业客户需求 |
-| LT-6 | PostgreSQL 生产级支持 + 迁移工具 | P2 | 多实例 + 高可用 |
-| LT-7 | Kubernetes Operator + Helm Chart | P3 | 云原生客户需求 |
+| LT-Router | Router 负载均衡（多 deployment 选择 + cooldown + fallback） | P2 | 多实例 upstream 需求 |
+| LT-Usage | Usage 多视角聚合（Global/Team/Org/Key 切换） | P2 | 前端用户反馈 |
+| LT-Native | Anthropic 原生上游适配（OpenAIToAnthropic + AnthropicPassthrough） | P3 | 需直接调 Anthropic Messages API |
+| LT-Redis | Redis 缓存 + 性能优化 | P2 | QPS > 1000 |
+| LT-Observ | Observability (Prometheus + OTEL) | P2 | 生产环境部署 |
+| LT-SSO | SSO/OAuth 鉴权 | P3 | 企业客户需求 |
+| LT-PG | PostgreSQL 生产级支持 + 迁移工具 | P2 | 多实例 + 高可用 |
+| LT-K8s | Kubernetes Operator + Helm Chart | P3 | 云原生客户需求 |
 
 ### 状态图标说明
 
@@ -212,6 +220,5 @@ Phase 17:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 | 版本 | 日期 | 修订内容 |
 |------|------|----------|
-| v1.0-v12.0 | 2026-07-03~10 | 初始版本 ~ Phase 13 完成 |
-| v13.0 | 2026-07-10 | 新增 Phase 14（Stage 40-43）原始反馈需求 |
-| v14.0 | 2026-07-11 | **重构编号**：Phase 14 重排为 `/v1/messages` 修复（最高优先级）；原反馈需求移入 Phase 15；新增 Phase 16 Playground 增强；新增 Phase 17 Provider 适配架构 |
+| v1.0-v14.0 | 2026-07-03~11 | 初始版本 ~ Phase 17 规划 |
+| v15.0 | 2026-07-14 | **架构重构规划**：修正 Phase 14-16 状态为已完成；移除旧 Stage 50-51（Usage 多视角聚合移入长期路线）；Phase 17 替换为代理转发架构重构（Stage 50-52: ModelResolver + MessageAdapter + Handler 瘦身）；每个 Stage 内置 TDD+BDD 测试；Stage 51 新增 tool_use/tool_calls 双向转换 |

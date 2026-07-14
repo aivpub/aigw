@@ -260,3 +260,28 @@
 - **Consequences**: ~25 new BDD scenarios. SSE streaming proxy is the riskiest item — first
   real streaming implementation in the project. Stage 34 gates stages 35 and 38.
   Stage 36-37 (users/orgs) and Stage 39 (playground) are independent tracks.
+
+## ADR-015: Architecture Refactor — ModelResolver + MessageAdapter over Feature Enhancements
+
+- **Date**: 2026-07-14
+- **Status**: Accepted
+- **Decision**: Replace Phase 17 feature work (Usage multi-view aggregation, Stages 50-51) with a proxy-forwarding architecture refactor: ModelResolver (model → Vec<Deployment>), MessageAdapter trait (OpenAI Chat ↔ Anthropic Messages bidirectional), and Handler slim-down. Defer Usage multi-view aggregation to LT-Usage (P2, activation on user feedback).
+- **Background**: Phase 14-16 delivered 10 Stages of feature work (v1/messages fixes, feedback round 2, Playground enhancements), bringing the total to 49 completed Stages. However an architecture audit revealed structural debt:
+  - `chat.rs` and `v1_messages.rs` each independently resolve upstream parameters (~230 lines of duplicate logic in `resolve_upstream_params`)
+  - `DefaultAdapter` is a monolithic struct with 6 methods, hardcoded for a single conversion direction
+  - `provider_registry` and `router_state` exist in `AppState` with `#[allow(dead_code)]` — defined but never wired into any request path
+  - No `Deployment` abstraction exists — upstream routing details (api_base, api_key, pricing) are scattered across inline resolution code
+  - The current structure makes it impossible to add new upstream protocol types or multi-instance routing without duplicating handler logic
+- **Rationale**: Architecture quality gates future velocity. Continuing to add features (Usage multi-view, more endpoints) on top of duplicated handler logic creates compounding tech debt — every new endpoint would copy-paste the resolve-upstream pattern. Fixing the architecture first reduces the cost of all subsequent features. The Usage multi-view feature (pie charts by provider, team/org/key dropdown) is not blocking any current user — it can safely defer to a user-feedback trigger.
+- **Design**: Three-stage progressive refactor:
+  - **Stage 50**: `ModelResolver` + `Deployment` — new modules (`deployment.rs`, `resolver.rs`), migrate `resolve_upstream_params` logic into `ModelResolver::resolve() → Vec<Deployment>`, replace `chat.rs` call site. No behavior change.
+  - **Stage 51**: `MessageAdapter` trait — split current monolithic `DefaultAdapter` into `MessageAdapter` trait + `StreamAdapter` trait, implement `OpenAIPassthrough` and `AnthropicToOpenAI` (migrates DefaultAdapter logic), add `select_adapter()` dispatch based on (client_protocol, provider_type).
+  - **Stage 52**: Handler slim-down — refactor `chat.rs` and `v1_messages.rs` to thin orchestration layers: validate → resolve → adapt → upstream call → spend log. Remove dead code and duplicated patterns.
+  - See `docs/plans/2026-07-13-arch-refactor-plan.md` for full design details.
+- **Consequences**:
+  - Stage numbering: 50-52 replaces the old 50-51 (Usage multi-view), which moves to LT-Usage (P2).
+  - RouteDispatcher renamed to ModelResolver (resolves, doesn't route). ProviderAdapter/DefaultAdapter renamed to MessageAdapter + implementations (AnthropicToOpenAI, OpenAIPassthrough) — clarifies it's about message format conversion, not provider configuration.
+  - `Deployment` = pure value object (api_base, api_key, upstream_model, provider_type, pricing) — one per proxy_models row, ModelResolver returns Vec.
+  - Future Router Phase: handler receives Vec<Deployment>, Router selects one (strategy + cooldown + fallback). No change needed in handler interface — just iterate Vec instead of taking [0].
+  - Router load balancing and native Anthropic upstream remain trigger-activated (LT-Router, LT-Native).
+  - No Stage detail docs created yet — to be written during implementation.
