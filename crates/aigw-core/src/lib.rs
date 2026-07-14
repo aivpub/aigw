@@ -22,12 +22,14 @@ pub mod config;
 pub mod crypto;
 pub mod daily_spend_queue;
 pub mod db;
+pub mod deployment;
 pub mod instance;
 pub mod middleware;
 pub mod models;
 pub mod password;
 pub mod provider;
 pub mod rate_limiter;
+pub mod resolver;
 pub mod router;
 pub mod tenant;
 
@@ -39,6 +41,7 @@ pub use crypto::{
     rotate_json_fields,
 };
 pub use db::CredentialsStore;
+pub use deployment::{Deployment, ProviderType};
 pub use models::{
     Budget, Credential, DailySpendKind, DailySpendLog, Organization, OrganizationMembership,
     Project, ProxyModel, SpendLog, Team, TeamMembership, User, VirtualKey,

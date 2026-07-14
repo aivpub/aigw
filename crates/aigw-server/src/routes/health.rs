@@ -172,11 +172,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_system_info_returns_ok() {
+    use aigw_core::resolver::ModelResolver;
         use aigw_core::db::Database;
         use std::sync::Arc;
 
         let db = Database::init("sqlite::memory:").await.expect("init");
         let state = Arc::new(AppState {
+            resolver: ModelResolver::new(db.clone(), None, "onprem"),
             db,
             master_key: None,
             aigw_master_key: None,

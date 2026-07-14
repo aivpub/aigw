@@ -8,6 +8,7 @@ use aigw_core::auth::decode_jwt;
 use aigw_core::crypto::{decrypt_json_fields, decrypt_litellm_value, hash_token};
 use aigw_core::middleware::KeyIdentity;
 use aigw_core::models::{DailySpendKind, DailySpendLog, SpendLog, Team, VirtualKey};
+use aigw_core::resolver::ModelResolver;
 use axum::{
     extract::State,
     http::{self, StatusCode, header},
@@ -1236,6 +1237,7 @@ mod tests {
             .await
             .expect("init sqlite");
         let state = Arc::new(AppState {
+            resolver: ModelResolver::new(db.clone(), None, "onprem"),
             db,
             master_key: Some("sk-master-chat-test".to_string()),
             aigw_master_key: None,
@@ -1408,6 +1410,7 @@ mod tests {
         db.insert_model(&model).await.expect("insert model");
 
         let state = Arc::new(AppState {
+            resolver: ModelResolver::new(db.clone(), None, "onprem"),
             db,
             master_key: Some("sk-master-chat-test".to_string()),
             aigw_master_key: None,
@@ -1545,6 +1548,7 @@ mod tests {
         db.insert_key(&key).await.expect("insert key");
 
         let state = Arc::new(AppState {
+            resolver: ModelResolver::new(db.clone(), None, "onprem"),
             db,
             master_key: None,
             aigw_master_key: None,
@@ -1587,6 +1591,7 @@ mod tests {
 
     fn make_test_state(db: Database) -> SharedState {
         Arc::new(AppState {
+            resolver: ModelResolver::new(db.clone(), None, "onprem"),
             db,
             master_key: Some("sk-master-test".to_string()),
             aigw_master_key: None,

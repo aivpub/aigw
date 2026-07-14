@@ -17,6 +17,7 @@ use aigw_core::daily_spend_queue::DailySpendQueue;
 use aigw_core::db::Database;
 use aigw_core::provider::ProviderRegistry;
 use aigw_core::rate_limiter::RateLimiter;
+use aigw_core::resolver::ModelResolver;
 use aigw_core::router::RouterState;
 use axum::http::HeaderName;
 use axum::{middleware, routing::get, Router};
@@ -177,6 +178,13 @@ async fn main() -> anyhow::Result<()> {
     let db_arc = Arc::new(db);
     let daily_spend_queue = Arc::new(DailySpendQueue::new(Arc::clone(&db_arc)));
 
+    // Build ModelResolver for unified upstream resolution
+    let resolver = ModelResolver::new(
+        (*db_arc).clone(),
+        aigw_master_key.clone(),
+        cli.deployment_mode.clone(),
+    );
+
     let state: SharedState = Arc::new(AppState {
         db: (*db_arc).clone(),
         master_key: Some(master_key.clone()),
@@ -187,6 +195,7 @@ async fn main() -> anyhow::Result<()> {
         deployment_mode: cli.deployment_mode.clone(),
         started_at: std::time::Instant::now(),
         daily_spend_queue: Some(daily_spend_queue),
+        resolver,
     });
 
     // Build router

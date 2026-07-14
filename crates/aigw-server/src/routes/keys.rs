@@ -14,6 +14,7 @@ use aigw_core::db::Database;
 use aigw_core::models::{GenerateKeyRequest, VirtualKey};
 use aigw_core::provider::ProviderRegistry;
 use aigw_core::rate_limiter::RateLimiter;
+use aigw_core::resolver::ModelResolver;
 use aigw_core::router::RouterState;
 use axum::{
     extract::{Query, State},
@@ -32,8 +33,10 @@ use super::spend::{require_admin, SpendAuth};
 // AppState
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AppState {
+    /// Model resolver — model_name → Vec<Deployment>
+    pub resolver: ModelResolver,
     pub db: Database,
     pub master_key: Option<String>,
     pub aigw_master_key: Option<String>, // for decrypting litellm_params at runtime
@@ -47,6 +50,30 @@ pub struct AppState {
     pub started_at: std::time::Instant,
     #[allow(dead_code)]
     pub daily_spend_queue: Option<Arc<DailySpendQueue>>,
+}
+
+impl AppState {
+    /// Create a test AppState with defaults for provider_registry, router_state,
+    /// rate_limiter, and resolver (empty, no DB dependency for non-chat tests).
+    pub fn for_test(
+        db: Database,
+        master_key: Option<String>,
+        aigw_master_key: Option<String>,
+        deployment_mode: String,
+    ) -> Self {
+        Self {
+            resolver: ModelResolver::new(db.clone(), None, "onprem"),
+            db,
+            master_key,
+            aigw_master_key,
+            provider_registry: ProviderRegistry::new(),
+            router_state: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            rate_limiter: Arc::new(RateLimiter::new()),
+            deployment_mode,
+            started_at: std::time::Instant::now(),
+            daily_spend_queue: None,
+        }
+    }
 }
 
 pub type SharedState = Arc<AppState>;
@@ -657,6 +684,7 @@ mod tests {
             .await
             .expect("init sqlite");
         let state = Arc::new(AppState {
+            resolver: ModelResolver::new(db.clone(), None, "onprem"),
             db,
             master_key: Some("sk-master-test".to_string()),
             aigw_master_key: None,

@@ -136,6 +136,7 @@ mod tests {
     use aigw_core::provider::ProviderRegistry;
     use aigw_core::rate_limiter::RateLimiter;
     use aigw_core::router::RouterState;
+use aigw_core::resolver::ModelResolver;
     use axum::{body::Body, http::Request, routing::get, Json, Router};
     use serde_json::{json, Value};
     use std::sync::Arc;
@@ -143,6 +144,7 @@ mod tests {
 
     fn make_state(db: Database, master_key: Option<String>, deployment_mode: &str) -> SharedState {
         Arc::new(super::super::keys::AppState {
+            resolver: ModelResolver::new(db.clone(), None, "onprem"),
             db,
             master_key,
             aigw_master_key: None,

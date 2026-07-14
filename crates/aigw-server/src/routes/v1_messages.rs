@@ -9,6 +9,7 @@ use aigw_core::adapter::{DefaultAdapter, ProviderAdapter};
 use aigw_core::auth::decode_jwt;
 use aigw_core::crypto::hash_token;
 use aigw_core::models::{ClaudeMessageRequest, DailySpendKind, DailySpendLog, SpendLog};
+use aigw_core::resolver::ModelResolver;
 use axum::{
     extract::State,
     http::{self, StatusCode, header},
@@ -867,6 +868,7 @@ mod tests {
             .await
             .expect("init sqlite");
         let state = Arc::new(AppState {
+            resolver: ModelResolver::new(db.clone(), None, "onprem"),
             db,
             master_key: Some("sk-master-v1msg".to_string()),
             aigw_master_key: None,

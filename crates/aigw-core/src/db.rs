@@ -2141,6 +2141,7 @@ pub trait ProxyModelStore {
     async fn insert_model(&self, m: &ProxyModel) -> Result<()>;
     async fn get_model_by_id(&self, model_id: &str) -> Result<Option<ProxyModel>>;
     async fn get_model_by_name(&self, model_name: &str) -> Result<Option<ProxyModel>>;
+    async fn list_models_by_name(&self, model_name: &str) -> Result<Vec<ProxyModel>>;
     async fn list_models(&self) -> Result<Vec<ProxyModel>>;
     async fn update_model(&self, m: &ProxyModel) -> Result<()>;
     async fn delete_model(&self, model_id: &str) -> Result<()>;
@@ -2161,6 +2162,11 @@ FROM proxy_models WHERE model_id = ?
 "#;
 
 const GET_MODEL_BY_NAME_SQLITE: &str = r#"
+SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by
+FROM proxy_models WHERE model_name = ?
+"#;
+
+const LIST_MODELS_BY_NAME_SQLITE: &str = r#"
 SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by
 FROM proxy_models WHERE model_name = ?
 "#;
@@ -2202,6 +2208,13 @@ impl ProxyModelStore for SqlitePool {
         sqlx::query_as(GET_MODEL_BY_NAME_SQLITE)
             .bind(model_name)
             .fetch_optional(self).await
+            .map_err(DbError::from)
+    }
+
+    async fn list_models_by_name(&self, model_name: &str) -> Result<Vec<ProxyModel>> {
+        sqlx::query_as(LIST_MODELS_BY_NAME_SQLITE)
+            .bind(model_name)
+            .fetch_all(self).await
             .map_err(DbError::from)
     }
 
@@ -2257,6 +2270,11 @@ impl ProxyModelStore for MySqlPool {
             .bind(model_name).fetch_optional(self).await.map_err(DbError::from)
     }
 
+    async fn list_models_by_name(&self, model_name: &str) -> Result<Vec<ProxyModel>> {
+        sqlx::query_as("SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by FROM proxy_models WHERE model_name = ?")
+            .bind(model_name).fetch_all(self).await.map_err(DbError::from)
+    }
+
     async fn list_models(&self) -> Result<Vec<ProxyModel>> {
         sqlx::query_as("SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by FROM proxy_models ORDER BY model_name")
             .fetch_all(self).await.map_err(DbError::from)
@@ -2303,6 +2321,11 @@ impl ProxyModelStore for PgPool {
             .bind(model_name).fetch_optional(self).await.map_err(DbError::from)
     }
 
+    async fn list_models_by_name(&self, model_name: &str) -> Result<Vec<ProxyModel>> {
+        sqlx::query_as("SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by FROM proxy_models WHERE model_name = $1")
+            .bind(model_name).fetch_all(self).await.map_err(DbError::from)
+    }
+
     async fn list_models(&self) -> Result<Vec<ProxyModel>> {
         sqlx::query_as("SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by FROM proxy_models ORDER BY model_name")
             .fetch_all(self).await.map_err(DbError::from)
@@ -2345,6 +2368,14 @@ impl Database {
             Database::Sqlite(pool) => pool.get_model_by_name(model_name).await,
             Database::Mysql(pool) => pool.get_model_by_name(model_name).await,
             Database::Postgres(pool) => pool.get_model_by_name(model_name).await,
+        }
+    }
+
+    pub async fn list_models_by_name(&self, model_name: &str) -> Result<Vec<ProxyModel>> {
+        match self {
+            Database::Sqlite(pool) => pool.list_models_by_name(model_name).await,
+            Database::Mysql(pool) => pool.list_models_by_name(model_name).await,
+            Database::Postgres(pool) => pool.list_models_by_name(model_name).await,
         }
     }
 
