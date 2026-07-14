@@ -5,7 +5,8 @@
 //!
 //! Auth: x-api-key header or Authorization: Bearer header (Claude convention)
 
-use aigw_core::adapter::{DefaultAdapter, ProviderAdapter};
+use aigw_core::adapter::{ClientProtocol, MessageAdapter, ProviderAdapter, select_adapter};
+use aigw_core::adapter::DefaultAdapter;
 use aigw_core::auth::decode_jwt;
 use aigw_core::crypto::hash_token;
 use aigw_core::models::{ClaudeMessageRequest, DailySpendKind, DailySpendLog, SpendLog};
@@ -1169,7 +1170,8 @@ mod tests {
     #[test]
     fn test_sse_conversion_adapter_mapping() {
         use aigw_core::models::ChatCompletionChunk;
-        use aigw_core::adapter::{DefaultAdapter, ProviderAdapter};
+        use aigw_core::adapter::{ClientProtocol, MessageAdapter, ProviderAdapter, select_adapter};
+use aigw_core::adapter::DefaultAdapter;
 
         // Simulate OpenAI SSE chunks
         let chunks = vec![
@@ -1229,7 +1231,8 @@ mod tests {
         );
 
         use aigw_core::models::ChatCompletionChunk;
-        use aigw_core::adapter::{DefaultAdapter, ProviderAdapter};
+        use aigw_core::adapter::{ClientProtocol, MessageAdapter, ProviderAdapter, select_adapter};
+use aigw_core::adapter::DefaultAdapter;
 
         let mut event_types = Vec::new();
         let mut rest = raw_sse;

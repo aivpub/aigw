@@ -459,6 +459,27 @@ pub struct ChatMessage {
     pub content: ChatContent,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+}
+
+/// OpenAI tool call (function call)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCall {
+    pub id: String,
+    #[serde(rename = "type", default = "default_tool_call_type")]
+    pub call_type: String,
+    pub function: ToolCallFunction,
+}
+
+fn default_tool_call_type() -> String { "function".to_string() }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCallFunction {
+    pub name: String,
+    pub arguments: String, // JSON string
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -506,6 +527,8 @@ pub struct Choice {
 pub struct AssistantMessage {
     pub role: String,
     pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -539,6 +562,31 @@ pub struct Delta {
     pub role: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ChunkToolCall>>,
+}
+
+/// Tool call delta in streaming chunks.
+/// Differs from ToolCall: `id` and `arguments` are `Option` since they arrive
+/// incrementally across SSE chunks.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChunkToolCall {
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub id: Option<String>,
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none", default)]
+    pub call_type: Option<String>,
+    #[serde(default)]
+    pub function: ChunkToolCallFunction,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub index: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ChunkToolCallFunction {
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub arguments: String,
 }
 
 /// /v1/models response
@@ -745,6 +793,18 @@ pub struct ClaudeContentBlock {
     pub text: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<ClaudeImageSource>,
+    // tool_use fields
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input: Option<serde_json::Value>,
+    // tool_result fields
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_use_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<serde_json::Value>,
 }
 
 /// Claude image source
