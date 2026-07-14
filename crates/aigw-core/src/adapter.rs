@@ -240,28 +240,37 @@ impl StreamAdapter for AnthropicToOpenAIStream {
                     });
                 }
 
-                if let Some(ref text) = choice.delta.content {
-                    if !text.is_empty() {
-                        let needs_new_block = !matches!(&self.current_block, Some(BlockType::Text));
-                        if needs_new_block {
-                            self.current_block = Some(BlockType::Text);
-                            let idx = self.current_block_index; self.current_block_index += 1;
+                let has_tool_calls = choice.delta.tool_calls.as_ref()
+                    .map(|tc| tc.iter().any(|t| t.id.as_ref().map(|id| !id.is_empty()).unwrap_or(false)))
+                    .unwrap_or(false);
+
+                if !has_tool_calls {
+                    if let Some(ref text) = choice.delta.content {
+                        if !text.is_empty() {
+                            let needs_new_block = !matches!(&self.current_block, Some(BlockType::Text));
+                            if needs_new_block {
+                                self.current_block = Some(BlockType::Text);
+                                let idx = self.current_block_index; self.current_block_index += 1;
+                                return self.emit_event(&ClaudeStreamEvent {
+                                    event_type: "content_block_start".to_string(), index: Some(idx), delta: None,
+                                    content_block: Some(ClaudeContentBlock {
+                                        content_type: "text".to_string(), text: None, source: None,
+                                        id: None, name: None, input: None, tool_use_id: None, content: None,
+                                    }), message: None, usage: None,
+                                });
+                            }
                             return self.emit_event(&ClaudeStreamEvent {
-                                event_type: "content_block_start".to_string(), index: Some(idx), delta: None,
-                                content_block: Some(ClaudeContentBlock {
-                                    content_type: "text".to_string(), text: None, source: None,
-                                    id: None, name: None, input: None, tool_use_id: None, content: None,
-                                }), message: None, usage: None,
+                                event_type: "content_block_delta".to_string(), index: Some(self.current_block_index - 1),
+                                delta: Some(ClaudeDelta { delta_type: "text_delta".to_string(), text: Some(text.clone()), partial_json: None }),
+                                content_block: None, message: None, usage: None,
                             });
                         }
-                        return self.emit_event(&ClaudeStreamEvent {
-                            event_type: "content_block_delta".to_string(), index: Some(self.current_block_index - 1),
-                            delta: Some(ClaudeDelta { delta_type: "text_delta".to_string(), text: Some(text.clone()), partial_json: None }),
-                            content_block: None, message: None, usage: None,
-                        });
                     }
                 }
 
+                // Process tool_calls BEFORE text content — DeepSeek thinking models
+                // emit reasoning_content (text) and tool_calls in the same chunk;
+                // tool_calls must take priority to create the correct block type.
                 if let Some(ref tool_calls) = choice.delta.tool_calls {
                     for tc in tool_calls {
                         if let Some(ref id) = tc.id {
