@@ -28,7 +28,6 @@ import {
   XCircle,
   Sparkles,
 } from "lucide-react";
-import { format, subDays } from "date-fns";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Types
@@ -90,22 +89,22 @@ function fmtTokens(v: number): string {
 }
 
 function todayStr(): string {
-  return format(new Date(), "yyyy-MM-dd");
+  return new Date().toISOString().split('T')[0];
 }
 
 type DatePreset = "3d" | "7d" | "30d" | "custom";
 
 function presetRange(p: DatePreset): { start: string; end: string } {
-  const now = new Date();
-  const end = format(now, "yyyy-MM-dd");
+  const now = Date.now();
+  const end = new Date(now).toISOString().split('T')[0];
   switch (p) {
     case "3d":
-      return { start: format(subDays(now, 3), "yyyy-MM-dd"), end };
+      return { start: new Date(now - 3 * 86400000).toISOString().split('T')[0], end };
     case "7d":
-      return { start: format(subDays(now, 7), "yyyy-MM-dd"), end };
+      return { start: new Date(now - 7 * 86400000).toISOString().split('T')[0], end };
     case "30d":
     default:
-      return { start: format(subDays(now, 30), "yyyy-MM-dd"), end };
+      return { start: new Date(now - 30 * 86400000).toISOString().split('T')[0], end };
   }
 }
 

@@ -44,7 +44,7 @@ import {
   AlertCircle,
   Download,
 } from "lucide-react";
-import { format, subMinutes, subHours, subDays, subWeeks } from "date-fns";
+import { format } from "date-fns";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Types
@@ -103,16 +103,16 @@ function todayStr(): string {
 }
 
 function presetRange(p: TimePreset): { start: string; end: string } {
-  const now = new Date();
+  const now = Date.now();
   switch (p) {
     case "15m":
-      return { start: format(subMinutes(now, 15), "yyyy-MM-dd'T'HH:mm:ss"), end: format(now, "yyyy-MM-dd'T'HH:mm:ss") };
+      return { start: new Date(now - 15 * 60 * 1000).toISOString(), end: new Date(now).toISOString() };
     case "4h":
-      return { start: format(subHours(now, 4), "yyyy-MM-dd'T'HH:mm:ss"), end: format(now, "yyyy-MM-dd'T'HH:mm:ss") };
+      return { start: new Date(now - 4 * 3600 * 1000).toISOString(), end: new Date(now).toISOString() };
     case "24h":
-      return { start: format(subDays(now, 1), "yyyy-MM-dd'T'HH:mm:ss"), end: format(now, "yyyy-MM-dd'T'HH:mm:ss") };
+      return { start: new Date(now - 24 * 3600 * 1000).toISOString(), end: new Date(now).toISOString() };
     case "7d":
-      return { start: format(subWeeks(now, 1), "yyyy-MM-dd'T'HH:mm:ss"), end: format(now, "yyyy-MM-dd'T'HH:mm:ss") };
+      return { start: new Date(now - 7 * 24 * 3600 * 1000).toISOString(), end: new Date(now).toISOString() };
     case "custom":
       return { start: "", end: "" };
   }

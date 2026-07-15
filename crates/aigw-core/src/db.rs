@@ -2139,6 +2139,27 @@ impl Database {
         }
     }
 
+    /// Normalize a date string for SQL query comparison.
+    ///
+    /// Handles three input formats defensively:
+    /// - Already RFC3339/UTC (contains 'Z' or '+'): pass through
+    /// - Pure date "yyyy-MM-dd": append T23:59:59.999Z for end dates,
+    ///   T00:00:00Z for start dates
+    /// - Local time without timezone suffix: append Z
+    pub fn normalize_date_for_query(date_str: &str, is_end: bool) -> String {
+        if date_str.contains('Z') || date_str.contains('+') {
+            return date_str.to_string();
+        }
+        if date_str.len() == 10 {
+            return if is_end {
+                format!("{}T23:59:59.999Z", date_str)
+            } else {
+                format!("{}T00:00:00Z", date_str)
+            };
+        }
+        format!("{}Z", date_str)
+    }
+
     /// Query activity metadata: aggregate spend/tokens/requests for a time range
     /// with optional user/team/org filters.
     pub async fn query_activity_metadata(
@@ -2160,7 +2181,7 @@ impl Database {
                 COALESCE(SUM(prompt_tokens), 0),
                 COALESCE(SUM(completion_tokens), 0)
             FROM spend_logs
-            WHERE start_time >= ? AND start_time <= ? {}"#,
+            WHERE date(start_time) >= date(?) AND date(start_time) <= date(?) {}"#,
             filter_clause
         );
 
@@ -2203,7 +2224,7 @@ impl Database {
                 COALESCE(SUM(total_tokens), 0),
                 COUNT(request_id)
             FROM spend_logs
-            WHERE start_time >= ? AND start_time <= ? {}
+            WHERE date(start_time) >= date(?) AND date(start_time) <= date(?) {}
             GROUP BY 1
             ORDER BY 1 ASC"#,
             filter_clause
@@ -4425,5 +4446,39 @@ mod tests {
         // general_settings should take precedence
         let result = db.get_master_key_from_db().await.expect("query");
         assert_eq!(result, Some("sk-from-json".to_string()));
+    }
+
+    #[test]
+    fn test_normalize_date_rfc3339_passthrough() {
+        assert_eq!(
+            Database::normalize_date_for_query("2026-07-15T02:34:38Z", false),
+            "2026-07-15T02:34:38Z"
+        );
+        assert_eq!(
+            Database::normalize_date_for_query("2026-07-15T10:30:00+08:00", true),
+            "2026-07-15T10:30:00+08:00"
+        );
+    }
+
+    #[test]
+    fn test_normalize_date_pure_date_expands() {
+        // start date → T00:00:00Z
+        assert_eq!(
+            Database::normalize_date_for_query("2026-07-15", false),
+            "2026-07-15T00:00:00Z"
+        );
+        // end date → T23:59:59.999Z
+        assert_eq!(
+            Database::normalize_date_for_query("2026-07-15", true),
+            "2026-07-15T23:59:59.999Z"
+        );
+    }
+
+    #[test]
+    fn test_normalize_date_local_time_append_z() {
+        assert_eq!(
+            Database::normalize_date_for_query("2026-07-15T10:34:38", false),
+            "2026-07-15T10:34:38Z"
+        );
     }
 }
