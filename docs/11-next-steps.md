@@ -1,7 +1,11 @@
 # aigw -- 下一步行动
 
 **上次更新**: 2026-07-15
-**当前阶段**: Phase 18 Spend Logs & Usage 质量修复（P0）✅ 已完成
+**当前阶段**: Phase 19 UI Enhancement（Models CRUD + Spend Logs 可视化）
+
+---
+
+## 当前状态：54/58 Stages 已完成，Phase 19 规划完成待执行
 
 ---
 
@@ -23,6 +27,8 @@ Phase 15:   ████████████████████ 100% (3
 Phase 16:   ████████████████████ 100% (3/3)  ✅ Playground 增强（Stages 47-49）
 Phase 17:   ████████████████████ 100% (3/3)  ✅ 代理转发架构重构（Stages 50-52）
 Phase 18:   ████████████████████ 100% (2/2)  ✅ Spend Logs & Usage 质量修复（Stages 53-54）
+Phase 19:   ░░░░░░░░░░░░░░░░░░░░   0% (2/2)  🔄 UI Enhancement（Stages 55-56）
+Phase 20:   ░░░░░░░░░░░░░░░░░░░░   0% (2/2)  ⏳ 可观测性增强（Stages 57-58）
 ```
 
 ### 测试状态
@@ -53,6 +59,30 @@ Phase 18:   ████████████████████ 100% (2
 | Stage 54 | end_user 提取 + 复制按钮反馈 — 从 metadata.user_id 提取 end_user/session_id；X-Forwarded-For → requester_ip_address；流式 request_id 去掉 req_ 前缀；useCopyToClipboard hook | ✅ 完成 (2026-07-15) |
 
 **设计文档**: `docs/14-spend-logs-usage-bugs.md`
+
+---
+
+## Phase 19: UI Enhancement — Models CRUD + Spend Logs 可视化（规划中）
+
+| Stage | 目标 | 状态 |
+|-------|------|------|
+| Stage 55 | Models 管理页面完整 CRUD 前端 — 结构化表单新增/编辑/删除 + BDD | ⏳ 待开始 |
+| Stage 56 | Spend Logs Prompt/Response 结构化可视化 — MessageViewer + ResponseViewer + Tab 切换 | ⏳ 待开始 |
+
+**设计文档**: `docs/plans/2026-07-15-phase-19-20-roadmap.md`
+**Stage 文档**: `docs/stages/stage-55.md`, `docs/stages/stage-56.md`
+
+---
+
+## Phase 20: Spend Logs 可观测性 — 过滤器增强 + Overhead 评估 + 修复（规划中）
+
+| Stage | 目标 | 状态 |
+|-------|------|------|
+| Stage 57 | 下拉过滤器 + model_group 修复 + UA/device_id — model/session 下拉 + metadata.user_agent + metadata.device_id + distinct API | ⏳ 待开始 |
+| Stage 58 | Gateway Overhead 评估 — proxy_server_request 入口快照 + queue_time + upstream_timing + overhead 可视化 | ⏳ 待开始 |
+
+**设计文档**: `docs/plans/2026-07-15-phase-19-20-roadmap.md`
+**Stage 文档**: `docs/stages/stage-57.md`, `docs/stages/stage-58.md`
 
 ---
 

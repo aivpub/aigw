@@ -7,9 +7,9 @@
 
 ## 当前状态
 
-- **当前 Phase**: Phase 18 — Spend Logs & Usage 质量修复（P0）✅ 已完成
-- **状态**: 54/54 Stages 已完成
-- **下一里程碑**: 待定（长期路线 LT-Router / LT-Usage 等）
+- **当前 Phase**: Phase 19 — UI Enhancement（Models CRUD + Spend Logs 可视化）
+- **状态**: 54/58 Stages 已完成（4 个待开始）
+- **下一里程碑**: Phase 20 Spend Logs 可观测性增强
 
 ### 整体进度
 
@@ -26,7 +26,9 @@ Phase 14:   ████████████████████ 100% (4
 Phase 15:   ████████████████████ 100% (3/3 Stages)
 Phase 16:   ████████████████████ 100% (3/3 Stages)
 Phase 17:   ████████████████████ 100% (3/3 Stages)  ✅
-Phase 18:   ░░░░░░░░░░░░░░░░░░░░   0% (0/2 Stages)  🔄 Spend Logs & Usage 质量修复
+Phase 18:   ████████████████████ 100% (2/2 Stages) ✅ 已完成
+Phase 19:   ░░░░░░░░░░░░░░░░░░░░   0% (2/2 Stages) 🔄 UI Enhancement
+Phase 20:   ░░░░░░░░░░░░░░░░░░░░   0% (2/2 Stages) ⏳ 可观测性增强
 ```
 
 ---
@@ -103,6 +105,38 @@ Phase 18:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 **TDD 要求**: UT 先行（RED → GREEN → REFACTOR），BDD feature 补充验收。门禁：全量 UT+BDD+前端测试回归通过。
 
 **设计文档**: `docs/14-spend-logs-usage-bugs.md`
+
+---
+
+### Phase 19：UI Enhancement — Models CRUD + Spend Logs 可视化
+
+**背景**: Models 页面仅有只读列表，缺少增删改查交互（后端 CRUD 已就绪）；Spend Logs 抽屉中 Prompt/Response 以 raw JSON 展示，难以阅读。
+
+| Stage | 状态 | 目标 | 类型 | 预估 |
+|-------|------|------|------|------|
+| Stage 55 | ⏳ 待开始 | **Models 管理页面完整 CRUD 前端** — 结构化表单（model_name 即 model_group；上游 model 自动跟随 model_name 可编辑；API Key / Credential 二选一 + credential 下拉 + 新建快捷入口；每百万 token 美元定价输入 → 自动转换 per-token 价格；编辑预填反向转换）。TDD: BDD 覆盖创建/编辑/删除/上游联动/auth 切换/定价转换 6 个 scenario × 3 viewports | 前端+BDD | 7-8h |
+| Stage 56 | ⏳ 待开始 | **Spend Logs Prompt/Response 结构化可视化** — 新建 MessageViewer（system/user/assistant/tool 按 role 气泡化）+ ResponseViewer（文本回复/tool_calls/usage/finish_reason）+ DetailDrawer Tab 切换（Prompt/Response/Raw）+ 各 Tab 独立复制按钮 + CopyButton 组件（Copy→Check 反馈动画）。TDD: BDD 覆盖结构化消息/tool_calls 折叠/Raw tab/复制按钮/no-data 占位 5 个 scenario × 3 viewports | 前端+BDD | 7-8h |
+
+**依赖关系**: Stage 55 / 56 无硬依赖，可并行。
+
+**设计文档**: `docs/plans/2026-07-15-phase-19-20-roadmap.md`
+
+---
+
+### Phase 20：Spend Logs 可观测性 — 过滤器增强 + Overhead 评估 + 修复
+
+**背景**: model 过滤器为文本框（不可直观选择）；model_group/custom_llm_provider/model_id 始终为 None（bug）；session_id 有数据但无过滤 UI；user_agent/device_id 缺失；proxy_server_request 始终为 None（无法评估网关 overhead）。
+
+| Stage | 状态 | 目标 | 类型 | 预估 |
+|-------|------|------|------|------|
+| Stage 57 | ⏳ 待开始 | **下拉过滤器 + model_group 修复 + UA/device_id** — 修复 chat.rs/v1_messages.rs 中 4 个 SpendLog 构造点写入 model_group/custom_llm_provider/model_id；新增 distinct-models/sessions API；Model/Session 过滤器改为 searchable Select；User-Agent 头提取写入 metadata.user_agent；device_id 从 metadata.user_id JSON 解析。TDD: UT 覆盖 model_group 写入/UA 提取/device_id 解析/distinct 查询；BDD 覆盖下拉过滤/UA 展示 4 个 scenario × 3 viewports | 前后端+BDD | 7-8h |
+| Stage 58 | ⏳ 待开始 | **Gateway Overhead 评估与展示**（对齐 litellm）— handler 入口写入 proxy_server_request（url/method/headers/arrival_time）；计算 queue_time；adapter 层记录 upstream_timing（sent_at/first_byte_at/ended_at）；计算 gateway_overhead_ms = total - upstream - queue；前端 TimingBreakdown 水平 bar 可视化。TDD: UT 覆盖 proxy_server_request 写入/queue_time/overhead 计算/adapter timing；BDD 覆盖 timing breakdown/旧日志降级 4 个 scenario × 3 viewports | 前后端+BDD | 7-8h |
+
+**依赖关系**: Stage 57 / 58 无硬依赖，可并行。
+
+**Phase 19 + 20 合计**: 28-32h。
+
+**设计文档**: `docs/plans/2026-07-15-phase-19-20-roadmap.md`
 
 ---
 
