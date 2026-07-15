@@ -1,15 +1,15 @@
 # aigw — AI Gateway Stage Roadmap
 
 **项目**: aigw (litellm Rust 最小兼容替代)
-**最后更新**: 2026-07-14
+**最后更新**: 2026-07-15
 
 ---
 
 ## 当前状态
 
-- **当前 Phase**: Phase 17 — 代理转发架构重构（P1）
-- **状态**: 49/52 Stages 已完成，Phase 17 规划完成
-- **下一里程碑**: Phase 17 Stage 50-52（ModelResolver + MessageAdapter + Handler 瘦身）
+- **当前 Phase**: Phase 18 — Spend Logs & Usage 质量修复（P0）
+- **状态**: 52/52 Stages 已完成，Phase 18 规划完成
+- **下一里程碑**: Phase 18 Stage 53（Spend Logs 时间过滤修复 + Usage 当天数据修复）
 
 ### 整体进度
 
@@ -25,7 +25,8 @@ Phase 13:   ████████████████████ 100% (6
 Phase 14:   ████████████████████ 100% (4/4 Stages)
 Phase 15:   ████████████████████ 100% (3/3 Stages)
 Phase 16:   ████████████████████ 100% (3/3 Stages)
-Phase 17:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3 Stages)  🔄 代理转发架构重构
+Phase 17:   ████████████████████ 100% (3/3 Stages)  ✅
+Phase 18:   ░░░░░░░░░░░░░░░░░░░░   0% (0/2 Stages)  🔄 Spend Logs & Usage 质量修复
 ```
 
 ---
@@ -69,9 +70,9 @@ Phase 17:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 | Stage | 状态 | 目标 | 类型 | 预估 |
 |-------|------|------|------|------|
-| Stage 50 | ⏳ 待开始 | **ModelResolver + Deployment** — 新建 `deployment.rs` + `resolver.rs`，迁移 `resolve_upstream_params` 为 `ModelResolver::resolve() → Vec<Deployment>`，替换 chat.rs 调用点。TDD: UT 覆盖查表/解密/credential/env fallback。门禁：全量 BDD 回归通过 | 后端+测试 | 4h |
-| Stage 51 | ⏳ 待开始 | **MessageAdapter + tool 转换** — 拆分 adapter trait 为 `MessageAdapter` + `StreamAdapter`，实现 `OpenAIPassthrough` + `AnthropicToOpenAI`（含 tool_use/tool_result ↔ tool_calls 双向转换），新增 `select_adapter()`。TDD: UT 覆盖 4 种转换方向 + 流式 tool chunk。BDD: /v1/messages 含 tool_use 场景 | 后端+测试 | 5h |
-| Stage 52 | ⏳ 待开始 | **Handler 瘦身** — chat.rs / v1_messages.rs 通用逻辑下沉，handler 只做：校验→resolve→adapt→upstream call→spend log。清理死代码。门禁：全量 UT+BDD+前端测试回归 | 后端+测试 | 3h |
+| Stage 50 | ✅ 完成 | **ModelResolver + Deployment** — 新建 `deployment.rs` + `resolver.rs`，迁移 `resolve_upstream_params` 为 `ModelResolver::resolve() → Vec<Deployment>`，替换 chat.rs 调用点。TDD: UT 覆盖查表/解密/credential/env fallback。门禁：全量 BDD 回归通过 | 后端+测试 | 4h |
+| Stage 51 | ✅ 完成 | **MessageAdapter + tool 转换** — 拆分 adapter trait 为 `MessageAdapter` + `StreamAdapter`，实现 `OpenAIPassthrough` + `AnthropicToOpenAI`（含 tool_use/tool_result ↔ tool_calls 双向转换），新增 `select_adapter()`。TDD: UT 覆盖 4 种转换方向 + 流式 tool chunk。BDD: /v1/messages 含 tool_use 场景 | 后端+测试 | 5h |
+| Stage 52 | ✅ 完成 | **Handler 瘦身** — chat.rs / v1_messages.rs 通用逻辑下沉，handler 只做：校验→resolve→adapt→upstream call→spend log。清理死代码。门禁：全量 UT+BDD+前端测试回归 | 后端+测试 | 3h |
 
 **依赖关系**: Stage 50 → 51 → 52（串行，渐进式重构）。预估 12h。
 
@@ -87,6 +88,21 @@ Phase 17:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 | 消息格式转换 | `MessageAdapter` trait | OpenAI Chat ↔ Anthropic Messages 双向转换（含 tool_use/tool_result ↔ tool_calls） |
 | 上游配置 | `Deployment` | 纯值对象：api_base / api_key / upstream_model / provider_type / 定价 / raw_params（解密后完整 litellm_params） |
 | 流式转换器 | `StreamAdapter` trait | SSE chunk 逐块转换（`&mut self` 维护跨 chunk 状态如 tool_use index） |
+
+### Phase 18：Spend Logs & Usage 质量修复（P0）
+
+> **背景**: Spend Logs 页面时间过滤器和 Usage 页面有 4 个已确认的 bug（详见 `docs/14-spend-logs-usage-bugs.md`），影响数据正确性和用户体验。依赖 Phase 17 Handler 瘦身完成后执行。
+
+| Stage | 状态 | 目标 | 类型 | 预估 |
+|-------|------|------|------|------|
+| Stage 53 | ⏳ 待开始 | **时间过滤 + Usage 当天数据修复** — 前端 `spend-logs/index.tsx` `presetRange()` 改用 `toISOString()` 发送 UTC 时间戳；`usage/index.tsx` `presetRange()` 用 UTC 日期；后端 `db.rs` `query_activity_*` 两处 `WHERE start_time` 比较改为 `date(start_time) >= date(?) AND date(start_time) <= date(?)` 解决纯日期截断；后端 `spend.rs` 新增 `normalize_date_for_query()` 防御不同前端日期格式。TDD: UT 覆盖 UTC 解析/date 比较/边界场景 + BDD 覆盖 15min/4h 预设过滤 + Usage 当天数据显示 | 前后端+测试 | 6h |
+| Stage 54 | ⏳ 待开始 | **end_user 提取 + 复制按钮反馈** — `v1_messages.rs` 和 `chat.rs` handler 中从请求体 `metadata.user_id` 提取 end_user，写入 SpendLog；可选解析 JSON 拆出 `session_id`；从 `X-Forwarded-For` 提取 `requester_ip_address`；修复 `v1_messages.rs:455-460` 流式路径 SpendLog 误用 `req_` 前缀改为纯 UUID；新建 `useCopyToClipboard` hook 替换 3 个页面的 `copyToClipboard()`。TDD: UT 覆盖 metadata.user_id 提取/String vs JSON/无 metadata 场景 + BDD 覆盖复制按钮反馈 | 前后端+测试 | 5h |
+
+**依赖关系**: Stage 53 → 54 无硬依赖，可并行；依赖 Phase 17 完成。预估 11h。
+
+**TDD 要求**: UT 先行（RED → GREEN → REFACTOR），BDD feature 补充验收。门禁：全量 UT+BDD+前端测试回归通过。
+
+**设计文档**: `docs/14-spend-logs-usage-bugs.md`
 
 ---
 
@@ -222,3 +238,4 @@ Phase 17:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 |------|------|----------|
 | v1.0-v14.0 | 2026-07-03~11 | 初始版本 ~ Phase 17 规划 |
 | v15.0 | 2026-07-14 | **架构重构规划**：修正 Phase 14-16 状态为已完成；移除旧 Stage 50-51（Usage 多视角聚合移入长期路线）；Phase 17 替换为代理转发架构重构（Stage 50-52: ModelResolver + MessageAdapter + Handler 瘦身）；每个 Stage 内置 TDD+BDD 测试；Stage 51 新增 tool_use/tool_calls 双向转换 |
+| v16.0 | 2026-07-15 | **Spend Logs & Usage 质量修复规划**：Phase 17 Stage 50-52 已全部完成，状态更新为 ✅；新增 Phase 18（Stage 53: 时间过滤+Usage 当天数据修复，Stage 54: end_user 提取+复制按钮反馈），共 2 Stage，预估 11h |
