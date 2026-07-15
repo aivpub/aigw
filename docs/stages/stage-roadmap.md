@@ -7,9 +7,9 @@
 
 ## 当前状态
 
-- **当前 Phase**: Phase 18 — Spend Logs & Usage 质量修复（P0）
-- **状态**: 52/52 Stages 已完成，Phase 18 规划完成
-- **下一里程碑**: Phase 18 Stage 53（Spend Logs 时间过滤修复 + Usage 当天数据修复）
+- **当前 Phase**: Phase 18 — Spend Logs & Usage 质量修复（P0）✅ 已完成
+- **状态**: 54/54 Stages 已完成
+- **下一里程碑**: 待定（长期路线 LT-Router / LT-Usage 等）
 
 ### 整体进度
 
