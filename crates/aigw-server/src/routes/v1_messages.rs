@@ -264,6 +264,31 @@ pub async fn messages_handler(
         .unwrap_or(false);
     let call_type = if is_stream { "completion_stream" } else { "completion" };
 
+    // Extract end_user from Anthropic protocol metadata.user_id
+    // Claude Code packs device_id/session_id as JSON string in this field
+    let end_user = body_val
+        .get("metadata")
+        .and_then(|m| m.get("user_id"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    // Try to parse session_id from JSON blob (Claude Code convention)
+    let session_id = end_user.as_ref().and_then(|eu| {
+        serde_json::from_str::<Value>(eu)
+            .ok()
+            .and_then(|v| {
+                v.get("session_id")
+                    .and_then(|id| id.as_str())
+                    .map(|s| s.to_string())
+            })
+    });
+
+    let requester_ip = headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.split(',').next().unwrap_or("").trim().to_string())
+        .filter(|s| !s.is_empty());
+
     // 4. Resolve upstream via ModelResolver
     let resolved_deployment = match state.resolver.resolve(&model).await {
         Ok(deployments) => {
@@ -282,6 +307,9 @@ pub async fn messages_handler(
             let log_model = model.clone();
             let log_token_hash = auth_token_hash.clone();
             let log_user_id = auth_user_id.clone();
+            let log_end_user = end_user.clone();
+            let log_session_id = session_id.clone();
+            let log_requester_ip = requester_ip.clone();
             tokio::spawn(async move {
                 let sl = SpendLog {
                     request_id: uuid::Uuid::new_v4().to_string(),
@@ -307,11 +335,11 @@ pub async fn messages_handler(
                     request_tags: None,
                     team_id: None,
                     organization_id: None,
-                    end_user: None,
-                    requester_ip_address: None,
+                    end_user: log_end_user,
+                    requester_ip_address: log_requester_ip,
                     messages: Some(error_body.clone()),
                     response: Some(error_body),
-                    session_id: None,
+                    session_id: log_session_id,
                     status: Some(format!("failure:{}", status.as_u16())),
                     mcp_namespaced_tool_name: None,
                     agent_id: None,
@@ -393,6 +421,9 @@ pub async fn messages_handler(
         let upstream_base_url_clone = upstream_base_url.clone();
         let auth_token_hash_clone = auth_token_hash.clone();
         let auth_user_id_clone = auth_user_id.clone();
+        let end_user_clone = end_user.clone();
+        let session_id_clone = session_id.clone();
+        let requester_ip_clone = requester_ip.clone();
         let status_code = upstream_status.as_u16();
         tokio::spawn(async move {
             let sl = SpendLog {
@@ -421,11 +452,11 @@ pub async fn messages_handler(
                 request_tags: None,
                 team_id: None,
                 organization_id: None,
-                end_user: None,
-                requester_ip_address: None,
+                end_user: end_user_clone,
+                requester_ip_address: requester_ip_clone,
                 messages: Some(upstream_body_clone),
                 response: resp_json.or_else(|| Some(json!({"error": error_body}))),
-                session_id: None,
+                session_id: session_id_clone,
                 status: Some(format!("failure:{}", status_code)),
                 mcp_namespaced_tool_name: None,
                 agent_id: None,
@@ -452,7 +483,7 @@ pub async fn messages_handler(
         // SSE streaming: two-phase spend-log pattern.
         // Phase 1: INSERT placeholder SpendLog BEFORE streaming begins.
         // Phase 2: UPDATE the same row with tokens + response AFTER stream ends.
-        let streaming_request_id = format!("req_{}", uuid::Uuid::new_v4());
+        let streaming_request_id = uuid::Uuid::new_v4().to_string();
 
         // Phase 1: pre-insert placeholder
         {
@@ -480,11 +511,11 @@ pub async fn messages_handler(
                 request_tags: None,
                 team_id: None,
                 organization_id: None,
-                end_user: None,
-                requester_ip_address: None,
+                end_user: end_user.clone(),
+                requester_ip_address: requester_ip.clone(),
                 messages: Some(upstream_body.clone()),
                 response: Some(json!({"status": "streaming"})),
-                session_id: None,
+                session_id: session_id.clone(),
                 status: Some("streaming".to_string()),
                 mcp_namespaced_tool_name: None,
                 agent_id: None,
@@ -713,11 +744,11 @@ pub async fn messages_handler(
             request_tags: None,
             team_id: None,
             organization_id: None,
-            end_user: None,
-            requester_ip_address: None,
+            end_user: end_user.clone(),
+            requester_ip_address: requester_ip.clone(),
             messages: Some(upstream_body),
             response: Some(resp_body),
-            session_id: None,
+            session_id: session_id.clone(),
             status: Some("success".to_string()),
             mcp_namespaced_tool_name: None,
             agent_id: None,

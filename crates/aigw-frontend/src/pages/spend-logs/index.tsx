@@ -36,6 +36,7 @@ import {
   RefreshCw,
   Search,
   Copy,
+  Check,
   ChevronLeft,
   ChevronRight,
   X,
@@ -45,6 +46,7 @@ import {
   Download,
 } from "lucide-react";
 import { format } from "date-fns";
+import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Types
@@ -143,10 +145,6 @@ function fmtDuration(ms: number | null): string {
 function truncate8(s: string): string {
   if (!s) return "—";
   return s.length > 8 ? s.slice(0, 8) + "…" : s;
-}
-
-function copyToClipboard(text: string) {
-  navigator.clipboard.writeText(text).catch(() => {});
 }
 
 function exportToCSV(logs: SpendLog[], startDate: string, endDate: string) {
@@ -311,6 +309,7 @@ interface DetailDrawerProps {
 
 function DetailDrawer({ log, open, onClose }: DetailDrawerProps) {
   if (!log) return null;
+  const { copied, copy } = useCopyToClipboard();
   const isFailure = (log.status ?? "").startsWith("failure");
   const ttftText = fmtTtft(log.ttft_ms);
   const durText = fmtDuration(log.request_duration_ms);
@@ -386,7 +385,7 @@ function DetailDrawer({ log, open, onClose }: DetailDrawerProps) {
             <Label className="text-xs text-muted-foreground">API Key</Label>
             <div className="flex items-center gap-1 mt-0.5">
               <code className="text-xs font-mono bg-muted rounded px-1.5 py-0.5">{truncate8(log.api_key)}</code>
-              <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => copyToClipboard(log.api_key)}><Copy className="h-3 w-3" /></Button>
+              <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => copy(log.api_key)}>{copied ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3" />}</Button>
             </div>
           </div>
           {log.messages != null && (
@@ -435,6 +434,7 @@ export function SpendLogsPage() {
   const [requestIdInput, setRequestIdInput] = useState("");
   const [liveTail, setLiveTail] = useState(loadLiveTailPref);
   const [page, setPage] = useState(1);
+  const { copied, copy } = useCopyToClipboard();
   const [pageSize, setPageSize] = useState(30);
   const [selectedLog, setSelectedLog] = useState<SpendLog | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -713,10 +713,10 @@ export function SpendLogsPage() {
                               className="h-4 w-4"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                copyToClipboard(log.request_id);
+                                copy(log.request_id);
                               }}
                             >
-                              <Copy className="h-2.5 w-2.5" />
+                              {copied ? <Check className="h-2.5 w-2.5 text-green-500" /> : <Copy className="h-2.5 w-2.5" />}
                             </Button>
                           </div>
                         </TableCell>
@@ -789,10 +789,10 @@ export function SpendLogsPage() {
                         className="h-4 w-4"
                         onClick={(e) => {
                           e.stopPropagation();
-                          copyToClipboard(log.request_id);
+                          copy(log.request_id);
                         }}
                       >
-                        <Copy className="h-2.5 w-2.5" />
+                        {copied ? <Check className="h-2.5 w-2.5 text-green-500" /> : <Copy className="h-2.5 w-2.5" />}
                       </Button>
                     </div>
                   </div>
