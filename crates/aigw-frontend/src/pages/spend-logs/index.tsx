@@ -151,7 +151,7 @@ function exportToCSV(logs: SpendLog[], startDate: string, endDate: string) {
   const headers = [
     "Request ID", "Time", "Type", "Model", "Status",
     "Prompt Tokens", "Completion Tokens", "Total Tokens",
-    "TTFT (ms)", "Duration (ms)", "Cost", "User", "API Key",
+    "TTFT (ms)", "Duration (ms)", "Cost", "User", "End User", "API Key",
   ];
   const rows = logs.map((log) => [
     log.request_id,
@@ -166,6 +166,7 @@ function exportToCSV(logs: SpendLog[], startDate: string, endDate: string) {
     log.request_duration_ms ?? "",
     log.spend,
     log.user ?? "",
+    log.end_user ?? "",
     log.api_key.slice(0, 12) + "…",
   ]);
   const csv = [headers, ...rows]
@@ -665,6 +666,7 @@ export function SpendLogsPage() {
                       <TableHead className="text-xs whitespace-nowrap">Type</TableHead>
                       <TableHead className="text-xs whitespace-nowrap">Model</TableHead>
                       <TableHead className="text-xs whitespace-nowrap">Key</TableHead>
+                      <TableHead className="text-xs whitespace-nowrap">End User</TableHead>
                       <TableHead className="text-xs whitespace-nowrap">Status</TableHead>
                       <TableHead className="text-xs whitespace-nowrap">Request ID</TableHead>
                       <TableHead className="text-xs whitespace-nowrap text-right">TTFT</TableHead>
@@ -695,6 +697,9 @@ export function SpendLogsPage() {
                         </TableCell>
                         <TableCell className="text-xs whitespace-nowrap text-muted-foreground max-w-[100px] truncate">
                           {log.key_name || log.user || "—"}
+                        </TableCell>
+                        <TableCell className="text-xs whitespace-nowrap text-muted-foreground max-w-[100px] truncate">
+                          {log.end_user || "—"}
                         </TableCell>
                         <TableCell>
                           <Badge
@@ -763,6 +768,11 @@ export function SpendLogsPage() {
                       <span className="text-xs font-mono font-medium">{fmtSpend(log.spend)}</span>
                     </div>
                     <div className="text-sm font-medium truncate mb-1">{log.model}</div>
+                    <div className="flex items-center gap-1 text-xs text-muted-foreground mb-1">
+                      {log.end_user ? (
+                        <span>End User: <span className="font-mono">{log.end_user}</span></span>
+                      ) : null}
+                    </div>
                     <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-muted-foreground">
                       <div>
                         <span>TTFT: </span>
