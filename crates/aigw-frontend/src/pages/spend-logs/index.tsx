@@ -47,6 +47,10 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { MessageViewer, ResponseViewer, CopyButton } from "@/components/log-viewer";
+import { parseMessages } from "@/components/log-viewer/MessageViewer";
+import { safeStringify } from "@/components/log-viewer/utils";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Types
@@ -310,10 +314,14 @@ interface DetailDrawerProps {
 
 function DetailDrawer({ log, open, onClose }: DetailDrawerProps) {
   if (!log) return null;
-  const { copied, copy } = useCopyToClipboard();
+  const { copied: apiKeyCopied, copy: copyApiKey } = useCopyToClipboard();
   const isFailure = (log.status ?? "").startsWith("failure");
   const ttftText = fmtTtft(log.ttft_ms);
   const durText = fmtDuration(log.request_duration_ms);
+  const parsed = parseMessages(log.messages);
+  const hasPrompt = log.messages != null;
+  const hasResponse = log.response != null;
+
   return (
     <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
       <SheetContent side="right" className="overflow-y-auto">
@@ -386,24 +394,94 @@ function DetailDrawer({ log, open, onClose }: DetailDrawerProps) {
             <Label className="text-xs text-muted-foreground">API Key</Label>
             <div className="flex items-center gap-1 mt-0.5">
               <code className="text-xs font-mono bg-muted rounded px-1.5 py-0.5">{truncate8(log.api_key)}</code>
-              <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => copy(log.api_key)}>{copied ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3" />}</Button>
+              <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => copyApiKey(log.api_key)}>
+                {apiKeyCopied ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3" />}
+              </Button>
             </div>
           </div>
-          {log.messages != null && (
-            <div>
-              <Label className="text-xs text-muted-foreground">Messages (Prompt)</Label>
-              <div className="mt-1"><pre className="text-xs bg-muted/30 rounded p-2 max-h-48 overflow-y-auto whitespace-pre-wrap break-words">{typeof log.messages === "string" ? log.messages : JSON.stringify(log.messages, null, 2)}</pre></div>
-            </div>
+
+          {/* ── Prompt Section — Visual + Raw tabs ── */}
+          {hasPrompt && (
+            <PromptSection log={log} parsed={parsed} />
           )}
-          {log.response != null && (
-            <div>
-              <Label className="text-xs text-muted-foreground">Response</Label>
-              <div className="mt-1"><pre className="text-xs bg-muted/30 rounded p-2 max-h-48 overflow-y-auto whitespace-pre-wrap break-words">{typeof log.response === "string" ? log.response : JSON.stringify(log.response, null, 2)}</pre></div>
-            </div>
+
+          {/* ── Response Section — Visual + Raw tabs ── */}
+          {hasResponse && (
+            <ResponseSection log={log} />
           )}
         </div>
       </SheetContent>
     </Sheet>
+  );
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Prompt Section — Visual / Raw sub-tabs
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+function PromptSection({ log, parsed }: { log: SpendLog; parsed: ReturnType<typeof parseMessages> }) {
+  const msgCount = parsed.messages.length;
+  const toolCount = parsed.tools?.length ?? 0;
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1.5">
+        <Label className="text-xs text-muted-foreground">Prompt</Label>
+        <span className="text-[10px] text-muted-foreground">
+          {msgCount > 0 && `${msgCount} message${msgCount !== 1 ? "s" : ""}`}
+          {toolCount > 0 && ` · ${toolCount} tool${toolCount !== 1 ? "s" : ""}`}
+        </span>
+      </div>
+      <Tabs defaultValue="visual">
+        <div className="flex items-center justify-between">
+          <TabsList className="h-7">
+            <TabsTrigger value="visual" className="text-xs h-6">Visual</TabsTrigger>
+            <TabsTrigger value="raw" className="text-xs h-6">Raw</TabsTrigger>
+          </TabsList>
+          <CopyButton
+            text={safeStringify(log.messages)}
+            label={msgCount > 0 ? undefined : "Copy"}
+          />
+        </div>
+        <TabsContent value="visual" className="mt-2">
+          <MessageViewer messages={log.messages} />
+        </TabsContent>
+        <TabsContent value="raw" className="mt-2">
+          <pre className="text-[10px] bg-muted/30 rounded p-2 max-h-64 overflow-y-auto whitespace-pre-wrap break-words">
+            {safeStringify(log.messages)}
+          </pre>
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Response Section — Visual / Raw sub-tabs
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+function ResponseSection({ log }: { log: SpendLog }) {
+  return (
+    <div>
+      <Label className="text-xs text-muted-foreground mb-1.5 block">Response</Label>
+      <Tabs defaultValue="visual">
+        <div className="flex items-center justify-between">
+          <TabsList className="h-7">
+            <TabsTrigger value="visual" className="text-xs h-6">Visual</TabsTrigger>
+            <TabsTrigger value="raw" className="text-xs h-6">Raw</TabsTrigger>
+          </TabsList>
+          <CopyButton text={safeStringify(log.response)} />
+        </div>
+        <TabsContent value="visual" className="mt-2">
+          <ResponseViewer response={log.response} />
+        </TabsContent>
+        <TabsContent value="raw" className="mt-2">
+          <pre className="text-[10px] bg-muted/30 rounded p-2 max-h-64 overflow-y-auto whitespace-pre-wrap break-words">
+            {safeStringify(log.response)}
+          </pre>
+        </TabsContent>
+      </Tabs>
+    </div>
   );
 }
 
