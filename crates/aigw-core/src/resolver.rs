@@ -76,6 +76,8 @@ impl ModelResolver {
                     model_group: None,
                     custom_llm_provider: None,
                     chat_template_compat: None,
+                    fail_count: 0,
+                    cooldown_until: None,
                 }]);
             }
         }
@@ -264,6 +266,8 @@ impl ModelResolver {
                 model_group: model_group.clone(),
                 custom_llm_provider: custom_llm_provider.clone(),
                 chat_template_compat,
+                fail_count: 0,
+                cooldown_until: None,
             })
         } else {
             tracing::warn!(%model_name, "resolve: NO credential reference, using litellm_params directly");
@@ -306,6 +310,8 @@ impl ModelResolver {
                 model_group,
                 custom_llm_provider,
                 chat_template_compat,
+                fail_count: 0,
+                cooldown_until: None,
             })
         }
     }

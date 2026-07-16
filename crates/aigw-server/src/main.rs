@@ -18,7 +18,7 @@ use aigw_core::db::Database;
 use aigw_core::provider::ProviderRegistry;
 use aigw_core::rate_limiter::RateLimiter;
 use aigw_core::resolver::ModelResolver;
-use aigw_core::router::RouterState;
+use aigw_core::router::{Router as AigwRouter, RouterConfig, RouterState};
 use axum::http::HeaderName;
 use axum::{middleware, routing::get, Router};
 use clap::Parser;
@@ -190,6 +190,7 @@ async fn main() -> anyhow::Result<()> {
         master_key: Some(master_key.clone()),
         aigw_master_key,
         provider_registry,
+        router: AigwRouter::from_config(&RouterConfig::default()),
         router_state,
         rate_limiter,
         deployment_mode: cli.deployment_mode.clone(),

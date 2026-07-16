@@ -15,7 +15,7 @@ use aigw_core::models::{GenerateKeyRequest, VirtualKey};
 use aigw_core::provider::ProviderRegistry;
 use aigw_core::rate_limiter::RateLimiter;
 use aigw_core::resolver::ModelResolver;
-use aigw_core::router::RouterState;
+use aigw_core::router::{Router as AigwRouter, RouterConfig, RouterState};
 use axum::{
     extract::{Query, State},
     http::StatusCode,
@@ -37,6 +37,8 @@ use super::spend::{require_admin, SpendAuth};
 pub struct AppState {
     /// Model resolver — model_name → Vec<Deployment>
     pub resolver: ModelResolver,
+    /// Phase 23 Router — picks deployment + retry loop
+    pub router: AigwRouter,
     pub db: Database,
     pub master_key: Option<String>,
     pub aigw_master_key: Option<String>, // for decrypting litellm_params at runtime
@@ -63,6 +65,7 @@ impl AppState {
     ) -> Self {
         Self {
             resolver: ModelResolver::new(db.clone(), None, "onprem"),
+            router: AigwRouter::default(),
             db,
             master_key,
             aigw_master_key,
@@ -685,6 +688,7 @@ mod tests {
             .expect("init sqlite");
         let state = Arc::new(AppState {
             resolver: ModelResolver::new(db.clone(), None, "onprem"),
+            router: AigwRouter::default(),
             db,
             master_key: Some("sk-master-test".to_string()),
             aigw_master_key: None,

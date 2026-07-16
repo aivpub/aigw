@@ -320,16 +320,17 @@ pub async fn messages_handler(
         None
     };
 
-    // 4. Resolve upstream via ModelResolver
+    // 4. Resolve upstream via ModelResolver + Router.pick_deployment()
     let resolved_deployment = match state.resolver.resolve(&model).await {
-        Ok(deployments) => {
-            deployments.into_iter().next().ok_or_else(|| {
+        Ok(mut deployments) => {
+            let idx = state.router.pick_deployment(&mut deployments).ok_or_else(|| {
                 anthropic_error(
                     StatusCode::BAD_REQUEST,
                     "invalid_request_error",
                     &format!("Model '{}' not found", model),
                 )
-            })?
+            })?;
+            deployments.remove(idx)
         }
         Err((status, body)) => {
             let now = chrono::Utc::now();
@@ -891,6 +892,7 @@ mod tests {
     use aigw_core::db::Database;
     use aigw_core::provider::ProviderRegistry;
     use aigw_core::rate_limiter::RateLimiter;
+    use aigw_core::router::Router as AigwRouter;
     use axum::{body::Body, http::Method, Router};
     use std::sync::Arc;
     use tower::util::ServiceExt;
@@ -901,6 +903,7 @@ mod tests {
             .expect("init sqlite");
         let state = Arc::new(AppState {
             resolver: ModelResolver::new(db.clone(), None, "onprem"),
+            router: AigwRouter::default(),
             db,
             master_key: Some("sk-master-v1msg".to_string()),
             aigw_master_key: None,

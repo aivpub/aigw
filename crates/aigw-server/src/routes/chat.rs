@@ -765,9 +765,9 @@ pub async fn chat_completions(
         }
     }
 
-    // 4. Resolve upstream via ModelResolver + select adapter
-    let deployments = state.resolver.resolve(_model).await?;
-    let deployment = deployments.into_iter().next().ok_or_else(|| {
+    // 4. Resolve upstream via ModelResolver + Router.pick_deployment()
+    let mut deployments = state.resolver.resolve(_model).await?;
+    let deployment_idx = state.router.pick_deployment(&mut deployments).ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
             Json(json!({
@@ -779,6 +779,7 @@ pub async fn chat_completions(
             })),
         )
     })?;
+    let deployment = deployments.remove(deployment_idx);
     let adapter = select_adapter(ClientProtocol::OpenAI, &deployment.provider_type)
         .ok_or_else(|| {
             (
@@ -1499,6 +1500,7 @@ mod tests {
     use aigw_core::models::{ProxyModel, VirtualKey};
     use aigw_core::provider::ProviderRegistry;
     use aigw_core::rate_limiter::RateLimiter;
+    use aigw_core::router::Router as AigwRouter;
     use axum::{
         body::Body,
         http::{header, Method, Request},
@@ -1514,6 +1516,7 @@ mod tests {
             .expect("init sqlite");
         let state = Arc::new(AppState {
             resolver: ModelResolver::new(db.clone(), None, "onprem"),
+            router: AigwRouter::default(),
             db,
             master_key: Some("sk-master-chat-test".to_string()),
             aigw_master_key: None,
@@ -1687,6 +1690,7 @@ mod tests {
 
         let state = Arc::new(AppState {
             resolver: ModelResolver::new(db.clone(), None, "onprem"),
+            router: AigwRouter::default(),
             db,
             master_key: Some("sk-master-chat-test".to_string()),
             aigw_master_key: None,
@@ -1825,6 +1829,7 @@ mod tests {
 
         let state = Arc::new(AppState {
             resolver: ModelResolver::new(db.clone(), None, "onprem"),
+            router: AigwRouter::default(),
             db,
             master_key: None,
             aigw_master_key: None,
@@ -1868,6 +1873,7 @@ mod tests {
     fn make_test_state(db: Database) -> SharedState {
         Arc::new(AppState {
             resolver: ModelResolver::new(db.clone(), None, "onprem"),
+            router: AigwRouter::default(),
             db,
             master_key: Some("sk-master-test".to_string()),
             aigw_master_key: None,

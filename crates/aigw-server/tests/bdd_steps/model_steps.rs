@@ -314,6 +314,7 @@ async fn ensure_decrypt_state() -> aigw_server::routes::keys::SharedState {
     let state: aigw_server::routes::keys::SharedState = Arc::new(
         aigw_server::routes::keys::AppState {
             resolver: aigw_core::resolver::ModelResolver::new(db.clone(), None, "onprem"),
+            router: aigw_core::router::Router::default(),
             db,
             master_key: Some("sk-decrypt-test".to_string()),
             aigw_master_key: Some(DECRYPT_MASTER_KEY.to_string()),

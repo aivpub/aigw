@@ -38,6 +38,11 @@ pub struct Deployment {
     /// chat template compatibility mode from model_info
     /// "auto" (default/absent) / "strict" (fold extra system messages) / "loose" (passthrough)
     pub chat_template_compat: Option<String>,
+    /// Runtime cooldown tracking — not persisted, managed by Router.
+    /// Number of consecutive failures for this deployment.
+    pub fail_count: u32,
+    /// If Some(instant), this deployment is in cooldown until that time.
+    pub cooldown_until: Option<std::time::Instant>,
 }
 
 /// Upstream provider type.
@@ -135,6 +140,8 @@ mod tests {
             model_group: Some("gpt-4".to_string()),
             custom_llm_provider: Some("openai".to_string()),
             chat_template_compat: None,
+            fail_count: 0,
+            cooldown_until: None,
         };
 
         assert_eq!(d.api_base, "https://api.openai.com/v1");

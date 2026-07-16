@@ -21,6 +21,7 @@ async fn ensure_global_state() -> aigw_server::routes::keys::SharedState {
     let state: aigw_server::routes::keys::SharedState = Arc::new(
         aigw_server::routes::keys::AppState {
             resolver: aigw_core::resolver::ModelResolver::new(db.clone(), None, "onprem"),
+            router: aigw_core::router::Router::default(),
             db,
             master_key: Some("sk-master-test".to_string()),
             aigw_master_key: None,

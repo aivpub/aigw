@@ -902,7 +902,7 @@ mod tests {
     use aigw_core::db::Database;
     use aigw_core::provider::ProviderRegistry;
     use aigw_core::rate_limiter::RateLimiter;
-    use aigw_core::router::RouterState;
+    use aigw_core::router::{Router as AigwRouter, RouterState};
 use aigw_core::resolver::ModelResolver;
     use axum::{
         body::Body,
@@ -918,6 +918,7 @@ use aigw_core::resolver::ModelResolver;
             .expect("init sqlite");
         let state = Arc::new(AppState {
             resolver: ModelResolver::new(db.clone(), None, "onprem"),
+            router: AigwRouter::default(),
             db,
             master_key: Some("sk-master-test-123".to_string()),
             aigw_master_key: None,

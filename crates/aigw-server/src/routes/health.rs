@@ -100,6 +100,7 @@ pub async fn health_metrics(
 mod tests {
     use super::*;
     use crate::routes::keys::AppState;
+    use aigw_core::router::Router as AigwRouter;
     use axum::{
         body::Body,
         http::{Method, Request},
@@ -179,6 +180,7 @@ mod tests {
         let db = Database::init("sqlite::memory:").await.expect("init");
         let state = Arc::new(AppState {
             resolver: ModelResolver::new(db.clone(), None, "onprem"),
+            router: AigwRouter::default(),
             db,
             master_key: None,
             aigw_master_key: None,

@@ -107,6 +107,8 @@ async fn given_anthropic_deployment(_world: &mut TestWorld, model: String) {
             model_group: None,
             custom_llm_provider: Some("anthropic".into()),
             chat_template_compat: None,
+            fail_count: 0,
+            cooldown_until: None,
         });
     });
 }

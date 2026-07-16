@@ -1360,6 +1360,8 @@ mod tests {
             model_group: Some("gpt-4".into()),
             custom_llm_provider: Some("openai".into()),
             chat_template_compat: None,
+            fail_count: 0,
+            cooldown_until: None,
         }
     }
 
@@ -1873,6 +1875,8 @@ mod tests {
             model_group: None,
             custom_llm_provider: None,
             chat_template_compat: Some("loose".to_string()),
+            fail_count: 0,
+            cooldown_until: None,
         };
         let body = json!({
             "model": "claude-sonnet", "max_tokens": 1024,
@@ -1912,6 +1916,8 @@ mod tests {
             model_group: None,
             custom_llm_provider: None,
             chat_template_compat: None,
+            fail_count: 0,
+            cooldown_until: None,
         };
 
         assert_eq!(
@@ -1943,6 +1949,8 @@ mod tests {
             model_group: None,
             custom_llm_provider: None,
             chat_template_compat: Some("loose".to_string()),
+            fail_count: 0,
+            cooldown_until: None,
         };
         assert_eq!(
             resolve_chat_template_compat(&deployment),
@@ -1968,6 +1976,8 @@ mod tests {
             model_group: Some("claude-sonnet-4".into()),
             custom_llm_provider: Some("anthropic".into()),
             chat_template_compat: None,
+            fail_count: 0,
+            cooldown_until: None,
         }
     }
 

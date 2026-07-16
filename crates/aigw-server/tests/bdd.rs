@@ -50,6 +50,7 @@ impl TestWorld {
             let state: aigw_server::routes::keys::SharedState = Arc::new(
                 aigw_server::routes::keys::AppState {
                     resolver: aigw_core::resolver::ModelResolver::new(db.clone(), None, "onprem"),
+                    router: aigw_core::router::Router::default(),
                     db,
                     master_key: Some(mk.clone()),
                     aigw_master_key: None,
