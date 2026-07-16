@@ -412,9 +412,16 @@ pub async fn messages_handler(
         )
     })?;
 
+    // Build upstream URL path based on provider type
+    let provider_type = resolved_deployment.provider_type.clone();
+    let upstream_path = match provider_type {
+        aigw_core::deployment::ProviderType::AnthropicNative => "messages",
+        _ => "chat/completions",
+    };
     let upstream_url = format!(
-        "{}/chat/completions",
-        upstream_base_url.trim_end_matches('/')
+        "{}/{}",
+        upstream_base_url.trim_end_matches('/'),
+        upstream_path
     );
 
     // 7. Call upstream
@@ -432,7 +439,15 @@ pub async fn messages_handler(
     let mut upstream_req = client.post(&upstream_url).json(&upstream_body);
 
     if let Some(ref api_key) = upstream_api_key {
-        upstream_req = upstream_req.header("Authorization", format!("Bearer {}", api_key));
+        match provider_type {
+            aigw_core::deployment::ProviderType::AnthropicNative => {
+                upstream_req = upstream_req.header("x-api-key", api_key);
+                upstream_req = upstream_req.header("anthropic-version", "2023-06-01");
+            }
+            _ => {
+                upstream_req = upstream_req.header("Authorization", format!("Bearer {}", api_key));
+            }
+        }
     }
 
     // Build proxy_server_request (align with litellm)

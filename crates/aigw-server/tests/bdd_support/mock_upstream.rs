@@ -11,17 +11,57 @@ use axum::{
 };
 use serde_json::Value;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use tokio::net::TcpListener;
 
 /// A recorded upstream request
 #[derive(Debug, Clone)]
 pub struct RecordedRequest {
     pub path: String,
-    #[allow(dead_code)]
     pub headers: HashMap<String, String>,
     #[allow(dead_code)]
     pub body: Value,
+}
+
+/// Global mock instance for Anthropic Native BDD tests.
+static ANTHROPIC_MOCK: OnceLock<Arc<Mutex<Option<MockUpstream>>>> = OnceLock::new();
+static ANTHROPIC_MOCK_URL: OnceLock<String> = OnceLock::new();
+
+/// Get or create the global Anthropic mock URL (starts the mock if needed).
+pub async fn get_or_create_anthropic_mock_url() -> &'static str {
+    if let Some(url) = ANTHROPIC_MOCK_URL.get() {
+        return url;
+    }
+    let mock = MockUpstream::start().await;
+    let url = mock.base_url.clone();
+    let _ = ANTHROPIC_MOCK_URL.set(url);
+    let cell = ANTHROPIC_MOCK.get_or_init(|| Arc::new(Mutex::new(None)));
+    *cell.lock().unwrap() = Some(mock);
+    ANTHROPIC_MOCK_URL.get().unwrap()
+}
+
+/// Get a reference to the global Anthropic mock (if started).
+pub fn get_anthropic_mock() -> Option<MockUpstreamRef> {
+    let cell = ANTHROPIC_MOCK.get()?;
+    let guard = cell.lock().unwrap();
+    guard.as_ref().map(|m| MockUpstreamRef {
+        state: m.state.clone(),
+    })
+}
+
+/// A lightweight reference to a mock upstream's state (for assertions).
+pub struct MockUpstreamRef {
+    state: Arc<MockState>,
+}
+
+impl MockUpstreamRef {
+    pub fn request_count(&self) -> usize {
+        self.state.request_count()
+    }
+
+    pub fn recorded_requests(&self) -> Vec<RecordedRequest> {
+        self.state.recorded_requests()
+    }
 }
 
 /// Configuration for a mock endpoint

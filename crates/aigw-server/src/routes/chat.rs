@@ -800,9 +800,16 @@ pub async fn chat_completions(
             Json(json!({"error": {"message": format!("Adapter error: {}", e), "type": "adapter_error"}})),
         )
     })?;
+
+    // Build upstream URL path based on provider type
+    let upstream_path = match deployment.provider_type {
+        aigw_core::deployment::ProviderType::AnthropicNative => "messages",
+        _ => "chat/completions",
+    };
     let upstream_url = format!(
-        "{}/chat/completions",
-        deployment.api_base.trim_end_matches('/')
+        "{}/{}",
+        deployment.api_base.trim_end_matches('/'),
+        upstream_path
     );
 
     // Extract end_user from metadata.user_id (Anthropic protocol convention)
@@ -880,7 +887,15 @@ pub async fn chat_completions(
     let mut upstream_req = client.post(&upstream_url).json(&upstream_body_val);
 
     if let Some(ref api_key) = deployment.api_key {
-        upstream_req = upstream_req.header("Authorization", format!("Bearer {}", api_key));
+        match deployment.provider_type {
+            aigw_core::deployment::ProviderType::AnthropicNative => {
+                upstream_req = upstream_req.header("x-api-key", api_key);
+                upstream_req = upstream_req.header("anthropic-version", "2023-06-01");
+            }
+            _ => {
+                upstream_req = upstream_req.header("Authorization", format!("Bearer {}", api_key));
+            }
+        }
     }
 
     // Build proxy_server_request (align with litellm: url/method/headers/arrival_time)
