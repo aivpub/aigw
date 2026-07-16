@@ -1,15 +1,15 @@
 # aigw — AI Gateway Stage Roadmap
 
 **项目**: aigw (litellm Rust 最小兼容替代)
-**最后更新**: 2026-07-15
+**最后更新**: 2026-07-16
 
 ---
 
 ## 当前状态
 
-- **当前 Phase**: Phase 19 — UI Enhancement（Models CRUD + Spend Logs 可视化）
-- **状态**: 54/58 Stages 已完成（4 个待开始）
-- **下一里程碑**: Phase 20 Spend Logs 可观测性增强
+- **当前 Phase**: Phase 21 — 协议兼容性修复（System Msg + Tool Results）
+- **状态**: 58/64 Stages 已完成（6 个待开始）
+- **下一里程碑**: Phase 23 完成后消化 LT-Native + LT-Router，进入 LT-Observ 触发等待
 
 ### 整体进度
 
@@ -25,10 +25,13 @@ Phase 13:   ████████████████████ 100% (6
 Phase 14:   ████████████████████ 100% (4/4 Stages)
 Phase 15:   ████████████████████ 100% (3/3 Stages)
 Phase 16:   ████████████████████ 100% (3/3 Stages)
-Phase 17:   ████████████████████ 100% (3/3 Stages)  ✅
+Phase 17:   ████████████████████ 100% (3/3 Stages) ✅
 Phase 18:   ████████████████████ 100% (2/2 Stages) ✅ 已完成
-Phase 19:   ░░░░░░░░░░░░░░░░░░░░   0% (2/2 Stages) 🔄 UI Enhancement
-Phase 20:   ░░░░░░░░░░░░░░░░░░░░   0% (2/2 Stages) ⏳ 可观测性增强
+Phase 19:   ████████████████████ 100% (2/2 Stages) ✅ UI Enhancement
+Phase 20:   ████████████████████ 100% (2/2 Stages) ✅ 可观测性增强
+Phase 21:   ░░░░░░░░░░░░░░░░░░░░   0% (2/2 Stages) ⏳ 协议兼容性修复
+Phase 22:   ░░░░░░░░░░░░░░░░░░░░   0% (2/2 Stages) ⏳ Anthropic 原生上游
+Phase 23:   ░░░░░░░░░░░░░░░░░░░░   0% (2/2 Stages) ⏳ Router 负载均衡
 ```
 
 ---
@@ -114,8 +117,8 @@ Phase 20:   ░░░░░░░░░░░░░░░░░░░░   0% (2
 
 | Stage | 状态 | 目标 | 类型 | 预估 |
 |-------|------|------|------|------|
-| Stage 55 | ⏳ 待开始 | **Models 管理页面完整 CRUD 前端** — 结构化表单（model_name 即 model_group；上游 model 自动跟随 model_name 可编辑；API Key / Credential 二选一 + credential 下拉 + 新建快捷入口；每百万 token 美元定价输入 → 自动转换 per-token 价格；编辑预填反向转换）。TDD: BDD 覆盖创建/编辑/删除/上游联动/auth 切换/定价转换 6 个 scenario × 3 viewports | 前端+BDD | 7-8h |
-| Stage 56 | ⏳ 待开始 | **Spend Logs Prompt/Response 结构化可视化** — 新建 MessageViewer（system/user/assistant/tool 按 role 气泡化）+ ResponseViewer（文本回复/tool_calls/usage/finish_reason）+ DetailDrawer Tab 切换（Prompt/Response/Raw）+ 各 Tab 独立复制按钮 + CopyButton 组件（Copy→Check 反馈动画）。TDD: BDD 覆盖结构化消息/tool_calls 折叠/Raw tab/复制按钮/no-data 占位 5 个 scenario × 3 viewports | 前端+BDD | 7-8h |
+| Stage 55 | ✅ 完成 | **Models 管理页面完整 CRUD 前端** — 结构化表单（model_name 即 model_group；上游 model 自动跟随 model_name 可编辑；API Key / Credential 二选一 + credential 下拉 + 新建快捷入口；每百万 token 美元定价输入 → 自动转换 per-token 价格；编辑预填反向转换）。TDD: BDD 覆盖创建/编辑/删除/上游联动/auth 切换/定价转换 6 个 scenario × 3 viewports | 前端+BDD | 7-8h | 2026-07-16 |
+| Stage 56 | ✅ 完成 | **Spend Logs Prompt/Response 结构化可视化** — 新建 MessageViewer（system/user/assistant/tool 按 role 气泡化）+ ResponseViewer（文本回复/tool_calls/usage/finish_reason）+ DetailDrawer Tab 切换（Prompt/Response/Raw）+ 各 Tab 独立复制按钮 + CopyButton 组件（Copy→Check 反馈动画）。TDD: BDD 覆盖结构化消息/tool_calls 折叠/Raw tab/复制按钮/no-data 占位 5 个 scenario × 3 viewports | 前端+BDD | 7-8h | 2026-07-16 |
 
 **依赖关系**: Stage 55 / 56 无硬依赖，可并行。
 
@@ -129,14 +132,72 @@ Phase 20:   ░░░░░░░░░░░░░░░░░░░░   0% (2
 
 | Stage | 状态 | 目标 | 类型 | 预估 |
 |-------|------|------|------|------|
-| Stage 57 | ⏳ 待开始 | **下拉过滤器 + model_group 修复 + UA/device_id** — 修复 chat.rs/v1_messages.rs 中 4 个 SpendLog 构造点写入 model_group/custom_llm_provider/model_id；新增 distinct-models/sessions API；Model/Session 过滤器改为 searchable Select；User-Agent 头提取写入 metadata.user_agent；device_id 从 metadata.user_id JSON 解析。TDD: UT 覆盖 model_group 写入/UA 提取/device_id 解析/distinct 查询；BDD 覆盖下拉过滤/UA 展示 4 个 scenario × 3 viewports | 前后端+BDD | 7-8h |
-| Stage 58 | ⏳ 待开始 | **Gateway Overhead 评估与展示**（对齐 litellm）— handler 入口写入 proxy_server_request（url/method/headers/arrival_time）；计算 queue_time；adapter 层记录 upstream_timing（sent_at/first_byte_at/ended_at）；计算 gateway_overhead_ms = total - upstream - queue；前端 TimingBreakdown 水平 bar 可视化。TDD: UT 覆盖 proxy_server_request 写入/queue_time/overhead 计算/adapter timing；BDD 覆盖 timing breakdown/旧日志降级 4 个 scenario × 3 viewports | 前后端+BDD | 7-8h |
+| Stage 57 | ✅ 完成 | **下拉过滤器 + model_group 修复 + UA/device_id** — 修复 chat.rs/v1_messages.rs 中 4 个 SpendLog 构造点写入 model_group/custom_llm_provider/model_id；新增 distinct-models/sessions API；Model/Session 过滤器改为 searchable Select；User-Agent 头提取写入 metadata.user_agent；device_id 从 metadata.user_id JSON 解析。TDD: UT 覆盖 model_group 写入/UA 提取/device_id 解析/distinct 查询；BDD 覆盖下拉过滤/UA 展示 4 个 scenario × 3 viewports | 前后端+BDD | 7-8h | 2026-07-16 |
+| Stage 58 | ✅ 完成 | **Gateway Overhead 评估与展示**（对齐 litellm）— handler 入口写入 proxy_server_request（url/method/headers/arrival_time）；计算 queue_time；adapter 层记录 upstream_timing（sent_at/first_byte_at/ended_at）；计算 gateway_overhead_ms = total - upstream - queue；前端 TimingBreakdown 水平 bar 可视化。TDD: UT 覆盖 proxy_server_request 写入/queue_time/overhead 计算/adapter timing；BDD 覆盖 timing breakdown/旧日志降级 4 个 scenario × 3 viewports | 前后端+BDD | 7-8h | 2026-07-16 |
 
 **依赖关系**: Stage 57 / 58 无硬依赖，可并行。
 
 **Phase 19 + 20 合计**: 28-32h。
 
 **设计文档**: `docs/plans/2026-07-15-phase-19-20-roadmap.md`
+
+---
+
+### Phase 21：协议兼容性修复 — System Message Normalization + Tool Results
+
+**背景**: Claude Code 实际使用中发现 2 个协议兼容性 bug：(1) 多 tool_result 仅保留第一个，并行工具调用上下文丢失；(2) Anthropic→OpenAI 多 system 消息未归一化，Qwen 系列上游 400 拒收。
+
+| Stage | 状态 | 目标 | 类型 | 预估 |
+|-------|------|------|------|------|
+| Stage 59 | ⏳ 待开始 | **Multi tool_result Discard 修复** — `claude_message_to_openai` 返回值改为 `Vec<ChatMessage>`；tool_result 迭代全部生成多条 `role="tool"` 消息。TDD: 5 UT | 后端+测试 | 4h |
+| Stage 60 | ⏳ 待开始 | **System Message Normalization（全栈）** — `ChatTemplateCompat` 枚举 + 嗅探 + 折叠算法；Deployment 增 `chat_template_compat`；前端 ModelDialog 增下拉。TDD: 8 UT + 3 BDD × 3 viewports | 后端+前端+测试 | 8h |
+
+**依赖关系**: 都修改 `adapter.rs` 但不同函数，可并行。
+
+**Phase 21 合计**: 12h。设计文档: `docs/plans/2026-07-16-phase-21-23-roadmap.md`
+
+---
+
+### Phase 22：Anthropic 原生上游适配（LT-Native）
+
+**背景**: `select_adapter` 对 `ProviderType::AnthropicNative` 返回 `None → 400`。需补全 `AnthropicPassthrough`（Anthropic→Anthropic 直通）和 `OpenAIToAnthropic`（OpenAI→Anthropic 转换）。
+
+| Stage | 状态 | 目标 | 类型 | 预估 |
+|-------|------|------|------|------|
+| Stage 61 | ⏳ 待开始 | **AnthropicPassthrough + OpenAIToAnthropic** — 两个新 struct 实现 `MessageAdapter` + `StreamAdapter`；`AnthropicPassthroughStream` 透传，`OpenAIToAnthropicStream`（OpenAI SSE→Anthropic event 方向）。TDD: 10 UT | 后端+测试 | 8h |
+| Stage 62 | ⏳ 待开始 | **select_adapter 扩展 + Handler 对接 + 全量回归** — 加两个 arm；MockUpstream 扩展 Anthropic 原生端点；BDD 新增 4 scenarios（直通+转换 × 流式/非流式）。门禁: 93→97 BDD | 后端+测试 | 6h |
+
+**依赖关系**: 61 → 62 串行。
+
+**Phase 22 合计**: 14h。设计文档: `docs/plans/2026-07-16-phase-21-23-roadmap.md`
+
+---
+
+### Phase 23：Router 负载均衡（LT-Router）
+
+**背景**: upstream litellm 有同名多 deployment（2 组），aigw 被 UNIQUE INDEX 限制只保留一条。需移除限制 + 实现 Router 策略引擎 + 三级 router_settings 配置 + 前端。
+
+| Stage | 状态 | 目标 | 类型 | 预估 |
+|-------|------|------|------|------|
+| Stage 63 | ⏳ 待开始 | **Schema 修复 + Router Core** — Migration 去掉 UNIQUE INDEX；aigw-migrate 补齐多 deployment；`Router` struct 含 `pick_deployment(SimpleShuffle)` + cooldown + report_failure/success + retry loop。TDD: 8 UT | 后端+测试 | 8h |
+| Stage 64 | ⏳ 待开始 | **三级 router_settings + API + 前端** — 启动时读 Global config 表；请求时 Key>Team>Global 合并；4 REST 端点；前端独立 `/dash/router-settings` 页面 + RouterSettingsAccordion 组件。TDD: 4 UT + 5 BDD × 3 viewports | 全栈+测试 | 8h |
+
+**依赖关系**: 63 → 64 串行。
+
+**Phase 23 合计**: 16h。设计文档: `docs/plans/2026-07-16-phase-21-23-roadmap.md`
+
+---
+
+**Phase 21-23 总汇总**:
+
+| Phase | Stages | 工时 | 主题 |
+|-------|--------|------|------|
+| 21 | 59-60 | 12h | 协议兼容性修复 |
+| 22 | 61-62 | 14h | Anthropic 原生上游 (LT-Native) |
+| 23 | 63-64 | 16h | Router 负载均衡 (LT-Router) |
+| **合计** | **6 Stages** | **42h** | 三 Phase 可并行推进 |
+
+完成后消化 LT-Native + LT-Router，状态 64/64。遗留 LT-Observ / LT-Usage / LT-PG / LT-Redis / LT-SSO / LT-K8s 仍为触发等待。
 
 ---
 
@@ -248,14 +309,14 @@ Phase 20:   ░░░░░░░░░░░░░░░░░░░░   0% (2
 
 | ID | 主题 | 优先级 | 触发条件 |
 |----|------|--------|---------|
-| LT-Router | Router 负载均衡（多 deployment 选择 + cooldown + fallback） | P2 | 多实例 upstream 需求 |
 | LT-Usage | Usage 多视角聚合（Global/Team/Org/Key 切换） | P2 | 前端用户反馈 |
-| LT-Native | Anthropic 原生上游适配（OpenAIToAnthropic + AnthropicPassthrough） | P3 | 需直接调 Anthropic Messages API |
+| LT-Observ | Observability (Prometheus + OTEL) | P1 | 生产环境部署（推荐下一项） |
 | LT-Redis | Redis 缓存 + 性能优化 | P2 | QPS > 1000 |
-| LT-Observ | Observability (Prometheus + OTEL) | P2 | 生产环境部署 |
 | LT-SSO | SSO/OAuth 鉴权 | P3 | 企业客户需求 |
 | LT-PG | PostgreSQL 生产级支持 + 迁移工具 | P2 | 多实例 + 高可用 |
 | LT-K8s | Kubernetes Operator + Helm Chart | P3 | 云原生客户需求 |
+
+> **已消化**: LT-Router → Phase 23, LT-Native → Phase 22
 
 ### 状态图标说明
 
@@ -273,3 +334,5 @@ Phase 20:   ░░░░░░░░░░░░░░░░░░░░   0% (2
 | v1.0-v14.0 | 2026-07-03~11 | 初始版本 ~ Phase 17 规划 |
 | v15.0 | 2026-07-14 | **架构重构规划**：修正 Phase 14-16 状态为已完成；移除旧 Stage 50-51（Usage 多视角聚合移入长期路线）；Phase 17 替换为代理转发架构重构（Stage 50-52: ModelResolver + MessageAdapter + Handler 瘦身）；每个 Stage 内置 TDD+BDD 测试；Stage 51 新增 tool_use/tool_calls 双向转换 |
 | v16.0 | 2026-07-15 | **Spend Logs & Usage 质量修复规划**：Phase 17 Stage 50-52 已全部完成，状态更新为 ✅；新增 Phase 18（Stage 53: 时间过滤+Usage 当天数据修复，Stage 54: end_user 提取+复制按钮反馈），共 2 Stage，预估 11h |
+| v17.0 | 2026-07-16 | **Phase 19-20 完成 + Phase 21 规划**：Phase 19-20 (Stages 55-58) 全部完成（Models CRUD、Prompt 可视化、过滤器、Overhead）；新增 Phase 21（Stages 59-60，共 2 Stage，预估 12h）：Multi tool_result 修复、System Message Normalization。总进度 58/60 |
+| v18.0 | 2026-07-16 | **Phase 21-23 拉通规划**：新增 Phase 22（Stages 61-62, Anthropic 原生上游, 14h）+ Phase 23（Stages 63-64, Router 负载均衡, 16h）。总进度 58/64，消化 LT-Native + LT-Router。6 Stage 细节文档就绪：`stage-59~64.md` |

@@ -285,3 +285,29 @@
   - Future Router Phase: handler receives Vec<Deployment>, Router selects one (strategy + cooldown + fallback). No change needed in handler interface — just iterate Vec instead of taking [0].
   - Router load balancing and native Anthropic upstream remain trigger-activated (LT-Router, LT-Native).
   - No Stage detail docs created yet — to be written during implementation.
+
+## ADR-016: Anthropic→OpenAI 转换的多 system 消息归一化(能力标志 + 折叠)
+
+- **Date**: 2026-07-16
+- **Status**: Accepted
+- **Decision**: `AnthropicToOpenAI` 转换路径引入 chat template 兼容性开关,默认按 `upstream_model` 名称自动嗅探;对严格模板模型(当前是 Qwen 家族)把非首位 `role="system"` 折叠进相邻 `user` 消息(用 `<system-reminder>` 标签包裹),对其它模型完全透传。
+- **Background**: Claude Code v2.1.153+ 客户端把额外 system 上下文塞入 `messages` 数组(而非只用顶层 `system` 字段)。aigw 的 `DefaultAdapter::claude_to_openai_request` 原样透传 `role`,导致输出 messages 出现多条 system。Qwen 系列的 Jinja chat template 强制 system 只能位于 index 0,否则触发 `raise_exception('System message must be at the beginning.')` 400 错误。GPT / DeepSeek / Claude via Bedrock / Kimi / Moonshot / GLM 等主流上游对多 system 宽容,只有 Qwen 类严格模板会拒。
+- **Alternatives**:
+  - **A. 丢弃**(litellm 现状):`translate_anthropic_messages_to_openai` 只识别 user/assistant,其它 role 静默丢。信息损失,Claude Code 的 agent 清单/skill 描述被吞。
+  - **B. 合并到首位单条 system**:保留信息但破坏时序(中段规则被视作一开始就有的规则)。
+  - **C. 换角色为 user**:保留信息但语义降级(系统级规则变用户发言)。
+  - **D. 折叠进相邻 user turn**(本决策):new-api 社区 PR #5413 的思路;信息不丢、时序保留、模板兼容。
+  - **E. 新增 QwenProvider / 子 adapter**:线协议未变(Qwen 走 OpenAI Chat Completions),模型家族与 provider 类型正交;引入会导致 M×N 配置面爆炸。
+- **Rationale**:
+  - 默认最大兼容性:非严格模板不做任何变换,零回归风险。
+  - 严格模板走折叠:`<system-reminder>` 标签是 Claude Code 客户端自身已使用的语义(LLM 已识别),折叠不改变消息数以外的字段,时序保留。
+  - 配置放 `proxy_models.model_info.chat_template_compat` JSON 字段:无 schema 变更;取值 `auto` / `strict` / `loose`;`auto` 按 `lower(upstream_model).contains("qwen")` 嗅探。
+  - 与 new-api 社区共识对齐:PR #5413 虽被驳回(维护者主张 Provider 责任),但 aigw 作为客户端和 Provider 之间的网关是最合适的归一化点。
+- **Implementation**: 详见 `docs/plans/2026-07-16-system-message-normalization.md`。生效范围仅 `AnthropicToOpenAI::adapt_request`;`OpenAIPassthrough` 直通路径不受影响。8 个 UT 覆盖真实 body 复现、多 system 夹杂、末尾 system、无 user 兜底、Loose 对照、嗅探大小写、显式 override。
+- **Consequences**:
+  - Claude Code v2.1.153+ + Qwen 上游可用性从 0% 恢复到 100%。
+  - 其它上游模型行为无回归(Loose 分支完全透传)。
+  - 未来 Gemma / Mistral 若发现同类模板问题,嗅探表加一条 `contains(...)` 即可,无需新架构。
+  - 引入 `Deployment.chat_template_compat` 派生字段;`resolver` 装配阶段从 `model_info` 读取。
+  - 前端 ModelDialog 新增一个下拉,承担用户显式 override 入口。
+  - 附带发现:`claude_message_to_openai` 多 tool_result 丢失(`adapter.rs:622-624`)属独立 bug,不在本 ADR 范围。
