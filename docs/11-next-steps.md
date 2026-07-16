@@ -1,11 +1,11 @@
 # aigw -- 下一步行动
 
 **上次更新**: 2026-07-16
-**当前阶段**: Phase 21 协议兼容性修复（Stages 59-60）
+**当前阶段**: Phase 22 Anthropic 原生上游适配（Stages 61-62）
 
 ---
 
-## 当前状态：58/64 Stages 已完成
+## 当前状态：60/64 Stages 已完成
 
 ### 项目里程碑
 
@@ -25,7 +25,7 @@ Phase 17:   ████████████████████ 100% (3
 Phase 18:   ████████████████████ 100% (2/2)  ✅ Spend Logs & Usage 质量修复（Stages 53-54）
 Phase 19:   ████████████████████ 100% (2/2)  ✅ UI Enhancement（Stages 55-56）
 Phase 20:   ████████████████████ 100% (2/2)  ✅ 可观测性增强（Stages 57-58）
-Phase 21:   ░░░░░░░░░░░░░░░░░░░░   0% (2/2)  ⏳ 协议兼容性修复（Stages 59-60）
+Phase 21:   ████████████████████ 100% (2/2)  ✅ 协议兼容性修复（Stages 59-60）
 Phase 22:   ░░░░░░░░░░░░░░░░░░░░   0% (2/2)  ⏳ Anthropic 原生上游（Stages 61-62）
 Phase 23:   ░░░░░░░░░░░░░░░░░░░░   0% (2/2)  ⏳ Router 负载均衡（Stages 63-64）
 ```
@@ -52,7 +52,7 @@ Phase 23:   ░░░░░░░░░░░░░░░░░░░░   0% (2
 
 | 优先级 | Phase | 目标 | 工时 |
 |--------|-------|------|------|
-| P0 | Phase 21 | 协议兼容性修复（tool_result + system message） | 12h |
+| P0 | ~~Phase 21~~ ✅ | 协议兼容性修复（tool_result + system message） | 2026-07-16 |
 | P1 | Phase 22 | Anthropic 原生上游适配 | 14h |
 | P1 | Phase 23 | Router 负载均衡 + 三级配置 + 前端 | 16h |
 | P1 | LT-Observ | Prometheus metrics | ~8h |
@@ -63,8 +63,8 @@ Phase 23:   ░░░░░░░░░░░░░░░░░░░░   0% (2
 
 | Stage | 目标 | 状态 |
 |-------|------|------|
-| Stage 59 | Multi tool_result Discard 修复 | ⏳ 待开始 |
-| Stage 60 | System Message Normalization（全栈）| ⏳ 待开始 |
+| Stage 59 | Multi tool_result Discard 修复 | ✅ 完成 |
+| Stage 60 | System Message Normalization（全栈）| ✅ 完成 |
 
 **设计文档**: `docs/plans/2026-07-16-phase-21-23-roadmap.md`
 **Stage 文档**: `docs/stages/stage-59.md`, `docs/stages/stage-60.md`
