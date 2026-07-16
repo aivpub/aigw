@@ -3,12 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiGet } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
@@ -17,457 +12,412 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
+  Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle,
 } from "@/components/ui/sheet";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
-  ScrollText,
-  Calendar,
-  RefreshCw,
-  Search,
-  Copy,
-  Check,
-  ChevronLeft,
-  ChevronRight,
-  X,
-  Clock,
-  AlertCircle,
-  Download,
+  ScrollText, Calendar, RefreshCw, Search, Copy, Check,
+  ChevronLeft, ChevronRight, X, Clock, AlertCircle, Download,
 } from "lucide-react";
 import { format } from "date-fns";
 import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 import { InputCard } from "@/components/log-viewer/InputCard";
 import { OutputCard } from "@/components/log-viewer/OutputCard";
-import { safeStringify } from "@/components/log-viewer/utils";
+import { parseMessages } from "@/components/log-viewer/MessageViewer";
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// Types
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+/* ─────────────────────────────────────────────── Types ── */
 
 interface SpendLog {
-  request_id: string;
-  call_type: string;
-  api_key: string;
-  key_name?: string | null;
-  spend: number;
-  total_tokens: number;
-  prompt_tokens: number;
-  completion_tokens: number;
-  start_time: string;
-  end_time: string;
-  request_duration_ms: number | null;
-  ttft_ms: number | null;
-  model: string;
-  model_id?: string | null;
-  model_group?: string | null;
-  custom_llm_provider?: string | null;
-  api_base?: string | null;
-  user: string | null;
-  team_id?: string | null;
-  organization_id?: string | null;
-  end_user?: string | null;
-  session_id?: string | null;
-  request_tags: unknown;
-  metadata?: unknown;
-  cache_hit?: unknown;
-  cache_key?: string | null;
-  mcp_namespaced_tool_name?: string | null;
-  status: string | null;
-  messages?: unknown;
-  response?: unknown;
+  request_id: string; call_type: string; api_key: string; key_name?: string | null;
+  spend: number; total_tokens: number; prompt_tokens: number; completion_tokens: number;
+  start_time: string; end_time: string; request_duration_ms: number | null; ttft_ms: number | null;
+  model: string; model_id?: string | null; model_group?: string | null;
+  custom_llm_provider?: string | null; api_base?: string | null;
+  user: string | null; team_id?: string | null; organization_id?: string | null;
+  end_user?: string | null; session_id?: string | null;
+  request_tags: unknown; metadata?: unknown; cache_hit?: unknown; cache_key?: string | null;
+  mcp_namespaced_tool_name?: string | null; status: string | null;
+  messages?: unknown; response?: unknown;
 }
 
 interface SpendLogsResponse {
-  data: SpendLog[];
-  count: number;
-  total_count: number;
-  page: number;
-  page_size: number;
-  total_pages: number;
+  data: SpendLog[]; count: number; total_count: number; page: number; page_size: number; total_pages: number;
 }
 
 type TimePreset = "15m" | "4h" | "24h" | "7d" | "custom";
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// Helpers
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+/* ─────────────────────────────────────────── Helpers ── */
 
-function presetRange(p: TimePreset): { start: string; end: string } {
+function presetRange(p: TimePreset) {
   const now = Date.now();
   switch (p) {
-    case "15m":
-      return { start: new Date(now - 15 * 60 * 1000).toISOString(), end: new Date(now).toISOString() };
-    case "4h":
-      return { start: new Date(now - 4 * 3600 * 1000).toISOString(), end: new Date(now).toISOString() };
-    case "24h":
-      return { start: new Date(now - 24 * 3600 * 1000).toISOString(), end: new Date(now).toISOString() };
-    case "7d":
-      return { start: new Date(now - 7 * 24 * 3600 * 1000).toISOString(), end: new Date(now).toISOString() };
-    case "custom":
-      return { start: "", end: "" };
+    case "15m": return { start: new Date(now - 15 * 60 * 1000).toISOString(), end: new Date(now).toISOString() };
+    case "4h":  return { start: new Date(now - 4 * 3600 * 1000).toISOString(), end: new Date(now).toISOString() };
+    case "24h": return { start: new Date(now - 24 * 3600 * 1000).toISOString(), end: new Date(now).toISOString() };
+    case "7d":  return { start: new Date(now - 7 * 24 * 3600 * 1000).toISOString(), end: new Date(now).toISOString() };
+    case "custom": return { start: "", end: "" };
   }
 }
 
-function fmtSpend(v: number): string {
-  return `$${v.toFixed(4)}`;
+function safeStringify(v: unknown): string {
+  if (v === null || v === undefined) return "";
+  if (typeof v === "string") return v;
+  try { return JSON.stringify(v, null, 2); } catch { return String(v); }
 }
 
-function fmtTokens(v: number): string {
+function fmtSpend(v: number) { return `$${v.toFixed(4)}`; }
+function fmtTokens(v: number) {
   if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
   if (v >= 1_000) return `${(v / 1_000).toFixed(1)}K`;
   return v.toString();
 }
-
-function fmtTtft(ms: number | null): string {
+function fmtTtft(ms: number | null) {
   if (ms === null || ms === undefined) return "—";
-  if (ms < 1000) return `${ms.toFixed(0)}ms`;
-  return `${(ms / 1000).toFixed(1)}s`;
+  return ms < 1000 ? `${ms.toFixed(0)}ms` : `${(ms / 1000).toFixed(1)}s`;
 }
-
-function fmtDuration(ms: number | null): string {
+function fmtDuration(ms: number | null) {
   if (ms === null || ms === undefined) return "—";
-  if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(1)}s`;
+  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
 }
-
-function truncate8(s: string): string {
+function truncate8(s: string) { return s ? (s.length > 8 ? s.slice(0, 8) + "…" : s) : "—"; }
+function truncateEndUser(s: string): string {
   if (!s) return "—";
-  return s.length > 8 ? s.slice(0, 8) + "…" : s;
+  return s.length > 30 ? s.slice(0, 30) + "…" : s;
 }
 
 function exportToCSV(logs: SpendLog[], startDate: string, endDate: string) {
-  const headers = [
-    "Request ID", "Time", "Type", "Model", "Status",
-    "Prompt Tokens", "Completion Tokens", "Total Tokens",
-    "TTFT (ms)", "Duration (ms)", "Cost", "User", "End User", "API Key",
-  ];
-  const rows = logs.map((log) => [
-    log.request_id,
-    log.start_time,
-    log.call_type,
-    log.model,
-    log.status ?? "",
-    log.prompt_tokens,
-    log.completion_tokens,
-    log.total_tokens,
-    log.ttft_ms ?? "",
-    log.request_duration_ms ?? "",
-    log.spend,
-    log.user ?? "",
-    log.end_user ?? "",
-    log.api_key.slice(0, 12) + "…",
-  ]);
-  const csv = [headers, ...rows]
-    .map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","))
-    .join("\n");
-  const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
+  const headers = ["Request ID","Time","Type","Model","Status","Prompt Tokens","Completion Tokens","Total Tokens","TTFT (ms)","Duration (ms)","Cost","User","End User","API Key"];
+  const rows = logs.map(l => [l.request_id,l.start_time,l.call_type,l.model,l.status??"",l.prompt_tokens,l.completion_tokens,l.total_tokens,l.ttft_ms??"",l.request_duration_ms??"",l.spend,l.user??"",l.end_user??"",l.api_key.slice(0,12)+"…"]);
+  const csv = [headers,...rows].map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
+  const blob = new Blob(["﻿"+csv],{type:"text/csv;charset=utf-8"});
   const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `spend-logs-${startDate.slice(0, 10)}-${endDate.slice(0, 10)}.csv`;
-  a.click();
+  const a = document.createElement("a"); a.href=url; a.download=`spend-logs-${startDate.slice(0,10)}-${endDate.slice(0,10)}.csv`; a.click();
   URL.revokeObjectURL(url);
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// Row-level copy button (isolated state per row)
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+/* ───────────────────────────────── JSON highlighter ── */
+
+function JsonHighlight({ json }: { json: string }) {
+  const html = json
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/("(?:\\.|[^"\\])*")\s*:/g, '<span class="text-blue-600 dark:text-blue-400">$1</span>:')
+    .replace(/: (\d+(?:\.\d+)?)(?=[,\s\n\r}\]])/g, ': <span class="text-orange-500">$1</span>')
+    .replace(/: (true|false|null)(?=[,\s\n\r}\]])/g, ': <span class="text-purple-500">$1</span>')
+    .replace(/: ("(?:\\.|[^"\\])*")/g, ': <span class="text-green-600 dark:text-green-400">$1</span>');
+  return <code className="text-[11px] font-mono whitespace-pre-wrap break-all leading-relaxed" dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
+/* ────────────────────────────── Provider Logo ── */
+
+const PROVIDER_LOGOS: Record<string, string> = {
+  openai: "/assets/logos/openai.svg",
+  anthropic: "/assets/logos/anthropic.svg",
+  deepseek: "/assets/logos/deepseek.svg",
+  vllm: "/assets/logos/vllm.png",
+};
+
+function ProviderLogo({ provider }: { provider?: string | null }) {
+  const src = provider ? PROVIDER_LOGOS[provider.toLowerCase()] : null;
+  if (!src) return null;
+  return <img src={`${import.meta.env.BASE_URL}${src.replace(/^\//, "")}`} alt={provider ?? ""} className="h-4 w-4 object-contain shrink-0" />;
+}
+
+/* ───────────────────────────────── Row-level copy ── */
 
 function RowCopyButton({ text }: { text: string }) {
   const { copied, copy } = useCopyToClipboard();
   return (
-    <Button
-      variant="ghost"
-      size="icon"
-      className="h-4 w-4"
-      onClick={(e) => { e.stopPropagation(); copy(text); }}
-    >
+    <Button variant="ghost" size="icon" className="h-4 w-4" onClick={e => { e.stopPropagation(); copy(text); }}>
       {copied ? <Check className="h-2.5 w-2.5 text-green-500" /> : <Copy className="h-2.5 w-2.5" />}
     </Button>
   );
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// Time Preset Bar
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-const PRESETS: { key: TimePreset; label: string }[] = [
-  { key: "15m", label: "15 min" },
-  { key: "4h", label: "4 hours" },
-  { key: "24h", label: "24 hours" },
-  { key: "7d", label: "7 days" },
-  { key: "custom", label: "Custom" },
-];
-
-interface TimePresetBarProps {
-  preset: TimePreset;
-  onPreset: (p: TimePreset) => void;
-  startDate: string;
-  endDate: string;
-  onStartDate: (v: string) => void;
-  onEndDate: (v: string) => void;
+function CopyIconButton({ text, className }: { text: string; className?: string }) {
+  const { copied, copy } = useCopyToClipboard();
+  return (
+    <button type="button" tabIndex={-1} className={className ?? "p-0.5 hover:text-foreground text-muted-foreground"} onClick={() => copy(text)} title="Copy">
+      {copied ? <Check className="h-3.5 w-3.5 text-green-500" /> : <Copy className="h-3.5 w-3.5" />}
+    </button>
+  );
 }
 
-function TimePresetBar({ preset, onPreset, startDate, endDate, onStartDate, onEndDate }: TimePresetBarProps) {
+/* ───────────────── RawJsonBlock — with copy button ── */
+
+function RawJsonBlock({ data }: { data: unknown }) {
+  const json = safeStringify(data);
+  return (
+    <div className="relative group">
+      <div className="absolute top-1 right-1 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
+        <CopyIconButton text={json} className="p-1 bg-muted rounded hover:bg-muted-foreground/20" />
+      </div>
+      <pre className="text-[11px] bg-muted/40 border rounded p-2 max-h-96 overflow-y-auto leading-relaxed whitespace-pre-wrap break-all font-mono">
+        <JsonHighlight json={json} />
+      </pre>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────── Tabs ── */
+
+const PRESETS: { key: TimePreset; label: string }[] = [
+  { key: "15m", label: "15 min" }, { key: "4h", label: "4 hours" },
+  { key: "24h", label: "24 hours" }, { key: "7d", label: "7 days" }, { key: "custom", label: "Custom" },
+];
+
+function TimePresetBar({ preset, onPreset, startDate, endDate, onStartDate, onEndDate }: {
+  preset: TimePreset; onPreset: (p: TimePreset) => void;
+  startDate: string; endDate: string; onStartDate: (v: string) => void; onEndDate: (v: string) => void;
+}) {
   return (
     <div className="flex flex-wrap items-center gap-2">
-      {PRESETS.map((p) => (
-        <Button
-          key={p.key}
-          variant={preset === p.key ? "default" : "outline"}
-          size="sm"
-          onClick={() => onPreset(p.key)}
-          className="h-7 text-xs"
-        >
-          {p.label}
-        </Button>
+      {PRESETS.map(p => (
+        <Button key={p.key} variant={preset===p.key?"default":"outline"} size="sm" onClick={()=>onPreset(p.key)} className="h-7 text-xs">{p.label}</Button>
       ))}
       {preset === "custom" && (
         <div className="flex items-center gap-2 ml-2">
-          <Input type="datetime-local" value={startDate} onChange={(e) => onStartDate(e.target.value)} className="h-7 w-44 text-xs" />
+          <Input type="datetime-local" value={startDate} onChange={e => onStartDate(e.target.value)} className="h-7 w-44 text-xs" />
           <span className="text-xs text-muted-foreground">–</span>
-          <Input type="datetime-local" value={endDate} onChange={(e) => onEndDate(e.target.value)} className="h-7 w-44 text-xs" />
+          <Input type="datetime-local" value={endDate} onChange={e => onEndDate(e.target.value)} className="h-7 w-44 text-xs" />
         </div>
       )}
     </div>
   );
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// Pagination Bar
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-interface PaginationBarProps {
+function PaginationBar({ page, pageSize, totalCount, totalPages, onPage, onPageSize }: {
   page: number; pageSize: number; totalCount: number; totalPages: number;
   onPage: (p: number) => void; onPageSize: (s: number) => void;
-}
-
-function PaginationBar({ page, pageSize, totalCount, totalPages, onPage, onPageSize }: PaginationBarProps) {
-  const from = totalCount === 0 ? 0 : (page - 1) * pageSize + 1;
-  const to = Math.min(page * pageSize, totalCount);
+}) {
+  const from = totalCount===0?0:(page-1)*pageSize+1;
+  const to = Math.min(page*pageSize,totalCount);
   return (
     <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
       <div className="flex items-center gap-3">
         <span className="text-xs text-muted-foreground">Showing {from}–{to} of {totalCount}</span>
-        <span className="text-xs text-muted-foreground">Page {page} of {Math.max(totalPages, 1)}</span>
+        <span className="text-xs text-muted-foreground">Page {page} of {Math.max(totalPages,1)}</span>
       </div>
       <div className="flex items-center gap-2">
-        <Select value={String(pageSize)} onValueChange={(v) => onPageSize(Number(v))}>
-          <SelectTrigger className="h-7 w-[70px] text-xs"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="30">30</SelectItem>
-            <SelectItem value="50">50</SelectItem>
-            <SelectItem value="100">100</SelectItem>
-          </SelectContent>
+        <Select value={String(pageSize)} onValueChange={v => onPageSize(Number(v))}>
+          <SelectTrigger className="h-7 w-[70px] text-xs"><SelectValue/></SelectTrigger>
+          <SelectContent><SelectItem value="30">30</SelectItem><SelectItem value="50">50</SelectItem><SelectItem value="100">100</SelectItem></SelectContent>
         </Select>
-        <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => onPage(page - 1)} className="h-7 px-2">
-          <ChevronLeft className="h-3.5 w-3.5" />
-        </Button>
-        <Button variant="outline" size="sm" disabled={page >= totalPages || totalPages === 0} onClick={() => onPage(page + 1)} className="h-7 px-2">
-          <ChevronRight className="h-3.5 w-3.5" />
-        </Button>
+        <Button variant="outline" size="sm" disabled={page<=1} onClick={()=>onPage(page-1)} className="h-7 px-2"><ChevronLeft className="h-3.5 w-3.5"/></Button>
+        <Button variant="outline" size="sm" disabled={page>=totalPages||totalPages===0} onClick={()=>onPage(page+1)} className="h-7 px-2"><ChevronRight className="h-3.5 w-3.5"/></Button>
       </div>
     </div>
   );
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// Detail Drawer — wider, two-column layout
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+/* ───────────────────────────────── Tools Card (top-level) ── */
 
-interface DetailDrawerProps { log: SpendLog | null; open: boolean; onClose: () => void; }
-
-function DetailDrawer({ log, open, onClose }: DetailDrawerProps) {
-  if (!log) return null;
-  const { copied: apiKeyCopied, copy: copyApiKey } = useCopyToClipboard();
-  const isFailure = (log.status ?? "").startsWith("failure");
-  const ttftText = fmtTtft(log.ttft_ms);
-  const durText = fmtDuration(log.request_duration_ms);
-  const hasPrompt = log.messages != null;
-  const hasResponse = log.response != null;
+function ToolsCard({ tools }: { tools: unknown[] }) {
+  const [open, setOpen] = useState(false);
+  if (!tools || tools.length === 0) return null;
 
   return (
-    <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
-      {/* Wider drawer: max-w-3xl replaces the default max-w-sm */}
-      <SheetContent side="right" className="overflow-y-auto w-[90vw] max-w-3xl sm:max-w-3xl">
+    <div className="border rounded-lg overflow-hidden">
+      <button type="button" tabIndex={-1}
+        className="flex items-center gap-2 w-full text-left px-3 py-2 text-xs font-medium bg-blue-50/50 dark:bg-blue-950/20 hover:bg-blue-100/50 dark:hover:bg-blue-950/40 transition-colors"
+        onClick={() => setOpen(!open)}
+      >
+        <span className="text-[10px]">{open ? "▾" : "▸"}</span>
+        <span className="text-blue-600 dark:text-blue-400">🛠</span>
+        <span>Tools ({tools.length})</span>
+      </button>
+      {open ? (
+        <div className="p-2 space-y-1 border-t max-h-64 overflow-y-auto">
+          {tools.map((t, i) => {
+            const tool = t as Record<string, unknown>;
+            const func = (tool.function ?? {}) as Record<string, unknown>;
+            return <ToolItem key={i} name={String(func.name ?? `tool_${i}`)} description={func.description as string | undefined} params={func.parameters} />;
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ToolItem({ name, description, params }: { name: string; description?: string; params?: unknown }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="border rounded overflow-hidden text-[11px]">
+      <button type="button" tabIndex={-1}
+        className="flex items-center gap-1.5 w-full text-left px-2 py-1.5 hover:bg-muted/30 transition-colors"
+        onClick={() => setOpen(!open)}
+      >
+        <span className="text-[10px]">{open ? "▾" : "▸"}</span>
+        <code className="font-mono font-medium text-xs">{name}</code>
+        {description && !open ? (
+          <span className="text-muted-foreground truncate ml-2 hidden sm:inline">{description.slice(0, 60)}</span>
+        ) : null}
+      </button>
+      {open ? (
+        <div className="px-3 py-1.5 border-t bg-muted/20 space-y-1.5">
+          {description && params ? (
+            <Tabs defaultValue="desc">
+              <TabsList className="h-6">
+                <TabsTrigger value="desc" className="text-[10px] h-5 px-2">Description</TabsTrigger>
+                <TabsTrigger value="params" className="text-[10px] h-5 px-2">Params</TabsTrigger>
+              </TabsList>
+              <TabsContent value="desc" className="mt-1">
+                {description ? <p className="text-muted-foreground leading-relaxed text-[11px]">{description}</p> : null}
+              </TabsContent>
+              <TabsContent value="params" className="mt-1">
+                <pre className="text-[10px] whitespace-pre-wrap break-all bg-background rounded p-1.5 max-h-32 overflow-y-auto">
+                  {safeStringify(params)}
+                </pre>
+              </TabsContent>
+            </Tabs>
+          ) : (
+            <>
+              {description ? <p className="text-muted-foreground leading-relaxed text-[11px]">{description}</p> : null}
+              {params ? (
+                <pre className="text-[10px] whitespace-pre-wrap break-all bg-background rounded p-1.5 max-h-32 overflow-y-auto">
+                  {safeStringify(params)}
+                </pre>
+              ) : null}
+            </>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/* ─────────────────────────────────── Drawer ── */
+
+function DetailDrawer({ log, open, onClose }: { log: SpendLog | null; open: boolean; onClose: () => void }) {
+  if (!log) return null;
+
+  const isFailure = (log.status ?? "").startsWith("failure");
+  const hasPrompt = log.messages != null;
+  const hasResponse = log.response != null;
+  const parsed = parseMessages(log.messages);
+  const tools = parsed.tools;
+
+  const side = typeof window !== "undefined" && window.innerWidth < 640 ? "bottom" : "right";
+
+  return (
+    <Sheet open={open} onOpenChange={o => !o && onClose()}>
+      <SheetContent side={side} className={`overflow-y-auto ${side === "bottom" ? "h-[90dvh] rounded-t-xl max-h-[90dvh]" : "w-[90vw] max-w-3xl sm:max-w-3xl"}`}>
         <SheetHeader>
-          <SheetTitle className="text-sm font-mono">Request Details</SheetTitle>
-          <SheetDescription className="text-[10px] font-mono break-all">{log.request_id}</SheetDescription>
+          <SheetTitle className="text-sm flex items-center gap-2">
+            <ProviderLogo provider={log.custom_llm_provider} />
+            {log.model}
+            {log.custom_llm_provider ? (
+              <span className="text-[10px] font-normal text-muted-foreground">{log.custom_llm_provider}</span>
+            ) : null}
+          </SheetTitle>
+          <SheetDescription className="text-[10px] font-mono break-all flex items-center gap-1">
+            <code>{log.request_id}</code>
+            <CopyIconButton text={log.request_id} />
+          </SheetDescription>
         </SheetHeader>
 
-        {/* Two-column layout: left summary, right cards. Mobile: stacked */}
-        <div className="mt-4 flex flex-col sm:flex-row gap-4">
-          {/* ── Left column: Summary ── */}
-          <div className="sm:w-52 shrink-0 space-y-3">
-            <div className="grid grid-cols-2 sm:grid-cols-1 gap-2 text-xs">
-              <div>
-                <Label className="text-[10px] text-muted-foreground">Status</Label>
-                <div><Badge variant={isFailure ? "destructive" : "default"} className="mt-0.5 text-[10px]">{log.status || "—"}</Badge></div>
-              </div>
-              <div>
-                <Label className="text-[10px] text-muted-foreground">Type</Label>
-                <div className="mt-0.5"><Badge variant="outline" className="text-[10px]">{log.call_type || "—"}</Badge></div>
-              </div>
-              <div>
-                <Label className="text-[10px] text-muted-foreground">Model</Label>
-                <div className="text-xs font-medium">{log.model}</div>
-              </div>
-              <div>
-                <Label className="text-[10px] text-muted-foreground">Cost</Label>
-                <div className="text-xs font-mono">{fmtSpend(log.spend)}</div>
-              </div>
-            </div>
+        {/* ── Summary pills row ── */}
+        <div className="flex flex-wrap items-center gap-2 mt-3 mb-3">
+          <Badge variant={isFailure ? "destructive" : "default"} className="text-[10px]">{log.status || "—"}</Badge>
+          <Badge variant="outline" className="text-[10px]">{log.call_type || "—"}</Badge>
+          <span className="text-xs font-medium">{log.model}</span>
+          <span className="text-xs font-mono text-muted-foreground">{fmtSpend(log.spend)}</span>
+          <span className="text-[11px] text-muted-foreground">
+            {fmtTokens(log.prompt_tokens)}↑ / {fmtTokens(log.completion_tokens)}↓ · {fmtTtft(log.ttft_ms)} / {fmtDuration(log.request_duration_ms)}
+          </span>
+          <span className="flex items-center gap-1 ml-auto">
+            <code className="text-[10px] font-mono bg-muted rounded px-1 py-0.5">{log.key_name || truncate8(log.api_key)}</code>
+            <CopyIconButton text={log.key_name || log.api_key} />
+          </span>
+        </div>
 
-            {/* Tokens */}
-            <div>
-              <Label className="text-[10px] text-muted-foreground">Tokens</Label>
-              <div className="grid grid-cols-3 gap-1 mt-0.5 text-[11px]">
-                <div className="rounded border p-1.5"><div className="text-muted-foreground">Prompt</div><div className="font-medium">{fmtTokens(log.prompt_tokens)}</div></div>
-                <div className="rounded border p-1.5"><div className="text-muted-foreground">Comp.</div><div className="font-medium">{fmtTokens(log.completion_tokens)}</div></div>
-                <div className="rounded border p-1.5"><div className="text-muted-foreground">Total</div><div className="font-medium">{fmtTokens(log.total_tokens)}</div></div>
-              </div>
-            </div>
-
-            {/* Timing */}
-            <div>
-              <Label className="text-[10px] text-muted-foreground">Timing</Label>
-              <div className="grid grid-cols-2 gap-1 mt-0.5 text-[11px]">
-                <div className="rounded border p-1.5"><div className="text-muted-foreground">TTFT</div><div className="font-mono font-medium">{ttftText}</div></div>
-                <div className="rounded border p-1.5"><div className="text-muted-foreground">Duration</div><div className="font-mono font-medium">{durText}</div></div>
-              </div>
-            </div>
-
-            {/* Timestamps */}
-            <div>
-              <Label className="text-[10px] text-muted-foreground">Timestamps</Label>
-              <div className="space-y-0.5 mt-0.5 text-[11px]">
-                <div className="flex justify-between"><span className="text-muted-foreground">Start</span><span className="font-mono">{log.start_time ? format(new Date(log.start_time), "MM-dd HH:mm:ss") : "—"}</span></div>
-                <div className="flex justify-between"><span className="text-muted-foreground">End</span><span className="font-mono">{log.end_time ? format(new Date(log.end_time), "MM-dd HH:mm:ss") : "—"}</span></div>
-              </div>
-            </div>
-
-            {/* Model Info */}
-            {(log.model_id || log.model_group || log.custom_llm_provider || log.api_base) && (
-              <div>
-                <Label className="text-[10px] text-muted-foreground">Model Info</Label>
-                <div className="text-[10px] space-y-0.5 mt-0.5 bg-muted/30 rounded p-1.5">
-                  {log.model_id && <div><span className="text-muted-foreground">ID:</span> {log.model_id}</div>}
-                  {log.model_group && <div><span className="text-muted-foreground">Group:</span> {log.model_group}</div>}
-                  {log.custom_llm_provider && <div><span className="text-muted-foreground">Provider:</span> {log.custom_llm_provider}</div>}
-                  {log.api_base && <div><span className="text-muted-foreground">Base:</span> <code className="text-[9px]">{log.api_base}</code></div>}
-                </div>
-              </div>
-            )}
-
-            {/* Metadata */}
-            <div>
-              <Label className="text-[10px] text-muted-foreground">Metadata</Label>
-              <div className="text-[10px] space-y-0.5 mt-0.5 bg-muted/30 rounded p-1.5">
-                {log.user && <div><span className="text-muted-foreground">User:</span> {log.user}</div>}
-                {log.team_id && <div><span className="text-muted-foreground">Team:</span> {log.team_id}</div>}
-                {log.organization_id && <div><span className="text-muted-foreground">Org:</span> {log.organization_id}</div>}
-                {log.end_user && <div><span className="text-muted-foreground">End User:</span> {log.end_user}</div>}
-                {log.session_id && <div><span className="text-muted-foreground">Session:</span> {log.session_id}</div>}
-                {log.cache_hit != null && <div><span className="text-muted-foreground">Cache Hit:</span> {String(log.cache_hit)}</div>}
-                {log.cache_key && <div><span className="text-muted-foreground">Cache Key:</span> {log.cache_key}</div>}
-                {log.mcp_namespaced_tool_name && <div><span className="text-muted-foreground">MCP Tool:</span> {log.mcp_namespaced_tool_name}</div>}
-              </div>
-            </div>
-
-            {/* API Key */}
-            <div>
-              <Label className="text-[10px] text-muted-foreground">API Key</Label>
-              <div className="flex items-center gap-1 mt-0.5">
-                <code className="text-[10px] font-mono bg-muted rounded px-1 py-0.5">{truncate8(log.api_key)}</code>
-                <Button variant="ghost" size="icon" className="h-4 w-4" onClick={() => copyApiKey(log.api_key)}>
-                  {apiKeyCopied ? <Check className="h-2.5 w-2.5 text-green-500" /> : <Copy className="h-2.5 w-2.5" />}
-                </Button>
-              </div>
-            </div>
+        {/* ── Top info row: model info + timestamps + metadata ── */}
+        <div className="text-[11px] text-muted-foreground bg-muted/20 rounded p-2 mb-3 space-y-1">
+          <div className="flex flex-wrap gap-x-4 gap-y-0.5">
+            <span>Start: <span className="font-mono text-foreground">{log.start_time ? format(new Date(log.start_time), "yyyy-MM-dd HH:mm:ss") : "—"}</span></span>
+            <span>End: <span className="font-mono text-foreground">{log.end_time ? format(new Date(log.end_time), "yyyy-MM-dd HH:mm:ss") : "—"}</span></span>
+            {log.model_group ? <span>Upstream: <span className="font-mono text-foreground">{log.model_group}</span></span> : null}
+            {log.custom_llm_provider ? <span>Provider: <span className="font-mono text-foreground">{log.custom_llm_provider}</span></span> : null}
+            {log.model_id ? <span>ID: <code className="text-[10px] text-foreground">{log.model_id}</code></span> : null}
+            {log.api_base ? <span>Base: <code className="text-[10px]">{log.api_base}</code></span> : null}
           </div>
-
-          {/* ── Right column: Input/Output cards ── */}
-          <div className="flex-1 min-w-0 space-y-3">
-            {hasPrompt ? (
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <Label className="text-xs text-muted-foreground">Prompt</Label>
-                </div>
-                <Tabs defaultValue="visual">
-                  <div className="flex items-center justify-between mb-1.5">
-                    <TabsList className="h-7">
-                      <TabsTrigger value="visual" className="text-xs h-6">Visual</TabsTrigger>
-                      <TabsTrigger value="raw" className="text-xs h-6">Raw</TabsTrigger>
-                    </TabsList>
-                  </div>
-                  <TabsContent value="visual" className="mt-0">
-                    <InputCard messages={log.messages} promptTokens={log.prompt_tokens} spend={log.spend} />
-                  </TabsContent>
-                  <TabsContent value="raw" className="mt-0">
-                    <pre className="text-[10px] bg-muted/30 rounded p-2 max-h-96 overflow-y-auto whitespace-pre-wrap break-words">
-                      {safeStringify(log.messages)}
-                    </pre>
-                  </TabsContent>
-                </Tabs>
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground italic py-2">No prompt data</p>
-            )}
-
-            {hasResponse ? (
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <Label className="text-xs text-muted-foreground">Response</Label>
-                </div>
-                <Tabs defaultValue="visual">
-                  <div className="flex items-center justify-between mb-1.5">
-                    <TabsList className="h-7">
-                      <TabsTrigger value="visual" className="text-xs h-6">Visual</TabsTrigger>
-                      <TabsTrigger value="raw" className="text-xs h-6">Raw</TabsTrigger>
-                    </TabsList>
-                  </div>
-                  <TabsContent value="visual" className="mt-0">
-                    <OutputCard response={log.response} completionTokens={log.completion_tokens} spend={log.spend} />
-                  </TabsContent>
-                  <TabsContent value="raw" className="mt-0">
-                    <pre className="text-[10px] bg-muted/30 rounded p-2 max-h-96 overflow-y-auto whitespace-pre-wrap break-words">
-                      {safeStringify(log.response)}
-                    </pre>
-                  </TabsContent>
-                </Tabs>
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground italic py-2">No response data</p>
-            )}
+          <div className="flex flex-wrap gap-x-4 gap-y-0.5">
+            {log.user ? <span>User: <span className="font-mono text-foreground">{log.user}</span></span> : null}
+            {log.end_user ? (
+              <span className="flex items-center gap-1">
+                <span>End User:</span>
+                <code className="text-[10px] bg-muted/40 rounded px-1 py-0.5 font-mono max-w-[200px] truncate">{log.end_user}</code>
+                <CopyIconButton text={log.end_user} />
+              </span>
+            ) : null}
+            {log.session_id ? <span>Session: <code className="text-[10px] text-foreground">{log.session_id}</code></span> : null}
+            {log.team_id ? <span>Team: <span className="text-foreground">{log.team_id}</span></span> : null}
+            {log.organization_id ? <span>Org: <span className="text-foreground">{log.organization_id}</span></span> : null}
+            {log.cache_hit != null ? <span>Cache: <span className="text-foreground">{String(log.cache_hit)}</span></span> : null}
+            {log.cache_key ? <span>Cache Key: <code className="text-[10px] text-foreground">{log.cache_key}</code></span> : null}
+            {log.mcp_namespaced_tool_name ? <span>MCP Tool: <span className="text-foreground">{log.mcp_namespaced_tool_name}</span></span> : null}
           </div>
+        </div>
+
+        {/* ── Single column: Tools + Input + Output ── */}
+        <div className="space-y-3">
+          {tools && tools.length > 0 ? <ToolsCard tools={tools} /> : null}
+
+          {hasPrompt ? (
+            <div>
+              <Tabs defaultValue="visual">
+                <div className="flex items-center justify-between mb-1.5">
+                  <TabsList className="h-7">
+                    <TabsTrigger value="visual" className="text-xs h-6">Visual</TabsTrigger>
+                    <TabsTrigger value="raw" className="text-xs h-6">Raw</TabsTrigger>
+                  </TabsList>
+                </div>
+                <TabsContent value="visual" className="mt-0">
+                  <InputCard messages={log.messages} promptTokens={log.prompt_tokens} spend={log.spend} />
+                </TabsContent>
+                <TabsContent value="raw" className="mt-0">
+                  <RawJsonBlock data={log.messages} />
+                </TabsContent>
+              </Tabs>
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground italic py-2">No prompt data</p>
+          )}
+
+          {hasResponse ? (
+            <div>
+              <Tabs defaultValue="visual">
+                <div className="flex items-center justify-between mb-1.5">
+                  <TabsList className="h-7">
+                    <TabsTrigger value="visual" className="text-xs h-6">Visual</TabsTrigger>
+                    <TabsTrigger value="raw" className="text-xs h-6">Raw</TabsTrigger>
+                  </TabsList>
+                </div>
+                <TabsContent value="visual" className="mt-0">
+                  <OutputCard response={log.response} completionTokens={log.completion_tokens} spend={log.spend} />
+                </TabsContent>
+                <TabsContent value="raw" className="mt-0">
+                  <RawJsonBlock data={log.response} />
+                </TabsContent>
+              </Tabs>
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground italic py-2">No response data</p>
+          )}
         </div>
       </SheetContent>
     </Sheet>
   );
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// Main Page Component
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+/* ─────────────────────────────────── Main Page ── */
 
-function loadLiveTailPref(): boolean {
-  try { return sessionStorage.getItem("spend-logs-live-tail") === "true"; } catch { return false; }
-}
-
-function saveLiveTailPref(v: boolean) {
-  try { sessionStorage.setItem("spend-logs-live-tail", String(v)); } catch { /* noop */ }
-}
+function loadLiveTailPref() { try { return sessionStorage.getItem("spend-logs-live-tail") === "true"; } catch { return false; } }
+function saveLiveTailPref(v: boolean) { try { sessionStorage.setItem("spend-logs-live-tail", String(v)); } catch { /* */ } }
 
 export function SpendLogsPage() {
   const queryClient = useQueryClient();
@@ -499,7 +449,6 @@ export function SpendLogsPage() {
   useEffect(() => { return () => { if (debounceRef.current) clearTimeout(debounceRef.current); }; }, []);
 
   const effectiveLiveTail = liveTail && page === 1;
-
   const handleLiveTailToggle = useCallback((v: boolean) => { setLiveTail(v); saveLiveTailPref(v); if (v) setPage(1); }, []);
 
   const { data: logsData, isLoading, isError, refetch } = useQuery<SpendLogsResponse>({
@@ -517,9 +466,6 @@ export function SpendLogsPage() {
   const totalCount = logsData?.total_count ?? 0;
   const totalPages = logsData?.total_pages ?? 0;
 
-  const handleRowClick = (log: SpendLog) => { setSelectedLog(log); setDrawerOpen(true); };
-  const handleFetch = () => { queryClient.invalidateQueries({ queryKey: ["global-spend-logs"] }); refetch(); };
-
   return (
     <div className="space-y-4 max-w-full">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
@@ -528,58 +474,44 @@ export function SpendLogsPage() {
           <p className="text-sm text-muted-foreground">Detailed request log with cost and token breakdown</p>
         </div>
         <div className="flex items-center gap-3">
-          {effectiveLiveTail && (
+          {effectiveLiveTail ? (
             <div className="flex items-center gap-2 text-xs text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-950 rounded-md px-2 py-1 animate-pulse">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-              </span>
+              <span className="relative flex h-2 w-2"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"/><span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"/></span>
               ● LIVE
-              <Button variant="ghost" size="icon" className="h-4 w-4 ml-1" onClick={() => handleLiveTailToggle(false)}><X className="h-3 w-3" /></Button>
+              <Button variant="ghost" size="icon" className="h-4 w-4 ml-1" onClick={() => handleLiveTailToggle(false)}><X className="h-3 w-3"/></Button>
             </div>
-          )}
+          ) : null}
           <div className="flex items-center gap-2">
             <Label htmlFor="live-tail" className="text-xs cursor-pointer">Live Tail</Label>
-            <Switch id="live-tail" checked={liveTail} onCheckedChange={handleLiveTailToggle} />
+            <Switch id="live-tail" checked={liveTail} onCheckedChange={handleLiveTailToggle}/>
           </div>
         </div>
       </div>
 
       <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-medium flex items-center gap-2"><Calendar className="h-4 w-4" />Time Range</CardTitle>
-        </CardHeader>
+        <CardHeader className="pb-2"><CardTitle className="text-sm font-medium flex items-center gap-2"><Calendar className="h-4 w-4"/>Time Range</CardTitle></CardHeader>
         <CardContent className="space-y-3">
-          <TimePresetBar preset={preset} onPreset={handlePreset} startDate={startDate} endDate={endDate} onStartDate={setStartDate} onEndDate={setEndDate} />
+          <TimePresetBar preset={preset} onPreset={handlePreset} startDate={startDate} endDate={endDate} onStartDate={setStartDate} onEndDate={setEndDate}/>
           <div className="flex flex-col sm:flex-row gap-2">
             <div className="flex gap-2">
-              <div className="w-44 relative">
-                <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                <Input placeholder="Request ID…" value={requestIdInput} onChange={(e) => handleRequestIdInput(e.target.value)} className="h-8 pl-7 text-xs" />
-              </div>
-              <div className="w-40">
-                <Input placeholder="Model filter…" value={modelFilter} onChange={(e) => { setModelFilter(e.target.value); setPage(1); }} className="h-8 text-xs" />
-              </div>
+              <div className="w-44 relative"><Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground"/><Input placeholder="Request ID…" value={requestIdInput} onChange={e => handleRequestIdInput(e.target.value)} className="h-8 pl-7 text-xs"/></div>
+              <div className="w-40"><Input placeholder="Model filter…" value={modelFilter} onChange={e => { setModelFilter(e.target.value); setPage(1); }} className="h-8 text-xs"/></div>
             </div>
-            <Button variant="outline" size="sm" onClick={handleFetch} className="h-8 shrink-0"><RefreshCw className="h-3.5 w-3.5 mr-1" />Fetch</Button>
-            <Button variant="outline" size="sm" onClick={() => exportToCSV(logs, startDate, endDate)} disabled={logs.length === 0} className="h-8 shrink-0"><Download className="h-3.5 w-3.5 mr-1" />CSV</Button>
+            <Button variant="outline" size="sm" onClick={() => { queryClient.invalidateQueries({ queryKey: ["global-spend-logs"] }); refetch(); }} className="h-8 shrink-0"><RefreshCw className="h-3.5 w-3.5 mr-1"/>Fetch</Button>
+            <Button variant="outline" size="sm" onClick={() => exportToCSV(logs, startDate, endDate)} disabled={logs.length===0} className="h-8 shrink-0"><Download className="h-3.5 w-3.5 mr-1"/>CSV</Button>
           </div>
         </CardContent>
       </Card>
 
       <Card>
-        <CardHeader className="pb-2">
-          <div className="flex flex-row items-center justify-between">
-            <CardTitle className="text-sm font-medium flex items-center gap-2"><ScrollText className="h-4 w-4" />Requests ({totalCount})</CardTitle>
-          </div>
-        </CardHeader>
+        <CardHeader className="pb-2"><div className="flex flex-row items-center justify-between"><CardTitle className="text-sm font-medium flex items-center gap-2"><ScrollText className="h-4 w-4"/>Requests ({totalCount})</CardTitle></div></CardHeader>
         <CardContent>
-          <div className="mb-3"><PaginationBar page={page} pageSize={pageSize} totalCount={totalCount} totalPages={totalPages} onPage={setPage} onPageSize={(s) => { setPageSize(s); setPage(1); }} /></div>
+          <div className="mb-3"><PaginationBar page={page} pageSize={pageSize} totalCount={totalCount} totalPages={totalPages} onPage={setPage} onPageSize={s => { setPageSize(s); setPage(1); }}/></div>
 
           {isLoading ? (
-            <div className="space-y-2">{Array.from({ length: 6 }).map((_, i) => (<Skeleton key={i} className="h-10 w-full" />))}</div>
+            <div className="space-y-2">{Array.from({length:6}).map((_,i) => <Skeleton key={i} className="h-10 w-full"/>)}</div>
           ) : isError ? (
-            <div className="flex flex-col items-center justify-center h-32 gap-2"><AlertCircle className="h-8 w-8 text-muted-foreground" /><p className="text-sm text-muted-foreground">Failed to load spend logs</p><Button variant="outline" size="sm" onClick={handleFetch}>Retry</Button></div>
+            <div className="flex flex-col items-center justify-center h-32 gap-2"><AlertCircle className="h-8 w-8 text-muted-foreground"/><p className="text-sm text-muted-foreground">Failed to load spend logs</p><Button variant="outline" size="sm" onClick={() => { queryClient.invalidateQueries({ queryKey: ["global-spend-logs"] }); refetch(); }}>Retry</Button></div>
           ) : logs.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-32 gap-1"><p className="text-sm text-muted-foreground">No spend logs found</p><p className="text-xs text-muted-foreground">Try adjusting the date range or filters</p></div>
           ) : (
@@ -588,7 +520,7 @@ export function SpendLogsPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="text-xs whitespace-nowrap"><Clock className="h-3 w-3 inline mr-1" />Time</TableHead>
+                      <TableHead className="text-xs whitespace-nowrap"><Clock className="h-3 w-3 inline mr-1"/>Time</TableHead>
                       <TableHead className="text-xs whitespace-nowrap">Type</TableHead>
                       <TableHead className="text-xs whitespace-nowrap">Model</TableHead>
                       <TableHead className="text-xs whitespace-nowrap">Key</TableHead>
@@ -602,20 +534,17 @@ export function SpendLogsPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {logs.map((log) => (
-                      <TableRow key={log.request_id} className="cursor-pointer hover:bg-muted/50" onClick={() => handleRowClick(log)}>
+                    {logs.map(log => (
+                      <TableRow key={log.request_id} className="cursor-pointer hover:bg-muted/50" onClick={() => { setSelectedLog(log); setDrawerOpen(true); }}>
                         <TableCell className="text-xs whitespace-nowrap">{log.start_time ? format(new Date(log.start_time), "MM-dd HH:mm:ss") : "—"}</TableCell>
                         <TableCell><Badge variant="outline" className="text-[10px] px-1 py-0">{log.call_type || "—"}</Badge></TableCell>
                         <TableCell className="text-xs whitespace-nowrap font-medium">{log.model}</TableCell>
                         <TableCell className="text-xs whitespace-nowrap text-muted-foreground max-w-[100px] truncate">{log.key_name || log.user || "—"}</TableCell>
-                        <TableCell className="text-xs whitespace-nowrap text-muted-foreground max-w-[100px] truncate">{log.end_user || "—"}</TableCell>
-                        <TableCell><Badge variant={log.status === "success" ? "default" : "destructive"} className="text-[10px] px-1.5 py-0">{log.status || "—"}</Badge></TableCell>
-                        <TableCell className="text-xs font-mono">
-                          <div className="flex items-center gap-1">
-                            {truncate8(log.request_id)}
-                            <RowCopyButton text={log.request_id} />
-                          </div>
+                        <TableCell className="text-xs whitespace-nowrap text-muted-foreground max-w-[120px]">
+                          <code className="text-[10px] truncate block">{truncateEndUser(log.end_user || "")}</code>
                         </TableCell>
+                        <TableCell><Badge variant={log.status==="success"?"default":"destructive"} className="text-[10px] px-1.5 py-0">{log.status || "—"}</Badge></TableCell>
+                        <TableCell className="text-xs font-mono"><div className="flex items-center gap-1">{truncate8(log.request_id)}<RowCopyButton text={log.request_id}/></div></TableCell>
                         <TableCell className="text-xs font-mono text-right">{fmtTtft(log.ttft_ms)}</TableCell>
                         <TableCell className="text-xs font-mono text-right">{fmtDuration(log.request_duration_ms)}</TableCell>
                         <TableCell className="text-xs text-right"><span className="text-muted-foreground">{fmtTokens(log.prompt_tokens)}</span>{" / "}<span>{fmtTokens(log.completion_tokens)}</span></TableCell>
@@ -625,42 +554,38 @@ export function SpendLogsPage() {
                   </TableBody>
                 </Table>
               </div>
-
               <div className="md:hidden space-y-2">
-                {logs.map((log) => (
-                  <div key={log.request_id} className="rounded-md border p-3 cursor-pointer hover:bg-muted/50" onClick={() => handleRowClick(log)}>
+                {logs.map(log => (
+                  <div key={log.request_id} className="rounded-md border p-3 cursor-pointer hover:bg-muted/50" onClick={() => { setSelectedLog(log); setDrawerOpen(true); }}>
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
-                        <Badge variant="outline" className="text-[10px] px-1 py-0">{log.call_type || "—"}</Badge>
-                        <Badge variant={log.status === "success" ? "default" : "destructive"} className="text-[10px] px-1.5 py-0">{log.status || "—"}</Badge>
+                        <Badge variant="outline" className="text-[10px] px-1 py-0">{log.call_type||"—"}</Badge>
+                        <Badge variant={log.status==="success"?"default":"destructive"} className="text-[10px] px-1.5 py-0">{log.status||"—"}</Badge>
                       </div>
                       <span className="text-xs font-mono font-medium">{fmtSpend(log.spend)}</span>
                     </div>
                     <div className="text-sm font-medium truncate mb-1">{log.model}</div>
-                    {log.end_user && <div className="text-xs text-muted-foreground mb-1">End User: <span className="font-mono">{log.end_user}</span></div>}
+                    {log.end_user ? <div className="text-xs text-muted-foreground mb-1">End User: <code className="text-[10px]">{truncateEndUser(log.end_user)}</code></div> : null}
                     <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                      <div><span>TTFT: </span><span className="font-mono">{fmtTtft(log.ttft_ms)}</span></div>
-                      <div><span>Dur: </span><span className="font-mono">{fmtDuration(log.request_duration_ms)}</span></div>
-                      <div><span>Tokens: </span><span>{fmtTokens(log.total_tokens)}</span></div>
-                      <div><span>Time: </span><span>{log.start_time ? format(new Date(log.start_time), "HH:mm:ss") : "—"}</span></div>
+                      <div>TTFT: <span className="font-mono">{fmtTtft(log.ttft_ms)}</span></div>
+                      <div>Dur: <span className="font-mono">{fmtDuration(log.request_duration_ms)}</span></div>
+                      <div>Tokens: <span>{fmtTokens(log.total_tokens)}</span></div>
+                      <div>Time: <span>{log.start_time ? format(new Date(log.start_time), "HH:mm:ss") : "—"}</span></div>
                     </div>
                     <div className="flex items-center gap-1 mt-1 text-xs text-muted-foreground">
                       <span className="font-mono">{truncate8(log.request_id)}</span>
-                      <RowCopyButton text={log.request_id} />
+                      <RowCopyButton text={log.request_id}/>
                     </div>
                   </div>
                 ))}
               </div>
             </>
           )}
-
-          {logs.length > 0 && (
-            <div className="mt-3"><PaginationBar page={page} pageSize={pageSize} totalCount={totalCount} totalPages={totalPages} onPage={setPage} onPageSize={(s) => { setPageSize(s); setPage(1); }} /></div>
-          )}
+          {logs.length > 0 ? <div className="mt-3"><PaginationBar page={page} pageSize={pageSize} totalCount={totalCount} totalPages={totalPages} onPage={setPage} onPageSize={s => { setPageSize(s); setPage(1); }}/></div> : null}
         </CardContent>
       </Card>
 
-      <DetailDrawer log={selectedLog} open={drawerOpen} onClose={() => { setDrawerOpen(false); setSelectedLog(null); }} />
+      <DetailDrawer log={selectedLog} open={drawerOpen} onClose={() => { setDrawerOpen(false); setSelectedLog(null); }}/>
     </div>
   );
 }

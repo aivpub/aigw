@@ -1,8 +1,7 @@
-import { useState, useCallback } from "react";
-import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
+import { useState } from "react";
 import { SectionHeader } from "./SectionHeader";
 import { ToolCallBlock } from "./ToolCallBlock";
-import { safeStringify, extractText } from "./utils";
+import { extractText } from "./utils";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // OutputCard — displays assistant response with tool calls
@@ -13,15 +12,29 @@ interface ParsedOutput {
   toolCalls: unknown[] | null;
   usage: Record<string, unknown> | null;
   finishReason: string | null;
+  error: string | null;
 }
 
 function parseOutput(raw: unknown): ParsedOutput {
-  const empty: ParsedOutput = { text: "", toolCalls: null, usage: null, finishReason: null };
+  const empty: ParsedOutput = { text: "", toolCalls: null, usage: null, finishReason: null, error: null };
   if (!raw) return empty;
 
   try {
     const r = typeof raw === "string" ? JSON.parse(raw) : (raw as Record<string, unknown>);
     if (!r || typeof r !== "object") return empty;
+
+    // Detect error responses first
+    if ((r as Record<string, unknown>).error) {
+      const err = (r as Record<string, unknown>).error;
+      let errMsg = "";
+      if (typeof err === "string") {
+        errMsg = err;
+      } else if (typeof err === "object" && err !== null) {
+        const e = err as Record<string, unknown>;
+        errMsg = (e.message as string) || (e.code as string) || JSON.stringify(err);
+      }
+      return { ...empty, error: errMsg };
+    }
 
     // OpenAI: choices[0].message
     if (Array.isArray((r as Record<string, unknown>).choices)) {
@@ -29,11 +42,16 @@ function parseOutput(raw: unknown): ParsedOutput {
       const first = choices[0];
       if (first) {
         const msg = (first.message ?? first.delta ?? {}) as Record<string, unknown>;
+        // Detect error in message (e.g. content filter)
+        if (msg.refusal) {
+          return { ...empty, error: `Refused: ${String(msg.refusal)}` };
+        }
         return {
           text: extractText(msg.content),
           toolCalls: (msg.tool_calls as unknown[]) ?? null,
           usage: (r as Record<string, unknown>).usage as Record<string, unknown> | null ?? null,
           finishReason: (first.finish_reason as string) ?? (msg.finish_reason as string) ?? null,
+          error: null,
         };
       }
     }
@@ -55,12 +73,13 @@ function parseOutput(raw: unknown): ParsedOutput {
         toolCalls: toolCalls.length > 0 ? toolCalls : null,
         usage: (r as Record<string, unknown>).usage as Record<string, unknown> | null ?? null,
         finishReason: ((r as Record<string, unknown>).stop_reason as string) ?? null,
+        error: null,
       };
     }
 
     return empty;
   } catch {
-    return empty;
+    return { ...empty, error: "Failed to parse response" };
   }
 }
 
@@ -72,7 +91,6 @@ interface OutputCardProps {
 
 export function OutputCard({ response, completionTokens, spend }: OutputCardProps) {
   const [collapsed, setCollapsed] = useState(false);
-  const { copied, copy } = useCopyToClipboard();
 
   const parsed = parseOutput(response);
 
@@ -80,38 +98,44 @@ export function OutputCard({ response, completionTokens, spend }: OutputCardProp
     ? spend * (completionTokens / (completionTokens + 1))
     : undefined;
 
-  const handleCopy = useCallback(() => {
-    copy(safeStringify(response));
-  }, [copy, response]);
-
   return (
     <div className="border rounded-lg overflow-hidden">
       <SectionHeader
         type="output"
         tokens={completionTokens > 0 ? completionTokens : undefined}
         cost={outputCost}
-        onCopy={handleCopy}
-        copied={copied}
         collapsed={collapsed}
         onToggleCollapse={() => setCollapsed(!collapsed)}
       />
 
       {!collapsed && (
         <div className="p-3 space-y-2">
+          {/* Error highlight */}
+          {parsed.error ? (
+            <div className="bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-lg p-3">
+              <div className="flex items-center gap-1.5 mb-1">
+                <span className="text-[10px] uppercase tracking-wider text-red-600 dark:text-red-400 font-medium">Error</span>
+              </div>
+              <pre className="text-xs text-red-700 dark:text-red-300 whitespace-pre-wrap break-all leading-relaxed font-mono">
+                {parsed.error}
+              </pre>
+            </div>
+          ) : null}
+
           {/* Plain text response */}
-          {parsed.text && (
+          {parsed.text ? (
             <div className="bg-green-50/30 dark:bg-green-950/10 rounded-lg p-2.5 text-xs whitespace-pre-wrap leading-relaxed">
               {parsed.text}
             </div>
-          )}
+          ) : null}
 
           {/* Tool calls */}
-          {parsed.toolCalls && parsed.toolCalls.length > 0 && (
+          {parsed.toolCalls && parsed.toolCalls.length > 0 ? (
             <ToolCallBlock toolCalls={parsed.toolCalls} />
-          )}
+          ) : null}
 
           {/* Usage stats */}
-          {parsed.usage && (
+          {parsed.usage ? (
             <div className="rounded border p-2 text-[11px] font-mono grid grid-cols-2 gap-x-4 gap-y-0.5">
               {Object.entries(parsed.usage).map(([key, val]) => (
                 <div key={key} className="flex justify-between">
@@ -120,21 +144,21 @@ export function OutputCard({ response, completionTokens, spend }: OutputCardProp
                 </div>
               ))}
             </div>
-          )}
+          ) : null}
 
           {/* Finish reason */}
-          {parsed.finishReason && (
+          {parsed.finishReason ? (
             <div className="text-[11px] text-muted-foreground">
               Finish: <code className="font-mono bg-muted px-1 rounded">{parsed.finishReason}</code>
             </div>
-          )}
+          ) : null}
 
           {/* Empty state */}
-          {!parsed.text && !parsed.toolCalls && !parsed.usage && (
+          {!parsed.error && !parsed.text && !parsed.toolCalls && !parsed.usage ? (
             <p className="text-xs text-muted-foreground italic py-2 text-center">
               No response content to display
             </p>
-          )}
+          ) : null}
         </div>
       )}
     </div>

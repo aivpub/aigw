@@ -52,6 +52,7 @@ export function SheetContent({
           sideStyles[side],
           className,
         )}
+        onOpenAutoFocus={(e) => e.preventDefault()}
         {...props}
       >
         {children}
