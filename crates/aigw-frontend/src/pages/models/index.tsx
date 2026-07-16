@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Search,
   ChevronDown,
@@ -27,6 +28,8 @@ import type { ReactNode } from "react";
 import type { ModelItem, ModelListResponse } from "./types";
 import { ModelDialog } from "./ModelDialog";
 import { DeleteConfirm } from "./DeleteConfirm";
+import { CredentialsTab } from "./CredentialsTab";
+import { HealthTab } from "./HealthTab";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Helpers
@@ -171,13 +174,22 @@ export function ModelsPage() {
 
   return (
     <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight">Models</h1>
+        <p className="text-sm text-muted-foreground">
+          Proxy model configurations, credentials, and system health
+        </p>
+      </div>
+
+      <Tabs defaultValue="model-groups">
+        <TabsList>
+          <TabsTrigger value="model-groups">Model Groups</TabsTrigger>
+          <TabsTrigger value="credentials">Credentials</TabsTrigger>
+          <TabsTrigger value="health">Health</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="model-groups" className="pt-4 space-y-6">
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Models</h1>
-          <p className="text-sm text-muted-foreground">
-            Proxy model configurations and upstream mappings
-          </p>
-        </div>
         <Button size="sm" onClick={handleAdd}>
           <Plus className="h-4 w-4" />
           Add Model
@@ -556,6 +568,17 @@ export function ModelsPage() {
         onConfirm={handleDeleteConfirm}
         loading={deleteLoading}
       />
+
+        </TabsContent>
+
+        <TabsContent value="credentials" className="pt-4">
+          <CredentialsTab />
+        </TabsContent>
+
+        <TabsContent value="health" className="pt-4">
+          <HealthTab />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

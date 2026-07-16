@@ -1,5 +1,5 @@
 import { NavLink } from "react-router-dom";
-import { Key, Box, Gamepad2, BarChart3, ScrollText, Users, Users2, Building2, Shuffle } from "lucide-react";
+import { Key, Box, Gamepad2, BarChart3, ScrollText, Users, Users2, Building2, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface NavGroup {
@@ -26,10 +26,15 @@ const navGroups: NavGroup[] = [
   {
     title: "ACCESS CONTROL",
     items: [
-      { to: "/dash/router-settings", label: "Router Settings", icon: Shuffle },
       { to: "/dash/users", label: "Users", icon: Users },
       { to: "/dash/teams", label: "Teams", icon: Users2 },
       { to: "/dash/orgs", label: "Organizations", icon: Building2 },
+    ],
+  },
+  {
+    title: "SETTINGS",
+    items: [
+      { to: "/dash/router-settings", label: "Router Settings", icon: Settings },
     ],
   },
 ];
