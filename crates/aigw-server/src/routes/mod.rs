@@ -11,6 +11,7 @@ pub mod login;
 pub mod models;
 pub mod org;
 pub mod proxy;
+pub mod router_settings;
 pub mod spend;
 pub mod team;
 pub mod user;

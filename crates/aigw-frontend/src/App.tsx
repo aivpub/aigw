@@ -10,6 +10,7 @@ import { OrgsPage } from "@/pages/orgs";
 import { TeamsPage } from "@/pages/teams";
 import { SpendLogsPage } from "@/pages/spend-logs";
 import { PlaygroundPage } from "@/pages/playground";
+import { RouterSettingsPage } from "@/pages/router-settings";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth();
@@ -56,6 +57,7 @@ export default function App() {
             <Route path="teams" element={<TeamsPage />} />
             <Route path="spend-logs" element={<SpendLogsPage />} />
             <Route path="playground" element={<PlaygroundPage />} />
+            <Route path="router-settings" element={<RouterSettingsPage />} />
           </Route>
 
           {/* Catch-all: authenticated pages redirect to /dash; unauthenticated to login */}

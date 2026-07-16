@@ -3577,6 +3577,135 @@ impl Database {
         Ok(None)
     }
 
+    /// Get a config value by param_name.
+    /// Returns None if the key doesn't exist.
+    pub async fn get_config(&self, param_name: &str) -> Result<Option<String>> {
+        let result = match self {
+            Database::Sqlite(p) => {
+                sqlx::query_scalar("SELECT param_value FROM config WHERE param_name = ?")
+                    .bind(param_name)
+                    .fetch_optional(p)
+                    .await?
+            }
+            Database::Mysql(p) => {
+                sqlx::query_scalar("SELECT param_value FROM config WHERE param_name = ?")
+                    .bind(param_name)
+                    .fetch_optional(p)
+                    .await?
+            }
+            Database::Postgres(p) => {
+                sqlx::query_scalar("SELECT param_value FROM config WHERE param_name = $1")
+                    .bind(param_name)
+                    .fetch_optional(p)
+                    .await?
+            }
+        };
+        Ok(result)
+    }
+
+    /// Upsert a config value. INSERT if not exists, UPDATE if exists.
+    pub async fn upsert_config(&self, param_name: &str, param_value: &str) -> Result<()> {
+        let id = format!("cfg-{}", param_name);
+        match self {
+            Database::Sqlite(p) => {
+                sqlx::query(
+                    "INSERT INTO config (id, param_name, param_value) VALUES (?1, ?2, ?3) \
+                     ON CONFLICT(param_name) DO UPDATE SET param_value = excluded.param_value"
+                )
+                    .bind(&id)
+                    .bind(param_name)
+                    .bind(param_value)
+                    .execute(p)
+                    .await?;
+            }
+            Database::Mysql(p) => {
+                sqlx::query(
+                    "INSERT INTO config (id, param_name, param_value) VALUES (?, ?, ?) \
+                     ON DUPLICATE KEY UPDATE param_value = VALUES(param_value)"
+                )
+                    .bind(&id)
+                    .bind(param_name)
+                    .bind(param_value)
+                    .execute(p)
+                    .await?;
+            }
+            Database::Postgres(p) => {
+                sqlx::query(
+                    "INSERT INTO config (id, param_name, param_value) VALUES ($1, $2, $3) \
+                     ON CONFLICT(param_name) DO UPDATE SET param_value = excluded.param_value"
+                )
+                    .bind(&id)
+                    .bind(param_name)
+                    .bind(param_value)
+                    .execute(p)
+                    .await?;
+            }
+        };
+        Ok(())
+    }
+
+    /// Update router_settings on a key (virtual_keys.router_settings JSON column).
+    pub async fn update_key_router_settings(&self, token: &str, settings_json: &str) -> Result<()> {
+        match self {
+            Database::Sqlite(p) => {
+                sqlx::query(
+                    "UPDATE virtual_keys SET router_settings = ?1 WHERE token = ?2 OR key_alias = ?2"
+                )
+                    .bind(settings_json)
+                    .bind(token)
+                    .execute(p)
+                    .await?;
+            }
+            Database::Mysql(p) => {
+                sqlx::query(
+                    "UPDATE virtual_keys SET router_settings = ? WHERE token = ? OR key_alias = ?"
+                )
+                    .bind(settings_json)
+                    .bind(token)
+                    .execute(p)
+                    .await?;
+            }
+            Database::Postgres(p) => {
+                sqlx::query(
+                    "UPDATE virtual_keys SET router_settings = $1 WHERE token = $2 OR key_alias = $2"
+                )
+                    .bind(settings_json)
+                    .bind(token)
+                    .execute(p)
+                    .await?;
+            }
+        };
+        Ok(())
+    }
+
+    /// Update router_settings on a team (teams.router_settings JSON column).
+    pub async fn update_team_router_settings(&self, team_id: &str, settings_json: &str) -> Result<()> {
+        match self {
+            Database::Sqlite(p) => {
+                sqlx::query("UPDATE teams SET router_settings = ?1 WHERE team_id = ?2 OR team_alias = ?2")
+                    .bind(settings_json)
+                    .bind(team_id)
+                    .execute(p)
+                    .await?;
+            }
+            Database::Mysql(p) => {
+                sqlx::query("UPDATE teams SET router_settings = ? WHERE team_id = ? OR team_alias = ?")
+                    .bind(settings_json)
+                    .bind(team_id)
+                    .execute(p)
+                    .await?;
+            }
+            Database::Postgres(p) => {
+                sqlx::query("UPDATE teams SET router_settings = $1 WHERE team_id = $2 OR team_alias = $2")
+                    .bind(settings_json)
+                    .bind(team_id)
+                    .execute(p)
+                    .await?;
+            }
+        };
+        Ok(())
+    }
+
     // ── Health / Metrics ──
 
     pub fn pool_size(&self) -> u32 {

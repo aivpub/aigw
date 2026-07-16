@@ -23,7 +23,7 @@ use axum::http::HeaderName;
 use axum::{middleware, routing::get, Router};
 use clap::Parser;
 use routes::keys::{self, AppState, SharedState};
-use routes::{chat, cors_layer, credentials, docs, health, login, models, org, spend, team, user, v1_messages};
+use routes::{chat, cors_layer, credentials, docs, health, login, models, org, router_settings, spend, team, user, v1_messages};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -263,6 +263,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/user/list", get(user::user_list))
         .route("/user/update", axum::routing::put(user::user_update))
         .route("/user/delete", axum::routing::delete(user::user_delete))
+        // Router settings endpoints (Phase 23)
+        .route("/router/settings", get(router_settings::get_global).put(router_settings::put_global))
+        .route("/key/{token}/router/settings", axum::routing::patch(router_settings::patch_key))
+        .route("/team/{id}/router/settings", axum::routing::patch(router_settings::patch_team))
         // Spend/usage tracking routes
         .route("/spend/logs", get(spend::spend_logs))
         .route("/spend/keys", get(spend::spend_keys))

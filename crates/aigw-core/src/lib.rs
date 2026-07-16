@@ -42,7 +42,7 @@ pub use crypto::{
 };
 pub use db::CredentialsStore;
 pub use deployment::{Deployment, ProviderType};
-pub use router::{Router, RouterConfig, RouterStrategy};
+pub use router::{merge_router_overrides, Router, RouterConfig, RouterStrategy};
 pub use models::{
     Budget, Credential, DailySpendKind, DailySpendLog, Organization, OrganizationMembership,
     Project, ProxyModel, SpendLog, Team, TeamMembership, User, VirtualKey,

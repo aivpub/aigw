@@ -303,6 +303,49 @@ impl Router {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Merge router settings — Key > Team > Global
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Merge Key > Team > Global router settings into an effective override.
+/// If both key and team settings are None, returns the global config unchanged.
+pub fn merge_router_overrides(
+    key_settings: Option<&serde_json::Value>,
+    team_settings: Option<&serde_json::Value>,
+    global: &RouterConfig,
+) -> RouterConfig {
+    let mut merged = global.clone();
+
+    // Layer 2: Team override
+    if let Some(ts) = team_settings {
+        apply_override(&mut merged, ts);
+    }
+
+    // Layer 1: Key override (highest priority)
+    if let Some(ks) = key_settings {
+        apply_override(&mut merged, ks);
+    }
+
+    merged
+}
+
+fn apply_override(config: &mut RouterConfig, overrides: &serde_json::Value) {
+    if let Some(v) = overrides.get("allowed_fails").and_then(|v| v.as_u64()) {
+        config.allowed_fails = v as u32;
+    }
+    if let Some(v) = overrides.get("cooldown_time").and_then(|v| v.as_f64()) {
+        if v > 0.0 {
+            config.cooldown_time = v;
+        }
+    }
+    if let Some(v) = overrides.get("num_retries").and_then(|v| v.as_u64()) {
+        config.num_retries = v as u32;
+    }
+    if let Some(v) = overrides.get("routing_strategy").and_then(|v| v.as_str()) {
+        config.routing_strategy = v.to_string();
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Tests
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -455,5 +498,72 @@ mod router_tests {
         let router = Router::new(RouterStrategy::SimpleShuffle, 3, 5.0, 0);
         let mut deps: Vec<Deployment> = vec![];
         assert_eq!(router.pick_deployment(&mut deps), None);
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Merge tests (Stage 64)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[cfg(test)]
+mod merge_tests {
+    use super::*;
+    use serde_json::json;
+
+    // UT-1: Key overrides Team overrides Global
+    #[test]
+    fn test_merge_key_override_team_override_global() {
+        let global = RouterConfig {
+            routing_strategy: "simple-shuffle".into(),
+            num_retries: 0,
+            allowed_fails: 3,
+            cooldown_time: 5.0,
+            model_group_alias: Default::default(),
+        };
+        let team = json!({"allowed_fails": 5, "cooldown_time": 10.0});
+        let key = json!({"allowed_fails": 1, "num_retries": 2});
+
+        let merged = merge_router_overrides(Some(&key), Some(&team), &global);
+
+        // Key wins over Team
+        assert_eq!(merged.allowed_fails, 1);
+        // Key sets num_retries
+        assert_eq!(merged.num_retries, 2);
+        // Team cooldown (not overridden by key)
+        assert_eq!(merged.cooldown_time, 10.0);
+        // Global routing_strategy (not overridden)
+        assert_eq!(merged.routing_strategy, "simple-shuffle");
+    }
+
+    // UT-2: empty overrides → return Global unchanged
+    #[test]
+    fn test_merge_empty_overrides() {
+        let global = RouterConfig::default();
+        let merged = merge_router_overrides(None, None, &global);
+        assert_eq!(merged.allowed_fails, global.allowed_fails);
+        assert_eq!(merged.cooldown_time, global.cooldown_time);
+        assert_eq!(merged.num_retries, global.num_retries);
+        assert_eq!(merged.routing_strategy, global.routing_strategy);
+    }
+
+    // UT-3: negative cooldown_time rejected
+    #[test]
+    fn test_merge_negative_cooldown_rejected() {
+        let global = RouterConfig::default();
+        let key = json!({"cooldown_time": -1.0});
+        let merged = merge_router_overrides(Some(&key), None, &global);
+        // Negative value should be ignored → keep default
+        assert_eq!(merged.cooldown_time, 5.0);
+    }
+
+    // UT-4: team-only override
+    #[test]
+    fn test_merge_team_only() {
+        let global = RouterConfig::default();
+        let team = json!({"routing_strategy": "usage-based-routing", "num_retries": 1});
+        let merged = merge_router_overrides(None, Some(&team), &global);
+        assert_eq!(merged.routing_strategy, "usage-based-routing");
+        assert_eq!(merged.num_retries, 1);
+        assert_eq!(merged.allowed_fails, 3); // global default
     }
 }
