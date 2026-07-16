@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiDelete } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -88,6 +89,8 @@ function extractCost(info: Record<string, unknown>): { input: number | null; out
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 export function ModelsPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = searchParams.get("tab") || "model-groups";
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -181,7 +184,11 @@ export function ModelsPage() {
         </p>
       </div>
 
-      <Tabs defaultValue="model-groups">
+      <Tabs
+        defaultValue={tab}
+        value={tab}
+        onValueChange={(v) => setSearchParams({ tab: v }, { replace: true })}
+      >
         <TabsList>
           <TabsTrigger value="model-groups">Model Groups</TabsTrigger>
           <TabsTrigger value="credentials">Credentials</TabsTrigger>

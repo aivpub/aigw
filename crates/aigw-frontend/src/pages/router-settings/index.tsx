@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiPut, apiPatch } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -356,27 +357,29 @@ function TeamsTab() {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 export function RouterSettingsPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = searchParams.get("tab") || "global";
   return (
     <div className="p-6 space-y-6 max-w-2xl">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Router Settings</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Configure routing strategy, retries, and cooldown at Global, Key, or Team level.
-          Key settings override Team, and both override Global.
+          Configure routing strategy, retries, and cooldown at Global or Team level.
+          Team settings override Global defaults.
         </p>
       </div>
 
-      <Tabs defaultValue="global">
+      <Tabs
+        defaultValue={tab}
+        value={tab}
+        onValueChange={(v) => setSearchParams({ tab: v }, { replace: true })}
+      >
         <TabsList>
           <TabsTrigger value="global">Global</TabsTrigger>
-          <TabsTrigger value="keys">Keys</TabsTrigger>
           <TabsTrigger value="teams">Teams</TabsTrigger>
         </TabsList>
         <TabsContent value="global" className="pt-4">
           <GlobalTab />
-        </TabsContent>
-        <TabsContent value="keys" className="pt-4">
-          <KeysTab />
         </TabsContent>
         <TabsContent value="teams" className="pt-4">
           <TeamsTab />

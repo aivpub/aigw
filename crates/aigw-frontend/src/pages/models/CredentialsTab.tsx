@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -14,7 +15,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter,
   DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
-import { Plus, Pencil, Trash2 } from "lucide-react";
+import { Plus, Pencil, Trash2, Code } from "lucide-react";
 import { toast } from "sonner";
 
 interface CredentialItem {
@@ -22,12 +23,6 @@ interface CredentialItem {
   credential_name: string;
   credential_values: Record<string, unknown>;
   credential_info: Record<string, unknown> | null;
-}
-
-interface CredentialForm {
-  credential_name: string;
-  credential_values: string; // JSON
-  credential_info: string;   // JSON
 }
 
 function maskApiKey(raw: string): string {
@@ -48,7 +43,16 @@ export function CredentialsTab() {
   // Dialog
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<CredentialItem | null>(null);
-  const [form, setForm] = useState<CredentialForm>({ credential_name: "", credential_values: "{}", credential_info: "{}" });
+
+  // Visual form fields
+  const [credName, setCredName] = useState("");
+  const [apiBase, setApiBase] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [provider, setProvider] = useState("");
+  const [credInfo, setCredInfo] = useState("{}");
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [advancedJson, setAdvancedJson] = useState("{}");
+  const [advancedInfo, setAdvancedInfo] = useState("{}");
   const [saving, setSaving] = useState(false);
 
   // Delete
@@ -58,19 +62,22 @@ export function CredentialsTab() {
 
   function openNew() {
     setEditing(null);
-    setForm({ credential_name: "", credential_values: "{}", credential_info: "{}" });
+    setCredName(""); setApiBase(""); setApiKey(""); setProvider("");
+    setCredInfo("{}"); setShowAdvanced(false); setAdvancedJson("{}"); setAdvancedInfo("{}");
     setDialogOpen(true);
   }
 
   function openEdit(c: CredentialItem) {
     setEditing(c);
-    const values = c.credential_values ?? {};
-    const info = c.credential_info ?? {};
-    setForm({
-      credential_name: c.credential_name,
-      credential_values: JSON.stringify(values, null, 2),
-      credential_info: JSON.stringify(info, null, 2),
-    });
+    const v = c.credential_values ?? {};
+    setCredName(c.credential_name);
+    setApiBase((v.api_base as string) ?? "");
+    setApiKey((v.api_key as string) ?? "");
+    setProvider((v.custom_llm_provider as string) ?? "");
+    setCredInfo(JSON.stringify(c.credential_info ?? {}, null, 2));
+    setAdvancedJson(JSON.stringify(v, null, 2));
+    setAdvancedInfo(JSON.stringify(c.credential_info ?? {}, null, 2));
+    setShowAdvanced(false);
     setDialogOpen(true);
   }
 
@@ -78,12 +85,24 @@ export function CredentialsTab() {
     setSaving(true);
     try {
       let valuesJson: Record<string, unknown>;
+      if (showAdvanced) {
+        try { valuesJson = JSON.parse(advancedJson); } catch { throw new Error("Advanced JSON is not valid"); }
+      } else {
+        valuesJson = {
+          api_base: apiBase || undefined,
+          api_key: apiKey || undefined,
+          custom_llm_provider: provider || undefined,
+        };
+        // Remove undefined keys
+        Object.keys(valuesJson).forEach((k) => { if (valuesJson[k] === undefined) delete valuesJson[k]; });
+      }
+
       let infoJson: Record<string, unknown>;
-      try { valuesJson = JSON.parse(form.credential_values); } catch { throw new Error("credential_values is not valid JSON"); }
-      try { infoJson = JSON.parse(form.credential_info); } catch { throw new Error("credential_info is not valid JSON"); }
+      const infoStr = showAdvanced ? advancedInfo : credInfo;
+      try { infoJson = JSON.parse(infoStr || "{}"); } catch { throw new Error("Credential Info is not valid JSON"); }
 
       const body = {
-        credential_name: form.credential_name,
+        credential_name: credName,
         credential_values: valuesJson,
         credential_info: infoJson,
       };
@@ -177,32 +196,71 @@ export function CredentialsTab() {
 
       {/* Create/Edit Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>{editing ? "Edit Credential" : "New Credential"}</DialogTitle>
-            <DialogDescription>API keys stored in credential_values are encrypted at rest using AIGW_MASTER_KEY.</DialogDescription>
+            <DialogDescription>
+              API keys are encrypted at rest using AIGW_MASTER_KEY. Toggle advanced mode to edit raw JSON.
+            </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
+
+          <div className="space-y-4 max-h-[60vh] overflow-y-auto">
             <div className="space-y-2">
-              <Label htmlFor="cred-name">Credential Name</Label>
-              <Input id="cred-name" value={form.credential_name} disabled={!!editing}
-                onChange={(e) => setForm({ ...form, credential_name: e.target.value })} />
+              <Label htmlFor="cred-name">Credential Name *</Label>
+              <Input id="cred-name" value={credName} disabled={!!editing}
+                onChange={(e) => setCredName(e.target.value)} placeholder="e.g. openai-prod" />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="cred-values">Credential Values (JSON)</Label>
-              <Textarea id="cred-values" rows={5} className="font-mono text-xs" value={form.credential_values}
-                onChange={(e) => setForm({ ...form, credential_values: e.target.value })} />
-              <p className="text-xs text-muted-foreground">e.g. {`{"api_base":"https://api.openai.com/v1","api_key":"sk-...","custom_llm_provider":"openai"}`}</p>
+
+            {/* Toggle */}
+            <div className="flex items-center gap-2">
+              <Switch checked={showAdvanced} onCheckedChange={setShowAdvanced} />
+              <Label className="text-xs cursor-pointer flex items-center gap-1" onClick={() => setShowAdvanced(!showAdvanced)}>
+                <Code className="h-3 w-3" /> Advanced (raw JSON)
+              </Label>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="cred-info">Credential Info (JSON, optional)</Label>
-              <Textarea id="cred-info" rows={3} className="font-mono text-xs" value={form.credential_info}
-                onChange={(e) => setForm({ ...form, credential_info: e.target.value })} />
-            </div>
+
+            {showAdvanced ? (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="cred-values-adv">Credential Values (JSON)</Label>
+                  <Textarea id="cred-values-adv" rows={6} className="font-mono text-xs"
+                    value={advancedJson} onChange={(e) => setAdvancedJson(e.target.value)} />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="cred-info-adv">Credential Info (JSON)</Label>
+                  <Textarea id="cred-info-adv" rows={4} className="font-mono text-xs"
+                    value={advancedInfo} onChange={(e) => setAdvancedInfo(e.target.value)} />
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="cred-provider">Provider</Label>
+                  <Input id="cred-provider" value={provider}
+                    onChange={(e) => setProvider(e.target.value)} placeholder="e.g. openai, anthropic, deepseek" />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="cred-apibase">API Base URL</Label>
+                  <Input id="cred-apibase" value={apiBase}
+                    onChange={(e) => setApiBase(e.target.value)} placeholder="https://api.openai.com/v1" />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="cred-apikey">API Key</Label>
+                  <Input id="cred-apikey" value={apiKey} type="password"
+                    onChange={(e) => setApiKey(e.target.value)} placeholder="sk-..." />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="cred-info-vis">Credential Info (JSON, optional)</Label>
+                  <Textarea id="cred-info-vis" rows={3} className="font-mono text-xs"
+                    value={credInfo} onChange={(e) => setCredInfo(e.target.value)} placeholder='{"description":"..."}' />
+                </div>
+              </>
+            )}
           </div>
+
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleSave} disabled={saving || !form.credential_name}>{saving ? "Saving…" : "Save"}</Button>
+            <Button onClick={handleSave} disabled={saving || !credName}>{saving ? "Saving…" : "Save"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
