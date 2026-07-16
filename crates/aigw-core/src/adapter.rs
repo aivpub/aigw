@@ -899,23 +899,163 @@ fn openai_stop_to_claude(finish_reason: &Option<String>) -> Option<String> {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //
 // Client (Anthropic) → AnthropicPassthrough → Upstream (Anthropic Native)
-// Body passthrough; handlers inject x-api-key + anthropic-version headers.
+// Body passthrough with system message folding for strict templates.
+
+/// Normalize Anthropic messages for strict chat templates.
+///
+/// Some Anthropic clients (including Claude Code) inject extra system-level
+/// context into the `messages` array on subsequent turns. Two forms observed:
+///   1. `role="system"` messages with plain text content
+///   2. `role="user"` messages with `<system-reminder>...</system-reminder>` blocks
+///
+/// Downstream Anthropic→OpenAI converters may extract both as separate
+/// `role="system"` messages, which strict ChatML/Jinja templates (qwen) reject
+/// when they appear at non-zero indices.
+///
+/// This function:
+///   - Removes all `role="system"` messages from the array, extracting their
+///     text into `extra_systems`
+///   - Strips `<system-reminder>` blocks from user messages, extracting their
+///     inner text into `extra_systems`
+///   - Returns cleaned messages (only user/assistant) and the collected texts
+///     to be merged into the top-level `system` field.
+pub fn extract_and_merge_system_reminders(
+    messages: Vec<ClaudeMessage>,
+) -> (Vec<ClaudeMessage>, Vec<String>) {
+    let mut out: Vec<ClaudeMessage> = Vec::with_capacity(messages.len());
+    let mut extra_systems: Vec<String> = Vec::new();
+
+    for msg in messages {
+        // ── role="system" messages: extract text, merge to top-level ──
+        if msg.role == "system" {
+            let text = match &msg.content {
+                ClaudeContent::Text(t) => t.clone(),
+                ClaudeContent::Blocks(blocks) => claude_blocks_to_text(blocks),
+            };
+            if !text.is_empty() {
+                extra_systems.push(text);
+            }
+            continue;
+        }
+
+        // ── role="user" messages: strip <system-reminder> blocks ──
+        if msg.role != "user" {
+            out.push(msg);
+            continue;
+        }
+
+        let mut cleaned_blocks: Vec<ClaudeContentBlock> = Vec::new();
+        let mut had_reminders = false;
+
+        let blocks = match msg.content {
+            ClaudeContent::Text(t) => vec![ClaudeContentBlock {
+                content_type: "text".to_string(), text: Some(t),
+                source: None, id: None, name: None, input: None,
+                tool_use_id: None, content: None,
+            }],
+            ClaudeContent::Blocks(b) => b,
+        };
+
+        for block in blocks {
+            if block.content_type == "text" {
+                if let Some(ref t) = block.text {
+                    if let Some(inner) = strip_system_reminder(t) {
+                        extra_systems.push(inner);
+                        had_reminders = true;
+                        continue;
+                    }
+                }
+            }
+            cleaned_blocks.push(block);
+        }
+
+        if had_reminders && cleaned_blocks.is_empty() {
+            continue; // drop empty user message
+        }
+
+        if cleaned_blocks.len() == 1 && cleaned_blocks[0].content_type == "text" {
+            out.push(ClaudeMessage {
+                role: "user".to_string(),
+                content: ClaudeContent::Text(cleaned_blocks[0].text.clone().unwrap_or_default()),
+            });
+        } else {
+            out.push(ClaudeMessage {
+                role: "user".to_string(),
+                content: ClaudeContent::Blocks(cleaned_blocks),
+            });
+        }
+    }
+
+    (out, extra_systems)
+}
+
+/// Extract inner text from a `<system-reminder>...</system-reminder>` block.
+/// Returns `None` if the text is not wrapped in system-reminder tags.
+fn strip_system_reminder(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.starts_with("<system-reminder>") && trimmed.ends_with("</system-reminder>") {
+        let inner = &trimmed["<system-reminder>".len()..trimmed.len() - "</system-reminder>".len()];
+        let inner = inner.trim();
+        if inner.is_empty() {
+            None
+        } else {
+            Some(inner.to_string())
+        }
+    } else {
+        None
+    }
+}
 
 pub struct AnthropicPassthrough;
 
 impl MessageAdapter for AnthropicPassthrough {
     fn client_protocol(&self) -> ClientProtocol { ClientProtocol::Anthropic }
 
-    fn adapt_request(&self, mut body: Value, deployment: &Deployment) -> Result<Value, AdapterError> {
-        body.as_object_mut().map(|obj| {
-            obj.insert("model".to_string(), json!(deployment.upstream_model));
-            // Inject stream_options via body; Anthropic uses different streaming but
-            // for passthrough compatibility we keep the original structure intact.
-            if obj.get("stream").and_then(|v| v.as_bool()).unwrap_or(false) {
-                obj.insert("stream_options".to_string(), json!({"include_usage": true}));
+    fn adapt_request(&self, body: Value, deployment: &Deployment) -> Result<Value, AdapterError> {
+        let mut req: ClaudeMessageRequest = serde_json::from_value(body)
+            .map_err(|e| AdapterError::Parse(format!("Invalid Claude request: {}", e)))?;
+
+        // Mirror AnthropicToOpenAI normalization on the Anthropic body level.
+        // Strip role="system" messages and <system-reminder> blocks from messages,
+        // merging them into the top-level `system` field.
+        let compat = resolve_chat_template_compat(deployment);
+        if compat == ChatTemplateCompat::Strict {
+            let (cleaned, reminders) = extract_and_merge_system_reminders(
+                std::mem::take(&mut req.messages),
+            );
+            req.messages = cleaned;
+
+            if !reminders.is_empty() {
+                let combined = reminders.join("\n\n");
+                req.system = Some(match req.system.take() {
+                    Some(ClaudeSystemMessage::Text(existing)) => {
+                        ClaudeSystemMessage::Text(format!("{}\n\n{}", existing, combined))
+                    }
+                    Some(ClaudeSystemMessage::Blocks(mut blocks)) => {
+                        blocks.extend(reminders.into_iter().map(|t| ClaudeContentBlock {
+                            content_type: "text".to_string(), text: Some(t),
+                            source: None, id: None, name: None, input: None,
+                            tool_use_id: None, content: None,
+                        }));
+                        ClaudeSystemMessage::Blocks(blocks)
+                    }
+                    None => ClaudeSystemMessage::Text(combined),
+                });
             }
-        });
-        Ok(body)
+        }
+
+        req.model = deployment.upstream_model.clone();
+        let is_stream = req.stream.unwrap_or(false);
+        let mut json = serde_json::to_value(&req)
+            .map_err(|e| AdapterError::Parse(e.to_string()))?;
+        // Anthropic requires `include_usage` in body for streaming responses
+        // to include usage.{input_tokens, output_tokens} in message_delta events
+        if is_stream {
+            json.as_object_mut().map(|obj| {
+                obj.insert("stream_options".to_string(), json!({"include_usage": true}));
+            });
+        }
+        Ok(json)
     }
 
     fn adapt_response(&self, body: Value) -> Result<Value, AdapterError> { Ok(body) }
@@ -2026,5 +2166,230 @@ mod tests {
         assert!(r1.is_some(), "first finish should return events");
         let r2 = stream.finish();
         assert!(r2.is_none(), "second finish should be idempotent (None)");
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // Hotfix: AnthropicPassthrough + Strict system-reminder extraction
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    /// Real-world Claude Code body: system-reminder injected into a user message
+    /// alongside the real query, after tool_result context.
+    fn make_claude_code_qwen_body() -> Value {
+        json!({
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 4096,
+            "system": "You are Claude Code, Anthropic's official CLI for Claude.",
+            "messages": [
+                {"role": "user", "content": "check hostname"},
+                {"role": "assistant", "content": [
+                    {"type": "tool_use", "id": "toolu_01", "name": "hostname", "input": {}}
+                ]},
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "toolu_01", "content": "myhost"}
+                ]},
+                {"role": "user", "content": [
+                    {"type": "text", "text": "<system-reminder>\nAvailable agent types for the Agent tool: foo, bar\n</system-reminder>"},
+                    {"type": "text", "text": "do something"}
+                ]}
+            ]
+        })
+    }
+
+    fn make_strict_deployment() -> Deployment {
+        Deployment {
+            upstream_model: "qwen/qwen3.5-9b".into(),
+            chat_template_compat: None, // auto-sniff detects qwen → Strict
+            ..anthropic_deployment()
+        }
+    }
+
+    // UT-HF0: strip_system_reminder
+    #[test]
+    fn test_hf_strip_system_reminder() {
+        assert_eq!(
+            strip_system_reminder("<system-reminder>\nI am a system reminder\n</system-reminder>"),
+            Some("I am a system reminder".to_string())
+        );
+        assert_eq!(
+            strip_system_reminder("<system-reminder>Single line</system-reminder>"),
+            Some("Single line".to_string())
+        );
+        assert_eq!(strip_system_reminder("plain text"), None);
+        assert_eq!(strip_system_reminder("<system-reminder></system-reminder>"), None); // empty
+    }
+
+    // UT-HF1: extract_and_merge_system_reminders — from user with text + reminder
+    #[test]
+    fn test_hf_extract_system_reminders_basic() {
+        let messages = vec![
+            ClaudeMessage { role: "user".to_string(), content: ClaudeContent::Blocks(vec![
+                ClaudeContentBlock { content_type: "text".to_string(), text: Some("<system-reminder>\nagent list\n</system-reminder>".to_string()), source: None, id: None, name: None, input: None, tool_use_id: None, content: None },
+                ClaudeContentBlock { content_type: "text".to_string(), text: Some("actual query".to_string()), source: None, id: None, name: None, input: None, tool_use_id: None, content: None },
+            ])},
+        ];
+        let (cleaned, extra) = extract_and_merge_system_reminders(messages);
+        assert_eq!(extra.len(), 1);
+        assert_eq!(extra[0], "agent list");
+        assert_eq!(cleaned.len(), 1);
+        match &cleaned[0].content {
+            ClaudeContent::Text(t) => assert_eq!(t, "actual query"),
+            _ => panic!("expected Text after single block remaining"),
+        }
+    }
+
+    // UT-HF2: extract_and_merge_system_reminders — pure reminder user is dropped
+    #[test]
+    fn test_hf_extract_pure_reminder_dropped() {
+        let messages = vec![
+            ClaudeMessage { role: "user".to_string(), content: ClaudeContent::Text("<system-reminder>\ncontext\n</system-reminder>".to_string()) },
+            ClaudeMessage { role: "assistant".to_string(), content: ClaudeContent::Text("ok".to_string()) },
+        ];
+        let (cleaned, extra) = extract_and_merge_system_reminders(messages);
+        assert_eq!(extra.len(), 1);
+        assert_eq!(extra[0], "context");
+        assert_eq!(cleaned.len(), 1);
+        assert_eq!(cleaned[0].role, "assistant");
+    }
+
+    // UT-HF2b: extract role="system" messages (the actual DB-recorded failure mode)
+    #[test]
+    fn test_hf_extract_role_system_message() {
+        let messages = vec![
+            ClaudeMessage { role: "user".to_string(), content: ClaudeContent::Text("check hostname".to_string()) },
+            ClaudeMessage { role: "assistant".to_string(), content: ClaudeContent::Text("ok".to_string()) },
+            ClaudeMessage { role: "system".to_string(), content: ClaudeContent::Text("Extra system context".to_string()) },
+            ClaudeMessage { role: "user".to_string(), content: ClaudeContent::Text("do next task".to_string()) },
+        ];
+        let (cleaned, extra) = extract_and_merge_system_reminders(messages);
+        assert_eq!(extra.len(), 1, "role=system should be extracted, got {:?}", extra);
+        assert_eq!(extra[0], "Extra system context");
+        // No role="system" in output
+        for msg in &cleaned {
+            assert!(matches!(msg.role.as_str(), "user" | "assistant"),
+                "role should not be 'system': {}", msg.role);
+        }
+        assert_eq!(cleaned.len(), 3); // user + assistant + user
+    }
+
+    // UT-HF2c: role="system" with Blocks content
+    #[test]
+    fn test_hf_extract_role_system_blocks() {
+        let messages = vec![
+            ClaudeMessage {
+                role: "system".to_string(),
+                content: ClaudeContent::Blocks(vec![
+                    ClaudeContentBlock { content_type: "text".to_string(), text: Some("sys block A".to_string()), source: None, id: None, name: None, input: None, tool_use_id: None, content: None },
+                    ClaudeContentBlock { content_type: "text".to_string(), text: Some("sys block B".to_string()), source: None, id: None, name: None, input: None, tool_use_id: None, content: None },
+                ]),
+            },
+            ClaudeMessage { role: "user".to_string(), content: ClaudeContent::Text("query".to_string()) },
+        ];
+        let (cleaned, extra) = extract_and_merge_system_reminders(messages);
+        assert_eq!(extra.len(), 1);
+        assert!(extra[0].contains("sys block A"));
+        assert!(extra[0].contains("sys block B"));
+        assert_eq!(cleaned.len(), 1);
+        assert_eq!(cleaned[0].role, "user");
+    }
+
+    // UT-HF3: AnthropicPassthrough Strict — system-reminder merged into top-level system
+    #[test]
+    fn test_hf_passthrough_strict_fold() {
+        let body = make_claude_code_qwen_body();
+        let adapted = AnthropicPassthrough.adapt_request(body, &make_strict_deployment()).unwrap();
+
+        // System must contain both original + extracted reminders
+        let sys = adapted["system"].as_str().unwrap();
+        assert!(sys.contains("You are Claude Code"), "missing original system: {}", sys);
+        assert!(sys.contains("Available agent types"), "missing extracted reminder: {}", sys);
+
+        // The last user message must NOT contain system-reminder tags
+        let msgs = adapted["messages"].as_array().unwrap();
+        let last_content = &msgs.last().unwrap()["content"];
+        if let Some(t) = last_content.as_str() {
+            assert!(!t.contains("system-reminder"), "user text still has reminder: {}", t);
+        } else if let Some(arr) = last_content.as_array() {
+            for b in arr {
+                if let Some(t) = b["text"].as_str() {
+                    assert!(!t.contains("system-reminder"), "user block still has reminder: {}", t);
+                }
+            }
+        }
+    }
+
+    // UT-HF4: Loose mode — no extraction
+    #[test]
+    fn test_hf_passthrough_loose_no_extraction() {
+        let body = json!({
+            "model": "claude-sonnet", "max_tokens": 100,
+            "messages": [{"role": "user", "content": [{"type": "text", "text": "<system-reminder>\nctx\n</system-reminder>"}]}]
+        });
+        let deployment = Deployment { chat_template_compat: Some("loose".to_string()), ..make_strict_deployment() };
+        let adapted = AnthropicPassthrough.adapt_request(body, &deployment).unwrap();
+        let msgs = adapted["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert!(adapted["system"].is_null(), "no system field should be added");
+    }
+
+    // UT-HF5: non-qwen upstream — passthrough
+    #[test]
+    fn test_hf_passthrough_non_qwen_passthrough() {
+        let body = json!({
+            "model": "claude-sonnet", "max_tokens": 100,
+            "messages": [{"role": "user", "content": [{"type": "text", "text": "<system-reminder>\nctx\n</system-reminder>"}]}]
+        });
+        let deployment = Deployment { upstream_model: "gpt-4".into(), ..make_strict_deployment() };
+        let adapted = AnthropicPassthrough.adapt_request(body, &deployment).unwrap();
+        let msgs = adapted["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 1);
+    }
+
+    // UT-HF6: tool_result messages preserved in Strict mode (no role="tool" leak)
+    #[test]
+    fn test_hf_passthrough_strict_preserves_tool_result() {
+        // Real-world body after tool execution: tool_result + system-reminder + query
+        let body = json!({
+            "model": "claude-sonnet-4-20250514",
+            "max_tokens": 32000,
+            "system": "You are Claude Code.",
+            "messages": [
+                {"role": "user", "content": "check hostname"},
+                {"role": "assistant", "content": [
+                    {"type": "tool_use", "id": "toolu_01", "name": "Bash", "input": {"command": "uname -r"}},
+                    {"type": "tool_use", "id": "toolu_02", "name": "Bash", "input": {"command": "lsmod"}}
+                ]},
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "toolu_01", "content": "7.0.11\naarch64"},
+                    {"type": "tool_result", "tool_use_id": "toolu_02", "content": "Exit code 127\nlsmod: not found"}
+                ]},
+                {"role": "user", "content": [
+                    {"type": "text", "text": "<system-reminder>\nAvailable agent types...\n</system-reminder>"},
+                    {"type": "text", "text": "do next task"}
+                ]}
+            ]
+        });
+        let adapted = AnthropicPassthrough.adapt_request(body, &make_strict_deployment()).unwrap();
+        let msgs = adapted["messages"].as_array().unwrap();
+
+        // Must NOT contain role="tool" (Anthropic protocol rejects it)
+        for msg in msgs {
+            let role = msg["role"].as_str().unwrap();
+            assert!(
+                matches!(role, "user" | "assistant"),
+                "illegal role in Anthropic body: {}", role
+            );
+        }
+
+        // tool_result user message preserved (index 2: after assistant with tool_use)
+        assert_eq!(msgs[2]["role"].as_str(), Some("user"));
+        let tr_content = msgs[2]["content"].as_array().unwrap();
+        assert_eq!(tr_content[0]["type"].as_str(), Some("tool_result"));
+
+        // system-reminder stripped from last user (index 3)
+        let last_user = msgs.get(3).unwrap_or_else(|| msgs.last().unwrap());
+        let last_content = &last_user["content"];
+        if let Some(t) = last_content.as_str() {
+            assert!(!t.contains("system-reminder"));
+        }
     }
 }

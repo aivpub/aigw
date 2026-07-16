@@ -628,8 +628,12 @@ pub async fn messages_handler(
                                     if data != "[DONE]" {
                                         if let Ok(raw) = serde_json::from_str::<Value>(data) {
                                             if let Some(usage) = raw.get("usage") {
-                                                last_prompt_tokens = usage.get("prompt_tokens").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-                                                last_completion_tokens = usage.get("completion_tokens").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                                                last_prompt_tokens = usage.get("prompt_tokens")
+                                                    .or_else(|| usage.get("input_tokens"))
+                                                    .and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                                                last_completion_tokens = usage.get("completion_tokens")
+                                                    .or_else(|| usage.get("output_tokens"))
+                                                    .and_then(|v| v.as_i64()).unwrap_or(0) as i32;
                                             }
                                             if raw.get("choices").and_then(|c| c.as_array()).map(|a| !a.is_empty()).unwrap_or(false) {
                                                 chunk_jsons.push(raw);
@@ -775,18 +779,20 @@ pub async fn messages_handler(
         // Record spend log
         let now = chrono::Utc::now();
         let usage = resp_body.get("usage");
+        // Handle both OpenAI format (prompt_tokens/completion_tokens) and
+        // Anthropic format (input_tokens/output_tokens) from passthrough.
         let prompt_tokens = usage
-            .and_then(|u| u.get("prompt_tokens"))
+            .and_then(|u| u.get("prompt_tokens").or_else(|| u.get("input_tokens")))
             .and_then(|v| v.as_i64())
             .unwrap_or(0) as i32;
         let completion_tokens = usage
-            .and_then(|u| u.get("completion_tokens"))
+            .and_then(|u| u.get("completion_tokens").or_else(|| u.get("output_tokens")))
             .and_then(|v| v.as_i64())
             .unwrap_or(0) as i32;
         let total_tokens = usage
             .and_then(|u| u.get("total_tokens"))
             .and_then(|v| v.as_i64())
-            .unwrap_or(0) as i32;
+            .unwrap_or((prompt_tokens + completion_tokens) as i64) as i32;
         let spend_amount =
             super::chat::calc_spend(prompt_tokens, completion_tokens, input_cost, output_cost);
         let spend_log = aigw_core::models::SpendLog {
