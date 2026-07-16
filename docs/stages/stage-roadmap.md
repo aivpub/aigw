@@ -7,9 +7,9 @@
 
 ## 当前状态
 
-- **当前 Phase**: Phase 23 — Router 负载均衡
-- **状态**: 62/64 Stages 已完成（2 个待开始）
-- **下一里程碑**: Phase 23 完成后消化 LT-Native + LT-Router，进入 LT-Observ 触发等待
+- **当前 Phase**: Phase 24 — 管理控制台完善
+- **状态**: 64/65 Stages 已完成（1 个待开始）
+- **下一里程碑**: Phase 24 完成后消化 LT-Settings，进入 LT-Observ 触发等待
 
 ### 整体进度
 
@@ -31,7 +31,8 @@ Phase 19:   ████████████████████ 100% (2
 Phase 20:   ████████████████████ 100% (2/2 Stages) ✅ 可观测性增强
 Phase 21:   ████████████████████ 100% (2/2 Stages) ✅ 协议兼容性修复
 Phase 22:   ████████████████████ 100% (2/2 Stages) ✅ Anthropic 原生上游
-Phase 23:   ░░░░░░░░░░░░░░░░░░░░   0% (2/2 Stages) ⏳ Router 负载均衡
+Phase 23:   ████████████████████ 100% (2/2 Stages) ✅ Router 负载均衡
+Phase 24:   ░░░░░░░░░░░░░░░░░░░░   0% (1/1 Stage)  ⏳ 管理控制台完善
 ```
 
 ---
@@ -173,14 +174,12 @@ Phase 23:   ░░░░░░░░░░░░░░░░░░░░   0% (2
 
 ---
 
-### Phase 23：Router 负载均衡（LT-Router）
-
-**背景**: upstream litellm 有同名多 deployment（2 组），aigw 被 UNIQUE INDEX 限制只保留一条。需移除限制 + 实现 Router 策略引擎 + 三级 router_settings 配置 + 前端。
+### Phase 23：Router 负载均衡
 
 | Stage | 状态 | 目标 | 类型 | 预估 |
 |-------|------|------|------|------|
-| Stage 63 | ⏳ 待开始 | **Schema 修复 + Router Core** — Migration 去掉 UNIQUE INDEX；aigw-migrate 补齐多 deployment；`Router` struct 含 `pick_deployment(SimpleShuffle)` + cooldown + report_failure/success + retry loop。TDD: 8 UT | 后端+测试 | 8h |
-| Stage 64 | ⏳ 待开始 | **三级 router_settings + API + 前端** — 启动时读 Global config 表；请求时 Key>Team>Global 合并；4 REST 端点；前端独立 `/dash/router-settings` 页面 + RouterSettingsAccordion 组件。TDD: 4 UT + 5 BDD × 3 viewports | 全栈+测试 | 8h |
+| Stage 63 | ✅ 完成 | **Schema Repair + Router Core** — Migration 去掉 UNIQUE INDEX；Router struct (SimpleShuffle + cooldown + failure tracking)；10 UT | 后端+测试 | 8h | 2026-07-16 |
+| Stage 64 | ✅ 完成 | **三级 router_settings + API + 前端** — GET/PUT /router/settings + PATCH key/team；merge_router_overrides；前端独立页面；4 UT | 全栈+测试 | 8h | 2026-07-16 |
 
 **依赖关系**: 63 → 64 串行。
 
@@ -188,16 +187,15 @@ Phase 23:   ░░░░░░░░░░░░░░░░░░░░   0% (2
 
 ---
 
-**Phase 21-23 总汇总**:
+### Phase 24：管理控制台完善
 
-| Phase | Stages | 工时 | 主题 |
-|-------|--------|------|------|
-| 21 | 59-60 | 12h | 协议兼容性修复 |
-| 22 | 61-62 | 14h | Anthropic 原生上游 (LT-Native) |
-| 23 | 63-64 | 16h | Router 负载均衡 (LT-Router) |
-| **合计** | **6 Stages** | **42h** | 三 Phase 可并行推进 |
+**背景**: 侧边栏缺少 SETTINGS 分组；Router Settings 仅 Global Tab 不完整；Credential 后端 CRUD 已有但缺少前端管理页；Health 页面代码存在但路由/侧边栏未注册。
 
-完成后消化 LT-Native + LT-Router，状态 64/64。遗留 LT-Observ / LT-Usage / LT-PG / LT-Redis / LT-SSO / LT-K8s 仍为触发等待。
+| Stage | 状态 | 目标 | 类型 | 预估 |
+|-------|------|------|------|------|
+| Stage 65 | ⏳ 待开始 | **SETTINGS 分组 + Router Settings 三 Tab + Models 多 Tab + Credential 前端 + Health Tab** — 侧边栏新增 SETTINGS 组；Router Settings 拆分 Global/Keys/Teams 三 Tab；Models 页面重组为 Model Groups/Credentials/Health 三 Tab；Credential CRUD 完整前端；Health Tab 对接 /health/metrics | 前端+测试 | 5h |
+
+**Phase 24 合计**: 5h。独立 Stage，无后端变更（所有 API 已就绪）。
 
 ---
 
@@ -336,3 +334,4 @@ Phase 23:   ░░░░░░░░░░░░░░░░░░░░   0% (2
 | v16.0 | 2026-07-15 | **Spend Logs & Usage 质量修复规划**：Phase 17 Stage 50-52 已全部完成，状态更新为 ✅；新增 Phase 18（Stage 53: 时间过滤+Usage 当天数据修复，Stage 54: end_user 提取+复制按钮反馈），共 2 Stage，预估 11h |
 | v17.0 | 2026-07-16 | **Phase 19-20 完成 + Phase 21 规划**：Phase 19-20 (Stages 55-58) 全部完成（Models CRUD、Prompt 可视化、过滤器、Overhead）；新增 Phase 21（Stages 59-60，共 2 Stage，预估 12h）：Multi tool_result 修复、System Message Normalization。总进度 58/60 |
 | v18.0 | 2026-07-16 | **Phase 21-23 拉通规划**：新增 Phase 22（Stages 61-62, Anthropic 原生上游, 14h）+ Phase 23（Stages 63-64, Router 负载均衡, 16h）。总进度 58/64，消化 LT-Native + LT-Router。6 Stage 细节文档就绪：`stage-59~64.md` |
+| v19.0 | 2026-07-16 | **Phase 23 完成 + Phase 24 规划**：Stages 63-64 完成；新增 Phase 24（Stage 65，管理控制台完善, 5h）：SETTINGS 分组 + Router Settings 三 Tab + Models 多 Tab + Credential 管理前端 + Health Tab 集成。总进度 64/65。|

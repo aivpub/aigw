@@ -1,11 +1,11 @@
 # aigw -- 下一步行动
 
 **上次更新**: 2026-07-16
-**当前阶段**: 全部完成！64/64 Stages
+**当前阶段**: Phase 24 管理控制台完善（Stage 65）
 
 ---
 
-## 当前状态：64/64 Stages 已完成 ✅
+## 当前状态：64/65 Stages 已完成
 
 ### 项目里程碑
 
@@ -15,7 +15,7 @@ Phase 5:    ████████████████████ 100% (6
 Phase 7:    ████████████████████ 100% (5/5)  ✅ 生产 litellm 迁移
 Phase 8:    ████████████████████ 100% (3/3)  ✅ 生产化基础（日志/多租户/健康检查）
 Phase 9:    ████████████████████ 100% (4/4)  ✅ 前端管理控制台
-Phase 11:   ████████████████████ 100% (6/6)  ✅ 前端質量加固 + 安全达标
+Phase 11:   ████████████████████ 100% (6/6)  ✅ 前端质量加固 + 安全达标
 Phase 12:   ████████████████████ 100% (3/3)  ✅ 前端导航重构 + Playground
 Phase 13:   ████████████████████ 100% (6/6)  ✅ 前端反馈改进（Stages 34-39）
 Phase 14:   ████████████████████ 100% (4/4)  ✅ /v1/messages 接口修复（Stages 40-43）
@@ -28,6 +28,7 @@ Phase 20:   ████████████████████ 100% (2
 Phase 21:   ████████████████████ 100% (2/2)  ✅ 协议兼容性修复（Stages 59-60）
 Phase 22:   ████████████████████ 100% (2/2)  ✅ Anthropic 原生上游适配（Stages 61-62）
 Phase 23:   ████████████████████ 100% (2/2)  ✅ Router 负载均衡（Stages 63-64）
+Phase 24:   ░░░░░░░░░░░░░░░░░░░░   0% (1/1)  ⏳ 管理控制台完善（Stage 65）
 ```
 
 ### 测试状态
@@ -75,8 +76,8 @@ Phase 23:   ████████████████████ 100% (2
 
 | Stage | 目标 | 状态 |
 |-------|------|------|
-| Stage 61 | AnthropicPassthrough + OpenAIToAnthropic | ⏳ 待开始 |
-| Stage 62 | select_adapter 扩展 + Handler 对接 + 全量回归 | ⏳ 待开始 |
+| Stage 61 | AnthropicPassthrough + OpenAIToAnthropic | ✅ **完成 (2026-07-16)** |
+| Stage 62 | select_adapter 扩展 + Handler 对接 + 全量回归 | ✅ **完成 (2026-07-16)** |
 
 **Stage 文档**: `docs/stages/stage-61.md`, `docs/stages/stage-62.md`
 
@@ -93,14 +94,23 @@ Phase 23:   ████████████████████ 100% (2
 
 ---
 
+## Phase 24: 管理控制台完善
+
+| Stage | 目标 | 状态 |
+|-------|------|------|
+| Stage 65 | SETTINGS 分组 + Router 三 Tab + Models 多 Tab + Credential 前端 + Health Tab | ⏳ 待开始 |
+
+**Stage 文档**: `docs/stages/stage-65.md`
+
+---
+
 ## 依赖关系
 
 ```
 Phase 21: Stage 59 ∥ 60 (并行)
 Phase 22: Stage 61 → 62 (串行)
 Phase 23: Stage 63 → 64 (串行)
-
-Phase 21 ∥ Phase 22 ∥ Phase 23 (三 Phase 可并行)
+Phase 24: Stage 65 (独立，前端为主)
 ```
 
 ---
@@ -109,14 +119,14 @@ Phase 21 ∥ Phase 22 ∥ Phase 23 (三 Phase 可并行)
 
 | ID | 主题 | 优先级 | 触发条件 |
 |----|------|--------|---------|
-| LT-Observ | Observability (Prometheus metrics) | P1 | 推荐 Phase 23 完成后启动 |
+| LT-Observ | Observability (Prometheus metrics) | P1 | Phase 24 完成后启动 |
 | LT-Usage | Usage 多视角聚合 | P2 | 前端用户反馈 |
 | LT-Redis | Redis 缓存 | P2 | QPS > 1000 |
 | LT-PG | PostgreSQL 生产级 | P2 | 多实例 + 高可用 |
 | LT-SSO | SSO/OAuth | P3 | 企业客户需求 |
 | LT-K8s | Kubernetes Operator | P3 | 云原生客户需求 |
 
-> **已消化**: LT-Native (Phase 22), LT-Router (Phase 23)
+> **已消化**: LT-Native (Phase 22), LT-Router (Phase 23), LT-Settings (Phase 24)
 
 ---
 
