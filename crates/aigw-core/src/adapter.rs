@@ -398,7 +398,7 @@ impl ProviderAdapter for DefaultAdapter {
                 }
             }
         }
-        for msg in &req.messages { messages.push(claude_message_to_openai(msg)); }
+        for msg in &req.messages { messages.extend(claude_message_to_openai(msg)); }
 
         // Map Claude tools → OpenAI tools
         let tools = req.tools.as_ref().map(|claude_tools| {
@@ -579,51 +579,90 @@ fn claude_blocks_to_text(blocks: &[ClaudeContentBlock]) -> String {
     blocks.iter().filter(|b| b.content_type == "text").filter_map(|b| b.text.clone()).collect::<Vec<_>>().join("")
 }
 
-fn claude_message_to_openai(msg: &ClaudeMessage) -> ChatMessage {
+fn claude_message_to_openai(msg: &ClaudeMessage) -> Vec<ChatMessage> {
     match &msg.content {
-        ClaudeContent::Text(t) => ChatMessage {
+        ClaudeContent::Text(t) => vec![ChatMessage {
             role: msg.role.clone(), content: ChatContent::Text(t.clone()),
             name: None, tool_calls: None, tool_call_id: None,
-        },
+        }],
         ClaudeContent::Blocks(blocks) => {
-            // Only emit ContentParts for text/image blocks.
-            // tool_use and tool_result are handled separately below
-            // (tool_calls / tool_call_id); including them would produce
-            // ContentPart { type:"text", text:None } which upstream
-            // rejects as "missing field `text`".
-            let parts: Vec<ContentPart> = blocks.iter()
-                .filter(|b| b.content_type == "text" || b.content_type == "image")
-                .map(|b| {
-                    if b.content_type == "image" {
-                        ContentPart {
-                            content_type: "image_url".to_string(), text: None,
-                            image_url: b.source.as_ref().map(|s| ImageUrl { url: format!("data:{};base64,{}", s.media_type, s.data) }),
-                        }
-                    } else {
-                        ContentPart { content_type: "text".to_string(), text: b.text.clone(), image_url: None }
-                    }
-                }).collect();
-            let tool_calls: Vec<ToolCall> = blocks.iter()
-                .filter(|b| b.content_type == "tool_use")
-                .filter_map(|b| {
-                    let id = b.id.clone()?;
-                    let name = b.name.clone()?;
-                    let input = b.input.clone().unwrap_or(json!({}));
-                    Some(ToolCall { id, call_type: "function".to_string(), function: ToolCallFunction { name, arguments: input.to_string() } })
-                }).collect();
-            let tc = if tool_calls.is_empty() { None } else { Some(tool_calls) };
             let tool_results: Vec<(String, String)> = blocks.iter()
                 .filter(|b| b.content_type == "tool_result")
                 .filter_map(|b| {
                     let tui = b.tool_use_id.clone()?;
-                    let c = b.content.as_ref().and_then(|v| v.as_str().map(String::from)).or_else(|| b.text.clone()).unwrap_or_default();
+                    let c = b.content.as_ref()
+                        .and_then(|v| v.as_str().map(String::from))
+                        .or_else(|| b.text.clone())
+                        .unwrap_or_default();
                     Some((tui, c))
                 }).collect();
+
             if !tool_results.is_empty() && msg.role == "user" {
-                let (tool_use_id, content) = &tool_results[0];
-                ChatMessage { role: "tool".to_string(), content: ChatContent::Text(content.clone()), name: None, tool_calls: None, tool_call_id: Some(tool_use_id.clone()) }
+                let mut out = Vec::new();
+
+                // Non-tool_result content parts (text/image) → user message
+                let non_tool_parts: Vec<ContentPart> = blocks.iter()
+                    .filter(|b| b.content_type != "tool_result")
+                    .filter(|b| b.content_type == "text" || b.content_type == "image")
+                    .map(|b| {
+                        if b.content_type == "image" {
+                            ContentPart {
+                                content_type: "image_url".to_string(), text: None,
+                                image_url: b.source.as_ref().map(|s| ImageUrl { url: format!("data:{};base64,{}", s.media_type, s.data) }),
+                            }
+                        } else {
+                            ContentPart { content_type: "text".to_string(), text: b.text.clone(), image_url: None }
+                        }
+                    }).collect();
+                if !non_tool_parts.is_empty() {
+                    out.push(ChatMessage {
+                        role: "user".to_string(),
+                        content: ChatContent::Parts(non_tool_parts),
+                        name: None,
+                        tool_calls: None,
+                        tool_call_id: None,
+                    });
+                }
+
+                // Each tool_result → one tool message
+                for (tool_use_id, content) in &tool_results {
+                    out.push(ChatMessage {
+                        role: "tool".to_string(),
+                        content: ChatContent::Text(content.clone()),
+                        name: None,
+                        tool_calls: None,
+                        tool_call_id: Some(tool_use_id.clone()),
+                    });
+                }
+                out
             } else {
-                ChatMessage { role: msg.role.clone(), content: ChatContent::Parts(parts), name: None, tool_calls: tc, tool_call_id: None }
+                // Only emit ContentParts for text/image blocks.
+                // tool_use and tool_result are handled separately above
+                // (tool_calls / tool_call_id); including them would produce
+                // ContentPart { type:"text", text:None } which upstream
+                // rejects as "missing field `text`".
+                let parts: Vec<ContentPart> = blocks.iter()
+                    .filter(|b| b.content_type == "text" || b.content_type == "image")
+                    .map(|b| {
+                        if b.content_type == "image" {
+                            ContentPart {
+                                content_type: "image_url".to_string(), text: None,
+                                image_url: b.source.as_ref().map(|s| ImageUrl { url: format!("data:{};base64,{}", s.media_type, s.data) }),
+                            }
+                        } else {
+                            ContentPart { content_type: "text".to_string(), text: b.text.clone(), image_url: None }
+                        }
+                    }).collect();
+                let tool_calls: Vec<ToolCall> = blocks.iter()
+                    .filter(|b| b.content_type == "tool_use")
+                    .filter_map(|b| {
+                        let id = b.id.clone()?;
+                        let name = b.name.clone()?;
+                        let input = b.input.clone().unwrap_or(json!({}));
+                        Some(ToolCall { id, call_type: "function".to_string(), function: ToolCallFunction { name, arguments: input.to_string() } })
+                    }).collect();
+                let tc = if tool_calls.is_empty() { None } else { Some(tool_calls) };
+                vec![ChatMessage { role: msg.role.clone(), content: ChatContent::Parts(parts), name: None, tool_calls: tc, tool_call_id: None }]
             }
         }
     }
@@ -674,7 +713,11 @@ mod tests {
         Deployment {
             api_base: "https://api.openai.com/v1".into(), api_key: None,
             upstream_model: "gpt-4".into(), provider_type: ProviderType::OpenAICompatible,
-            input_cost_per_token: None, output_cost_per_token: None, raw_params: json!({"custom_llm_provider": "openai"}),
+            input_cost_per_token: None, output_cost_per_token: None,
+            raw_params: json!({"custom_llm_provider": "openai"}),
+            model_id: Some("test-model-id".into()),
+            model_group: Some("gpt-4".into()),
+            custom_llm_provider: Some("openai".into()),
         }
     }
 
@@ -870,6 +913,104 @@ mod tests {
         });
         let adapted = AnthropicToOpenAI.adapt_request(body, &test_deployment()).unwrap();
         assert_eq!(adapted["tool_choice"].as_str(), Some("none"));
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // Stage 59: Multi tool_result tests
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    #[test]
+    fn test_stage59_single_tool_result_regression() {
+        let body = json!({
+            "model": "claude-sonnet", "max_tokens": 1024,
+            "messages": [{"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_01", "content": "output1"}
+            ]}]
+        });
+        let adapted = AnthropicToOpenAI.adapt_request(body, &test_deployment()).unwrap();
+        let msgs = adapted["messages"].as_array().unwrap();
+        // Single tool_result → 1 tool message
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0]["role"].as_str(), Some("tool"));
+        assert_eq!(msgs[0]["tool_call_id"].as_str(), Some("toolu_01"));
+    }
+
+    #[test]
+    fn test_stage59_double_tool_result() {
+        let body = json!({
+            "model": "claude-sonnet", "max_tokens": 1024,
+            "messages": [{"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "toolu_01", "content": "Bash output"},
+                {"type": "tool_result", "tool_use_id": "toolu_02", "content": "Read output"}
+            ]}]
+        });
+        let adapted = AnthropicToOpenAI.adapt_request(body, &test_deployment()).unwrap();
+        let msgs = adapted["messages"].as_array().unwrap();
+        // Two tool_results → 2 tool messages
+        assert_eq!(msgs.len(), 2, "expected 2 tool messages, got {}", msgs.len());
+        assert_eq!(msgs[0]["role"].as_str(), Some("tool"));
+        assert_eq!(msgs[0]["tool_call_id"].as_str(), Some("toolu_01"));
+        assert_eq!(msgs[1]["role"].as_str(), Some("tool"));
+        assert_eq!(msgs[1]["tool_call_id"].as_str(), Some("toolu_02"));
+    }
+
+    #[test]
+    fn test_stage59_triple_tool_result() {
+        let body = json!({
+            "model": "claude-sonnet", "max_tokens": 1024,
+            "messages": [{"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "tc1", "content": "r1"},
+                {"type": "tool_result", "tool_use_id": "tc2", "content": "r2"},
+                {"type": "tool_result", "tool_use_id": "tc3", "content": "r3"}
+            ]}]
+        });
+        let adapted = AnthropicToOpenAI.adapt_request(body, &test_deployment()).unwrap();
+        let msgs = adapted["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 3);
+        // Verify all three tool_call_ids are present and distinct
+        let ids: Vec<&str> = msgs.iter()
+            .filter_map(|m| m["tool_call_id"].as_str())
+            .collect();
+        assert_eq!(ids, vec!["tc1", "tc2", "tc3"]);
+        // All should be tool role
+        for msg in msgs {
+            assert_eq!(msg["role"].as_str(), Some("tool"));
+        }
+    }
+
+    #[test]
+    fn test_stage59_tool_result_plus_text() {
+        let body = json!({
+            "model": "claude-sonnet", "max_tokens": 1024,
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": "here is the result"},
+                {"type": "tool_result", "tool_use_id": "toolu_01", "content": "output"}
+            ]}]
+        });
+        let adapted = AnthropicToOpenAI.adapt_request(body, &test_deployment()).unwrap();
+        let msgs = adapted["messages"].as_array().unwrap();
+        // 1 user message (text) + 1 tool message (tool_result)
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0]["role"].as_str(), Some("user"));
+        assert_eq!(msgs[0]["content"].as_array().unwrap()[0]["text"].as_str(), Some("here is the result"));
+        assert_eq!(msgs[1]["role"].as_str(), Some("tool"));
+        assert_eq!(msgs[1]["tool_call_id"].as_str(), Some("toolu_01"));
+    }
+
+    #[test]
+    fn test_stage59_empty_tool_results_boundary() {
+        // User message with no tool_result blocks → single user message, name preserved
+        let body = json!({
+            "model": "claude-sonnet", "max_tokens": 1024,
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": "hello world"}
+            ]}]
+        });
+        let adapted = AnthropicToOpenAI.adapt_request(body, &test_deployment()).unwrap();
+        let msgs = adapted["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0]["role"].as_str(), Some("user"));
+        assert_eq!(msgs[0]["content"].as_array().unwrap()[0]["text"].as_str(), Some("hello world"));
     }
 
     /// Regression: assistant message with tool_use block must NOT produce
