@@ -35,6 +35,9 @@ pub struct Deployment {
     pub model_group: Option<String>,
     /// litellm_params.custom_llm_provider value — e.g. "openai", "anthropic"
     pub custom_llm_provider: Option<String>,
+    /// chat template compatibility mode from model_info
+    /// "auto" (default/absent) / "strict" (fold extra system messages) / "loose" (passthrough)
+    pub chat_template_compat: Option<String>,
 }
 
 /// Upstream provider type.
@@ -131,6 +134,7 @@ mod tests {
             model_id: Some("m1".to_string()),
             model_group: Some("gpt-4".to_string()),
             custom_llm_provider: Some("openai".to_string()),
+            chat_template_compat: None,
         };
 
         assert_eq!(d.api_base, "https://api.openai.com/v1");

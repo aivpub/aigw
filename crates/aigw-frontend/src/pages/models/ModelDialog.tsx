@@ -46,6 +46,7 @@ interface ModelFormData {
   tpm: string;
   input_price_per_million: string;
   output_price_per_million: string;
+  chat_template_compat: string;
 }
 
 const PROVIDERS = [
@@ -73,6 +74,7 @@ const emptyForm = (): ModelFormData => ({
   tpm: "",
   input_price_per_million: "",
   output_price_per_million: "",
+  chat_template_compat: "",
 });
 
 function populateForm(model: ModelItem): ModelFormData {
@@ -94,6 +96,7 @@ function populateForm(model: ModelItem): ModelFormData {
     tpm: p.tpm != null ? String(p.tpm) : "",
     input_price_per_million: rawInput != null ? String(rawInput * 1_000_000) : "",
     output_price_per_million: rawOutput != null ? String(rawOutput * 1_000_000) : "",
+    chat_template_compat: (info.chat_template_compat as string) || "",
   };
 }
 
@@ -126,13 +129,19 @@ function buildBody(form: ModelFormData, _original?: ModelItem): Record<string, u
     }
   }
 
+  const model_info: Record<string, unknown> = {
+    input_cost_per_token: inputCostPerToken,
+    output_cost_per_token: outputCostPerToken,
+  };
+  // Only write chat_template_compat if explicitly set (non-empty)
+  if (form.chat_template_compat) {
+    model_info.chat_template_compat = form.chat_template_compat;
+  }
+
   const body: Record<string, unknown> = {
     model_name: form.model_name,
     litellm_params,
-    model_info: {
-      input_cost_per_token: inputCostPerToken,
-      output_cost_per_token: outputCostPerToken,
-    },
+    model_info,
   };
 
   return body;
@@ -434,6 +443,31 @@ export function ModelDialog({ open, onOpenChange, model, onSaved, onError }: Mod
                 />
               </FormField>
             </div>
+          </div>
+
+          {/* Chat Template Compatibility */}
+          <div className="space-y-3 pt-1 border-t">
+            <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+              Chat Template Compatibility
+            </Label>
+            <FormField
+              label="System Message Handling"
+              description="Some models (e.g. Qwen) require system messages only at position 0, otherwise 400. Auto-detect by model name; override if misdetected."
+            >
+              <Select
+                value={form.chat_template_compat || "auto"}
+                onValueChange={(v) => update("chat_template_compat", v === "auto" ? "" : v)}
+              >
+                <SelectTrigger className="h-9">
+                  <SelectValue placeholder="Auto-detect (recommended)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="auto">Auto-detect (recommended)</SelectItem>
+                  <SelectItem value="strict">Strict (Qwen-like templates)</SelectItem>
+                  <SelectItem value="loose">Loose (passthrough)</SelectItem>
+                </SelectContent>
+              </Select>
+            </FormField>
           </div>
 
           {/* Advanced: litellm_params extra */}

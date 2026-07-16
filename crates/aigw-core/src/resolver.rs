@@ -75,6 +75,7 @@ impl ModelResolver {
                     model_id: None,
                     model_group: None,
                     custom_llm_provider: None,
+                    chat_template_compat: None,
                 }]);
             }
         }
@@ -245,6 +246,12 @@ impl ModelResolver {
                 &api_base,
             );
 
+            // Extract chat_template_compat from model_info
+            let chat_template_compat = m.model_info
+                .get("chat_template_compat")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
             Ok(Deployment {
                 api_base,
                 api_key,
@@ -256,6 +263,7 @@ impl ModelResolver {
                 model_id,
                 model_group: model_group.clone(),
                 custom_llm_provider: custom_llm_provider.clone(),
+                chat_template_compat,
             })
         } else {
             tracing::warn!(%model_name, "resolve: NO credential reference, using litellm_params directly");
@@ -279,6 +287,12 @@ impl ModelResolver {
                 &api_base,
             );
 
+            // Extract chat_template_compat from model_info
+            let chat_template_compat = m.model_info
+                .get("chat_template_compat")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
             tracing::warn!(%model_name, %api_base, ?api_key, %upstream_model, "resolve: DIRECT PARAMS RESOLVED");
             Ok(Deployment {
                 api_base,
@@ -291,6 +305,7 @@ impl ModelResolver {
                 model_id,
                 model_group,
                 custom_llm_provider,
+                chat_template_compat,
             })
         }
     }

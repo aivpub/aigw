@@ -129,6 +129,22 @@ impl MessageAdapter for AnthropicToOpenAI {
         let req: ClaudeMessageRequest = serde_json::from_value(body)
             .map_err(|e| AdapterError::Parse(format!("Invalid Claude request: {}", e)))?;
         let oai_req = DefaultAdapter::claude_to_openai_request(&req);
+
+        // Stage 60: System message normalization for strict chat templates
+        let compat = resolve_chat_template_compat(deployment);
+        let oai_req = match compat {
+            ChatTemplateCompat::Strict => {
+                let messages = fold_extra_systems_into_adjacent_user(oai_req.messages);
+                ChatCompletionRequest { messages, ..oai_req }
+            }
+            ChatTemplateCompat::Loose => oai_req,
+            ChatTemplateCompat::Auto => {
+                // Already resolved to Strict or Loose by resolve_chat_template_compat;
+                // this arm is unreachable but kept for exhaustiveness.
+                oai_req
+            }
+        };
+
         let mut json = serde_json::to_value(&oai_req).map_err(|e| AdapterError::Parse(e.to_string()))?;
         json.as_object_mut().map(|obj| {
             obj.insert("model".to_string(), json!(deployment.upstream_model));
@@ -183,6 +199,168 @@ fn oai_response_to_claude_messages(resp: &ChatCompletionResponse) -> ClaudeMessa
         id: resp.id.clone(), response_type: "message".to_string(), role: "assistant".to_string(),
         content, model: resp.model.clone(), stop_reason, stop_sequence: None,
         usage: ClaudeUsage { input_tokens: resp.usage.prompt_tokens, output_tokens: resp.usage.completion_tokens },
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// System Message Normalization (Stage 60)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Chat template compatibility mode for Anthropic→OpenAI conversion.
+///
+/// Some upstream models (e.g. Qwen series) enforce that `role="system"` messages
+/// can only appear at index 0. Claude Code clients may inject extra system
+/// messages into the `messages` array, which causes 400 errors on strict templates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChatTemplateCompat {
+    /// Auto-detect: sniff by upstream model name (default behavior)
+    Auto,
+    /// Fold extra system messages into adjacent user turns with `<system-reminder>` wrapper
+    Strict,
+    /// Pass through all messages unchanged
+    Loose,
+}
+
+/// Resolve the effective [`ChatTemplateCompat`] mode from a deployment.
+///
+/// Decision chain:
+///   1. Explicit `chat_template_compat` field: "strict" → Strict, "loose" → Loose
+///   2. Unknown value → warn + fall through to auto sniff
+///   3. Auto sniff: upstream_model name contains "qwen" (case-insensitive) → Strict, else Loose
+pub fn resolve_chat_template_compat(deployment: &Deployment) -> ChatTemplateCompat {
+    match deployment.chat_template_compat.as_deref() {
+        Some("strict") => return ChatTemplateCompat::Strict,
+        Some("loose") => return ChatTemplateCompat::Loose,
+        Some(other) => {
+            tracing::warn!(%other, "unknown chat_template_compat value, falling back to auto sniff");
+        }
+        _ => {}
+    }
+    // Auto sniff: check if upstream model name contains "qwen" (case-insensitive)
+    if deployment.upstream_model.to_lowercase().contains("qwen") {
+        ChatTemplateCompat::Strict
+    } else {
+        ChatTemplateCompat::Loose
+    }
+}
+
+/// Fold extra system messages (index > 0) into adjacent user turns.
+///
+/// The folding wraps each extra system's content in `<system-reminder>...</system-reminder>`
+/// tags and prepends it to the next user message's content. Pending reminders that
+/// have no following user message are appended to the last user message, or a new
+/// user message is created as a fallback.
+///
+/// Post-condition: `role="system"` only appears at index 0 (if at all).
+pub fn fold_extra_systems_into_adjacent_user(messages: Vec<ChatMessage>) -> Vec<ChatMessage> {
+    let mut out = Vec::with_capacity(messages.len());
+    let mut pending_reminders: Vec<String> = Vec::new();
+
+    for (i, msg) in messages.iter().enumerate() {
+        if i == 0 && msg.role == "system" {
+            out.push(msg.clone());
+            continue;
+        }
+        if msg.role == "system" {
+            let text = flatten_chat_content_to_text(&msg.content);
+            let wrapped = format!("<system-reminder>\n{}\n</system-reminder>", text);
+            pending_reminders.push(wrapped);
+            continue;
+        }
+        if msg.role == "user" && !pending_reminders.is_empty() {
+            let reminders: Vec<String> = pending_reminders.drain(..).collect();
+            out.push(prepend_text_to_chat_message(msg, &reminders));
+        } else {
+            out.push(msg.clone());
+        }
+    }
+
+    // Flush remaining reminders
+    if !pending_reminders.is_empty() {
+        let text = pending_reminders.join("\n\n");
+        if let Some(last_user_idx) = out.iter().rposition(|m| m.role == "user") {
+            let last_user = &out[last_user_idx];
+            out[last_user_idx] = append_text_to_chat_message(last_user, &text);
+        } else {
+            out.push(ChatMessage {
+                role: "user".to_string(),
+                content: ChatContent::Text(text),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+            });
+        }
+    }
+
+    // Post-condition: only index 0 can be system
+    debug_assert!(
+        out.iter().enumerate().all(|(i, m)| i == 0 || m.role != "system"),
+        "fold_extra_systems_into_adjacent_user: system message found beyond index 0"
+    );
+
+    out
+}
+
+/// Extract a plain text representation from a [`ChatContent`].
+fn flatten_chat_content_to_text(content: &ChatContent) -> String {
+    match content {
+        ChatContent::Text(t) => t.clone(),
+        ChatContent::Parts(parts) => parts
+            .iter()
+            .filter_map(|p| p.text.as_deref())
+            .collect::<Vec<&str>>()
+            .join(""),
+    }
+}
+
+/// Prepend reminder texts to a user ChatMessage's content.
+fn prepend_text_to_chat_message(msg: &ChatMessage, reminders: &[String]) -> ChatMessage {
+    let reminder_text = reminders.join("\n\n");
+    let new_content = match &msg.content {
+        ChatContent::Text(t) => {
+            ChatContent::Text(format!("{}\n\n{}", reminder_text, t))
+        }
+        ChatContent::Parts(parts) => {
+            let mut new_parts = vec![ContentPart {
+                content_type: "text".to_string(),
+                text: Some(reminder_text),
+                image_url: None,
+            }];
+            new_parts.extend(parts.clone());
+            ChatContent::Parts(new_parts)
+        }
+    };
+    ChatMessage {
+        role: msg.role.clone(),
+        content: new_content,
+        name: msg.name.clone(),
+        tool_calls: msg.tool_calls.clone(),
+        tool_call_id: msg.tool_call_id.clone(),
+    }
+}
+
+/// Append text to a user ChatMessage's content (for tail system reminders).
+fn append_text_to_chat_message(msg: &ChatMessage, text: &str) -> ChatMessage {
+    let new_content = match &msg.content {
+        ChatContent::Text(t) => {
+            ChatContent::Text(format!("{}\n\n{}", t, text))
+        }
+        ChatContent::Parts(parts) => {
+            let mut new_parts = parts.clone();
+            new_parts.push(ContentPart {
+                content_type: "text".to_string(),
+                text: Some(text.to_string()),
+                image_url: None,
+            });
+            ChatContent::Parts(new_parts)
+        }
+    };
+    ChatMessage {
+        role: msg.role.clone(),
+        content: new_content,
+        name: msg.name.clone(),
+        tool_calls: msg.tool_calls.clone(),
+        tool_call_id: msg.tool_call_id.clone(),
     }
 }
 
@@ -718,6 +896,7 @@ mod tests {
             model_id: Some("test-model-id".into()),
             model_group: Some("gpt-4".into()),
             custom_llm_provider: Some("openai".into()),
+            chat_template_compat: None,
         }
     }
 
@@ -1040,5 +1219,269 @@ mod tests {
         }
         assert!(assistant["tool_calls"].as_array().unwrap().len() > 0,
             "tool_calls must be present");
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // Stage 60: System Message Normalization tests
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    fn make_system_msg(text: &str) -> ChatMessage {
+        ChatMessage {
+            role: "system".to_string(),
+            content: ChatContent::Text(text.to_string()),
+            name: None, tool_calls: None, tool_call_id: None,
+        }
+    }
+
+    fn make_user_msg(text: &str) -> ChatMessage {
+        ChatMessage {
+            role: "user".to_string(),
+            content: ChatContent::Text(text.to_string()),
+            name: None, tool_calls: None, tool_call_id: None,
+        }
+    }
+
+    fn make_user_parts(parts: Vec<ContentPart>) -> ChatMessage {
+        ChatMessage {
+            role: "user".to_string(),
+            content: ChatContent::Parts(parts),
+            name: None, tool_calls: None, tool_call_id: None,
+        }
+    }
+
+    fn make_assistant_msg(text: &str) -> ChatMessage {
+        ChatMessage {
+            role: "assistant".to_string(),
+            content: ChatContent::Text(text.to_string()),
+            name: None, tool_calls: None, tool_call_id: None,
+        }
+    }
+
+    #[test]
+    fn test_stage60_real_body_with_top_system_and_inline_system() {
+        // UT-1: Top-level system + user_with_parts + inline system(agent-list) → folded
+        let messages = vec![
+            make_system_msg("You are Claude Code, Anthropic's official CLI..."),
+            make_user_parts(vec![ContentPart {
+                content_type: "text".to_string(),
+                text: Some("check hostname".to_string()),
+                image_url: None,
+            }]),
+            make_system_msg("Available agent types for the Agent tool:..."),
+        ];
+        let folded = fold_extra_systems_into_adjacent_user(messages);
+        assert_eq!(folded.len(), 2, "expected 2 messages after fold: system + user");
+        assert_eq!(folded[0].role, "system");
+        assert_eq!(folded[1].role, "user");
+        // The user should now contain the system-reminder
+        match &folded[1].content {
+            ChatContent::Parts(parts) => {
+                assert!(parts.iter().any(|p| p.text.as_deref().unwrap_or("").contains("<system-reminder>")),
+                    "user Parts should contain <system-reminder>");
+            }
+            _ => panic!("expected Parts content"),
+        }
+        // No system beyond index 0
+        for (i, m) in folded.iter().enumerate().skip(1) {
+            assert_ne!(m.role, "system", "system found at index {}", i);
+        }
+    }
+
+    #[test]
+    fn test_stage60_multiple_systems_between() {
+        // UT-2: [u1, s1, a1, u2, s2, s3, u3] → folded
+        let messages = vec![
+            make_user_msg("first question"),
+            make_system_msg("system 1 — agent list"),
+            make_assistant_msg("I'll help"),
+            make_user_msg("second question"),
+            make_system_msg("system 2 — skill desc"),
+            make_system_msg("system 3 — more context"),
+            make_user_msg("third question"),
+        ];
+        let folded = fold_extra_systems_into_adjacent_user(messages);
+        // Expected: [u1, a1, u2(with s1), u3(with s2+s3)] = 4 messages
+        // s1, s2, s3 are NOT in the output — only reminders prepended to users
+        assert_eq!(folded.len(), 4, "expected 4 messages after fold: u1, a1, u2+reminder, u3+reminders");
+        assert_eq!(folded[0].role, "user");
+        assert_eq!(folded[1].role, "assistant");
+        // u2 now contains s1
+        match &folded[2].content {
+            ChatContent::Text(t) => {
+                assert!(t.contains("<system-reminder>"), "u2 should contain s1 reminder, got: {}", t);
+                assert!(t.contains("system 1"), "u2 should contain s1 content");
+                assert!(t.contains("second question"), "original user text preserved");
+            }
+            _ => panic!("expected Text"),
+        }
+        // u3 now contains s2 + s3 (at index 3, since folded has 4 msgs)
+        match &folded[3].content {
+            ChatContent::Text(t) => {
+                assert!(t.contains("system 2"), "u3 should contain s2");
+                assert!(t.contains("system 3"), "u3 should contain s3");
+                assert!(t.contains("third question"), "original user text preserved");
+            }
+            _ => panic!("expected Text"),
+        }
+    }
+
+    #[test]
+    fn test_stage60_tail_system() {
+        // UT-3: [u1, u2, s1] → s1 appended to u2
+        let messages = vec![
+            make_user_msg("question 1"),
+            make_user_msg("question 2"),
+            make_system_msg("tail system"),
+        ];
+        let folded = fold_extra_systems_into_adjacent_user(messages);
+        assert_eq!(folded.len(), 2, "tail system folded into u2");
+        match &folded[1].content {
+            ChatContent::Text(t) => {
+                assert!(t.contains("<system-reminder>"), "u2 should contain reminder");
+                assert!(t.contains("tail system"), "u2 should contain tail system");
+                assert!(t.contains("question 2"), "original text preserved");
+            }
+            _ => panic!("expected Text"),
+        }
+    }
+
+    #[test]
+    fn test_stage60_adjacent_systems() {
+        // UT-4: [s1, u1, s2, s3, u2] → s1 stays at 0, s2+s3 folded into u2
+        let messages = vec![
+            make_system_msg("first system at index 0"),
+            make_user_msg("user 1"),
+            make_system_msg("system 2"),
+            make_system_msg("system 3"),
+            make_user_msg("user 2"),
+        ];
+        let folded = fold_extra_systems_into_adjacent_user(messages);
+        assert_eq!(folded.len(), 3, "expected 3 messages");
+        assert_eq!(folded[0].role, "system"); // s1 retained
+        assert_eq!(folded[1].role, "user");
+        // u2 should contain both s2 and s3
+        match &folded[2].content {
+            ChatContent::Text(t) => {
+                assert!(t.contains("system 2"), "u2 should contain s2");
+                assert!(t.contains("system 3"), "u2 should contain s3");
+            }
+            _ => panic!("expected Text"),
+        }
+    }
+
+    #[test]
+    fn test_stage60_no_user_fallback() {
+        // UT-5: [s1, assistant, s2] → s1 at 0, s2 creates new user
+        let messages = vec![
+            make_system_msg("system 1"),
+            make_assistant_msg("I'll help"),
+            make_system_msg("system 2 — no user follows"),
+        ];
+        let folded = fold_extra_systems_into_adjacent_user(messages);
+        // Expected: [s1, assistant, user(with s2)]
+        assert_eq!(folded.len(), 3);
+        assert_eq!(folded[0].role, "system");
+        assert_eq!(folded[1].role, "assistant");
+        assert_eq!(folded[2].role, "user");
+        match &folded[2].content {
+            ChatContent::Text(t) => {
+                assert!(t.contains("system 2"), "fallback user should contain s2");
+            }
+            _ => panic!("expected Text"),
+        }
+    }
+
+    #[test]
+    fn test_stage60_loose_no_fold() {
+        // UT-6: Loose mode — verify adapter preserves extra systems when chat_template_compat = "loose"
+        // Use qwen model (which auto-sniffs as Strict) but set explicit "loose"
+        let deployment = Deployment {
+            api_base: "http://localhost:1234/v1".into(),
+            api_key: None,
+            upstream_model: "qwen/qwen3.5-9b".into(),
+            provider_type: ProviderType::OpenAICompatible,
+            input_cost_per_token: None,
+            output_cost_per_token: None,
+            raw_params: json!({"custom_llm_provider": "openai"}),
+            model_id: None,
+            model_group: None,
+            custom_llm_provider: None,
+            chat_template_compat: Some("loose".to_string()),
+        };
+        let body = json!({
+            "model": "claude-sonnet", "max_tokens": 1024,
+            "system": "You are a helpful assistant.",
+            "messages": [
+                {"role": "user", "content": "first question"},
+                {"role": "system", "content": "system 1 — agent list"},
+                {"role": "assistant", "content": "I'll help"},
+                {"role": "user", "content": "second question"},
+                {"role": "system", "content": "system 2 — skill desc"},
+                {"role": "system", "content": "system 3 — more context"},
+                {"role": "user", "content": "third question"}
+            ]
+        });
+        let adapted = AnthropicToOpenAI.adapt_request(body, &deployment).unwrap();
+        let msgs = adapted["messages"].as_array().unwrap();
+        // In Loose mode, all messages are preserved (system messages at various positions)
+        // top-level system → index 0, then messages array: user, system, assistant, user, system, system, user = 7
+        let systems: Vec<&str> = msgs.iter().map(|m| m["role"].as_str().unwrap_or("")).collect();
+        // Loose → passthrough, systems should exist at multiple positions
+        let system_count = systems.iter().filter(|r| **r == "system").count();
+        assert!(system_count > 1, "Loose mode should preserve extra systems, got {} system messages", system_count);
+    }
+
+    #[test]
+    fn test_stage60_sniff_case_insensitive() {
+        // UT-7: Test resolve_chat_template_compat sniff logic
+        let mk_deployment = |name: &str| Deployment {
+            api_base: "https://api.openai.com/v1".into(),
+            api_key: None,
+            upstream_model: name.into(),
+            provider_type: ProviderType::OpenAICompatible,
+            input_cost_per_token: None,
+            output_cost_per_token: None,
+            raw_params: json!({}),
+            model_id: None,
+            model_group: None,
+            custom_llm_provider: None,
+            chat_template_compat: None,
+        };
+
+        assert_eq!(
+            resolve_chat_template_compat(&mk_deployment("qwen/qwen3.5-9b")),
+            ChatTemplateCompat::Strict
+        );
+        assert_eq!(
+            resolve_chat_template_compat(&mk_deployment("Qwen2.5-VL-72B")),
+            ChatTemplateCompat::Strict
+        );
+        assert_eq!(
+            resolve_chat_template_compat(&mk_deployment("gpt-4")),
+            ChatTemplateCompat::Loose
+        );
+    }
+
+    #[test]
+    fn test_stage60_explicit_override() {
+        // UT-8: Explicit chat_template_compat="loose" overrides qwen sniff
+        let deployment = Deployment {
+            api_base: "http://localhost:1234/v1".into(),
+            api_key: None,
+            upstream_model: "qwen-max".into(),
+            provider_type: ProviderType::OpenAICompatible,
+            input_cost_per_token: None,
+            output_cost_per_token: None,
+            raw_params: json!({}),
+            model_id: None,
+            model_group: None,
+            custom_llm_provider: None,
+            chat_template_compat: Some("loose".to_string()),
+        };
+        assert_eq!(
+            resolve_chat_template_compat(&deployment),
+            ChatTemplateCompat::Loose,
+            "explicit 'loose' should override qwen sniff"
+        );
     }
 }
