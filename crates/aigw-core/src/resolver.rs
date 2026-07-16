@@ -72,6 +72,9 @@ impl ModelResolver {
                     input_cost_per_token: None,
                     output_cost_per_token: None,
                     raw_params: json!({}),
+                    model_id: None,
+                    model_group: None,
+                    custom_llm_provider: None,
                 }]);
             }
         }
@@ -138,6 +141,17 @@ impl ModelResolver {
 
         // Extract pricing
         let (input_cost, output_cost) = extract_pricing(&m.model_info, &params_json);
+
+        // Extract model_group/model_id/custom_llm_provider from proxy_models for SpendLog
+        let model_id = Some(m.model_id.clone());
+        let model_group = params_json
+            .get("model")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let custom_llm_provider = params_json
+            .get("custom_llm_provider")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
 
         // Resolve credential reference if present
         if let Some(cred_name) = params_json
@@ -239,6 +253,9 @@ impl ModelResolver {
                 input_cost_per_token: input_cost,
                 output_cost_per_token: output_cost,
                 raw_params: params_json,
+                model_id,
+                model_group: model_group.clone(),
+                custom_llm_provider: custom_llm_provider.clone(),
             })
         } else {
             tracing::warn!(%model_name, "resolve: NO credential reference, using litellm_params directly");
@@ -271,6 +288,9 @@ impl ModelResolver {
                 input_cost_per_token: input_cost,
                 output_cost_per_token: output_cost,
                 raw_params: params_json,
+                model_id,
+                model_group,
+                custom_llm_provider,
             })
         }
     }

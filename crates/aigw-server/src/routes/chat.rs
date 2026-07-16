@@ -33,6 +33,12 @@ pub(crate) struct ResolvedUpstream {
     pub(crate) input_cost_per_token: Option<f64>,
     /// USD per output token (from model_info JSON)
     pub(crate) output_cost_per_token: Option<f64>,
+    /// proxy_models UUID (model_id)
+    pub(crate) model_id: Option<String>,
+    /// litellm_params.model — upstream model name for model_group
+    pub(crate) model_group: Option<String>,
+    /// litellm_params.custom_llm_provider — e.g. "openai", "anthropic"
+    pub(crate) custom_llm_provider: Option<String>,
 }
 
 /// Extract pricing — primary from model_info (litellm-standard cost calculator source),
@@ -127,6 +133,17 @@ pub(crate) async fn resolve_upstream_params(
             // decrypted litellm_params is the fallback for deployments where pricing
             // was set only in proxy config and not mirrored to model_info.
             let (input_cost, output_cost) = extract_pricing(&m.model_info, &params_json);
+
+            // Extract model_group / custom_llm_provider from proxy_models for SpendLog
+            let model_id = Some(m.model_id.clone());
+            let model_group = params_json
+                .get("model")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let custom_llm_provider = params_json
+                .get("custom_llm_provider")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
 
             // Resolve credential reference if present
             if let Some(cred_name) = params_json
@@ -223,6 +240,9 @@ pub(crate) async fn resolve_upstream_params(
                     model_name: upstream_model,
                     input_cost_per_token: input_cost,
                     output_cost_per_token: output_cost,
+                    model_id,
+                    model_group: model_group.clone(),
+                    custom_llm_provider: custom_llm_provider.clone(),
                 })
             } else {
                 tracing::warn!(%model_name, "resolve_upstream_params: NO credential reference, using litellm_params directly");
@@ -248,6 +268,9 @@ pub(crate) async fn resolve_upstream_params(
                     model_name: upstream_model,
                     input_cost_per_token: input_cost,
                     output_cost_per_token: output_cost,
+                    model_id,
+                    model_group,
+                    custom_llm_provider,
                 })
             }
         }
@@ -274,6 +297,9 @@ pub(crate) async fn resolve_upstream_params(
                         model_name: model_name.to_string(),
                         input_cost_per_token: None,
                         output_cost_per_token: None,
+                        model_id: None,
+                        model_group: None,
+                        custom_llm_provider: None,
                     });
                 }
             }
@@ -803,6 +829,37 @@ pub async fn chat_completions(
         .map(|s| s.split(',').next().unwrap_or("").trim().to_string())
         .filter(|s| !s.is_empty());
 
+    // Extract User-Agent from HTTP header (align with litellm: store in metadata.user_agent)
+    let user_agent: Option<String> = headers
+        .get("user-agent")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    // Extract device_id from metadata.user_id JSON (Claude Code convention)
+    let device_id: Option<String> = end_user.as_ref().and_then(|eu| {
+        serde_json::from_str::<Value>(eu)
+            .ok()
+            .and_then(|v| {
+                v.get("device_id")
+                    .and_then(|id| id.as_str())
+                    .map(|s| s.to_string())
+            })
+    });
+
+    // Build metadata JSON with user_agent and device_id (align with litellm)
+    let metadata: Option<Value> = if user_agent.is_some() || device_id.is_some() {
+        let mut meta_map = serde_json::Map::new();
+        if let Some(ref ua) = user_agent {
+            meta_map.insert("user_agent".to_string(), json!(ua));
+        }
+        if let Some(ref did) = device_id {
+            meta_map.insert("device_id".to_string(), json!(did));
+        }
+        Some(Value::Object(meta_map))
+    } else {
+        None
+    };
+
     // 5. Build and send upstream request
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(120))
@@ -825,6 +882,22 @@ pub async fn chat_completions(
     if let Some(ref api_key) = deployment.api_key {
         upstream_req = upstream_req.header("Authorization", format!("Bearer {}", api_key));
     }
+
+    // Build proxy_server_request (align with litellm: url/method/headers/arrival_time)
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let arrival_time = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64();
+    let proxy_server_request = Some(json!({
+        "url": "/v1/chat/completions",
+        "method": "POST",
+        "headers": {
+            "user-agent": user_agent.clone().unwrap_or_default(),
+            "x-forwarded-for": requester_ip.as_deref().unwrap_or(""),
+        },
+        "arrival_time": arrival_time,
+    }));
 
     let start_time = chrono::Utc::now();
 
@@ -852,6 +925,9 @@ pub async fn chat_completions(
             let fail_upstream_body = upstream_body_val.clone();
             let fail_model = deployment.upstream_model.clone();
             let fail_api_base = deployment.api_base.clone();
+            let fail_model_id = deployment.model_id.clone();
+            let fail_model_group = deployment.model_group.clone();
+            let fail_custom_llm_provider = deployment.custom_llm_provider.clone();
             let fail_token_hash = auth.token_hash.clone();
             let fail_user_id = auth.user_id.clone();
             let fail_status = upstream_status.as_u16();
@@ -875,12 +951,12 @@ pub async fn chat_completions(
                     ),
                     completion_start_time: None,
                     model: fail_model,
-                    model_id: None,
-                    model_group: None,
-                    custom_llm_provider: None,
+                    model_id: fail_model_id,
+                    model_group: fail_model_group,
+                    custom_llm_provider: fail_custom_llm_provider,
                     api_base: Some(fail_api_base),
                     user: fail_user_id,
-                    metadata: None,
+                    metadata: metadata.clone(),
                     cache_hit: None,
                     cache_key: None,
                     request_tags: None,
@@ -894,7 +970,7 @@ pub async fn chat_completions(
                     status: Some(format!("failure:{}", fail_status)),
                     mcp_namespaced_tool_name: None,
                     agent_id: None,
-                    proxy_server_request: None,
+                    proxy_server_request: proxy_server_request.clone(),
                 };
                 let _ = state.db.insert_spend_log(&sl).await;
             });
@@ -943,12 +1019,12 @@ pub async fn chat_completions(
                 request_duration_ms: None,
                 completion_start_time: None,
                 model: model.clone(),
-                model_id: None,
-                model_group: None,
-                custom_llm_provider: None,
+                model_id: deployment.model_id.clone(),
+                model_group: deployment.model_group.clone(),
+                custom_llm_provider: deployment.custom_llm_provider.clone(),
                 api_base: Some(api_base.clone()),
                 user: user_id.clone(),
-                metadata: None,
+                metadata: metadata.clone(),
                 cache_hit: None,
                 cache_key: None,
                 request_tags: None,
@@ -1174,6 +1250,9 @@ pub async fn chat_completions(
             let fail_upstream_body = upstream_body_val.clone();
             let fail_model = deployment.upstream_model.clone();
             let fail_api_base = deployment.api_base.clone();
+            let fail_model_id = deployment.model_id.clone();
+            let fail_model_group = deployment.model_group.clone();
+            let fail_custom_llm_provider = deployment.custom_llm_provider.clone();
             let fail_token_hash = auth.token_hash.clone();
             let fail_user_id = auth.user_id.clone();
             let fail_status = upstream_status.as_u16();
@@ -1197,12 +1276,12 @@ pub async fn chat_completions(
                     ),
                     completion_start_time: None,
                     model: fail_model,
-                    model_id: None,
-                    model_group: None,
-                    custom_llm_provider: None,
+                    model_id: fail_model_id,
+                    model_group: fail_model_group,
+                    custom_llm_provider: fail_custom_llm_provider,
                     api_base: Some(fail_api_base),
                     user: fail_user_id,
-                    metadata: None,
+                    metadata: metadata.clone(),
                     cache_hit: None,
                     cache_key: None,
                     request_tags: None,
@@ -1216,7 +1295,7 @@ pub async fn chat_completions(
                     status: Some(format!("failure:{}", fail_status)),
                     mcp_namespaced_tool_name: None,
                     agent_id: None,
-                    proxy_server_request: None,
+                    proxy_server_request: proxy_server_request.clone(),
                 };
                 let _ = state.db.insert_spend_log(&sl).await;
             });
@@ -1260,9 +1339,9 @@ pub async fn chat_completions(
             ),
             completion_start_time: Some(now), // non-streaming sentinel = end_time
             model: _model.to_string(),
-            model_id: None,
-            model_group: None,
-            custom_llm_provider: None,
+            model_id: deployment.model_id.clone(),
+            model_group: deployment.model_group.clone(),
+            custom_llm_provider: deployment.custom_llm_provider.clone(),
             api_base: Some(deployment.api_base.clone()),
             user: auth.user_id.clone(),
             metadata: None,

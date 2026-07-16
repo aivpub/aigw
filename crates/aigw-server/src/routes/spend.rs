@@ -41,6 +41,7 @@ pub struct SpendLogsQuery {
     pub start_date: Option<String>,
     pub end_date: Option<String>,
     pub request_id: Option<String>,
+    pub session_id: Option<String>,
     pub limit: Option<i32>,
     pub page: Option<i32>,
     pub page_size: Option<i32>,

@@ -76,6 +76,20 @@ export async function defineMockRoutes(route: Route, request: Request) {
   if (url.pathname === "/model/new" && route.request().method() === "POST") {
     return route.fulfill({ status: 200, json: { model_name: "new-model", litellm_params: {} } });
   }
+  if (url.pathname === "/model/update" && route.request().method() === "PUT") {
+    return route.fulfill({ status: 200, json: { message: "Model updated" } });
+  }
+  if (url.pathname === "/model/delete" && route.request().method() === "DELETE") {
+    return route.fulfill({ status: 200, json: { message: "Model deleted" } });
+  }
+
+  // Credentials list (for ModelDialog credential dropdown)
+  if (url.pathname === "/credential/list") {
+    return route.fulfill({
+      status: 200,
+      json: { data: [{ credential_name: "prod-openai" }, { credential_name: "dev-anthropic" }] },
+    });
+  }
 
   // Spend
   if (url.pathname === "/spend/logs") {

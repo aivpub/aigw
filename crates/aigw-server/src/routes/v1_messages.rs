@@ -289,6 +289,37 @@ pub async fn messages_handler(
         .map(|s| s.split(',').next().unwrap_or("").trim().to_string())
         .filter(|s| !s.is_empty());
 
+    // Extract User-Agent from HTTP header (align with litellm)
+    let user_agent: Option<String> = headers
+        .get("user-agent")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    // Extract device_id from metadata.user_id JSON
+    let device_id: Option<String> = end_user.as_ref().and_then(|eu| {
+        serde_json::from_str::<Value>(eu)
+            .ok()
+            .and_then(|v| {
+                v.get("device_id")
+                    .and_then(|id| id.as_str())
+                    .map(|s| s.to_string())
+            })
+    });
+
+    // Build metadata JSON with user_agent and device_id (align with litellm)
+    let metadata: Option<Value> = if user_agent.is_some() || device_id.is_some() {
+        let mut meta_map = serde_json::Map::new();
+        if let Some(ref ua) = user_agent {
+            meta_map.insert("user_agent".to_string(), json!(ua));
+        }
+        if let Some(ref did) = device_id {
+            meta_map.insert("device_id".to_string(), json!(did));
+        }
+        Some(Value::Object(meta_map))
+    } else {
+        None
+    };
+
     // 4. Resolve upstream via ModelResolver
     let resolved_deployment = match state.resolver.resolve(&model).await {
         Ok(deployments) => {
@@ -310,6 +341,7 @@ pub async fn messages_handler(
             let log_end_user = end_user.clone();
             let log_session_id = session_id.clone();
             let log_requester_ip = requester_ip.clone();
+            let log_metadata = metadata.clone();
             tokio::spawn(async move {
                 let sl = SpendLog {
                     request_id: uuid::Uuid::new_v4().to_string(),
@@ -329,7 +361,7 @@ pub async fn messages_handler(
                     custom_llm_provider: None,
                     api_base: None,
                     user: log_user_id,
-                    metadata: None,
+                    metadata: log_metadata,
                     cache_hit: None,
                     cache_key: None,
                     request_tags: None,
@@ -357,6 +389,9 @@ pub async fn messages_handler(
 
     let upstream_base_url = resolved_deployment.api_base.clone();
     let upstream_api_key = resolved_deployment.api_key.clone();
+    let upstream_model_id = resolved_deployment.model_id.clone();
+    let upstream_model_group = resolved_deployment.model_group.clone();
+    let upstream_custom_llm_provider = resolved_deployment.custom_llm_provider.clone();
 
     // Select adapter based on client protocol + provider type
     let adapter = select_adapter(ClientProtocol::Anthropic, &resolved_deployment.provider_type)
@@ -400,6 +435,22 @@ pub async fn messages_handler(
         upstream_req = upstream_req.header("Authorization", format!("Bearer {}", api_key));
     }
 
+    // Build proxy_server_request (align with litellm)
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let arrival_time_v1 = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64();
+    let proxy_server_request = Some(json!({
+        "url": "/v1/messages",
+        "method": "POST",
+        "headers": {
+            "user-agent": user_agent.clone().unwrap_or_default(),
+            "x-forwarded-for": requester_ip.as_deref().unwrap_or(""),
+        },
+        "arrival_time": arrival_time_v1,
+    }));
+
     let start_time = chrono::Utc::now();
 
     let upstream_resp = upstream_req.send().await.map_err(|e| {
@@ -422,9 +473,14 @@ pub async fn messages_handler(
         let auth_token_hash_clone = auth_token_hash.clone();
         let auth_user_id_clone = auth_user_id.clone();
         let end_user_clone = end_user.clone();
+        let psr = proxy_server_request.clone();
         let session_id_clone = session_id.clone();
         let requester_ip_clone = requester_ip.clone();
         let status_code = upstream_status.as_u16();
+        let mid = upstream_model_id.clone();
+        let mg = upstream_model_group.clone();
+        let ccp = upstream_custom_llm_provider.clone();
+        let mdata = metadata.clone();
         tokio::spawn(async move {
             let sl = SpendLog {
                 request_id: uuid::Uuid::new_v4().to_string(),
@@ -441,12 +497,12 @@ pub async fn messages_handler(
                 ),
                 completion_start_time: None,
                 model: model_clone,
-                model_id: None,
-                model_group: None,
-                custom_llm_provider: None,
+                model_id: mid,
+                model_group: mg,
+                custom_llm_provider: ccp,
                 api_base: Some(upstream_base_url_clone),
                 user: auth_user_id_clone,
-                metadata: None,
+                metadata: mdata,
                 cache_hit: None,
                 cache_key: None,
                 request_tags: None,
@@ -460,7 +516,7 @@ pub async fn messages_handler(
                 status: Some(format!("failure:{}", status_code)),
                 mcp_namespaced_tool_name: None,
                 agent_id: None,
-                proxy_server_request: None,
+                proxy_server_request: psr,
             };
             let _ = state.db.insert_spend_log(&sl).await;
         });
@@ -500,12 +556,12 @@ pub async fn messages_handler(
                 request_duration_ms: None,
                 completion_start_time: None,
                 model: model.clone(),
-                model_id: None,
-                model_group: None,
-                custom_llm_provider: None,
+                model_id: upstream_model_id.clone(),
+                model_group: upstream_model_group.clone(),
+                custom_llm_provider: upstream_custom_llm_provider.clone(),
                 api_base: Some(upstream_base_url.clone()),
                 user: auth_user_id.clone(),
-                metadata: None,
+                metadata: metadata.clone(),
                 cache_hit: None,
                 cache_key: None,
                 request_tags: None,
@@ -519,7 +575,7 @@ pub async fn messages_handler(
                 status: Some("streaming".to_string()),
                 mcp_namespaced_tool_name: None,
                 agent_id: None,
-                proxy_server_request: None,
+                proxy_server_request: proxy_server_request.clone(),
             };
             let _ = state.db.insert_spend_log(&sl).await;
         }
@@ -752,7 +808,7 @@ pub async fn messages_handler(
             status: Some("success".to_string()),
             mcp_namespaced_tool_name: None,
             agent_id: None,
-            proxy_server_request: None,
+            proxy_server_request: proxy_server_request.clone(),
         };
 
         let _ = state.db.insert_spend_log(&spend_log).await;

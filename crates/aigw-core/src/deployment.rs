@@ -29,6 +29,12 @@ pub struct Deployment {
     pub output_cost_per_token: Option<f64>,
     /// Decrypted litellm_params JSON (all original fields preserved)
     pub raw_params: Value,
+    /// proxy_models UUID (model_id column)
+    pub model_id: Option<String>,
+    /// litellm_params.model — upstream model name for model_group
+    pub model_group: Option<String>,
+    /// litellm_params.custom_llm_provider value — e.g. "openai", "anthropic"
+    pub custom_llm_provider: Option<String>,
 }
 
 /// Upstream provider type.
@@ -122,6 +128,9 @@ mod tests {
             input_cost_per_token: Some(0.00003),
             output_cost_per_token: Some(0.00006),
             raw_params: serde_json::json!({"model": "gpt-4", "custom_llm_provider": "openai"}),
+            model_id: Some("m1".to_string()),
+            model_group: Some("gpt-4".to_string()),
+            custom_llm_provider: Some("openai".to_string()),
         };
 
         assert_eq!(d.api_base, "https://api.openai.com/v1");
