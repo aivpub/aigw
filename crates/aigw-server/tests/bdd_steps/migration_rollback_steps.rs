@@ -33,10 +33,12 @@ fn source_master_key() -> String {
     "sk-master-test".to_string()
 }
 
+#[allow(dead_code)]
 fn is_mysql(url: &str) -> bool {
     url.starts_with("mysql://") || url.starts_with("mariadb://")
 }
 
+#[allow(dead_code)]
 fn quote_table(url: &str, table: &str) -> String {
     if is_mysql(url) {
         format!("`{}`", table)

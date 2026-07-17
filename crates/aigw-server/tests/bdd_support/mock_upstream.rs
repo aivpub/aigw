@@ -18,16 +18,20 @@ use tokio::net::TcpListener;
 #[derive(Debug, Clone)]
 pub struct RecordedRequest {
     pub path: String,
+    #[allow(dead_code)]
     pub headers: HashMap<String, String>,
     #[allow(dead_code)]
     pub body: Value,
 }
 
 /// Global mock instance for Anthropic Native BDD tests.
+#[allow(dead_code)]
 static ANTHROPIC_MOCK: OnceLock<Arc<Mutex<Option<MockUpstream>>>> = OnceLock::new();
+#[allow(dead_code)]
 static ANTHROPIC_MOCK_URL: OnceLock<String> = OnceLock::new();
 
 /// Get or create the global Anthropic mock URL (starts the mock if needed).
+#[allow(dead_code)]
 pub async fn get_or_create_anthropic_mock_url() -> &'static str {
     if let Some(url) = ANTHROPIC_MOCK_URL.get() {
         return url;
@@ -41,6 +45,7 @@ pub async fn get_or_create_anthropic_mock_url() -> &'static str {
 }
 
 /// Get a reference to the global Anthropic mock (if started).
+#[allow(dead_code)]
 pub fn get_anthropic_mock() -> Option<MockUpstreamRef> {
     let cell = ANTHROPIC_MOCK.get()?;
     let guard = cell.lock().unwrap();
@@ -50,15 +55,18 @@ pub fn get_anthropic_mock() -> Option<MockUpstreamRef> {
 }
 
 /// A lightweight reference to a mock upstream's state (for assertions).
+#[allow(dead_code)]
 pub struct MockUpstreamRef {
     state: Arc<MockState>,
 }
 
 impl MockUpstreamRef {
+    #[allow(dead_code)]
     pub fn request_count(&self) -> usize {
         self.state.request_count()
     }
 
+    #[allow(dead_code)]
     pub fn recorded_requests(&self) -> Vec<RecordedRequest> {
         self.state.recorded_requests()
     }
@@ -122,6 +130,7 @@ impl MockState {
             .insert(path.to_string(), response);
     }
 
+    #[allow(dead_code)]
     pub fn recorded_requests(&self) -> Vec<RecordedRequest> {
         self.requests.lock().unwrap().clone()
     }
@@ -195,6 +204,7 @@ impl MockUpstream {
     }
 
     /// Get recorded requests
+    #[allow(dead_code)]
     pub fn recorded_requests(&self) -> Vec<RecordedRequest> {
         self.state.recorded_requests()
     }
