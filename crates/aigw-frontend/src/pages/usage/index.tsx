@@ -117,8 +117,7 @@ const PRESETS: { key: DatePreset; label: string }[] = [
   { key: "custom", label: "Custom" },
 ];
 
-type ChartMode = "spend" | "tokens";
-type ProviderMode = "spend" | "tokens" | "requests";
+type ChartMode = "spend" | "tokens" | "requests";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Component
@@ -129,7 +128,6 @@ export function UsagePage() {
   const [startDate, setStartDate] = useState(presetRange("30d").start);
   const [endDate, setEndDate] = useState(presetRange("30d").end);
   const [chartMode, setChartMode] = useState<ChartMode>("spend");
-  const [providerMode, setProviderMode] = useState<ProviderMode>("spend");
 
   const handlePreset = (p: DatePreset) => {
     setPreset(p);
@@ -169,6 +167,7 @@ export function UsagePage() {
     name: a.provider,
     value: Math.round(a.total_spend * 10000) / 10000,
     tokens: a.total_tokens,
+    requests: a.requests,
   }));
 
   const dailyChartData = (activity?.daily ?? []).map((d) => ({
@@ -318,7 +317,7 @@ export function UsagePage() {
         </Card>
       </div>
 
-      {/* Daily Chart with Spend/Tokens Tabs */}
+      {/* Daily Chart with shared Spend/Tokens/Requests Tabs */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between pb-2 pt-4 px-4">
           <CardTitle className="text-sm font-medium">Daily Trend</CardTitle>
@@ -326,6 +325,7 @@ export function UsagePage() {
             <TabsList className="h-7">
               <TabsTrigger value="spend" className="text-xs px-3 h-5">💰 Spend</TabsTrigger>
               <TabsTrigger value="tokens" className="text-xs px-3 h-5">📊 Tokens</TabsTrigger>
+              <TabsTrigger value="requests" className="text-xs px-3 h-5">📋 Requests</TabsTrigger>
             </TabsList>
           </Tabs>
         </CardHeader>
@@ -350,24 +350,20 @@ export function UsagePage() {
                       borderRadius: "6px",
                       fontSize: "12px",
                     }}
-                    formatter={(value, name, props) => {
-                      if (name === "spend") return [fmtSpend(value as number), "Spend"];
-                      if (name === "tokens") return [fmtTokens(value as number), "Tokens"];
-                      if (name === "requests") return [value, "Requests"];
-                      return [value, name];
+                    formatter={(value, name) => {
+                      if (chartMode === "tokens") return [fmtTokens(value as number), "Tokens"];
+                      if (chartMode === "requests") return [value, "Requests"];
+                      return [fmtSpend(value as number), "Spend"];
                     }}
                     labelFormatter={(label) => {
                       const item = dailyChartData.find((d) => d.date === label);
                       if (!item) return label;
-                      // Enhanced tooltip: show spend + tokens + requests for the day
                       return `${label}  |  ${fmtSpend(item.spend)}  |  ${item.requests} req  |  ${fmtTokens(item.tokens)} tokens`;
                     }}
                   />
-                  {chartMode === "spend" ? (
-                    <Bar dataKey="spend" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
-                  ) : (
-                    <Bar dataKey="tokens" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-                  )}
+                  {chartMode === "spend" && <Bar dataKey="spend" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />}
+                  {chartMode === "tokens" && <Bar dataKey="tokens" fill="#f59e0b" radius={[4, 4, 0, 0]} />}
+                  {chartMode === "requests" && <Bar dataKey="requests" fill="#22c55e" radius={[4, 4, 0, 0]} />}
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -375,7 +371,7 @@ export function UsagePage() {
         </CardContent>
       </Card>
 
-      {/* Model / Provider Charts with Spend/Tokens Tabs */}
+      {/* Model / Provider Charts with shared tabs */}
       <div className="grid gap-4 lg:grid-cols-2">
         {/* Model Bar Chart */}
         <Card>
@@ -385,6 +381,7 @@ export function UsagePage() {
               <TabsList className="h-7">
                 <TabsTrigger value="spend" className="text-xs px-3 h-5">💰</TabsTrigger>
                 <TabsTrigger value="tokens" className="text-xs px-3 h-5">📊</TabsTrigger>
+                <TabsTrigger value="requests" className="text-xs px-3 h-5">📋</TabsTrigger>
               </TabsList>
             </Tabs>
           </CardHeader>
@@ -409,16 +406,15 @@ export function UsagePage() {
                         borderRadius: "6px",
                         fontSize: "12px",
                       }}
-                      formatter={(value, name, props) => {
+                      formatter={(value) => {
                         if (chartMode === "tokens") return [fmtTokens(value as number), "Tokens"];
+                        if (chartMode === "requests") return [value, "Requests"];
                         return [fmtSpend(value as number), "Spend"];
                       }}
                     />
-                    {chartMode === "spend" ? (
-                      <Bar dataKey="total_spend" name="Spend" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
-                    ) : (
-                      <Bar dataKey="total_tokens" name="Tokens" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-                    )}
+                    {chartMode === "spend" && <Bar dataKey="total_spend" name="Spend" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />}
+                    {chartMode === "tokens" && <Bar dataKey="total_tokens" name="Tokens" fill="#f59e0b" radius={[4, 4, 0, 0]} />}
+                    {chartMode === "requests" && <Bar dataKey="requests" name="Requests" fill="#22c55e" radius={[4, 4, 0, 0]} />}
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -426,11 +422,11 @@ export function UsagePage() {
           </CardContent>
         </Card>
 
-        {/* Provider Bar Chart (was donut; now bar for consistency + readability) */}
+        {/* Provider Donut Chart — shared tab, keyed to chartMode */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2 pt-4 px-4">
             <CardTitle className="text-sm font-medium">Spend by Provider</CardTitle>
-            <Tabs defaultValue="spend" value={providerMode} onValueChange={(v) => setProviderMode(v as ProviderMode)}>
+            <Tabs defaultValue="spend" value={chartMode} onValueChange={(v) => setChartMode(v as ChartMode)}>
               <TabsList className="h-7">
                 <TabsTrigger value="spend" className="text-xs px-3 h-5">💰</TabsTrigger>
                 <TabsTrigger value="tokens" className="text-xs px-3 h-5">📊</TabsTrigger>
@@ -446,16 +442,31 @@ export function UsagePage() {
                 No data available
               </div>
             ) : (
-              <div className="h-[200px] md:h-[260px]">
+              <div className="h-[200px] md:h-[280px]">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart
-                    data={providerChartData}
-                    margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
-                    layout="vertical"
-                  >
-                    <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                    <XAxis type="number" tick={{ fontSize: 11 }} stroke="hsl(var(--muted-foreground))" />
-                    <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={60} stroke="hsl(var(--muted-foreground))" />
+                  <PieChart>
+                    <Pie
+                      data={providerChartData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={50}
+                      outerRadius={80}
+                      paddingAngle={2}
+                      dataKey={
+                        chartMode === "tokens" ? "tokens" : chartMode === "requests" ? "requests" : "value"
+                      }
+                      label={({ name, value }) => {
+                        const n = (name as string) ?? "";
+                        const fmt = chartMode === "tokens" ? fmtTokens(value) : chartMode === "requests" ? String(value) : fmtSpend(value);
+                        const shortName = n.length > 10 ? n.slice(0, 10) + "…" : n;
+                        return `${shortName}: ${fmt}`;
+                      }}
+                      labelLine={{ strokeWidth: 1 }}
+                    >
+                      {providerChartData.map((_, i) => (
+                        <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                      ))}
+                    </Pie>
                     <Tooltip
                       contentStyle={{
                         backgroundColor: "hsl(var(--card))",
@@ -463,21 +474,17 @@ export function UsagePage() {
                         borderRadius: "6px",
                         fontSize: "12px",
                       }}
-                      formatter={(value, name) => {
-                        if (providerMode === "tokens") return [fmtTokens(value as number), "Tokens"];
-                        if (providerMode === "requests") return [value, "Requests"];
-                        return [fmtSpend(value as number), "Spend"];
+                      formatter={(value: unknown) => {
+                        const v = Number(value ?? 0);
+                        if (chartMode === "tokens") return [fmtTokens(v), "Tokens"] as [string, string];
+                        if (chartMode === "requests") return [String(v), "Requests"] as [string, string];
+                        return [fmtSpend(v), "Spend"] as [string, string];
                       }}
                     />
-                    <Bar
-                      dataKey={providerMode === "tokens" ? "tokens" : providerMode === "requests" ? "requests" : "value"}
-                      radius={[0, 4, 4, 0]}
-                    >
-                      {providerChartData.map((_, i) => (
-                        <Cell key={i} fill={COLORS[i % COLORS.length]} />
-                      ))}
-                    </Bar>
-                  </BarChart>
+                    <Legend
+                      formatter={(value) => value.length > 12 ? value.slice(0, 12) + "…" : value}
+                    />
+                  </PieChart>
                 </ResponsiveContainer>
               </div>
             )}

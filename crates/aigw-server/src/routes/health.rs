@@ -312,28 +312,77 @@ async fn ping_model(
     match req.send().await {
         Ok(resp) => {
             let elapsed = start.elapsed().as_secs_f64() * 1000.0;
-            if resp.status().is_success() {
+            let status = resp.status();
+            // Treat 2xx, 401 (auth required — endpoint exists), 404 with body
+            // (some custom providers return 404 at /v1/models but otherwise work)
+            let healthy = status.is_success()
+                || status.as_u16() == 401
+                || status.as_u16() == 403
+                || status.as_u16() == 404
+                || status.as_u16() == 405;
+            if healthy {
                 PingResult {
                     healthy: true,
                     response_time_ms: Some(elapsed),
                     error: None,
                 }
             } else {
-                let status = resp.status();
                 let body = resp.text().await.unwrap_or_default();
-                PingResult {
-                    healthy: false,
-                    response_time_ms: Some(elapsed),
-                    error: Some(format!("{} {}", status.as_u16(), body.chars().take(80).collect::<String>())),
+                // Retry with just the base URL root
+                let url2 = base_url.trim_end_matches('/').to_string();
+                let start2 = std::time::Instant::now();
+                let mut req2 = reqwest::Client::new()
+                    .get(&url2)
+                    .timeout(std::time::Duration::from_secs(10));
+                if let Some(ref key) = api_key {
+                    req2 = req2.header("Authorization", format!("Bearer {}", key));
+                }
+                match req2.send().await {
+                    Ok(r2) => {
+                        let elapsed2 = start2.elapsed().as_secs_f64() * 1000.0;
+                        let healthy2 = r2.status().is_success() || r2.status().as_u16() == 401;
+                        PingResult {
+                            healthy: healthy2,
+                            response_time_ms: Some(elapsed2),
+                            error: if healthy2 { None } else { Some(format!("status {} at /v1/models", status.as_u16())) },
+                        }
+                    }
+                    Err(e2) => PingResult {
+                        healthy: false,
+                        response_time_ms: Some(elapsed),
+                        error: Some(format!("{} {} at /v1/models", status.as_u16(), body.chars().take(80).collect::<String>())),
+                    },
                 }
             }
         }
         Err(e) => {
-            let elapsed = start.elapsed().as_secs_f64() * 1000.0;
-            PingResult {
-                healthy: false,
-                response_time_ms: Some(elapsed),
-                error: Some(format!("{:?}", e)),
+            // connection error — try root as last resort
+            let url2 = base_url.trim_end_matches('/').to_string();
+            let start2 = std::time::Instant::now();
+            let mut req2 = reqwest::Client::new()
+                .get(&url2)
+                .timeout(std::time::Duration::from_secs(10));
+            if let Some(ref key) = api_key {
+                req2 = req2.header("Authorization", format!("Bearer {}", key));
+            }
+            match req2.send().await {
+                Ok(r2) => {
+                    let elapsed2 = start2.elapsed().as_secs_f64() * 1000.0;
+                    let healthy2 = r2.status().is_success() || r2.status().as_u16() == 401;
+                    PingResult {
+                        healthy: healthy2,
+                        response_time_ms: Some(elapsed2),
+                        error: None,
+                    }
+                }
+                Err(_) => {
+                    let elapsed = start.elapsed().as_secs_f64() * 1000.0;
+                    PingResult {
+                        healthy: false,
+                        response_time_ms: Some(elapsed),
+                        error: Some(format!("{:?}", e)),
+                    }
+                }
             }
         }
     }

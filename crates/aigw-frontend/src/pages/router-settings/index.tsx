@@ -50,6 +50,7 @@ function RouterSettingsForm({
 }) {
   return (
     <div className="space-y-6">
+      <div className="grid gap-4 lg:grid-cols-2">
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-lg">
@@ -57,7 +58,7 @@ function RouterSettingsForm({
             Routing Strategy
           </CardTitle>
           <CardDescription>
-            Determines how aigw picks an upstream deployment when multiple instances share the same model name.
+            How aigw picks an upstream deployment when multiple instances share the same model name.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -84,43 +85,35 @@ function RouterSettingsForm({
       <Card>
         <CardHeader>
           <CardTitle className="text-lg">Reliability &amp; Retries</CardTitle>
-          <CardDescription>Control failure tolerance and automatic cooldown behavior.</CardDescription>
+          <CardDescription>Failure tolerance and automatic cooldown behavior.</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-3 gap-4">
             <div className="space-y-2">
               <Label htmlFor="num_retries">Retry Count</Label>
-              <Input
-                id="num_retries"
-                type="number" min={0} max={10}
+              <Input id="num_retries" type="number" min={0} max={10}
                 value={form.num_retries ?? 0}
-                onChange={(e) => onChange({ ...form, num_retries: Math.max(0, parseInt(e.target.value) || 0) })}
-              />
-              <p className="text-xs text-muted-foreground">Number of retries on failure (0–10).</p>
+                onChange={(e) => onChange({ ...form, num_retries: Math.max(0, parseInt(e.target.value) || 0) })} />
+              <p className="text-xs text-muted-foreground">Retries on failure (0–10).</p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="allowed_fails">Allowed Failures</Label>
-              <Input
-                id="allowed_fails"
-                type="number" min={1} max={100}
+              <Input id="allowed_fails" type="number" min={1} max={100}
                 value={form.allowed_fails ?? 3}
-                onChange={(e) => onChange({ ...form, allowed_fails: Math.max(1, parseInt(e.target.value) || 1) })}
-              />
-              <p className="text-xs text-muted-foreground">Consecutive failures before cooldown (1–100).</p>
+                onChange={(e) => onChange({ ...form, allowed_fails: Math.max(1, parseInt(e.target.value) || 1) })} />
+              <p className="text-xs text-muted-foreground">Consecutive failures before cooldown.</p>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="cooldown_time">Cooldown (seconds)</Label>
-              <Input
-                id="cooldown_time"
-                type="number" min={1} max={3600}
+              <Label htmlFor="cooldown_time">Cooldown (s)</Label>
+              <Input id="cooldown_time" type="number" min={1} max={3600}
                 value={form.cooldown_time ?? 5}
-                onChange={(e) => onChange({ ...form, cooldown_time: Math.max(1, parseInt(e.target.value) || 1) })}
-              />
-              <p className="text-xs text-muted-foreground">Time a deployment stays on cooldown (1–3600s).</p>
+                onChange={(e) => onChange({ ...form, cooldown_time: Math.max(1, parseInt(e.target.value) || 1) })} />
+              <p className="text-xs text-muted-foreground">Deployment cooldown duration.</p>
             </div>
           </div>
         </CardContent>
       </Card>
+      </div>
 
       <div className="flex justify-between">
         <Button variant="outline" onClick={() => onChange({ ...DEFAULTS })}>
@@ -360,13 +353,24 @@ export function RouterSettingsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = searchParams.get("tab") || "global";
   return (
-    <div className="p-6 space-y-6 max-w-2xl">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Router Settings</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Configure routing strategy, retries, and cooldown at Global or Team level.
-          Team settings override Global defaults.
-        </p>
+    <div className="p-6 space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Router Settings</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Configure routing strategy, retries, and cooldown. Team settings override Global defaults.
+          </p>
+        </div>
+        <Tabs
+          defaultValue={tab}
+          value={tab}
+          onValueChange={(v) => setSearchParams({ tab: v }, { replace: true })}
+        >
+          <TabsList>
+            <TabsTrigger value="global">Global</TabsTrigger>
+            <TabsTrigger value="teams">Teams</TabsTrigger>
+          </TabsList>
+        </Tabs>
       </div>
 
       <Tabs
@@ -374,14 +378,10 @@ export function RouterSettingsPage() {
         value={tab}
         onValueChange={(v) => setSearchParams({ tab: v }, { replace: true })}
       >
-        <TabsList>
-          <TabsTrigger value="global">Global</TabsTrigger>
-          <TabsTrigger value="teams">Teams</TabsTrigger>
-        </TabsList>
-        <TabsContent value="global" className="pt-4">
+        <TabsContent value="global" className="mt-0">
           <GlobalTab />
         </TabsContent>
-        <TabsContent value="teams" className="pt-4">
+        <TabsContent value="teams" className="mt-0">
           <TeamsTab />
         </TabsContent>
       </Tabs>

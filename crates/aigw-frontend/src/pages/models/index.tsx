@@ -189,19 +189,21 @@ export function ModelsPage() {
         value={tab}
         onValueChange={(v) => setSearchParams({ tab: v }, { replace: true })}
       >
-        <TabsList>
-          <TabsTrigger value="model-groups">Model Groups</TabsTrigger>
-          <TabsTrigger value="credentials">Credentials</TabsTrigger>
-          <TabsTrigger value="health">Health</TabsTrigger>
-        </TabsList>
+        <div className="flex items-center justify-between">
+          <TabsList>
+            <TabsTrigger value="model-groups">Model Groups</TabsTrigger>
+            <TabsTrigger value="credentials">Credentials</TabsTrigger>
+            <TabsTrigger value="health">Health</TabsTrigger>
+          </TabsList>
+          {tab === "model-groups" && (
+            <Button size="sm" onClick={handleAdd}>
+              <Plus className="h-4 w-4" />
+              Add Model
+            </Button>
+          )}
+        </div>
 
         <TabsContent value="model-groups" className="pt-4 space-y-6">
-      <div className="flex items-center justify-between">
-        <Button size="sm" onClick={handleAdd}>
-          <Plus className="h-4 w-4" />
-          Add Model
-        </Button>
-      </div>
 
       {/* Error toast */}
       {errorMsg && (
