@@ -1020,6 +1020,9 @@ pub async fn chat_completions(
         let organization_id = auth.organization_id.clone();
         let request_id = uuid::Uuid::new_v4().to_string();
         let request_body = body.clone();
+        let stream_metrics = state.metrics.clone();
+        let stream_auth_user = auth.user_id.clone();
+        let stream_model = _model.to_string();
 
         // Phase 1: pre-insert placeholder SpendLog
         {
@@ -1202,12 +1205,50 @@ pub async fn chat_completions(
                         json!({"error": err, "status_code": status_code}),
                         &format!("failure:{}", status_code),
                     ).await;
+                    if let Some(ref m) = stream_metrics {
+                        m.record_request(&RequestSummary {
+                            model: stream_model.clone(),
+                            user: stream_auth_user.clone().unwrap_or_default(),
+                            status_code: status_code.to_string(),
+                            success: false,
+                            latency_secs: duration_ms as f64 / 1000.0,
+                            upstream_latency_secs: 0.0,
+                            ttft_secs: None,
+                            queue_time_secs: None,
+                            spend: 0.0,
+                            prompt_tokens: 0,
+                            completion_tokens: 0,
+                            total_tokens: 0,
+                            error_type: "upstream_error".into(),
+                            api_base: Some(api_base.clone()),
+                        });
+                    }
                 }
                 None => {
                     let _ = state_clone.db.update_spend_log(
                         &request_id, streaming_spend, stream_total_tokens, stream_prompt_tokens, stream_completion_tokens,
                         now, duration_ms, cst, assembled_response, "success",
                     ).await;
+                    if let Some(ref m) = stream_metrics {
+                        let ttft = first_chunk_time
+                            .map(|fct| fct.signed_duration_since(start_time).num_milliseconds() as f64 / 1000.0);
+                        m.record_request(&RequestSummary {
+                            model: stream_model.clone(),
+                            user: stream_auth_user.clone().unwrap_or_default(),
+                            status_code: "200".to_string(),
+                            success: true,
+                            latency_secs: duration_ms as f64 / 1000.0,
+                            upstream_latency_secs: duration_ms as f64 / 1000.0,
+                            ttft_secs: ttft,
+                            queue_time_secs: None,
+                            spend: streaming_spend,
+                            prompt_tokens: stream_prompt_tokens,
+                            completion_tokens: stream_completion_tokens,
+                            total_tokens: stream_total_tokens,
+                            error_type: String::new(),
+                            api_base: Some(api_base.clone()),
+                        });
+                    }
                 }
             }
 
