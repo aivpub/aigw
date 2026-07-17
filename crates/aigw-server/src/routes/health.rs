@@ -320,7 +320,14 @@ async fn ping_model(
     };
 
     let base = base_url.trim_end_matches('/').to_string();
-    let url = format!("{}/v1/chat/completions", base);
+
+    // Detect if api_base already includes /v1 (e.g. https://api.openai.com/v1)
+    // If yes, just append /chat/completions; otherwise include /v1/chat/completions.
+    let chat_url = if base.ends_with("/v1") || base.contains("/v1/") {
+        format!("{}/chat/completions", base)
+    } else {
+        format!("{}/v1/chat/completions", base)
+    };
     let start = std::time::Instant::now();
 
     // Send a minimal chat completion request to test real connectivity
@@ -332,7 +339,7 @@ async fn ping_model(
     });
 
     let mut req = reqwest::Client::new()
-        .post(&url)
+        .post(&chat_url)
         .header("Content-Type", "application/json")
         .json(&test_body)
         .timeout(std::time::Duration::from_secs(15));
