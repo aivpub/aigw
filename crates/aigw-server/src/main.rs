@@ -207,7 +207,11 @@ async fn main() -> anyhow::Result<()> {
         .route("/health/readiness", get(health::readiness))
         .route("/health/liveliness", get(health::liveliness))
         .route("/health/metrics", get(health::health_metrics))
+        .route("/health/latest", get(health::health_latest))
         .route("/system/info", get(health::system_info))
+        // Model health checks
+        .route("/model/health-check", axum::routing::post(health::model_health_check))
+        .route("/model/health-check/all", axum::routing::post(health::model_health_check_all))
         // Frontend admin console (embedded SPA)
         .route("/dash", get(frontend::serve_frontend))
         .route("/dash/{*rest}", get(frontend::serve_frontend))

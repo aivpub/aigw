@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   BarChart,
   Bar,
@@ -88,10 +89,6 @@ function fmtTokens(v: number): string {
   return v.toString();
 }
 
-function todayStr(): string {
-  return new Date().toISOString().split('T')[0];
-}
-
 type DatePreset = "3d" | "7d" | "30d" | "custom";
 
 function presetRange(p: DatePreset): { start: string; end: string } {
@@ -128,6 +125,8 @@ const PRESETS: { key: DatePreset; label: string }[] = [
   { key: "custom", label: "Custom" },
 ];
 
+type ChartMode = "spend" | "tokens";
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Component
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -136,6 +135,7 @@ export function UsagePage() {
   const [preset, setPreset] = useState<DatePreset>("30d");
   const [startDate, setStartDate] = useState(presetRange("30d").start);
   const [endDate, setEndDate] = useState(presetRange("30d").end);
+  const [chartMode, setChartMode] = useState<ChartMode>("spend");
 
   const handlePreset = (p: DatePreset) => {
     setPreset(p);
@@ -187,99 +187,85 @@ export function UsagePage() {
   const isLoading = activityLoading || modelLoading || providerLoading;
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Usage</h1>
-        <p className="text-sm text-muted-foreground">
-          Usage and spend overview
-        </p>
+    <div className="space-y-4">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Usage</h1>
+          <p className="text-sm text-muted-foreground">Usage and spend overview</p>
+        </div>
+        {/* Toolbar: date presets + custom picker */}
+        <div className="flex flex-wrap items-center gap-2">
+          {PRESETS.map((p) => (
+            <Button
+              key={p.key}
+              variant={preset === p.key ? "default" : "outline"}
+              size="sm"
+              onClick={() => handlePreset(p.key)}
+              className="h-7 text-xs"
+            >
+              {p.label}
+            </Button>
+          ))}
+          {preset === "custom" && (
+            <div className="flex items-center gap-1">
+              <Input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="h-7 w-32 text-xs"
+              />
+              <span className="text-xs text-muted-foreground">–</span>
+              <Input
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="h-7 w-32 text-xs"
+              />
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* Date presets */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-medium flex items-center gap-2">
-            <Calendar className="h-4 w-4" />
-            Time Range
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-wrap items-center gap-2">
-            {PRESETS.map((p) => (
-              <Button
-                key={p.key}
-                variant={preset === p.key ? "default" : "outline"}
-                size="sm"
-                onClick={() => handlePreset(p.key)}
-                className="h-7 text-xs"
-              >
-                {p.label}
-              </Button>
-            ))}
-            {preset === "custom" && (
-              <div className="flex items-center gap-2 ml-2">
-                <Input
-                  type="date"
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  className="h-7 w-36 text-xs"
-                />
-                <span className="text-xs text-muted-foreground">–</span>
-                <Input
-                  type="date"
-                  value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                  className="h-7 w-36 text-xs"
-                />
-              </div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Metric Cards */}
-      <div className="grid gap-4 grid-cols-2 md:grid-cols-3">
+      {/* Metric Cards — compact */}
+      <div className="grid gap-3 grid-cols-3 md:grid-cols-6">
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Total Spend</CardTitle>
-            <DollarSign className="h-4 w-4 text-muted-foreground" />
+          <CardHeader className="flex flex-row items-center justify-between pb-1 p-4">
+            <CardTitle className="text-xs font-medium">Spend</CardTitle>
+            <DollarSign className="h-3.5 w-3.5 text-muted-foreground" />
           </CardHeader>
-          <CardContent>
+          <CardContent className="p-4 pt-0">
             {activityLoading ? (
-              <Skeleton className="h-8 w-24" />
+              <Skeleton className="h-6 w-16" />
             ) : (
-              <div className="text-2xl font-bold">{fmtSpend(metadata?.total_spend ?? 0)}</div>
-            )}
-            <p className="text-xs text-muted-foreground mt-1">
-              {startDate} — {endDate}
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Total Requests</CardTitle>
-            <BarChart3 className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            {activityLoading ? (
-              <Skeleton className="h-8 w-16" />
-            ) : (
-              <div className="text-2xl font-bold">{metadata?.total_requests?.toLocaleString() ?? "—"}</div>
+              <div className="text-lg font-bold">{fmtSpend(metadata?.total_spend ?? 0)}</div>
             )}
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Successful</CardTitle>
-            <CheckCircle className="h-4 w-4 text-green-500" />
+          <CardHeader className="flex flex-row items-center justify-between pb-1 p-4">
+            <CardTitle className="text-xs font-medium">Requests</CardTitle>
+            <BarChart3 className="h-3.5 w-3.5 text-muted-foreground" />
           </CardHeader>
-          <CardContent>
+          <CardContent className="p-4 pt-0">
             {activityLoading ? (
-              <Skeleton className="h-8 w-16" />
+              <Skeleton className="h-6 w-12" />
             ) : (
-              <div className="text-2xl font-bold text-green-600 dark:text-green-400">
+              <div className="text-lg font-bold">{metadata?.total_requests?.toLocaleString() ?? "—"}</div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-1 p-4">
+            <CardTitle className="text-xs font-medium">OK</CardTitle>
+            <CheckCircle className="h-3.5 w-3.5 text-green-500" />
+          </CardHeader>
+          <CardContent className="p-4 pt-0">
+            {activityLoading ? (
+              <Skeleton className="h-6 w-12" />
+            ) : (
+              <div className="text-lg font-bold text-green-600 dark:text-green-400">
                 {metadata?.successful_requests?.toLocaleString() ?? "—"}
               </div>
             )}
@@ -287,15 +273,15 @@ export function UsagePage() {
         </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Failed</CardTitle>
-            <XCircle className="h-4 w-4 text-red-500" />
+          <CardHeader className="flex flex-row items-center justify-between pb-1 p-4">
+            <CardTitle className="text-xs font-medium">Failed</CardTitle>
+            <XCircle className="h-3.5 w-3.5 text-red-500" />
           </CardHeader>
-          <CardContent>
+          <CardContent className="p-4 pt-0">
             {activityLoading ? (
-              <Skeleton className="h-8 w-16" />
+              <Skeleton className="h-6 w-12" />
             ) : (
-              <div className="text-2xl font-bold text-red-600 dark:text-red-400">
+              <div className="text-lg font-bold text-red-600 dark:text-red-400">
                 {metadata?.failed_requests?.toLocaleString() ?? "—"}
               </div>
             )}
@@ -303,32 +289,32 @@ export function UsagePage() {
         </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Total Tokens</CardTitle>
-            <Sparkles className="h-4 w-4 text-muted-foreground" />
+          <CardHeader className="flex flex-row items-center justify-between pb-1 p-4">
+            <CardTitle className="text-xs font-medium">Tokens</CardTitle>
+            <Sparkles className="h-3.5 w-3.5 text-muted-foreground" />
           </CardHeader>
-          <CardContent>
+          <CardContent className="p-4 pt-0">
             {activityLoading ? (
-              <Skeleton className="h-8 w-20" />
+              <Skeleton className="h-6 w-16" />
             ) : (
-              <div className="text-2xl font-bold">{fmtTokens(metadata?.total_tokens ?? 0)}</div>
+              <div className="text-lg font-bold">{fmtTokens(metadata?.total_tokens ?? 0)}</div>
             )}
-            <p className="text-xs text-muted-foreground mt-1">
-              prompt {fmtTokens(metadata?.prompt_tokens ?? 0)} / completion {fmtTokens(metadata?.completion_tokens ?? 0)}
+            <p className="text-[10px] text-muted-foreground mt-0.5">
+              p {fmtTokens(metadata?.prompt_tokens ?? 0)} / c {fmtTokens(metadata?.completion_tokens ?? 0)}
             </p>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Success Rate</CardTitle>
-            <TrendingUp className="h-4 w-4 text-muted-foreground" />
+          <CardHeader className="flex flex-row items-center justify-between pb-1 p-4">
+            <CardTitle className="text-xs font-medium">Rate</CardTitle>
+            <TrendingUp className="h-3.5 w-3.5 text-muted-foreground" />
           </CardHeader>
-          <CardContent>
+          <CardContent className="p-4 pt-0">
             {activityLoading ? (
-              <Skeleton className="h-8 w-16" />
+              <Skeleton className="h-6 w-12" />
             ) : (
-              <div className="text-2xl font-bold">
+              <div className="text-lg font-bold">
                 {metadata && metadata.total_requests > 0
                   ? `${((metadata.successful_requests / metadata.total_requests) * 100).toFixed(1)}%`
                   : "—"}
@@ -338,11 +324,16 @@ export function UsagePage() {
         </Card>
       </div>
 
-      {/* Daily Spend Bar Chart */}
+      {/* Daily Chart with Spend/Tokens Tabs */}
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between pb-2">
-          <CardTitle className="text-sm font-medium">Daily Spend</CardTitle>
-          <BarChart3 className="h-4 w-4 text-muted-foreground" />
+        <CardHeader className="flex flex-row items-center justify-between pb-2 pt-4 px-4">
+          <CardTitle className="text-sm font-medium">Daily Trend</CardTitle>
+          <Tabs defaultValue="spend" value={chartMode} onValueChange={(v) => setChartMode(v as ChartMode)}>
+            <TabsList className="h-7">
+              <TabsTrigger value="spend" className="text-xs px-3 h-5">💰 Spend</TabsTrigger>
+              <TabsTrigger value="tokens" className="text-xs px-3 h-5">📊 Tokens</TabsTrigger>
+            </TabsList>
+          </Tabs>
         </CardHeader>
         <CardContent>
           {activityLoading ? (
@@ -352,33 +343,37 @@ export function UsagePage() {
               No data available
             </div>
           ) : (
-            <div className="h-[200px] md:h-[280px]">
+            <div className="h-[220px] md:h-[260px]">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={dailyChartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
                   <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                  <XAxis
-                    dataKey="date"
-                    tick={{ fontSize: 11 }}
-                    stroke="hsl(var(--muted-foreground))"
-                  />
-                  <YAxis
-                    tick={{ fontSize: 11 }}
-                    stroke="hsl(var(--muted-foreground))"
-                  />
+                  <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="hsl(var(--muted-foreground))" />
+                  <YAxis tick={{ fontSize: 11 }} stroke="hsl(var(--muted-foreground))" />
                   <Tooltip
                     contentStyle={{
                       backgroundColor: "hsl(var(--card))",
                       border: "1px solid hsl(var(--border))",
                       borderRadius: "6px",
+                      fontSize: "12px",
                     }}
-                    formatter={(value, name) => {
+                    formatter={(value, name, props) => {
                       if (name === "spend") return [fmtSpend(value as number), "Spend"];
                       if (name === "tokens") return [fmtTokens(value as number), "Tokens"];
                       if (name === "requests") return [value, "Requests"];
                       return [value, name];
                     }}
+                    labelFormatter={(label) => {
+                      const item = dailyChartData.find((d) => d.date === label);
+                      if (!item) return label;
+                      // Enhanced tooltip: show spend + tokens + requests for the day
+                      return `${label}  |  ${fmtSpend(item.spend)}  |  ${item.requests} req  |  ${fmtTokens(item.tokens)} tokens`;
+                    }}
                   />
-                  <Bar dataKey="spend" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+                  {chartMode === "spend" ? (
+                    <Bar dataKey="spend" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+                  ) : (
+                    <Bar dataKey="tokens" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                  )}
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -386,13 +381,18 @@ export function UsagePage() {
         </CardContent>
       </Card>
 
-      {/* Model / Provider Charts */}
+      {/* Model / Provider Charts with Spend/Tokens Tabs */}
       <div className="grid gap-4 lg:grid-cols-2">
         {/* Model Bar Chart */}
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
+          <CardHeader className="flex flex-row items-center justify-between pb-2 pt-4 px-4">
             <CardTitle className="text-sm font-medium">Spend by Model</CardTitle>
-            <BarChart3 className="h-4 w-4 text-muted-foreground" />
+            <Tabs defaultValue="spend" value={chartMode} onValueChange={(v) => setChartMode(v as ChartMode)}>
+              <TabsList className="h-7">
+                <TabsTrigger value="spend" className="text-xs px-3 h-5">💰</TabsTrigger>
+                <TabsTrigger value="tokens" className="text-xs px-3 h-5">📊</TabsTrigger>
+              </TabsList>
+            </Tabs>
           </CardHeader>
           <CardContent>
             {modelLoading ? (
@@ -402,28 +402,29 @@ export function UsagePage() {
                 No data available
               </div>
             ) : (
-              <div className="h-[200px] md:h-[280px]">
+              <div className="h-[200px] md:h-[260px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={modelChartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                    <XAxis
-                      dataKey="model"
-                      tick={{ fontSize: 11 }}
-                      stroke="hsl(var(--muted-foreground))"
-                    />
-                    <YAxis
-                      tick={{ fontSize: 11 }}
-                      stroke="hsl(var(--muted-foreground))"
-                    />
+                    <XAxis dataKey="model" tick={{ fontSize: 11 }} stroke="hsl(var(--muted-foreground))" />
+                    <YAxis tick={{ fontSize: 11 }} stroke="hsl(var(--muted-foreground))" />
                     <Tooltip
                       contentStyle={{
                         backgroundColor: "hsl(var(--card))",
                         border: "1px solid hsl(var(--border))",
                         borderRadius: "6px",
+                        fontSize: "12px",
                       }}
-                      formatter={(value) => [fmtSpend(value as number), "Spend"]}
+                      formatter={(value, name, props) => {
+                        if (chartMode === "tokens") return [fmtTokens(value as number), "Tokens"];
+                        return [fmtSpend(value as number), "Spend"];
+                      }}
                     />
-                    <Bar dataKey="total_spend" name="Spend" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+                    {chartMode === "spend" ? (
+                      <Bar dataKey="total_spend" name="Spend" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+                    ) : (
+                      <Bar dataKey="total_tokens" name="Tokens" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                    )}
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -433,7 +434,7 @@ export function UsagePage() {
 
         {/* Provider Donut Chart */}
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
+          <CardHeader className="flex flex-row items-center justify-between pb-2 pt-4 px-4">
             <CardTitle className="text-sm font-medium">Spend by Provider</CardTitle>
             <PieChartIcon className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
@@ -445,7 +446,7 @@ export function UsagePage() {
                 No data available
               </div>
             ) : (
-              <div className="h-[200px] md:h-[280px]">
+              <div className="h-[200px] md:h-[260px]">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie
@@ -468,8 +469,13 @@ export function UsagePage() {
                         backgroundColor: "hsl(var(--card))",
                         border: "1px solid hsl(var(--border))",
                         borderRadius: "6px",
+                        fontSize: "12px",
                       }}
-                      formatter={(value) => [fmtSpend(value as number), "Spend"]}
+                      formatter={(value, name, props) => {
+                        const item = providerChartData[props.payload?.payload ? providerChartData.indexOf(props.payload.payload) : -1];
+                        if (item && chartMode === "tokens") return [fmtTokens(item.tokens), "Tokens"];
+                        return [fmtSpend(value as number), "Spend"];
+                      }}
                     />
                     <Legend />
                   </PieChart>

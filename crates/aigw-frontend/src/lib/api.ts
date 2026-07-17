@@ -22,13 +22,13 @@ export async function apiGet<T = unknown>(path: string): Promise<T> {
 
 export async function apiPost<T = unknown>(
   path: string,
-  body: unknown
+  body?: unknown
 ): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     method: "POST",
     headers: authHeaders(),
     credentials: "include",
-    body: JSON.stringify(body),
+    body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   return handleResponse(res);
 }

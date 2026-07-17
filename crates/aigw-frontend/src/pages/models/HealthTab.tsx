@@ -1,192 +1,175 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { apiGet } from "@/lib/api";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { apiGet, apiPost } from "@/lib/api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Spinner } from "@/components/ui/spinner";
-import { CheckCircle, XCircle, Activity, Database, Key, Box, Users, Users2, Building2 } from "lucide-react";
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from "@/components/ui/table";
+import { CheckCircle, XCircle, Activity, RefreshCw } from "lucide-react";
 
-interface CheckResult {
-  label: string;
-  ok: boolean;
-  detail: string;
+interface HealthCheckItem {
+  model_name: string;
+  model_id?: string | null;
+  status: string;
+  response_time_ms?: number | null;
+  error_message?: string | null;
+  checked_at?: string;
+}
+
+interface HealthLatestResponse {
+  data: HealthCheckItem[];
+  count: number;
+}
+
+interface CheckAllResponse {
+  checked: number;
+  healthy: number;
+  unhealthy: number;
+}
+
+function fmtLatency(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined) return "—";
+  return ms < 1000 ? `${ms.toFixed(0)}ms` : `${(ms / 1000).toFixed(1)}s`;
+}
+
+function fmtCheckedAt(iso: string | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return d.toLocaleTimeString();
 }
 
 export function HealthTab() {
-  const [running, setRunning] = useState(false);
-  const [checks, setChecks] = useState<CheckResult[]>([]);
-  const [lastRun, setLastRun] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+  const [checking, setChecking] = useState(false);
 
-  const { data: metrics, isLoading } = useQuery({
-    queryKey: ["health-metrics"],
-    queryFn: () => apiGet("/health/metrics"),
-    retry: false,
+  const { data, isLoading, error } = useQuery<HealthLatestResponse>({
+    queryKey: ["health-latest"],
+    queryFn: () => apiGet("/health/latest"),
   });
 
-  async function runHealthCheck() {
-    setRunning(true);
-    const results: CheckResult[] = [];
-    const now = new Date().toLocaleTimeString();
+  const checks = data?.data ?? [];
 
-    // Check 1: /health
+  async function runCheckAll() {
+    setChecking(true);
     try {
-      const h = await apiGet("/health");
-      results.push({ label: "API Health", ok: (h as { status: string }).status === "ok", detail: JSON.stringify(h) });
+      const result = await apiPost("/model/health-check/all") as CheckAllResponse;
+      // Refetch latest results
+      await queryClient.invalidateQueries({ queryKey: ["health-latest"] });
+      console.log(`Checked ${result.checked} models: ${result.healthy} healthy, ${result.unhealthy} unhealthy`);
     } catch (e) {
-      results.push({ label: "API Health", ok: false, detail: String(e) });
+      console.error("Health check failed:", e);
+    } finally {
+      setChecking(false);
     }
-
-    // Check 2: /health/readiness
-    try {
-      const r = await apiGet("/health/readiness");
-      results.push({ label: "Readiness", ok: (r as { ready: boolean }).ready === true, detail: JSON.stringify(r) });
-    } catch (e) {
-      results.push({ label: "Readiness", ok: false, detail: String(e) });
-    }
-
-    // Check 3: /health/liveliness
-    try {
-      const l = await apiGet("/health/liveliness");
-      results.push({ label: "Liveliness", ok: (l as { alive: boolean }).alive === true, detail: JSON.stringify(l) });
-    } catch (e) {
-      results.push({ label: "Liveliness", ok: false, detail: String(e) });
-    }
-
-    // Check 4: /system/info
-    try {
-      const si = await apiGet("/system/info");
-      results.push({ label: "System Info", ok: true, detail: JSON.stringify(si) });
-    } catch (e) {
-      results.push({ label: "System Info", ok: false, detail: String(e) });
-    }
-
-    setChecks(results);
-    setLastRun(now);
-    setRunning(false);
   }
 
-  const m = metrics as Record<string, unknown> | undefined;
-  const allOk = checks.length > 0 && checks.every((c) => c.ok);
+  const latestCheck = checks.length > 0
+    ? checks.reduce((max, c) => (c.checked_at && c.checked_at > (max || "")) ? c.checked_at! : max, checks[0].checked_at)
+    : null;
 
   return (
     <div className="space-y-6">
-      {/* Health Check Button & Results */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2"><Activity className="h-5 w-5" /> Health Check</CardTitle>
-          <CardDescription>Run diagnostics against the aigw API.</CardDescription>
+          <CardTitle className="flex items-center gap-2">
+            <Activity className="h-5 w-5" /> Model Health
+          </CardTitle>
+          <CardDescription>
+            Ping each model's upstream endpoint to verify connectivity.
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center gap-3">
-            <Button onClick={runHealthCheck} disabled={running}>
-              {running ? <Spinner className="mr-2 h-4 w-4" /> : <Activity className="mr-2 h-4 w-4" />}
-              Run Checks
+            <Button onClick={runCheckAll} disabled={checking}>
+              {checking ? <Spinner className="mr-2 h-4 w-4" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+              Check All Models
             </Button>
-            {lastRun && <span className="text-xs text-muted-foreground">Last run: {lastRun}</span>}
-            {checks.length > 0 && (
-              <Badge variant={allOk ? "default" : "destructive"} className={allOk ? "bg-green-600" : ""}>
-                {allOk ? <CheckCircle className="mr-1 h-3 w-3" /> : <XCircle className="mr-1 h-3 w-3" />}
-                {checks.filter((c) => c.ok).length}/{checks.length} passed
-              </Badge>
+            {latestCheck && (
+              <span className="text-xs text-muted-foreground">
+                Last run: {fmtCheckedAt(latestCheck)}
+              </span>
             )}
           </div>
 
-          {checks.length > 0 && (
-            <div className="space-y-2">
-              {checks.map((c) => (
-                <div key={c.label} className="flex items-start gap-2 rounded-md border p-3 text-sm">
-                  {c.ok ? (
-                    <CheckCircle className="mt-0.5 h-4 w-4 shrink-0 text-green-500" />
-                  ) : (
-                    <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <span className="font-medium">{c.label}</span>
-                    <p className="text-muted-foreground truncate font-mono text-xs">{c.detail}</p>
-                  </div>
-                </div>
-              ))}
+          {error && (
+            <div className="rounded-md bg-destructive/10 border border-destructive/30 px-4 py-2 text-sm text-destructive">
+              {(error as Error).message}
             </div>
           )}
-        </CardContent>
-      </Card>
 
-      {/* Metrics */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2"><Database className="h-5 w-5" /> Overview</CardTitle>
-          <CardDescription>Runtime metrics &amp; counts.</CardDescription>
-        </CardHeader>
-        <CardContent>
           {isLoading ? (
             <Skeleton className="h-32 w-full" />
+          ) : checks.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-sm text-muted-foreground gap-2">
+              <Activity className="h-8 w-8" />
+              <p>No health checks run yet.</p>
+              <p>Click "Check All Models" to run diagnostics.</p>
+            </div>
           ) : (
-            <div className="space-y-6">
-              {/* Status row */}
-              <div className="grid grid-cols-3 gap-4">
-                <div>
-                  <p className="text-xs text-muted-foreground">Status</p>
-                  <p className="text-xl font-bold text-green-600">
-                    {(m?.status as string) ?? "—"}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Version</p>
-                  <p className="text-xl font-bold">{m?.version as string ?? "—"}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Uptime</p>
-                  <p className="text-xl font-bold">
-                    {m?.uptime_seconds != null
-                      ? `${Math.floor((m.uptime_seconds as number) / 3600)}h ${Math.floor(((m.uptime_seconds as number) % 3600) / 60)}m`
-                      : "—"}
-                  </p>
-                </div>
+            <>
+              {/* Desktop table */}
+              <div className="hidden md:block">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-8">Status</TableHead>
+                      <TableHead>Model</TableHead>
+                      <TableHead>Latency</TableHead>
+                      <TableHead>Error</TableHead>
+                      <TableHead>Checked</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {checks.map((c) => (
+                      <TableRow key={c.model_name}>
+                        <TableCell>
+                          {c.status === "healthy" ? (
+                            <CheckCircle className="h-4 w-4 text-green-500" />
+                          ) : (
+                            <XCircle className="h-4 w-4 text-destructive" />
+                          )}
+                        </TableCell>
+                        <TableCell className="font-mono text-sm">{c.model_name}</TableCell>
+                        <TableCell>{fmtLatency(c.response_time_ms)}</TableCell>
+                        <TableCell className="max-w-[200px] truncate text-sm text-destructive">
+                          {c.error_message || "—"}
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {fmtCheckedAt(c.checked_at)}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               </div>
 
-              {/* DB pool */}
-              {m?.db != null && (
-                <div>
-                  <p className="text-xs text-muted-foreground mb-2">Database Pool</p>
-                  <div className="grid grid-cols-3 gap-4 text-sm">
-                    <div className="flex items-center gap-2">
-                      <Database className="h-4 w-4 text-muted-foreground" />
-                      <span>Pool Size: <strong>{(m.db as Record<string, unknown>).pool_size as number ?? "—"}</strong></span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span>Idle: <strong>{(m.db as Record<string, unknown>).idle as number ?? "—"}</strong></span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span>Connected: <strong>{(m.db as Record<string, unknown>).connected ? "yes" : "no"}</strong></span>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Counts */}
-              {m?.counts != null && (
-                <div>
-                  <p className="text-xs text-muted-foreground mb-2">Resource Counts</p>
-                  <div className="grid grid-cols-5 gap-4 text-center">
-                    {[
-                      { icon: Key, label: "Keys", key: "virtual_keys" },
-                      { icon: Box, label: "Models", key: "proxy_models" },
-                      { icon: Building2, label: "Orgs", key: "organizations" },
-                      { icon: Users2, label: "Teams", key: "teams" },
-                      { icon: Users, label: "Users", key: "users" },
-                    ].map(({ icon: Icon, label, key }) => (
-                      <div key={key}>
-                        <Icon className="mx-auto mb-1 h-4 w-4 text-muted-foreground" />
-                        <dt className="text-[10px] text-muted-foreground">{label}</dt>
-                        <dd className="text-lg font-semibold">{(m.counts as Record<string, unknown>)[key] as number ?? "—"}</dd>
+              {/* Mobile card list */}
+              <div className="md:hidden space-y-3">
+                {checks.map((c) => (
+                  <Card key={c.model_name}>
+                    <CardContent className="p-3 flex items-center gap-3">
+                      {c.status === "healthy" ? (
+                        <CheckCircle className="h-5 w-5 shrink-0 text-green-500" />
+                      ) : (
+                        <XCircle className="h-5 w-5 shrink-0 text-destructive" />
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <div className="font-mono text-sm truncate">{c.model_name}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {fmtLatency(c.response_time_ms)}
+                          {c.error_message && (
+                            <span className="ml-2 text-destructive truncate block">{c.error_message}</span>
+                          )}
+                        </div>
                       </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </>
           )}
         </CardContent>
       </Card>

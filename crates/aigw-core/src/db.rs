@@ -1220,6 +1220,16 @@ pub trait SpendLogStore {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// HealthCheckStore trait
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[async_trait]
+pub trait HealthCheckStore {
+    async fn insert_health_check(&self, check: &HealthCheck) -> Result<()>;
+    async fn get_latest_health_checks(&self) -> Result<Vec<HealthCheck>>;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // SpendLogStore implementation for SqlitePool
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -3752,6 +3762,145 @@ impl Database {
 
     pub async fn count_users(&self) -> Result<i64> {
         self._count("users").await
+    }
+
+    // ── Health Check ──
+
+    pub async fn insert_health_check(&self, check: &HealthCheck) -> Result<()> {
+        let sql = r#"INSERT INTO health_checks (
+            health_check_id, model_name, model_id, status,
+            healthy_count, unhealthy_count, error_message, response_time_ms,
+            details, checked_by, checked_at, created_at, updated_at
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"#;
+        match self {
+            Database::Sqlite(p) => {
+                sqlx::query(sql)
+                    .bind(&check.health_check_id)
+                    .bind(&check.model_name)
+                    .bind(&check.model_id)
+                    .bind(&check.status)
+                    .bind(check.healthy_count)
+                    .bind(check.unhealthy_count)
+                    .bind(&check.error_message)
+                    .bind(check.response_time_ms)
+                    .bind(&check.details)
+                    .bind(&check.checked_by)
+                    .bind(&check.checked_at)
+                    .bind(&check.created_at)
+                    .bind(&check.updated_at)
+                    .execute(p).await?;
+            }
+            Database::Mysql(p) => {
+                sqlx::query(sql)
+                    .bind(&check.health_check_id)
+                    .bind(&check.model_name)
+                    .bind(&check.model_id)
+                    .bind(&check.status)
+                    .bind(check.healthy_count)
+                    .bind(check.unhealthy_count)
+                    .bind(&check.error_message)
+                    .bind(check.response_time_ms)
+                    .bind(&check.details)
+                    .bind(&check.checked_by)
+                    .bind(&check.checked_at)
+                    .bind(&check.created_at)
+                    .bind(&check.updated_at)
+                    .execute(p).await?;
+            }
+            Database::Postgres(p) => {
+                sqlx::query(sql)
+                    .bind(&check.health_check_id)
+                    .bind(&check.model_name)
+                    .bind(&check.model_id)
+                    .bind(&check.status)
+                    .bind(check.healthy_count)
+                    .bind(check.unhealthy_count)
+                    .bind(&check.error_message)
+                    .bind(check.response_time_ms)
+                    .bind(&check.details)
+                    .bind(&check.checked_by)
+                    .bind(&check.checked_at)
+                    .bind(&check.created_at)
+                    .bind(&check.updated_at)
+                    .execute(p).await?;
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn get_latest_health_checks(&self) -> Result<Vec<HealthCheck>> {
+        let sql = r#"SELECT h.* FROM health_checks h
+            INNER JOIN (
+                SELECT model_name, MAX(checked_at) AS max_checked
+                FROM health_checks GROUP BY model_name
+            ) latest ON h.model_name = latest.model_name AND h.checked_at = latest.max_checked
+            ORDER BY h.model_name"#;
+        match self {
+            Database::Sqlite(p) => Ok(sqlx::query_as::<_, HealthCheck>(sql).fetch_all(p).await?),
+            Database::Mysql(p) => Ok(sqlx::query_as::<_, HealthCheck>(sql).fetch_all(p).await?),
+            Database::Postgres(p) => Ok(sqlx::query_as::<_, HealthCheck>(sql).fetch_all(p).await?),
+        }
+    }
+
+    // ── Spend Logs: status + token range filter ──
+
+    pub async fn query_spend_logs_with_status_filter(
+        &self,
+        api_key: Option<&str>,
+        model: Option<&str>,
+        provider: Option<&str>,
+        start_date: Option<&str>,
+        end_date: Option<&str>,
+        request_id: Option<&str>,
+        status: Option<&str>,
+        min_tokens: Option<i32>,
+        max_tokens: Option<i32>,
+        limit: Option<i32>,
+        offset: Option<i32>,
+    ) -> Result<Vec<SpendLog>> {
+        let mut conditions = Vec::new();
+        let mut params: Vec<String> = Vec::new();
+
+        if let Some(k) = api_key { conditions.push(format!("api_key = '{}'", k.replace('\'', "''"))); }
+        if let Some(m) = model { conditions.push(format!("model = '{}'", m.replace('\'', "''"))); }
+        if let Some(p) = provider { conditions.push(format!("custom_llm_provider = '{}'", p.replace('\'', "''"))); }
+        if let Some(s) = start_date { conditions.push(format!("start_time >= '{}'", s.replace('\'', "''"))); }
+        if let Some(e) = end_date { conditions.push(format!("start_time <= '{}'", e.replace('\'', "''"))); }
+        if let Some(rid) = request_id { conditions.push(format!("request_id = '{}'", rid.replace('\'', "''"))); }
+        if let Some(st) = status {
+            if st == "success" { conditions.push("status = 'success'".to_string()); }
+            else if st == "failure" { conditions.push("status LIKE 'failure%'".to_string()); }
+            else if st == "streaming" { conditions.push("status = 'streaming'".to_string()); }
+        }
+        if let Some(mt) = min_tokens { conditions.push(format!("total_tokens >= {}", mt)); }
+        if let Some(mt) = max_tokens { conditions.push(format!("total_tokens <= {}", mt)); }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+
+        let l = limit.unwrap_or(100);
+        let o = offset.unwrap_or(0);
+
+        let sql = format!(
+            r#"SELECT request_id, call_type, api_key, spend, total_tokens,
+            prompt_tokens, completion_tokens, start_time, end_time,
+            request_duration_ms, completion_start_time, model, model_id, model_group,
+            custom_llm_provider, api_base, "user", metadata,
+            cache_hit, cache_key, request_tags, team_id, organization_id,
+            end_user, requester_ip_address, messages, response,
+            session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request
+            FROM spend_logs {} ORDER BY start_time DESC LIMIT {} OFFSET {}"#,
+            where_clause, l, o
+        );
+
+        match self {
+            Database::Sqlite(p) => Ok(sqlx::query_as::<_, SpendLog>(&sql).fetch_all(p).await?),
+            Database::Mysql(p) => Ok(sqlx::query_as::<_, SpendLog>(&sql).fetch_all(p).await?),
+            Database::Postgres(p) => Ok(sqlx::query_as::<_, SpendLog>(&sql).fetch_all(p).await?),
+        }
     }
 }
 

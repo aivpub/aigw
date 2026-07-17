@@ -890,6 +890,28 @@ pub struct ClaudeStreamEvent {
     pub usage: Option<ClaudeUsage>,
 }
 
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Health Check models
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Health check result — aligned with LiteLLM_HealthCheckTable
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct HealthCheck {
+    pub health_check_id: String,
+    pub model_name: String,
+    pub model_id: Option<String>,
+    pub status: String,
+    pub healthy_count: i32,
+    pub unhealthy_count: i32,
+    pub error_message: Option<String>,
+    pub response_time_ms: Option<f64>,
+    pub details: String,
+    pub checked_by: Option<String>,
+    pub checked_at: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 /// Claude delta for streaming text/content block events
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClaudeDelta {

@@ -42,6 +42,9 @@ pub struct SpendLogsQuery {
     pub end_date: Option<String>,
     pub request_id: Option<String>,
     pub session_id: Option<String>,
+    pub status: Option<String>,
+    pub min_tokens: Option<i32>,
+    pub max_tokens: Option<i32>,
     pub limit: Option<i32>,
     pub page: Option<i32>,
     pub page_size: Option<i32>,
@@ -235,13 +238,16 @@ pub async fn spend_logs(
     let offset = (page - 1) * page_size;
 
     let (logs, total_count) = tokio::try_join!(
-        state.db.query_spend_logs_filtered(
+        state.db.query_spend_logs_with_status_filter(
             Some(&api_key),
             query.model.as_deref(),
             query.provider.as_deref(),
             query.start_date.as_deref(),
             query.end_date.as_deref(),
             query.request_id.as_deref(),
+            query.status.as_deref(),
+            query.min_tokens,
+            query.max_tokens,
             Some(page_size),
             Some(offset),
         ),
@@ -459,13 +465,16 @@ pub async fn global_spend_logs(
     let offset = (page - 1) * page_size;
 
     let (logs, total_count) = tokio::try_join!(
-        state.db.query_spend_logs_filtered(
+        state.db.query_spend_logs_with_status_filter(
             query.api_key.as_deref(),
             query.model.as_deref(),
             query.provider.as_deref(),
             query.start_date.as_deref(),
             query.end_date.as_deref(),
             query.request_id.as_deref(),
+            query.status.as_deref(),
+            query.min_tokens,
+            query.max_tokens,
             Some(page_size),
             Some(offset),
         ),

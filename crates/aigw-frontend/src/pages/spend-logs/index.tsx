@@ -427,6 +427,9 @@ export function SpendLogsPage() {
   const [modelFilter, setModelFilter] = useState("");
   const [requestIdFilter, setRequestIdFilter] = useState("");
   const [requestIdInput, setRequestIdInput] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [minTokens, setMinTokens] = useState<number | undefined>();
+  const [maxTokens, setMaxTokens] = useState<number | undefined>();
   const [liveTail, setLiveTail] = useState(loadLiveTailPref);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(30);
@@ -452,11 +455,14 @@ export function SpendLogsPage() {
   const handleLiveTailToggle = useCallback((v: boolean) => { setLiveTail(v); saveLiveTailPref(v); if (v) setPage(1); }, []);
 
   const { data: logsData, isLoading, isError, refetch } = useQuery<SpendLogsResponse>({
-    queryKey: ["global-spend-logs", startDate, endDate, modelFilter, requestIdFilter, page, pageSize],
+    queryKey: ["global-spend-logs", startDate, endDate, modelFilter, requestIdFilter, statusFilter, minTokens, maxTokens, page, pageSize],
     queryFn: () => {
       let url = `/global/spend/logs?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}&page=${page}&page_size=${pageSize}`;
       if (modelFilter.trim()) url += `&model=${encodeURIComponent(modelFilter.trim())}`;
       if (requestIdFilter) url += `&request_id=${encodeURIComponent(requestIdFilter)}`;
+      if (statusFilter && statusFilter !== "all") url += `&status=${encodeURIComponent(statusFilter)}`;
+      if (minTokens !== undefined) url += `&min_tokens=${minTokens}`;
+      if (maxTokens !== undefined) url += `&max_tokens=${maxTokens}`;
       return apiGet(url);
     },
     refetchInterval: effectiveLiveTail ? 15_000 : false,
@@ -496,6 +502,29 @@ export function SpendLogsPage() {
             <div className="flex gap-2">
               <div className="w-44 relative"><Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground"/><Input placeholder="Request ID…" value={requestIdInput} onChange={e => handleRequestIdInput(e.target.value)} className="h-8 pl-7 text-xs"/></div>
               <div className="w-40"><Input placeholder="Model filter…" value={modelFilter} onChange={e => { setModelFilter(e.target.value); setPage(1); }} className="h-8 text-xs"/></div>
+              <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setPage(1); }}>
+                <SelectTrigger className="h-8 w-[110px] text-xs"><SelectValue placeholder="Status: All"/></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All</SelectItem>
+                  <SelectItem value="success">Success</SelectItem>
+                  <SelectItem value="failure">Failure</SelectItem>
+                  <SelectItem value="streaming">Streaming</SelectItem>
+                </SelectContent>
+              </Select>
+              <Input
+                type="number"
+                placeholder="Min tokens"
+                value={minTokens !== undefined ? String(minTokens) : ""}
+                onChange={e => { const v = e.target.value; setMinTokens(v ? Number(v) : undefined); setPage(1); }}
+                className="h-8 w-24 text-xs"
+              />
+              <Input
+                type="number"
+                placeholder="Max tokens"
+                value={maxTokens !== undefined ? String(maxTokens) : ""}
+                onChange={e => { const v = e.target.value; setMaxTokens(v ? Number(v) : undefined); setPage(1); }}
+                className="h-8 w-24 text-xs"
+              />
             </div>
             <Button variant="outline" size="sm" onClick={() => { queryClient.invalidateQueries({ queryKey: ["global-spend-logs"] }); refetch(); }} className="h-8 shrink-0"><RefreshCw className="h-3.5 w-3.5 mr-1"/>Fetch</Button>
             <Button variant="outline" size="sm" onClick={() => exportToCSV(logs, startDate, endDate)} disabled={logs.length===0} className="h-8 shrink-0"><Download className="h-3.5 w-3.5 mr-1"/>CSV</Button>
