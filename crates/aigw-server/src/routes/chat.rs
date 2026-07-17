@@ -8,6 +8,7 @@ use aigw_core::adapter::{ClientProtocol, select_adapter};
 use aigw_core::auth::decode_jwt;
 use aigw_core::crypto::{decrypt_json_fields, decrypt_litellm_value, hash_token};
 use aigw_core::middleware::KeyIdentity;
+use aigw_core::metrics::RequestSummary;
 use aigw_core::models::{DailySpendKind, DailySpendLog, SpendLog, Team, VirtualKey};
 use aigw_core::resolver::ModelResolver;
 use axum::{
@@ -1380,6 +1381,26 @@ pub async fn chat_completions(
         // Record spend log (don't fail the request if logging fails)
         let _ = state.db.insert_spend_log(&spend_log).await;
 
+        // Record Prometheus metrics (non-streaming success)
+        if let Some(ref m) = state.metrics {
+            m.record_request(&RequestSummary {
+                model: _model.to_string(),
+                user: auth.user_id.clone().unwrap_or_default(),
+                status_code: "200".to_string(),
+                success: true,
+                latency_secs: now.signed_duration_since(start_time).num_milliseconds() as f64 / 1000.0,
+                upstream_latency_secs: now.signed_duration_since(start_time).num_milliseconds() as f64 / 1000.0,
+                ttft_secs: None,
+                queue_time_secs: None,
+                spend: spend_amount,
+                prompt_tokens: spend_log.prompt_tokens,
+                completion_tokens: spend_log.completion_tokens,
+                total_tokens: spend_log.total_tokens,
+                error_type: String::new(),
+                api_base: Some(deployment.api_base.clone()),
+            });
+        }
+
         // Queue daily_spend update
         if let Some(ref queue) = state.daily_spend_queue {
             let date = now.format("%Y-%m-%d").to_string();
@@ -1526,6 +1547,7 @@ mod tests {
             deployment_mode: "onprem".to_string(),
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
+            metrics: None,
         });
 
         Router::new()
@@ -1700,6 +1722,7 @@ mod tests {
             deployment_mode: "onprem".to_string(),
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
+            metrics: None,
         });
 
         let app = Router::new()
@@ -1839,6 +1862,7 @@ mod tests {
             deployment_mode: "onprem".to_string(),
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
+            metrics: None,
         });
 
         let app = Router::new()
@@ -1883,6 +1907,7 @@ mod tests {
             deployment_mode: "onprem".to_string(),
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
+            metrics: None,
         })
     }
 

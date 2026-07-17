@@ -560,6 +560,7 @@ mod tests {
             deployment_mode: "test".to_string(),
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
+            metrics: None,
         });
 
         let app = Router::new()

@@ -11,6 +11,7 @@
 use aigw_core::crypto::hash_token;
 use aigw_core::daily_spend_queue::DailySpendQueue;
 use aigw_core::db::Database;
+use aigw_core::metrics::MetricsRecorder;
 use aigw_core::models::{GenerateKeyRequest, VirtualKey};
 use aigw_core::provider::ProviderRegistry;
 use aigw_core::rate_limiter::RateLimiter;
@@ -42,6 +43,9 @@ pub struct AppState {
     pub db: Database,
     pub master_key: Option<String>,
     pub aigw_master_key: Option<String>, // for decrypting litellm_params at runtime
+    /// Prometheus metrics recorder (global registry, initialized at startup, None in tests)
+    #[allow(dead_code)]
+    pub metrics: Option<Arc<MetricsRecorder>>,
     #[allow(dead_code)]
     pub provider_registry: ProviderRegistry,
     #[allow(dead_code)]
@@ -69,6 +73,7 @@ impl AppState {
             db,
             master_key,
             aigw_master_key,
+            metrics: None,
             provider_registry: ProviderRegistry::new(),
             router_state: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             rate_limiter: Arc::new(RateLimiter::new()),
@@ -698,6 +703,7 @@ mod tests {
             deployment_mode: "onprem".to_string(),
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
+            metrics: None,
         });
         Router::new()
             .route("/key/generate", axum::routing::post(generate_key))

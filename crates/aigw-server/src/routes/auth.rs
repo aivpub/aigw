@@ -155,6 +155,7 @@ use aigw_core::resolver::ModelResolver;
             deployment_mode: deployment_mode.to_string(),
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
+            metrics: None,
         })
     }
 

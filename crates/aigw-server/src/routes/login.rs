@@ -375,6 +375,7 @@ use aigw_core::resolver::ModelResolver;
             deployment_mode: "onprem".to_string(),
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
+            metrics: None,
         });
         Router::new()
             .route("/v2/login", axum::routing::post(login))

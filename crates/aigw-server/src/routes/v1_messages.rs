@@ -9,6 +9,7 @@ use aigw_core::adapter::{AnthropicToOpenAIStream, ClientProtocol, DefaultAdapter
 use aigw_core::auth::decode_jwt;
 use aigw_core::crypto::hash_token;
 use aigw_core::models::{ClaudeMessageRequest, DailySpendKind, DailySpendLog, SpendLog};
+use aigw_core::metrics::RequestSummary;
 use aigw_core::resolver::ModelResolver;
 use axum::{
     extract::State,
@@ -835,6 +836,26 @@ pub async fn messages_handler(
 
         let _ = state.db.insert_spend_log(&spend_log).await;
 
+        // Record Prometheus metrics (non-streaming v1/messages success)
+        if let Some(ref m) = state.metrics {
+            m.record_request(&RequestSummary {
+                model: model.clone(),
+                user: auth_user_id.clone().unwrap_or_default(),
+                status_code: "200".to_string(),
+                success: true,
+                latency_secs: now.signed_duration_since(start_time).num_milliseconds() as f64 / 1000.0,
+                upstream_latency_secs: now.signed_duration_since(start_time).num_milliseconds() as f64 / 1000.0,
+                ttft_secs: None,
+                queue_time_secs: None,
+                spend: spend_amount,
+                prompt_tokens: spend_log.prompt_tokens,
+                completion_tokens: spend_log.completion_tokens,
+                total_tokens: spend_log.total_tokens,
+                error_type: String::new(),
+                api_base: Some(resolved_deployment.api_base.clone()),
+            });
+        }
+
         // Queue daily_spend update
         if let Some(ref queue) = state.daily_spend_queue {
             let date = now.format("%Y-%m-%d").to_string();
@@ -913,6 +934,7 @@ mod tests {
             deployment_mode: "onprem".to_string(),
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
+            metrics: None,
         });
 
         Router::new()

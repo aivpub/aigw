@@ -937,6 +937,7 @@ use aigw_core::resolver::ModelResolver;
             deployment_mode: "onprem".to_string(),
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
+            metrics: None,
         });
         Router::new()
             .route("/spend/logs", axum::routing::get(spend_logs))

@@ -150,8 +150,8 @@ async fn main() -> anyhow::Result<()> {
     let rate_limiter = Arc::new(RateLimiter::new());
 
     // Initialize Prometheus metrics (global default registry)
-    let _metrics = aigw_core::metrics::MetricsRecorder::init("aigw")
-        .map_err(|e| anyhow::anyhow!("Failed to initialize metrics: {}", e))?;
+    let metrics = Arc::new(aigw_core::metrics::MetricsRecorder::init("aigw")
+        .expect("Failed to initialize prometheus metrics"));
     tracing::info!("Prometheus metrics initialized (namespace: aigw)");
 
     // Determine aigw master key for runtime decryption (CREDENTIALS/encrypted fields)
@@ -194,6 +194,7 @@ async fn main() -> anyhow::Result<()> {
         db: (*db_arc).clone(),
         master_key: Some(master_key.clone()),
         aigw_master_key,
+        metrics: Some(metrics),
         provider_registry,
         router: AigwRouter::from_config(&RouterConfig::default()),
         router_state,
