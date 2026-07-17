@@ -27,6 +27,7 @@ pub mod instance;
 pub mod metrics;
 pub mod middleware;
 pub mod models;
+pub mod otel_tracing;
 pub mod password;
 pub mod provider;
 pub mod rate_limiter;
