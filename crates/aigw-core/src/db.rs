@@ -3859,7 +3859,7 @@ impl Database {
         offset: Option<i32>,
     ) -> Result<Vec<SpendLog>> {
         let mut conditions = Vec::new();
-        let mut params: Vec<String> = Vec::new();
+        let _params: Vec<String> = Vec::new();
 
         if let Some(k) = api_key { conditions.push(format!("api_key = '{}'", k.replace('\'', "''"))); }
         if let Some(m) = model { conditions.push(format!("model = '{}'", m.replace('\'', "''"))); }

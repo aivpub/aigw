@@ -16,7 +16,7 @@ use aigw_core::models::{GenerateKeyRequest, VirtualKey};
 use aigw_core::provider::ProviderRegistry;
 use aigw_core::rate_limiter::RateLimiter;
 use aigw_core::resolver::ModelResolver;
-use aigw_core::router::{Router as AigwRouter, RouterConfig, RouterState};
+use aigw_core::router::{Router as AigwRouter, RouterState};
 use axum::{
     extract::{Query, State},
     http::StatusCode,
@@ -61,6 +61,7 @@ pub struct AppState {
 impl AppState {
     /// Create a test AppState with defaults for provider_registry, router_state,
     /// rate_limiter, and resolver (empty, no DB dependency for non-chat tests).
+    #[allow(dead_code)]
     pub fn for_test(
         db: Database,
         master_key: Option<String>,

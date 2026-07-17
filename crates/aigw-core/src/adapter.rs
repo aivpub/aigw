@@ -70,7 +70,6 @@ pub fn select_adapter(client: ClientProtocol, provider: &ProviderType) -> Option
         (ClientProtocol::Anthropic, ProviderType::OpenAICompatible) => Some(&AnthropicToOpenAI),
         (ClientProtocol::Anthropic, ProviderType::AnthropicNative) => Some(&AnthropicPassthrough),
         (ClientProtocol::OpenAI, ProviderType::AnthropicNative) => Some(&OpenAIToAnthropic),
-        _ => None,
     }
 }
 
@@ -372,6 +371,7 @@ fn append_text_to_chat_message(msg: &ChatMessage, text: &str) -> ChatMessage {
 
 enum BlockType {
     Text,
+    #[allow(dead_code)]
     ToolUse { id: String, name: String },
 }
 
@@ -1129,6 +1129,7 @@ impl MessageAdapter for OpenAIToAnthropic {
 
 enum O2ABlockType {
     Text,
+    #[allow(dead_code)]
     ToolUse { id: String, name: String },
 }
 
