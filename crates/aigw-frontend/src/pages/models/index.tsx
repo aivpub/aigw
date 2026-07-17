@@ -177,11 +177,24 @@ export function ModelsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Models</h1>
-        <p className="text-sm text-muted-foreground">
-          Proxy model configurations, credentials, and system health
-        </p>
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Models</h1>
+          <p className="text-sm text-muted-foreground">
+            Proxy model configurations, credentials, and system health
+          </p>
+        </div>
+        <Tabs
+          defaultValue={tab}
+          value={tab}
+          onValueChange={(v) => setSearchParams({ tab: v }, { replace: true })}
+        >
+          <TabsList>
+            <TabsTrigger value="model-groups">Model Groups</TabsTrigger>
+            <TabsTrigger value="credentials">Credentials</TabsTrigger>
+            <TabsTrigger value="health">Health</TabsTrigger>
+          </TabsList>
+        </Tabs>
       </div>
 
       <Tabs
@@ -189,21 +202,7 @@ export function ModelsPage() {
         value={tab}
         onValueChange={(v) => setSearchParams({ tab: v }, { replace: true })}
       >
-        <div className="flex items-center justify-between">
-          <TabsList>
-            <TabsTrigger value="model-groups">Model Groups</TabsTrigger>
-            <TabsTrigger value="credentials">Credentials</TabsTrigger>
-            <TabsTrigger value="health">Health</TabsTrigger>
-          </TabsList>
-          {tab === "model-groups" && (
-            <Button size="sm" onClick={handleAdd}>
-              <Plus className="h-4 w-4" />
-              Add Model
-            </Button>
-          )}
-        </div>
-
-        <TabsContent value="model-groups" className="pt-4 space-y-6">
+        <TabsContent value="model-groups" className="mt-0 space-y-4">
 
       {/* Error toast */}
       {errorMsg && (
@@ -221,14 +220,20 @@ export function ModelsPage() {
         </div>
       )}
 
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          placeholder="Search by name, provider..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="pl-9 max-w-sm"
-        />
+      <div className="flex items-center gap-2">
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Search by name, provider..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9"
+          />
+        </div>
+        <Button size="sm" onClick={handleAdd}>
+          <Plus className="h-4 w-4" />
+          Add Model
+        </Button>
       </div>
 
       <Card>
@@ -580,11 +585,11 @@ export function ModelsPage() {
 
         </TabsContent>
 
-        <TabsContent value="credentials" className="pt-4">
+        <TabsContent value="credentials" className="mt-0">
           <CredentialsTab />
         </TabsContent>
 
-        <TabsContent value="health" className="pt-4">
+        <TabsContent value="health" className="mt-0">
           <HealthTab />
         </TabsContent>
       </Tabs>
