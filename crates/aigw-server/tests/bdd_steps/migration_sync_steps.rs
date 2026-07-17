@@ -6,7 +6,9 @@
 //! `AIGW_UPSTREAM_MASTER_KEY`.
 
 use cucumber::{given, then, when};
+#[allow(unused_imports)]
 use sqlx::any::AnyPoolOptions;
+#[allow(unused_imports)]
 use sqlx::Row as _;
 use crate::TestWorld;
 

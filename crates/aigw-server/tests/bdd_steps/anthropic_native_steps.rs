@@ -6,7 +6,7 @@ use cucumber::{given, then, when};
 use cucumber::gherkin::Step;
 use aigw_core::adapter::{
     ClientProtocol, MessageAdapter, select_adapter,
-    AnthropicPassthrough, OpenAIToAnthropic,
+    AnthropicPassthrough,
 };
 use aigw_core::deployment::{Deployment, ProviderType};
 use serde_json::json;

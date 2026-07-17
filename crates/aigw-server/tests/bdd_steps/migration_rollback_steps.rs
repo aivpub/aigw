@@ -5,7 +5,9 @@
 //! upstream litellm database.
 
 use cucumber::{then, when};
+#[allow(unused_imports)]
 use sqlx::any::AnyPoolOptions;
+#[allow(unused_imports)]
 use sqlx::Row as _;
 use crate::TestWorld;
 
