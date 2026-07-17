@@ -144,6 +144,26 @@ impl MetricsRecorder {
         })
     }
 
+    /// Seed each Counter/Histogram with a zero value so they appear in /metrics output
+    /// even before the first real request hits.
+    pub fn seed_zero_values(&self) {
+        let label = "";
+        self.total_requests.with_label_values(&["_", "_", "_"]).inc_by(0.0);
+        self.failed_requests.with_label_values(&["_", "_", "_"]).inc_by(0.0);
+        self.request_latency_seconds.with_label_values(&["_", "_"]).observe(0.0);
+        self.llm_api_latency_seconds.with_label_values(&["_", "_"]).observe(0.0);
+        self.llm_api_ttft_seconds.with_label_values(&["_", "_"]).observe(0.0);
+        self.request_queue_time_seconds.with_label_values(&["_", "_"]).observe(0.0);
+        self.spend_metric.with_label_values(&["_", "_"]).inc_by(0.0);
+        self.tokens_metric.with_label_values(&["_", "_", "_"]).inc_by(0);
+        self.deployment_state.with_label_values(&["_", "_"]).set(0.0);
+        self.deployment_tpm_limit.with_label_values(&["_", "_"]).set(0.0);
+        self.deployment_rpm_limit.with_label_values(&["_", "_"]).set(0.0);
+        self.deployment_cooled_down.with_label_values(&["_", "_"]).inc_by(0);
+        self.deployment_success_responses.with_label_values(&["_", "_"]).inc_by(0);
+        self.deployment_failure_responses.with_label_values(&["_", "_"]).inc_by(0);
+    }
+
     /// Record a completed request (success or failure).
     pub fn record_request(&self, summary: &RequestSummary) {
         let model = &summary.model;
@@ -213,6 +233,64 @@ impl MetricsRecorder {
                     .inc();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_init_and_gather_non_empty() {
+        let recorder = MetricsRecorder::init("aigw_test").expect("init metrics");
+        recorder.seed_zero_values();
+        // After seeding, gather() should return metric families
+        let families = prometheus::gather();
+        assert!(!families.is_empty(), "gather should return non-empty metric families after init + seed");
+
+        // Verify at least the 14 families exist
+        let names: Vec<&str> = families.iter().map(|f| f.get_name()).collect();
+        assert!(names.contains(&"aigw_test_total_requests"));
+        assert!(names.contains(&"aigw_test_failed_requests"));
+        assert!(names.contains(&"aigw_test_request_latency_seconds"));
+        assert!(names.contains(&"aigw_test_llm_api_latency_seconds"));
+        assert!(names.contains(&"aigw_test_llm_api_ttft_seconds"));
+        assert!(names.contains(&"aigw_test_request_queue_time_seconds"));
+        assert!(names.contains(&"aigw_test_spend_metric"));
+        assert!(names.contains(&"aigw_test_tokens_metric"));
+        assert!(names.contains(&"aigw_test_deployment_state"));
+        assert!(names.contains(&"aigw_test_deployment_tpm_limit"));
+        assert!(names.contains(&"aigw_test_deployment_rpm_limit"));
+        assert!(names.contains(&"aigw_test_deployment_cooled_down"));
+        assert!(names.contains(&"aigw_test_deployment_success_responses"));
+        assert!(names.contains(&"aigw_test_deployment_failure_responses"));
+    }
+
+    #[test]
+    fn test_record_request_increments_counter() {
+        let recorder = MetricsRecorder::init("aigw_req").expect("init");
+        recorder.record_request(&RequestSummary {
+            model: "gpt-4".into(),
+            user: "user-1".into(),
+            status_code: "200".into(),
+            success: true,
+            latency_secs: 0.5,
+            upstream_latency_secs: 0.4,
+            ttft_secs: Some(0.1),
+            queue_time_secs: None,
+            spend: 0.042,
+            prompt_tokens: 100,
+            completion_tokens: 50,
+            total_tokens: 150,
+            error_type: "".into(),
+            api_base: Some("https://api.openai.com".into()),
+        });
+
+        // Verify total_requests counter has the label
+        let families = prometheus::gather();
+        let req_family = families.iter().find(|f| f.get_name() == "aigw_req_total_requests").expect("total_requests family exists");
+        let metrics = req_family.get_metric();
+        assert!(!metrics.is_empty(), "total_requests should have at least one labeled metric");
     }
 }
 

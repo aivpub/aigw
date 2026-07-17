@@ -411,7 +411,13 @@ pub async fn prometheus_metrics() -> axum::response::Response {
     let encoder = TextEncoder::new();
     let metric_families = prometheus::gather();
     let mut buffer = vec![];
-    let _ = encoder.encode(&metric_families, &mut buffer);
+    if let Err(e) = encoder.encode(&metric_families, &mut buffer) {
+        tracing::error!("prometheus encode error: {}", e);
+        return axum::response::Response::builder()
+            .status(500)
+            .body(axum::body::Body::from(format!("encode error: {}", e)))
+            .unwrap();
+    }
     axum::response::Response::builder()
         .header("Content-Type", "text/plain; version=0.0.4")
         .body(axum::body::Body::from(buffer))

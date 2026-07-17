@@ -152,6 +152,7 @@ async fn main() -> anyhow::Result<()> {
     // Initialize Prometheus metrics (global default registry)
     let metrics = Arc::new(aigw_core::metrics::MetricsRecorder::init("aigw")
         .expect("Failed to initialize prometheus metrics"));
+    metrics.seed_zero_values();
     tracing::info!("Prometheus metrics initialized (namespace: aigw)");
 
     // Determine aigw master key for runtime decryption (CREDENTIALS/encrypted fields)
