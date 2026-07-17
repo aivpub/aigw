@@ -495,57 +495,39 @@ export function SpendLogsPage() {
       </div>
 
       <Card>
-        <CardHeader className="pb-2"><CardTitle className="text-sm font-medium flex items-center gap-2"><Calendar className="h-4 w-4"/>Time Range</CardTitle></CardHeader>
-        <CardContent className="space-y-3">
-          <TimePresetBar preset={preset} onPreset={handlePreset} startDate={startDate} endDate={endDate} onStartDate={setStartDate} onEndDate={setEndDate}/>
-          <div className="flex flex-col sm:flex-row gap-2">
-            <div className="flex gap-2">
-              <div className="w-44 relative"><Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground"/><Input placeholder="Request ID…" value={requestIdInput} onChange={e => handleRequestIdInput(e.target.value)} className="h-8 pl-7 text-xs"/></div>
-              <div className="w-40"><Input placeholder="Model filter…" value={modelFilter} onChange={e => { setModelFilter(e.target.value); setPage(1); }} className="h-8 text-xs"/></div>
-              <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setPage(1); }}>
-                <SelectTrigger className="h-8 w-[110px] text-xs"><SelectValue placeholder="Status: All"/></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All</SelectItem>
-                  <SelectItem value="success">Success</SelectItem>
-                  <SelectItem value="failure">Failure</SelectItem>
-                  <SelectItem value="streaming">Streaming</SelectItem>
-                </SelectContent>
-              </Select>
-              <Input
-                type="number"
-                placeholder="Min tokens"
-                value={minTokens !== undefined ? String(minTokens) : ""}
-                onChange={e => { const v = e.target.value; setMinTokens(v ? Number(v) : undefined); setPage(1); }}
-                className="h-8 w-24 text-xs"
-              />
-              <Input
-                type="number"
-                placeholder="Max tokens"
-                value={maxTokens !== undefined ? String(maxTokens) : ""}
-                onChange={e => { const v = e.target.value; setMaxTokens(v ? Number(v) : undefined); setPage(1); }}
-                className="h-8 w-24 text-xs"
-              />
-            </div>
-            <Button variant="outline" size="sm" onClick={() => { queryClient.invalidateQueries({ queryKey: ["global-spend-logs"] }); refetch(); }} className="h-8 shrink-0"><RefreshCw className="h-3.5 w-3.5 mr-1"/>Fetch</Button>
-            <Button variant="outline" size="sm" onClick={() => exportToCSV(logs, startDate, endDate)} disabled={logs.length===0} className="h-8 shrink-0"><Download className="h-3.5 w-3.5 mr-1"/>CSV</Button>
+        <CardHeader className="pb-2"><CardTitle className="text-sm font-medium flex items-center gap-2"><Calendar className="h-4 w-4"/>Spend Logs ({totalCount})</CardTitle></CardHeader>
+        <CardContent className="space-y-2">
+          {/* Time presets + all filters + actions in one compact row */}
+          <div className="flex flex-wrap items-center gap-2">
+            {PRESETS.map(p => (
+              <Button key={p.key} variant={preset===p.key?"default":"outline"} size="sm" onClick={()=>handlePreset(p.key)} className="h-7 text-xs">{p.label}</Button>
+            ))}
+            {preset === "custom" && (
+              <>
+                <Input type="datetime-local" value={startDate} onChange={e => setStartDate(e.target.value)} className="h-7 w-36 text-xs" />
+                <span className="text-xs text-muted-foreground">–</span>
+                <Input type="datetime-local" value={endDate} onChange={e => setEndDate(e.target.value)} className="h-7 w-36 text-xs" />
+              </>
+            )}
+            <div className="h-5 w-px bg-border mx-1" />
+            <div className="w-36 relative"><Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground"/><Input placeholder="Request ID…" value={requestIdInput} onChange={e => handleRequestIdInput(e.target.value)} className="h-7 pl-7 text-xs"/></div>
+            <div className="w-32"><Input placeholder="Model…" value={modelFilter} onChange={e => { setModelFilter(e.target.value); setPage(1); }} className="h-7 text-xs"/></div>
+            <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setPage(1); }}>
+              <SelectTrigger className="h-7 w-[100px] text-xs"><SelectValue placeholder="Status"/></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All</SelectItem>
+                <SelectItem value="success">Success</SelectItem>
+                <SelectItem value="failure">Failure</SelectItem>
+                <SelectItem value="streaming">Streaming</SelectItem>
+              </SelectContent>
+            </Select>
+            <Input type="number" placeholder="Min tok" value={minTokens !== undefined ? String(minTokens) : ""} onChange={e => { const v = e.target.value; setMinTokens(v ? Number(v) : undefined); setPage(1); }} className="h-7 w-[70px] text-xs"/>
+            <Input type="number" placeholder="Max tok" value={maxTokens !== undefined ? String(maxTokens) : ""} onChange={e => { const v = e.target.value; setMaxTokens(v ? Number(v) : undefined); setPage(1); }} className="h-7 w-[70px] text-xs"/>
+            <Button variant="outline" size="sm" onClick={() => { queryClient.invalidateQueries({ queryKey: ["global-spend-logs"] }); refetch(); }} className="h-7 shrink-0 text-xs"><RefreshCw className="h-3 w-3 mr-1"/>Fetch</Button>
+            <Button variant="outline" size="sm" onClick={() => exportToCSV(logs, startDate, endDate)} disabled={logs.length===0} className="h-7 shrink-0 text-xs"><Download className="h-3 w-3 mr-1"/>CSV</Button>
           </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="pb-2"><div className="flex flex-row items-center justify-between"><CardTitle className="text-sm font-medium flex items-center gap-2"><ScrollText className="h-4 w-4"/>Requests ({totalCount})</CardTitle></div></CardHeader>
-        <CardContent>
-          <div className="mb-3"><PaginationBar page={page} pageSize={pageSize} totalCount={totalCount} totalPages={totalPages} onPage={setPage} onPageSize={s => { setPageSize(s); setPage(1); }}/></div>
-
-          {isLoading ? (
-            <div className="space-y-2">{Array.from({length:6}).map((_,i) => <Skeleton key={i} className="h-10 w-full"/>)}</div>
-          ) : isError ? (
-            <div className="flex flex-col items-center justify-center h-32 gap-2"><AlertCircle className="h-8 w-8 text-muted-foreground"/><p className="text-sm text-muted-foreground">Failed to load spend logs</p><Button variant="outline" size="sm" onClick={() => { queryClient.invalidateQueries({ queryKey: ["global-spend-logs"] }); refetch(); }}>Retry</Button></div>
-          ) : logs.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-32 gap-1"><p className="text-sm text-muted-foreground">No spend logs found</p><p className="text-xs text-muted-foreground">Try adjusting the date range or filters</p></div>
-          ) : (
-            <>
-              <div className="hidden md:block overflow-x-auto">
+          <PaginationBar page={page} pageSize={pageSize} totalCount={totalCount} totalPages={totalPages} onPage={setPage} onPageSize={s => { setPageSize(s); setPage(1); }}/>
+          <div className="hidden md:block overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -608,8 +590,6 @@ export function SpendLogsPage() {
                   </div>
                 ))}
               </div>
-            </>
-          )}
           {logs.length > 0 ? <div className="mt-3"><PaginationBar page={page} pageSize={pageSize} totalCount={totalCount} totalPages={totalPages} onPage={setPage} onPageSize={s => { setPageSize(s); setPage(1); }}/></div> : null}
         </CardContent>
       </Card>

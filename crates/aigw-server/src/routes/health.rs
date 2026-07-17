@@ -10,6 +10,7 @@
 //! - POST /model/health-check       — Ping a single model upstream
 //! - POST /model/health-check/all   — Ping all models
 
+use aigw_core::db::Database;
 use aigw_core::models::HealthCheck;
 use axum::{extract::State, http::StatusCode, Json};
 use prometheus::{Encoder, TextEncoder};
@@ -96,8 +97,7 @@ pub async fn model_health_check(
         )
     })?;
 
-    let result = ping_model(model).await;
-    let now = Utc::now().to_rfc3339();
+    let result = ping_model(model, &state.db, state.aigw_master_key.as_deref()).await;    let now = Utc::now().to_rfc3339();
     let check = HealthCheck {
         health_check_id: Uuid::new_v4().to_string(),
         model_name: model.model_name.clone(),
@@ -147,8 +147,7 @@ pub async fn model_health_check_all(
 
     let mut results = Vec::new();
     for model in &models {
-        let result = ping_model(model).await;
-        let now = chrono::Utc::now().to_rfc3339();
+        let result = ping_model(model, &state.db, state.aigw_master_key.as_deref()).await;        let now = chrono::Utc::now().to_rfc3339();
         let check = HealthCheck {
             health_check_id: Uuid::new_v4().to_string(),
             model_name: model.model_name.clone(),
@@ -217,23 +216,87 @@ struct PingResult {
     error: Option<String>,
 }
 
-async fn ping_model(model: &aigw_core::models::ProxyModel) -> PingResult {
-    let base_url = model.litellm_params
+async fn ping_model(
+    model: &aigw_core::models::ProxyModel,
+    db: &Database,
+    master_key: Option<&str>,
+) -> PingResult {
+    let mut base_url = model.litellm_params
         .get("api_base")
         .and_then(|v| v.as_str())
-        .unwrap_or("");
+        .map(|s| s.to_string());
 
-    let api_key = model.litellm_params.get("api_key")
+    let mut api_key = model.litellm_params.get("api_key")
         .and_then(|v| v.as_str())
-        .or_else(|| model.litellm_params.get("key").and_then(|v| v.as_str()));
+        .or_else(|| model.litellm_params.get("key").and_then(|v| v.as_str()))
+        .map(|s| s.to_string());
 
-    if base_url.is_empty() {
-        return PingResult {
-            healthy: false,
-            response_time_ms: None,
-            error: Some("model has no api_base configured".to_string()),
-        };
+    // Resolve credential reference: if litellm_credential_name is set, look up
+    // the credential and merge api_base + api_key from credential_values.
+    if let Some(cred_name) = model.litellm_params
+        .get("litellm_credential_name")
+        .and_then(|v| v.as_str())
+    {
+        if let Ok(Some(cred)) = db.get_credential_by_name(cred_name).await {
+            // credential_values may be encrypted — try to decrypt
+            let cred_values = if let Some(mk) = master_key {
+                let raw = cred.credential_values.to_string();
+                if !raw.starts_with('{') {
+                    // It's an encrypted string — decrypt
+                    aigw_core::crypto::decrypt_litellm_value(&raw, mk)
+                        .ok()
+                        .and_then(|d| serde_json::from_str::<Value>(&d).ok())
+                        .unwrap_or_else(|| cred.credential_values.clone())
+                } else {
+                    cred.credential_values.clone()
+                }
+            } else {
+                cred.credential_values.clone()
+            };
+
+            // Merge: credential values provide missing api_base/api_key
+            if base_url.is_none() {
+                base_url = cred_values.get("api_base")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+            }
+            if api_key.is_none() {
+                api_key = cred_values.get("api_key")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| cred_values.get("key").and_then(|v| v.as_str()))
+                    .map(|s| s.to_string());
+            }
+        }
     }
+
+    let base_url = match base_url {
+        Some(ref url) if !url.is_empty() => url.clone(),
+        _ => {
+            // Fallback: try to construct from custom_llm_provider well-known endpoints
+            let provider = model.litellm_params
+                .get("custom_llm_provider")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let known = match provider {
+                "openai" => Some("https://api.openai.com"),
+                "anthropic" => Some("https://api.anthropic.com"),
+                _ => None,
+            };
+            match known {
+                Some(url) => url.to_string(),
+                None => {
+                    return PingResult {
+                        healthy: false,
+                        response_time_ms: None,
+                        error: Some(format!(
+                            "no api_base configured (provider={})",
+                            if provider.is_empty() { "unknown" } else { provider }
+                        )),
+                    };
+                }
+            }
+        }
+    };
 
     let url = format!("{}/v1/models", base_url.trim_end_matches('/'));
     let start = std::time::Instant::now();
@@ -242,7 +305,7 @@ async fn ping_model(model: &aigw_core::models::ProxyModel) -> PingResult {
         .get(&url)
         .timeout(std::time::Duration::from_secs(10));
 
-    if let Some(key) = api_key {
+    if let Some(ref key) = api_key {
         req = req.header("Authorization", format!("Bearer {}", key));
     }
 

@@ -106,16 +106,8 @@ function presetRange(p: DatePreset): { start: string; end: string } {
 }
 
 const COLORS = [
-  "hsl(var(--primary))",
-  "hsl(var(--secondary-foreground))",
-  "hsl(var(--muted-foreground))",
-  "hsl(var(--accent-foreground))",
-  "hsl(var(--destructive))",
-  "#3b82f6",
-  "#22c55e",
-  "#f59e0b",
-  "#8b5cf6",
-  "#ec4899",
+  "#3b82f6", "#22c55e", "#f59e0b", "#8b5cf6", "#ec4899",
+  "#14b8a6", "#f97316", "#06b6d4", "#84cc16", "#6366f1",
 ];
 
 const PRESETS: { key: DatePreset; label: string }[] = [
@@ -126,6 +118,7 @@ const PRESETS: { key: DatePreset; label: string }[] = [
 ];
 
 type ChartMode = "spend" | "tokens";
+type ProviderMode = "spend" | "tokens" | "requests";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Component
@@ -136,6 +129,7 @@ export function UsagePage() {
   const [startDate, setStartDate] = useState(presetRange("30d").start);
   const [endDate, setEndDate] = useState(presetRange("30d").end);
   const [chartMode, setChartMode] = useState<ChartMode>("spend");
+  const [providerMode, setProviderMode] = useState<ProviderMode>("spend");
 
   const handlePreset = (p: DatePreset) => {
     setPreset(p);
@@ -432,11 +426,17 @@ export function UsagePage() {
           </CardContent>
         </Card>
 
-        {/* Provider Donut Chart */}
+        {/* Provider Bar Chart (was donut; now bar for consistency + readability) */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2 pt-4 px-4">
             <CardTitle className="text-sm font-medium">Spend by Provider</CardTitle>
-            <PieChartIcon className="h-4 w-4 text-muted-foreground" />
+            <Tabs defaultValue="spend" value={providerMode} onValueChange={(v) => setProviderMode(v as ProviderMode)}>
+              <TabsList className="h-7">
+                <TabsTrigger value="spend" className="text-xs px-3 h-5">💰</TabsTrigger>
+                <TabsTrigger value="tokens" className="text-xs px-3 h-5">📊</TabsTrigger>
+                <TabsTrigger value="requests" className="text-xs px-3 h-5">📋</TabsTrigger>
+              </TabsList>
+            </Tabs>
           </CardHeader>
           <CardContent>
             {providerLoading ? (
@@ -448,22 +448,14 @@ export function UsagePage() {
             ) : (
               <div className="h-[200px] md:h-[260px]">
                 <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={providerChartData}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={50}
-                      outerRadius={80}
-                      paddingAngle={2}
-                      dataKey="value"
-                      label={({ name, value }) => `${name}: ${fmtSpend(value)}`}
-                      labelLine={false}
-                    >
-                      {providerChartData.map((_, i) => (
-                        <Cell key={i} fill={COLORS[i % COLORS.length]} />
-                      ))}
-                    </Pie>
+                  <BarChart
+                    data={providerChartData}
+                    margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
+                    layout="vertical"
+                  >
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                    <XAxis type="number" tick={{ fontSize: 11 }} stroke="hsl(var(--muted-foreground))" />
+                    <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={60} stroke="hsl(var(--muted-foreground))" />
                     <Tooltip
                       contentStyle={{
                         backgroundColor: "hsl(var(--card))",
@@ -471,14 +463,21 @@ export function UsagePage() {
                         borderRadius: "6px",
                         fontSize: "12px",
                       }}
-                      formatter={(value, name, props) => {
-                        const item = providerChartData[props.payload?.payload ? providerChartData.indexOf(props.payload.payload) : -1];
-                        if (item && chartMode === "tokens") return [fmtTokens(item.tokens), "Tokens"];
+                      formatter={(value, name) => {
+                        if (providerMode === "tokens") return [fmtTokens(value as number), "Tokens"];
+                        if (providerMode === "requests") return [value, "Requests"];
                         return [fmtSpend(value as number), "Spend"];
                       }}
                     />
-                    <Legend />
-                  </PieChart>
+                    <Bar
+                      dataKey={providerMode === "tokens" ? "tokens" : providerMode === "requests" ? "requests" : "value"}
+                      radius={[0, 4, 4, 0]}
+                    >
+                      {providerChartData.map((_, i) => (
+                        <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                      ))}
+                    </Bar>
+                  </BarChart>
                 </ResponsiveContainer>
               </div>
             )}
