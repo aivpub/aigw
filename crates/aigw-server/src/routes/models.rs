@@ -44,8 +44,16 @@ pub struct NewModelBody {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct UpdateModelBody {
+pub struct UpdateModelQuery {
     pub model_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateModelBody {
+    // model_id is optional in body — it can come from query param instead
+    // (litellm upstream sends it in query, not body)
+    #[serde(default)]
+    pub model_id: Option<String>,
     #[serde(default)]
     pub model_name: Option<String>,
     #[serde(default)]
@@ -203,13 +211,18 @@ pub async fn model_list(
 }
 
 /// PUT /model/update — update an existing model (admin)
+///
+/// model_id can be passed as query param (litellm convention: PUT /model/update?model_id=...)
+/// or in the JSON body field `model_id`.
 pub async fn model_update(
     State(state): State<SharedState>,
     SpendAuth(auth): SpendAuth,
+    Query(q): Query<UpdateModelQuery>,
     Json(body): Json<UpdateModelBody>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&auth)?;
-    let existing = state.db.get_model_by_id(&body.model_id).await.map_err(|e| {
+    let model_id = body.model_id.as_deref().unwrap_or(&q.model_id);
+    let existing = state.db.get_model_by_id(model_id).await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": {"message": format!("{}", e)}})),
