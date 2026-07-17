@@ -604,6 +604,10 @@ pub async fn messages_handler(
         let upstream_base_url_clone = upstream_base_url.clone();
         let auth_token_hash_clone = auth_token_hash.clone();
         let auth_user_id_clone = auth_user_id.clone();
+        let stream_metrics = state.metrics.clone();
+        let stream_model = model.clone();
+        let stream_user = auth_user_id.clone();
+        let stream_api_base = upstream_base_url.clone();
 
         tokio::spawn(async move {
             use tokio_stream::StreamExt;
@@ -732,6 +736,28 @@ pub async fn messages_handler(
                 assembled_response,
                 "success",
             ).await;
+
+            // Record streaming metrics
+            if let Some(ref m) = stream_metrics {
+                let ttft = first_chunk_time
+                    .map(|fct| fct.signed_duration_since(start_time).num_milliseconds() as f64 / 1000.0);
+                m.record_request(&RequestSummary {
+                    model: stream_model.clone(),
+                    user: stream_user.clone().unwrap_or_default(),
+                    status_code: "200".to_string(),
+                    success: true,
+                    latency_secs: duration_ms as f64 / 1000.0,
+                    upstream_latency_secs: duration_ms as f64 / 1000.0,
+                    ttft_secs: ttft,
+                    queue_time_secs: None,
+                    spend: streaming_spend,
+                    prompt_tokens: last_prompt_tokens,
+                    completion_tokens: last_completion_tokens,
+                    total_tokens: last_prompt_tokens + last_completion_tokens,
+                    error_type: String::new(),
+                    api_base: Some(stream_api_base.clone()),
+                });
+            }
         });
 
         // Build SSE response from the Anthropic-formatted event stream
