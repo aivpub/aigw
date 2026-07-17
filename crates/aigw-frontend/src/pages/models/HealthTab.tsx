@@ -8,7 +8,13 @@ import { Spinner } from "@/components/ui/spinner";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { CheckCircle, XCircle, Activity, RefreshCw } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { CheckCircle, XCircle, Activity, RefreshCw, Loader2 } from "lucide-react";
 
 interface HealthCheckItem {
   model_name: string;
@@ -47,19 +53,26 @@ export function HealthTab() {
   const { data, isLoading, error } = useQuery<HealthLatestResponse>({
     queryKey: ["health-latest"],
     queryFn: () => apiGet("/health/latest"),
+    refetchInterval: 3000, // poll while checking
   });
 
   const checks = data?.data ?? [];
+  const anyChecking = checks.some((c) => c.status === "checking");
+
+  // Stop polling faster once all checks are done
+  // (react-query handles this via refetchInterval — we keep 3s for simplicity)
 
   async function runCheckAll() {
     setChecking(true);
     try {
       await apiPost("/model/health-check/all");
+      // Start polling; results will arrive asynchronously
       await queryClient.invalidateQueries({ queryKey: ["health-latest"] });
     } catch (e) {
       console.error("Health check failed:", e);
     } finally {
-      setChecking(false);
+      // Keep checking state true until all are done
+      setTimeout(() => setChecking(false), 2000);
     }
   }
 
@@ -67,16 +80,20 @@ export function HealthTab() {
     try {
       await apiPost(`/model/health-check?model_id=${encodeURIComponent(modelId)}`);
       await queryClient.invalidateQueries({ queryKey: ["health-latest"] });
+      setChecking(true);
+      setTimeout(() => setChecking(false), 2000);
     } catch (e) {
       console.error("Single health check failed:", e);
     }
   }
 
+  const isRunning = checking || anyChecking;
   const latestCheck = checks.length > 0
     ? checks.reduce((max, c) => (c.checked_at && c.checked_at > (max || "")) ? c.checked_at! : max, checks[0].checked_at)
     : null;
 
   return (
+    <TooltipProvider>
     <div className="space-y-6">
       <Card>
         <CardHeader>
@@ -89,11 +106,11 @@ export function HealthTab() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center gap-3">
-            <Button onClick={runCheckAll} disabled={checking}>
-              {checking ? <Spinner className="mr-2 h-4 w-4" /> : <RefreshCw className="mr-2 h-4 w-4" />}
-              Check All Models
+            <Button onClick={runCheckAll} disabled={isRunning}>
+              {isRunning ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+              {isRunning ? "Checking…" : "Check All Models"}
             </Button>
-            {latestCheck && (
+            {latestCheck && !isRunning && (
               <span className="text-xs text-muted-foreground">
                 Last run: {fmtRelative(latestCheck)}
               </span>
@@ -136,6 +153,8 @@ export function HealthTab() {
                         <TableCell>
                           {c.status === "healthy" ? (
                             <CheckCircle className="h-4 w-4 text-green-500" />
+                          ) : c.status === "checking" ? (
+                            <Loader2 className="h-4 w-4 text-blue-500 animate-spin" />
                           ) : (
                             <XCircle className="h-4 w-4 text-destructive" />
                           )}
@@ -148,12 +167,25 @@ export function HealthTab() {
                         <TableCell className="max-w-[220px] truncate text-xs">
                           {c.status === "healthy" ? (
                             <span className="text-green-600">no errors</span>
+                          ) : c.status === "checking" ? (
+                            <span className="text-blue-500 italic">checking…</span>
+                          ) : c.error_message && c.error_message.length > 40 ? (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="text-destructive cursor-help underline decoration-dotted">
+                                  {c.error_message.slice(0, 40)}…
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent side="bottom" className="max-w-[400px] break-all text-xs p-3">
+                                {c.error_message}
+                              </TooltipContent>
+                            </Tooltip>
                           ) : (
                             <span className="text-destructive">{c.error_message || "unknown error"}</span>
                           )}
                         </TableCell>
                         <TableCell>
-                          <Button variant="ghost" size="sm" className="h-7 text-xs"
+                          <Button variant="ghost" size="sm" className="h-7 text-xs" disabled={c.status === "checking"}
                             onClick={() => c.model_id && checkOne(c.model_id)}>
                             <RefreshCw className="h-3 w-3 mr-1" />Check
                           </Button>
@@ -173,6 +205,8 @@ export function HealthTab() {
                       <div className="flex items-center gap-3">
                         {c.status === "healthy" ? (
                           <CheckCircle className="h-5 w-5 shrink-0 text-green-500" />
+                        ) : c.status === "checking" ? (
+                          <Loader2 className="h-5 w-5 shrink-0 text-blue-500 animate-spin" />
                         ) : (
                           <XCircle className="h-5 w-5 shrink-0 text-destructive" />
                         )}
@@ -184,12 +218,14 @@ export function HealthTab() {
                           </div>
                         </div>
                       </div>
-                      {c.status !== "healthy" && c.error_message && (
+                      {c.status === "checking" ? (
+                        <div className="text-xs text-blue-500 italic">checking…</div>
+                      ) : c.error_message && (
                         <div className="text-xs text-destructive bg-destructive/5 rounded px-2 py-1 break-all">
                           {c.error_message}
                         </div>
                       )}
-                      <Button variant="outline" size="sm" className="h-7 text-xs w-full"
+                      <Button variant="outline" size="sm" className="h-7 text-xs w-full" disabled={c.status === "checking"}
                         onClick={() => c.model_id && checkOne(c.model_id)}>
                         <RefreshCw className="h-3 w-3 mr-1" />Re-check
                       </Button>
@@ -202,5 +238,6 @@ export function HealthTab() {
         </CardContent>
       </Card>
     </div>
+    </TooltipProvider>
   );
 }

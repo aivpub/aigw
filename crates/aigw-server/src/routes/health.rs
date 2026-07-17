@@ -69,7 +69,26 @@ pub struct ModelHealthCheckQuery {
     pub model_id: Option<String>,
 }
 
-/// POST /model/health-check?model_id=xxx — Ping a single model upstream
+/// POST /model/health-check?model_id=xxx — Trigger async check for a single model.
+fn create_checking_record(model_name: &str, model_id: &str) -> HealthCheck {
+    let now = Utc::now().to_rfc3339();
+    HealthCheck {
+        health_check_id: Uuid::new_v4().to_string(),
+        model_name: model_name.to_string(),
+        model_id: Some(model_id.to_string()),
+        status: "checking".to_string(),
+        healthy_count: 0,
+        unhealthy_count: 0,
+        error_message: None,
+        response_time_ms: None,
+        details: "{}".to_string(),
+        checked_by: Some("api".to_string()),
+        checked_at: now.clone(),
+        created_at: now.clone(),
+        updated_at: now,
+    }
+}
+
 pub async fn model_health_check(
     State(state): State<SharedState>,
     SpendAuth(auth): SpendAuth,
@@ -84,56 +103,31 @@ pub async fn model_health_check(
         )
     })?;
 
-    // Find the proxy model
     let models = state.db.list_models().await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
-        )
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})))
     })?;
 
     let model = models.iter().find(|m| m.model_id == model_id).ok_or_else(|| {
-        (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": {"message": format!("model_id '{}' not found", model_id), "type": "not_found"}})),
-        )
+        (StatusCode::NOT_FOUND, Json(json!({"error": {"message": format!("model_id '{}' not found", model_id), "type": "not_found"}})))
     })?;
 
-    let result = ping_model(model, &state.db, state.aigw_master_key.as_deref()).await;    let now = Utc::now().to_rfc3339();
-    let check = HealthCheck {
-        health_check_id: Uuid::new_v4().to_string(),
-        model_name: model.model_name.clone(),
-        model_id: Some(model.model_id.clone()),
-        status: if result.healthy { "healthy".into() } else { "unhealthy".into() },
-        healthy_count: if result.healthy { 1 } else { 0 },
-        unhealthy_count: if result.healthy { 0 } else { 1 },
-        error_message: result.error,
-        response_time_ms: result.response_time_ms,
-        details: "{}".to_string(),
-        checked_by: Some("api".to_string()),
-        checked_at: now.clone(),
-        created_at: now.clone(),
-        updated_at: now,
-    };
+    // Insert "checking" placeholder
+    let check = create_checking_record(&model.model_name, &model.model_id);
+    let _ = state.db.insert_health_check(&check).await;
 
-    state.db.insert_health_check(&check).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
-        )
-    })?;
+    // Spawn async background check
+    let resolver = state.resolver.clone();
+    let db = state.db.clone();
+    let mn = model.model_name.clone();
+    let mi = model.model_id.clone();
+    tokio::spawn(async move {
+        run_and_save_health_check(&resolver, &db, &mn, &mi).await;
+    });
 
-    Ok(Json(json!({
-        "model_name": check.model_name,
-        "model_id": check.model_id,
-        "status": check.status,
-        "response_time_ms": check.response_time_ms,
-        "error_message": check.error_message,
-        "checked_at": check.checked_at,
-    })))
+    Ok(Json(json!({"status": "checking", "model_name": model.model_name, "model_id": model.model_id})))
 }
 
-/// POST /model/health-check/all — Ping all models
+/// POST /model/health-check/all — Trigger async checks for ALL models, return immediately.
 pub async fn model_health_check_all(
     State(state): State<SharedState>,
     SpendAuth(auth): SpendAuth,
@@ -141,52 +135,43 @@ pub async fn model_health_check_all(
     require_admin(&auth)?;
 
     let models = state.db.list_models().await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
-        )
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})))
     })?;
 
-    let mut results = Vec::new();
-    for model in &models {
-        let result = ping_model(model, &state.db, state.aigw_master_key.as_deref()).await;        let now = chrono::Utc::now().to_rfc3339();
-        let check = HealthCheck {
-            health_check_id: Uuid::new_v4().to_string(),
-            model_name: model.model_name.clone(),
-            model_id: Some(model.model_id.clone()),
-            status: if result.healthy { "healthy".into() } else { "unhealthy".into() },
-            healthy_count: if result.healthy { 1 } else { 0 },
-            unhealthy_count: if result.healthy { 0 } else { 1 },
-            error_message: result.error.clone(),
-            response_time_ms: result.response_time_ms,
-            details: "{}".to_string(),
-            checked_by: Some("api".to_string()),
-            checked_at: now.clone(),
-            created_at: now.clone(),
-            updated_at: now,
-        };
+    // Collect model info before moving into spawn
+    let to_check: Vec<(String, String)> = models.iter().map(|m| (m.model_name.clone(), m.model_id.clone())).collect();
+    let count = to_check.len();
 
+    // Insert "checking" placeholder for all models
+    for (name, mid) in &to_check {
+        let check = create_checking_record(name, mid);
         let _ = state.db.insert_health_check(&check).await;
-
-        results.push(json!({
-            "model_name": check.model_name,
-            "model_id": check.model_id,
-            "status": check.status,
-            "response_time_ms": check.response_time_ms,
-            "error_message": check.error_message,
-            "checked_at": check.checked_at,
-        }));
     }
 
-    Ok(Json(json!({
-        "checked": results.len(),
-        "healthy": results.iter().filter(|r| r["status"] == "healthy").count(),
-        "unhealthy": results.iter().filter(|r| r["status"] == "unhealthy").count(),
-        "results": results,
-    })))
+    // Spawn worker tasks: one per model, running concurrently
+    let resolver = state.resolver.clone();
+    let db = state.db.clone();
+    tokio::spawn(async move {
+        let mut handles = Vec::new();
+        for (mn, mi) in to_check {
+            let r = resolver.clone();
+            let d = db.clone();
+            let mn = mn.clone();
+            let mi = mi.clone();
+            handles.push(tokio::spawn(async move {
+                run_and_save_health_check(&r, &d, &mn, &mi).await;
+            }));
+        }
+        // Await all
+        for h in handles {
+            let _ = h.await;
+        }
+    });
+
+    Ok(Json(json!({"status": "dispatched", "models": count})))
 }
 
-/// GET /health/latest — Latest health check per model
+/// GET /health/latest — Latest health check per model (includes "checking" status)
 pub async fn health_latest(
     State(state): State<SharedState>,
     SpendAuth(auth): SpendAuth,
@@ -194,23 +179,38 @@ pub async fn health_latest(
     require_admin(&auth)?;
 
     let checks = state.db.get_latest_health_checks().await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
-        )
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})))
     })?;
 
-    let data: Vec<Value> = checks.iter().map(|c| json!({
-        "model_name": c.model_name,
-        "model_id": c.model_id,
-        "status": c.status,
-        "response_time_ms": c.response_time_ms,
-        "error_message": c.error_message,
-        "checked_at": c.checked_at,
-    })).collect();
+    // Merge with models table: show all models, even those without any check yet
+    let models = state.db.list_models().await.unwrap_or_default();
+    let mut data = Vec::new();
+    let mut seen = std::collections::HashSet::new();
 
-    // Build last_success map: per model_name, the most recent healthy check timestamp
-    let mut last_success: std::collections::HashMap<String, Option<String>> = std::collections::HashMap::new();
+    for model in &models {
+        seen.insert(model.model_name.clone());
+        if let Some(c) = checks.iter().find(|c| c.model_name == model.model_name) {
+            data.push(json!({
+                "model_name": c.model_name,
+                "model_id": c.model_id,
+                "status": c.status,
+                "response_time_ms": c.response_time_ms,
+                "error_message": c.error_message,
+                "checked_at": c.checked_at,
+            }));
+        } else {
+            data.push(json!({
+                "model_name": model.model_name,
+                "model_id": model.model_id,
+                "status": "unknown",
+                "response_time_ms": null,
+                "error_message": null,
+                "checked_at": null,
+            }));
+        }
+    }
+
+    let mut last_success = HashMap::new();
     for c in &checks {
         if c.status == "healthy" {
             let entry = last_success.entry(c.model_name.clone()).or_insert(None);
@@ -219,125 +219,55 @@ pub async fn health_latest(
             }
         }
     }
-    // Fill in None for models that have no healthy record
-    for c in &checks {
-        last_success.entry(c.model_name.clone()).or_insert(None);
+    for m in &models {
+        last_success.entry(m.model_name.clone()).or_insert(None);
     }
 
-    Ok(Json(json!({
-        "data": data,
-        "count": data.len(),
-        "last_success": last_success,
-    })))
+    Ok(Json(json!({ "data": data, "count": data.len(), "last_success": last_success })))
 }
 
-struct PingResult {
-    healthy: bool,
-    response_time_ms: Option<f64>,
-    error: Option<String>,
-}
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Core health check logic — uses ModelResolver for proper deployment resolution
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-async fn ping_model(
-    model: &aigw_core::models::ProxyModel,
+async fn run_and_save_health_check(
+    resolver: &aigw_core::resolver::ModelResolver,
     db: &Database,
-    master_key: Option<&str>,
-) -> PingResult {
-    let mut base_url = model.litellm_params
-        .get("api_base")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-
-    let mut api_key = model.litellm_params.get("api_key")
-        .and_then(|v| v.as_str())
-        .or_else(|| model.litellm_params.get("key").and_then(|v| v.as_str()))
-        .map(|s| s.to_string());
-
-    // Resolve credential reference: if litellm_credential_name is set, look up
-    // the credential and merge api_base + api_key from credential_values.
-    if let Some(cred_name) = model.litellm_params
-        .get("litellm_credential_name")
-        .and_then(|v| v.as_str())
-    {
-        if let Ok(Some(cred)) = db.get_credential_by_name(cred_name).await {
-            // credential_values may be encrypted — try to decrypt
-            let cred_values = if let Some(mk) = master_key {
-                let raw = cred.credential_values.to_string();
-                if !raw.starts_with('{') {
-                    // It's an encrypted string — decrypt
-                    aigw_core::crypto::decrypt_litellm_value(&raw, mk)
-                        .ok()
-                        .and_then(|d| serde_json::from_str::<Value>(&d).ok())
-                        .unwrap_or_else(|| cred.credential_values.clone())
-                } else {
-                    cred.credential_values.clone()
-                }
-            } else {
-                cred.credential_values.clone()
-            };
-
-            // Merge: credential values provide missing api_base/api_key
-            if base_url.is_none() {
-                base_url = cred_values.get("api_base")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
-            }
-            if api_key.is_none() {
-                api_key = cred_values.get("api_key")
-                    .and_then(|v| v.as_str())
-                    .or_else(|| cred_values.get("key").and_then(|v| v.as_str()))
-                    .map(|s| s.to_string());
-            }
+    model_name: &str,
+    model_id: &str,
+) {
+    // Use ModelResolver to get properly decrypted Deployment (handles encryption + credential refs)
+    let (base_url, api_key, upstream_model) = match resolver.resolve(model_name).await {
+        Ok(deployments) if !deployments.is_empty() => {
+            let d = &deployments[0];
+            (d.api_base.clone(), d.api_key.clone(), d.upstream_model.clone())
         }
-    }
-
-    let base_url = match base_url {
-        Some(ref url) if !url.is_empty() => url.clone(),
         _ => {
-            // Fallback: try to construct from custom_llm_provider well-known endpoints
-            let provider = model.litellm_params
-                .get("custom_llm_provider")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let known = match provider {
-                "openai" => Some("https://api.openai.com"),
-                "anthropic" => Some("https://api.anthropic.com"),
-                _ => None,
-            };
-            match known {
-                Some(url) => url.to_string(),
-                None => {
-                    return PingResult {
-                        healthy: false,
-                        response_time_ms: None,
-                        error: Some(format!(
-                            "no api_base configured (provider={})",
-                            if provider.is_empty() { "unknown" } else { provider }
-                        )),
-                    };
-                }
-            }
+            save_result(db, model_name, model_id, false, None, Some("model not found in resolver".into())).await;
+            return;
         }
     };
 
-    let base = base_url.trim_end_matches('/').to_string();
+    if base_url.is_empty() {
+        save_result(db, model_name, model_id, false, None, Some("no api_base configured after resolution".into())).await;
+        return;
+    }
 
-    // Detect if api_base already includes /v1 (e.g. https://api.openai.com/v1)
-    // If yes, just append /chat/completions; otherwise include /v1/chat/completions.
+    let base = base_url.trim_end_matches('/').to_string();
     let chat_url = if base.ends_with("/v1") || base.contains("/v1/") {
         format!("{}/chat/completions", base)
     } else {
         format!("{}/v1/chat/completions", base)
     };
-    let start = std::time::Instant::now();
 
-    // Send a minimal chat completion request to test real connectivity
     let test_body = json!({
-        "model": model.model_name,
+        "model": upstream_model,
         "messages": [{"role": "user", "content": "ping"}],
         "max_tokens": 1,
         "stream": false
     });
 
+    let start = std::time::Instant::now();
     let mut req = reqwest::Client::new()
         .post(&chat_url)
         .header("Content-Type", "application/json")
@@ -351,60 +281,60 @@ async fn ping_model(
     match req.send().await {
         Ok(resp) => {
             let elapsed = start.elapsed().as_secs_f64() * 1000.0;
-            let status = resp.status();
-            // Accept 2xx, 4xx (auth error, bad request — endpoint exists & processing)
-            let healthy = status.is_success()
-                || status.as_u16() == 400
-                || status.as_u16() == 401
-                || status.as_u16() == 403
-                || status.as_u16() == 429  // rate-limited but reachable
-                || status.as_u16() == 422;
+            let code = resp.status().as_u16();
+            let healthy = resp.status().is_success() || code == 400 || code == 401 || code == 403 || code == 429 || code == 422;
             if healthy {
-                PingResult {
-                    healthy: true,
-                    response_time_ms: Some(elapsed),
-                    error: None,
-                }
+                save_result(db, model_name, model_id, true, Some(elapsed), None).await;
             } else {
                 let body = resp.text().await.unwrap_or_default();
-                PingResult {
-                    healthy: false,
-                    response_time_ms: Some(elapsed),
-                    error: Some(format!("HTTP {} {}", status.as_u16(), body.chars().take(120).collect::<String>())),
-                }
+                save_result(db, model_name, model_id, false, Some(elapsed), Some(format!("HTTP {}: {}", code, body.chars().take(120).collect::<String>()))).await;
             }
         }
         Err(e) => {
             let elapsed = start.elapsed().as_secs_f64() * 1000.0;
-            // If POST fails, fall back to GET /
-            let url2 = base.clone();
-            let start2 = std::time::Instant::now();
-            let mut req2 = reqwest::Client::new()
-                .get(&url2)
-                .timeout(std::time::Duration::from_secs(10));
+            // Fallback: GET /
+            let mut fallback = reqwest::Client::new().get(&base).timeout(std::time::Duration::from_secs(10));
             if let Some(ref key) = api_key {
-                req2 = req2.header("Authorization", format!("Bearer {}", key));
+                fallback = fallback.header("Authorization", format!("Bearer {}", key));
             }
-            match req2.send().await {
+            match fallback.send().await {
                 Ok(r2) => {
-                    let elapsed2 = start2.elapsed().as_secs_f64() * 1000.0;
-                    let healthy2 = r2.status().is_success() || r2.status().as_u16() == 401;
-                    PingResult {
-                        healthy: healthy2,
-                        response_time_ms: Some(elapsed2),
-                        error: if healthy2 { None } else { Some(format!("{:?}", e)) },
-                    }
+                    let ok = r2.status().is_success() || r2.status().as_u16() == 401;
+                    save_result(db, model_name, model_id, ok, Some(elapsed), if ok { None } else { Some(format!("{:?}", e)) }).await;
                 }
                 Err(_) => {
-                    PingResult {
-                        healthy: false,
-                        response_time_ms: Some(elapsed),
-                        error: Some(format!("{:?}", e)),
-                    }
+                    save_result(db, model_name, model_id, false, Some(elapsed), Some(format!("{:?}", e))).await;
                 }
             }
         }
     }
+}
+
+async fn save_result(
+    db: &Database,
+    model_name: &str,
+    model_id: &str,
+    healthy: bool,
+    response_time_ms: Option<f64>,
+    error: Option<String>,
+) {
+    let now = Utc::now().to_rfc3339();
+    let check = HealthCheck {
+        health_check_id: Uuid::new_v4().to_string(),
+        model_name: model_name.to_string(),
+        model_id: Some(model_id.to_string()),
+        status: if healthy { "healthy".into() } else { "unhealthy".into() },
+        healthy_count: if healthy { 1 } else { 0 },
+        unhealthy_count: if healthy { 0 } else { 1 },
+        error_message: error,
+        response_time_ms,
+        details: "{}".to_string(),
+        checked_by: Some("api".to_string()),
+        checked_at: now.clone(),
+        created_at: now.clone(),
+        updated_at: now,
+    };
+    let _ = db.insert_health_check(&check).await;
 }
 /// GET /metrics — Prometheus metrics endpoint (Stage 67)
 pub async fn prometheus_metrics() -> axum::response::Response {
