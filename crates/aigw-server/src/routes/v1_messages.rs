@@ -5,12 +5,11 @@
 //!
 //! Auth: x-api-key header or Authorization: Bearer header (Claude convention)
 
-use aigw_core::adapter::{AnthropicToOpenAIStream, ClientProtocol, DefaultAdapter, MessageAdapter, ProviderAdapter, StreamAdapter, select_adapter};
+use aigw_core::adapter::{AnthropicToOpenAIStream, ClientProtocol, StreamAdapter, select_adapter};
 use aigw_core::auth::decode_jwt;
 use aigw_core::crypto::hash_token;
-use aigw_core::models::{ClaudeMessageRequest, DailySpendKind, DailySpendLog, SpendLog};
+use aigw_core::models::{DailySpendKind, DailySpendLog, SpendLog};
 use aigw_core::metrics::RequestSummary;
-use aigw_core::resolver::ModelResolver;
 use axum::{
     extract::State,
     http::{self, StatusCode, header},
@@ -601,9 +600,9 @@ pub async fn messages_handler(
         let state_clone = Arc::clone(&state);
         let sr_id = streaming_request_id.clone();
         let model_clone = model.clone();
-        let upstream_base_url_clone = upstream_base_url.clone();
-        let auth_token_hash_clone = auth_token_hash.clone();
-        let auth_user_id_clone = auth_user_id.clone();
+        let _upstream_base_url_clone = upstream_base_url.clone();
+        let _auth_token_hash_clone = auth_token_hash.clone();
+        let _auth_user_id_clone = auth_user_id.clone();
         let stream_metrics = state.metrics.clone();
         let stream_model = model.clone();
         let stream_user = auth_user_id.clone();
@@ -613,8 +612,8 @@ pub async fn messages_handler(
             use tokio_stream::StreamExt;
             let mut stream = upstream_resp.bytes_stream();
             let mut first_chunk_time: Option<chrono::DateTime<chrono::Utc>> = None;
-            let buffer: Vec<u8> = Vec::new();
-            let message_id = format!("msg_{}", uuid::Uuid::new_v4());
+            let _buffer: Vec<u8> = Vec::new();
+            let _message_id = format!("msg_{}", uuid::Uuid::new_v4());
             let mut last_prompt_tokens: i32 = 0;
             let mut last_completion_tokens: i32 = 0;
             let mut chunk_jsons: Vec<Value> = Vec::new();
@@ -939,6 +938,7 @@ mod tests {
     use aigw_core::db::Database;
     use aigw_core::provider::ProviderRegistry;
     use aigw_core::rate_limiter::RateLimiter;
+    use aigw_core::resolver::ModelResolver;
     use aigw_core::router::Router as AigwRouter;
     use axum::{body::Body, http::Method, Router};
     use std::sync::Arc;
@@ -1252,8 +1252,7 @@ mod tests {
     #[test]
     fn test_sse_conversion_adapter_mapping() {
         use aigw_core::models::ChatCompletionChunk;
-        use aigw_core::adapter::{ClientProtocol, MessageAdapter, ProviderAdapter, select_adapter};
-use aigw_core::adapter::DefaultAdapter;
+        use aigw_core::adapter::{DefaultAdapter, ProviderAdapter};
 
         // Simulate OpenAI SSE chunks
         let chunks = vec![
@@ -1313,8 +1312,7 @@ use aigw_core::adapter::DefaultAdapter;
         );
 
         use aigw_core::models::ChatCompletionChunk;
-        use aigw_core::adapter::{ClientProtocol, MessageAdapter, ProviderAdapter, select_adapter};
-use aigw_core::adapter::DefaultAdapter;
+        use aigw_core::adapter::{DefaultAdapter, ProviderAdapter};
 
         let mut event_types = Vec::new();
         let mut rest = raw_sse;

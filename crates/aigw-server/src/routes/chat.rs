@@ -10,7 +10,6 @@ use aigw_core::crypto::{decrypt_json_fields, decrypt_litellm_value, hash_token};
 use aigw_core::middleware::KeyIdentity;
 use aigw_core::metrics::RequestSummary;
 use aigw_core::models::{DailySpendKind, DailySpendLog, SpendLog, Team, VirtualKey};
-use aigw_core::resolver::ModelResolver;
 use axum::{
     extract::State,
     http::{self, StatusCode, header},
@@ -26,6 +25,7 @@ use tokio_stream::StreamExt;
 use super::keys::SharedState;
 
 /// Resolved upstream routing parameters from proxy_models + credentials lookup.
+#[allow(dead_code)]
 pub(crate) struct ResolvedUpstream {
     pub(crate) api_base: String,
     pub(crate) api_key: Option<String>,
@@ -48,6 +48,7 @@ pub(crate) struct ResolvedUpstream {
 /// In litellm, pricing is mirrored between columns (see docs/litellm-cost-tracing.md):
 ///   - model_info is the authoritative cost lookup location
 ///   - litellm_params is where users set pricing; Deployment.__init__ mirrors it to model_info
+#[allow(dead_code)]
 fn extract_pricing(model_info: &Value, params_json: &Value) -> (Option<f64>, Option<f64>) {
     let input = model_info
         .get("input_cost_per_token")
@@ -70,6 +71,7 @@ pub(crate) fn calc_spend(prompt_tokens: i32, completion_tokens: i32, input_cost:
 
 /// Look up a model by name in proxy_models, decrypt litellm_params if encrypted,
 /// and resolve credential references. Falls back to env vars if model not found.
+#[allow(dead_code)]
 pub(crate) async fn resolve_upstream_params(
     state: &SharedState,
     model_name: &str,
@@ -1562,6 +1564,7 @@ mod tests {
     use aigw_core::models::{ProxyModel, VirtualKey};
     use aigw_core::provider::ProviderRegistry;
     use aigw_core::rate_limiter::RateLimiter;
+    use aigw_core::resolver::ModelResolver;
     use aigw_core::router::Router as AigwRouter;
     use axum::{
         body::Body,

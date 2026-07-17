@@ -324,6 +324,7 @@ async fn ensure_decrypt_state() -> aigw_server::routes::keys::SharedState {
             deployment_mode: "test".to_string(),
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
+            metrics: None,
         },
     );
     let _ = DECRYPT_STATE.set(state.clone());

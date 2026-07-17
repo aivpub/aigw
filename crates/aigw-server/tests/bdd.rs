@@ -59,7 +59,8 @@ impl TestWorld {
                     rate_limiter: Arc::new(aigw_core::rate_limiter::RateLimiter::new()),
                     deployment_mode: "test".to_string(),
                     started_at: std::time::Instant::now(),
-            daily_spend_queue: None,
+                    daily_spend_queue: None,
+                    metrics: None,
                 },
             );
             self.master_key = mk;
