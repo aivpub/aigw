@@ -44,6 +44,27 @@ pub struct GeneralSettings {
     /// Deployment mode: "saas" or "onprem"
     #[serde(rename = "deployment_mode", skip_serializing_if = "Option::is_none")]
     pub deployment_mode: Option<String>,
+
+    /// Prometheus histogram bucket overrides — if set, these replace the defaults.
+    /// Each key maps to a Vec<f64> of upper bounds. Example:
+    /// ```yaml
+    /// metrics_buckets:
+    ///   latency: [0.5, 1, 2, 5, 10, 20, 30]
+    ///   ttft: [0.25, 0.5, 1, 2.5, 5, 10]
+    ///   queue_time: [0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1]
+    /// ```
+    #[serde(rename = "metrics_buckets", skip_serializing_if = "Option::is_none")]
+    pub metrics_buckets: Option<MetricsBuckets>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetricsBuckets {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latency: Option<Vec<f64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttft: Option<Vec<f64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub queue_time: Option<Vec<f64>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

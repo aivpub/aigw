@@ -150,7 +150,11 @@ async fn main() -> anyhow::Result<()> {
     let rate_limiter = Arc::new(RateLimiter::new());
 
     // Initialize Prometheus metrics (global default registry)
-    let metrics = Arc::new(aigw_core::metrics::MetricsRecorder::init("aigw")
+    let buckets_override = config
+        .as_ref()
+        .and_then(|c| c.general_settings.as_ref())
+        .and_then(|gs| gs.metrics_buckets.as_ref());
+    let metrics = Arc::new(aigw_core::metrics::MetricsRecorder::init("aigw", buckets_override)
         .expect("Failed to initialize prometheus metrics"));
     tracing::info!("Prometheus metrics initialized (namespace: aigw)");
 
