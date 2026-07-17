@@ -7,9 +7,9 @@
 
 ## 当前状态
 
-- **当前 Phase**: Phase 24 — 管理控制台完善
-- **状态**: 64/65 Stages 已完成（1 个待开始）
-- **下一里程碑**: Phase 24 完成后消化 LT-Settings，进入 LT-Observ 触发等待
+- **当前 Phase**: Phase 26 — 可观测性 (Observability)
+- **状态**: 65/68 Stages 已完成（3 个待开始）
+- **下一里程碑**: Phase 26 完成后消化 LT-Observ
 
 ### 整体进度
 
@@ -32,7 +32,9 @@ Phase 20:   ████████████████████ 100% (2
 Phase 21:   ████████████████████ 100% (2/2 Stages) ✅ 协议兼容性修复
 Phase 22:   ████████████████████ 100% (2/2 Stages) ✅ Anthropic 原生上游
 Phase 23:   ████████████████████ 100% (2/2 Stages) ✅ Router 负载均衡
-Phase 24:   ░░░░░░░░░░░░░░░░░░░░   0% (1/1 Stage)  ⏳ 管理控制台完善
+Phase 24:   ████████████████████ 100% (1/1 Stage)  ✅ 管理控制台完善
+Phase 25:   ░░░░░░░░░░░░░░░░░░░░   0% (1/1 Stage)  ⏳ 健康检查 & UX 优化
+Phase 26:   ░░░░░░░░░░░░░░░░░░░░   0% (2/2 Stages) ⏳ 可观测性
 ```
 
 ---
@@ -193,9 +195,48 @@ Phase 24:   ░░░░░░░░░░░░░░░░░░░░   0% (1
 
 | Stage | 状态 | 目标 | 类型 | 预估 |
 |-------|------|------|------|------|
-| Stage 65 | ⏳ 待开始 | **SETTINGS 分组 + Router Settings 三 Tab + Models 多 Tab + Credential 前端 + Health Tab** — 侧边栏新增 SETTINGS 组；Router Settings 拆分 Global/Keys/Teams 三 Tab；Models 页面重组为 Model Groups/Credentials/Health 三 Tab；Credential CRUD 完整前端；Health Tab 对接 /health/metrics | 前端+测试 | 5h |
+| Stage 65 | ✅ 完成 | **SETTINGS 分组 + Router 三 Tab + Models 多 Tab + Credential 前端 + Health Tab** | 前端+测试 | 5h | 2026-07-16 |
 
 **Phase 24 合计**: 5h。独立 Stage，无后端变更（所有 API 已就绪）。
+
+---
+
+### Phase 25：健康检查 & UX 优化
+
+**背景**: litellm 有 `LiteLLM_HealthCheckTable` + `/health/latest` 用于模型健康检查（纯手动触发）；Usage 页面布局松散、图表只显示费用；Spend Logs 缺少 status/token 过滤器。
+
+| Stage | 状态 | 目标 | 类型 | 预估 |
+|-------|------|------|------|------|
+| Stage 66 | ⏳ 待开始 | **健康检查 + Usage 重构 + Spend Logs 过滤** — `health_checks` 表 + `POST /model/health-check` ping + `GET /health/latest`；Usage 布局紧凑化 + 过滤器迁移 + 图表 Y 轴 Tab 切换（费用/Token）+ tooltip 增强；Spend Logs 新增 status/token 范围过滤 | 全栈+测试 | 7h |
+
+**Phase 25 合计**: 7h。独立 Stage。
+
+---
+
+### Phase 26：可观测性 (Observability)
+
+**背景**: 对齐 litellm PrometheusLogger（14 指标）+ OTEL traces（5 层 span）。
+
+| Stage | 状态 | 目标 | 类型 | 预估 |
+|-------|------|------|------|------|
+| Stage 67 | ⏳ 待开始 | **Prometheus Metrics** — 14 指标（Counter/Histogram/Gauge），namespace 来自配置默认 `aigw`，`GET /metrics` 端点，handler 注入，Grafana dashboard 模板 | 后端+测试 | 6h |
+| Stage 68 | ⏳ 待开始 | **OTEL Traces 链路追踪** — W3C traceparent 提取/注入，5 层 span（request → auth → adapter → upstream → response），OTEL exporter 配置化（config.yaml），禁用时零开销 | 后端+测试 | 6h |
+
+**依赖**: 67 → 68 串行。
+
+**Phase 26 合计**: 12h。
+
+---
+
+**Phase 25-26 总汇总**:
+
+| Phase | Stages | 工时 | 主题 |
+|-------|--------|------|------|
+| 25 | 66 | 7h | 健康检查 & UX 优化 |
+| 26 | 67-68 | 12h | 可观测性 (Metrics + Traces) |
+| **合计** | **3 Stages** | **19h** | 三 Stage 串行推进 |
+
+完成后消化 LT-Health + LT-Observ，状态 68/68。
 
 ---
 
