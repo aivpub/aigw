@@ -209,6 +209,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/health/metrics", get(health::health_metrics))
         .route("/health/latest", get(health::health_latest))
         .route("/system/info", get(health::system_info))
+        // Prometheus metrics
+        .route("/metrics", get(health::prometheus_metrics))
         // Model health checks
         .route("/model/health-check", axum::routing::post(health::model_health_check))
         .route("/model/health-check/all", axum::routing::post(health::model_health_check_all))

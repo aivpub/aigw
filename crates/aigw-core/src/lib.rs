@@ -24,6 +24,7 @@ pub mod daily_spend_queue;
 pub mod db;
 pub mod deployment;
 pub mod instance;
+pub mod metrics;
 pub mod middleware;
 pub mod models;
 pub mod password;
@@ -42,6 +43,7 @@ pub use crypto::{
 };
 pub use db::CredentialsStore;
 pub use deployment::{Deployment, ProviderType};
+pub use metrics::{MetricsRecorder, RequestSummary};
 pub use router::{merge_router_overrides, Router, RouterConfig, RouterStrategy};
 pub use models::{
     Budget, Credential, DailySpendKind, DailySpendLog, Organization, OrganizationMembership,

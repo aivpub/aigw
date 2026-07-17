@@ -1,0 +1,65 @@
+{
+  "dashboard": {
+    "title": "aigw - AI Gateway",
+    "uid": "aigw",
+    "panels": [
+      {
+        "title": "Throughput",
+        "type": "stat",
+        "targets": [{"expr": "rate(aigw_total_requests[5m])", "legendFormat": "req/s"}],
+        "gridPos": {"x": 0, "y": 0, "w": 8, "h": 4}
+      },
+      {
+        "title": "Error Rate",
+        "type": "gauge",
+        "targets": [{"expr": "rate(aigw_failed_requests[5m]) / rate(aigw_total_requests[5m])", "legendFormat": "error rate"}],
+        "gridPos": {"x": 8, "y": 0, "w": 8, "h": 4},
+        "fieldConfig": {"defaults": {"unit": "percentunit", "max": 1, "min": 0}}
+      },
+      {
+        "title": "P50/P95 Total Latency",
+        "type": "timeseries",
+        "targets": [
+          {"expr": "histogram_quantile(0.5, rate(aigw_request_latency_seconds_bucket[5m]))", "legendFormat": "p50"},
+          {"expr": "histogram_quantile(0.95, rate(aigw_request_latency_seconds_bucket[5m]))", "legendFormat": "p95"}
+        ],
+        "gridPos": {"x": 16, "y": 0, "w": 8, "h": 8},
+        "fieldConfig": {"defaults": {"unit": "s"}}
+      },
+      {
+        "title": "P50 Upstream Latency",
+        "type": "timeseries",
+        "targets": [{"expr": "histogram_quantile(0.5, rate(aigw_llm_api_latency_seconds_bucket[5m]))", "legendFormat": "upstream p50"}],
+        "gridPos": {"x": 0, "y": 4, "w": 8, "h": 8},
+        "fieldConfig": {"defaults": {"unit": "s"}}
+      },
+      {
+        "title": "TTFT",
+        "type": "timeseries",
+        "targets": [{"expr": "histogram_quantile(0.5, rate(aigw_llm_api_ttft_seconds_bucket[5m]))", "legendFormat": "ttft p50"}],
+        "gridPos": {"x": 8, "y": 4, "w": 8, "h": 8},
+        "fieldConfig": {"defaults": {"unit": "s"}}
+      },
+      {
+        "title": "Spend Rate",
+        "type": "timeseries",
+        "targets": [{"expr": "rate(aigw_spend_metric[5m])", "legendFormat": "{{model}}"}],
+        "gridPos": {"x": 0, "y": 12, "w": 12, "h": 8},
+        "fieldConfig": {"defaults": {"unit": "currencyUSD"}}
+      },
+      {
+        "title": "Token Throughput",
+        "type": "timeseries",
+        "targets": [{"expr": "rate(aigw_tokens_metric{token_type='total'}[5m])", "legendFormat": "{{model}}"}],
+        "gridPos": {"x": 12, "y": 12, "w": 12, "h": 8}
+      },
+      {
+        "title": "Deployment Health",
+        "type": "table",
+        "targets": [{"expr": "aigw_deployment_state", "legendFormat": "{{model}} @ {{api_base}}"}],
+        "gridPos": {"x": 0, "y": 20, "w": 24, "h": 6}
+      }
+    ],
+    "schemaVersion": 39
+  }
+}

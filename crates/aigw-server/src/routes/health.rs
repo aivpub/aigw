@@ -12,6 +12,7 @@
 
 use aigw_core::models::HealthCheck;
 use axum::{extract::State, http::StatusCode, Json};
+use prometheus::{Encoder, TextEncoder};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -276,6 +277,18 @@ async fn ping_model(model: &aigw_core::models::ProxyModel) -> PingResult {
 }
 
 use chrono::Utc;
+
+/// GET /metrics — Prometheus metrics endpoint (Stage 67)
+pub async fn prometheus_metrics() -> axum::response::Response {
+    let encoder = TextEncoder::new();
+    let metric_families = prometheus::gather();
+    let mut buffer = vec![];
+    let _ = encoder.encode(&metric_families, &mut buffer);
+    axum::response::Response::builder()
+        .header("Content-Type", "text/plain; version=0.0.4")
+        .body(axum::body::Body::from(buffer))
+        .unwrap()
+}
 
 /// GET /health/metrics — operational metrics (admin only)
 pub async fn health_metrics(
