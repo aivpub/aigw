@@ -16,7 +16,9 @@ use axum::{extract::State, http::StatusCode, Json};
 use prometheus::{Encoder, TextEncoder};
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use uuid::Uuid;
+use chrono::Utc;
 
 use super::spend::{require_admin, SpendAuth};
 use crate::routes::keys::SharedState;
@@ -207,7 +209,26 @@ pub async fn health_latest(
         "checked_at": c.checked_at,
     })).collect();
 
-    Ok(Json(json!({ "data": data, "count": data.len() })))
+    // Build last_success map: per model_name, the most recent healthy check timestamp
+    let mut last_success: std::collections::HashMap<String, Option<String>> = std::collections::HashMap::new();
+    for c in &checks {
+        if c.status == "healthy" {
+            let entry = last_success.entry(c.model_name.clone()).or_insert(None);
+            if entry.is_none() || c.checked_at > *entry.as_ref().unwrap() {
+                *entry = Some(c.checked_at.clone());
+            }
+        }
+    }
+    // Fill in None for models that have no healthy record
+    for c in &checks {
+        last_success.entry(c.model_name.clone()).or_insert(None);
+    }
+
+    Ok(Json(json!({
+        "data": data,
+        "count": data.len(),
+        "last_success": last_success,
+    })))
 }
 
 struct PingResult {
@@ -298,12 +319,23 @@ async fn ping_model(
         }
     };
 
-    let url = format!("{}/v1/models", base_url.trim_end_matches('/'));
+    let base = base_url.trim_end_matches('/').to_string();
+    let url = format!("{}/v1/chat/completions", base);
     let start = std::time::Instant::now();
 
+    // Send a minimal chat completion request to test real connectivity
+    let test_body = json!({
+        "model": model.model_name,
+        "messages": [{"role": "user", "content": "ping"}],
+        "max_tokens": 1,
+        "stream": false
+    });
+
     let mut req = reqwest::Client::new()
-        .get(&url)
-        .timeout(std::time::Duration::from_secs(10));
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .json(&test_body)
+        .timeout(std::time::Duration::from_secs(15));
 
     if let Some(ref key) = api_key {
         req = req.header("Authorization", format!("Bearer {}", key));
@@ -313,13 +345,13 @@ async fn ping_model(
         Ok(resp) => {
             let elapsed = start.elapsed().as_secs_f64() * 1000.0;
             let status = resp.status();
-            // Treat 2xx, 401 (auth required — endpoint exists), 404 with body
-            // (some custom providers return 404 at /v1/models but otherwise work)
+            // Accept 2xx, 4xx (auth error, bad request — endpoint exists & processing)
             let healthy = status.is_success()
+                || status.as_u16() == 400
                 || status.as_u16() == 401
                 || status.as_u16() == 403
-                || status.as_u16() == 404
-                || status.as_u16() == 405;
+                || status.as_u16() == 429  // rate-limited but reachable
+                || status.as_u16() == 422;
             if healthy {
                 PingResult {
                     healthy: true,
@@ -328,36 +360,17 @@ async fn ping_model(
                 }
             } else {
                 let body = resp.text().await.unwrap_or_default();
-                // Retry with just the base URL root
-                let url2 = base_url.trim_end_matches('/').to_string();
-                let start2 = std::time::Instant::now();
-                let mut req2 = reqwest::Client::new()
-                    .get(&url2)
-                    .timeout(std::time::Duration::from_secs(10));
-                if let Some(ref key) = api_key {
-                    req2 = req2.header("Authorization", format!("Bearer {}", key));
-                }
-                match req2.send().await {
-                    Ok(r2) => {
-                        let elapsed2 = start2.elapsed().as_secs_f64() * 1000.0;
-                        let healthy2 = r2.status().is_success() || r2.status().as_u16() == 401;
-                        PingResult {
-                            healthy: healthy2,
-                            response_time_ms: Some(elapsed2),
-                            error: if healthy2 { None } else { Some(format!("status {} at /v1/models", status.as_u16())) },
-                        }
-                    }
-                    Err(e2) => PingResult {
-                        healthy: false,
-                        response_time_ms: Some(elapsed),
-                        error: Some(format!("{} {} at /v1/models", status.as_u16(), body.chars().take(80).collect::<String>())),
-                    },
+                PingResult {
+                    healthy: false,
+                    response_time_ms: Some(elapsed),
+                    error: Some(format!("HTTP {} {}", status.as_u16(), body.chars().take(120).collect::<String>())),
                 }
             }
         }
         Err(e) => {
-            // connection error — try root as last resort
-            let url2 = base_url.trim_end_matches('/').to_string();
+            let elapsed = start.elapsed().as_secs_f64() * 1000.0;
+            // If POST fails, fall back to GET /
+            let url2 = base.clone();
             let start2 = std::time::Instant::now();
             let mut req2 = reqwest::Client::new()
                 .get(&url2)
@@ -372,11 +385,10 @@ async fn ping_model(
                     PingResult {
                         healthy: healthy2,
                         response_time_ms: Some(elapsed2),
-                        error: None,
+                        error: if healthy2 { None } else { Some(format!("{:?}", e)) },
                     }
                 }
                 Err(_) => {
-                    let elapsed = start.elapsed().as_secs_f64() * 1000.0;
                     PingResult {
                         healthy: false,
                         response_time_ms: Some(elapsed),
@@ -387,9 +399,6 @@ async fn ping_model(
         }
     }
 }
-
-use chrono::Utc;
-
 /// GET /metrics — Prometheus metrics endpoint (Stage 67)
 pub async fn prometheus_metrics() -> axum::response::Response {
     let encoder = TextEncoder::new();

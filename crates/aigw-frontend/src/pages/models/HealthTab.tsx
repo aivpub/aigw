@@ -22,12 +22,7 @@ interface HealthCheckItem {
 interface HealthLatestResponse {
   data: HealthCheckItem[];
   count: number;
-}
-
-interface CheckAllResponse {
-  checked: number;
-  healthy: number;
-  unhealthy: number;
+  last_success: Record<string, string | null>;
 }
 
 function fmtLatency(ms: number | null | undefined): string {
@@ -35,10 +30,14 @@ function fmtLatency(ms: number | null | undefined): string {
   return ms < 1000 ? `${ms.toFixed(0)}ms` : `${(ms / 1000).toFixed(1)}s`;
 }
 
-function fmtCheckedAt(iso: string | undefined): string {
+function fmtRelative(iso: string | undefined): string {
   if (!iso) return "—";
   const d = new Date(iso);
-  return d.toLocaleTimeString();
+  const diffMs = Date.now() - d.getTime();
+  if (diffMs < 60_000) return `${Math.floor(diffMs / 1000)}s ago`;
+  if (diffMs < 3600_000) return `${Math.floor(diffMs / 60000)}m ago`;
+  if (diffMs < 86400_000) return `${Math.floor(diffMs / 3600000)}h ago`;
+  return d.toLocaleDateString();
 }
 
 export function HealthTab() {
@@ -55,14 +54,21 @@ export function HealthTab() {
   async function runCheckAll() {
     setChecking(true);
     try {
-      const result = await apiPost("/model/health-check/all") as CheckAllResponse;
-      // Refetch latest results
+      await apiPost("/model/health-check/all");
       await queryClient.invalidateQueries({ queryKey: ["health-latest"] });
-      console.log(`Checked ${result.checked} models: ${result.healthy} healthy, ${result.unhealthy} unhealthy`);
     } catch (e) {
       console.error("Health check failed:", e);
     } finally {
       setChecking(false);
+    }
+  }
+
+  async function checkOne(modelId: string) {
+    try {
+      await apiPost(`/model/health-check?model_id=${encodeURIComponent(modelId)}`);
+      await queryClient.invalidateQueries({ queryKey: ["health-latest"] });
+    } catch (e) {
+      console.error("Single health check failed:", e);
     }
   }
 
@@ -89,7 +95,7 @@ export function HealthTab() {
             </Button>
             {latestCheck && (
               <span className="text-xs text-muted-foreground">
-                Last run: {fmtCheckedAt(latestCheck)}
+                Last run: {fmtRelative(latestCheck)}
               </span>
             )}
           </div>
@@ -110,7 +116,6 @@ export function HealthTab() {
             </div>
           ) : (
             <>
-              {/* Desktop table */}
               <div className="hidden md:block">
                 <Table>
                   <TableHeader>
@@ -118,12 +123,15 @@ export function HealthTab() {
                       <TableHead className="w-8">Status</TableHead>
                       <TableHead>Model</TableHead>
                       <TableHead>Latency</TableHead>
+                      <TableHead>Last Success</TableHead>
                       <TableHead>Error</TableHead>
-                      <TableHead>Checked</TableHead>
+                      <TableHead className="w-20">Action</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {checks.map((c) => (
+                    {checks.map((c) => {
+                      const lastOk = data?.last_success?.[c.model_name];
+                      return (
                       <TableRow key={c.model_name}>
                         <TableCell>
                           {c.status === "healthy" ? (
@@ -134,40 +142,60 @@ export function HealthTab() {
                         </TableCell>
                         <TableCell className="font-mono text-sm">{c.model_name}</TableCell>
                         <TableCell>{fmtLatency(c.response_time_ms)}</TableCell>
-                        <TableCell className="max-w-[200px] truncate text-sm text-destructive">
-                          {c.error_message || "—"}
-                        </TableCell>
                         <TableCell className="text-xs text-muted-foreground">
-                          {fmtCheckedAt(c.checked_at)}
+                          {lastOk ? fmtRelative(lastOk) : "—"}
+                        </TableCell>
+                        <TableCell className="max-w-[220px] truncate text-xs">
+                          {c.status === "healthy" ? (
+                            <span className="text-green-600">no errors</span>
+                          ) : (
+                            <span className="text-destructive">{c.error_message || "unknown error"}</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Button variant="ghost" size="sm" className="h-7 text-xs"
+                            onClick={() => c.model_id && checkOne(c.model_id)}>
+                            <RefreshCw className="h-3 w-3 mr-1" />Check
+                          </Button>
                         </TableCell>
                       </TableRow>
-                    ))}
+                    )})}
                   </TableBody>
                 </Table>
               </div>
 
-              {/* Mobile card list */}
               <div className="md:hidden space-y-3">
-                {checks.map((c) => (
+                {checks.map((c) => {
+                  const lastOk = data?.last_success?.[c.model_name];
+                  return (
                   <Card key={c.model_name}>
-                    <CardContent className="p-3 flex items-center gap-3">
-                      {c.status === "healthy" ? (
-                        <CheckCircle className="h-5 w-5 shrink-0 text-green-500" />
-                      ) : (
-                        <XCircle className="h-5 w-5 shrink-0 text-destructive" />
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <div className="font-mono text-sm truncate">{c.model_name}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {fmtLatency(c.response_time_ms)}
-                          {c.error_message && (
-                            <span className="ml-2 text-destructive truncate block">{c.error_message}</span>
-                          )}
+                    <CardContent className="p-3 space-y-2">
+                      <div className="flex items-center gap-3">
+                        {c.status === "healthy" ? (
+                          <CheckCircle className="h-5 w-5 shrink-0 text-green-500" />
+                        ) : (
+                          <XCircle className="h-5 w-5 shrink-0 text-destructive" />
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="font-mono text-sm truncate">{c.model_name}</div>
+                          <div className="text-xs text-muted-foreground flex gap-3">
+                            <span>{fmtLatency(c.response_time_ms)}</span>
+                            {lastOk && <span>Last OK: {fmtRelative(lastOk)}</span>}
+                          </div>
                         </div>
                       </div>
+                      {c.status !== "healthy" && c.error_message && (
+                        <div className="text-xs text-destructive bg-destructive/5 rounded px-2 py-1 break-all">
+                          {c.error_message}
+                        </div>
+                      )}
+                      <Button variant="outline" size="sm" className="h-7 text-xs w-full"
+                        onClick={() => c.model_id && checkOne(c.model_id)}>
+                        <RefreshCw className="h-3 w-3 mr-1" />Re-check
+                      </Button>
                     </CardContent>
                   </Card>
-                ))}
+                )})}
               </div>
             </>
           )}

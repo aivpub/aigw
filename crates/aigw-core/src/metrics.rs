@@ -3,16 +3,15 @@
 //! 14 core metrics (Counter/Histogram/Gauge) with configurable namespace.
 
 use prometheus::{
-    register_counter_vec_with_registry, register_histogram_vec_with_registry,
-    register_gauge_vec_with_registry, register_int_counter_vec_with_registry,
-    CounterVec, GaugeVec, HistogramVec, IntCounterVec, Registry,
+    register_counter_vec, register_histogram_vec,
+    register_gauge_vec, register_int_counter_vec,
+    CounterVec, GaugeVec, HistogramVec, IntCounterVec,
 };
 
 /// Central metrics recorder holding all 14 prometheus metric families.
+/// All metrics are registered in the global default registry so `prometheus::gather()` works.
 #[derive(Debug, Clone)]
 pub struct MetricsRecorder {
-    pub registry: Registry,
-
     // Request-level Counters
     pub total_requests: CounterVec,
     pub failed_requests: CounterVec,
@@ -39,112 +38,95 @@ pub struct MetricsRecorder {
 impl MetricsRecorder {
     /// Initialize all 14 metrics under the given namespace (e.g. "aigw").
     pub fn init(namespace: &str) -> Result<Self, prometheus::Error> {
-        let registry = Registry::new_custom(Some(namespace.to_string()), None)?;
-
-        let total_requests = register_counter_vec_with_registry!(
+        let total_requests = register_counter_vec!(
             format!("{}_total_requests", namespace),
             "Total proxy requests",
-            &["model", "user", "status_code"],
-            registry
+            &["model", "user", "status_code"]
         )?;
 
-        let failed_requests = register_counter_vec_with_registry!(
+        let failed_requests = register_counter_vec!(
             format!("{}_failed_requests", namespace),
             "Failed proxy requests",
-            &["model", "user", "error_type"],
-            registry
+            &["model", "user", "error_type"]
         )?;
 
-        let request_latency_seconds = register_histogram_vec_with_registry!(
+        let request_latency_seconds = register_histogram_vec!(
             format!("{}_request_latency_seconds", namespace),
             "End-to-end request latency in seconds",
             &["model", "user"],
-            prometheus::exponential_buckets(0.01, 2.0, 12)?,
-            registry
+            prometheus::exponential_buckets(0.01, 2.0, 12)?
         )?;
 
-        let llm_api_latency_seconds = register_histogram_vec_with_registry!(
+        let llm_api_latency_seconds = register_histogram_vec!(
             format!("{}_llm_api_latency_seconds", namespace),
             "Upstream API latency in seconds",
             &["model", "user"],
-            prometheus::exponential_buckets(0.01, 2.0, 12)?,
-            registry
+            prometheus::exponential_buckets(0.01, 2.0, 12)?
         )?;
 
-        let llm_api_ttft_seconds = register_histogram_vec_with_registry!(
+        let llm_api_ttft_seconds = register_histogram_vec!(
             format!("{}_llm_api_ttft_seconds", namespace),
             "Time to first token in seconds",
             &["model", "user"],
-            prometheus::exponential_buckets(0.05, 2.0, 10)?,
-            registry
+            prometheus::exponential_buckets(0.05, 2.0, 10)?
         )?;
 
-        let request_queue_time_seconds = register_histogram_vec_with_registry!(
+        let request_queue_time_seconds = register_histogram_vec!(
             format!("{}_request_queue_time_seconds", namespace),
             "Queue time before processing in seconds",
             &["model", "user"],
-            prometheus::exponential_buckets(0.001, 2.0, 8)?,
-            registry
+            prometheus::exponential_buckets(0.001, 2.0, 8)?
         )?;
 
-        let spend_metric = register_counter_vec_with_registry!(
+        let spend_metric = register_counter_vec!(
             format!("{}_spend_metric", namespace),
             "Total spend in USD",
-            &["model", "user"],
-            registry
+            &["model", "user"]
         )?;
 
-        let tokens_metric = register_int_counter_vec_with_registry!(
+        let tokens_metric = register_int_counter_vec!(
             format!("{}_tokens_metric", namespace),
             "Total tokens processed",
-            &["model", "user", "token_type"],
-            registry
+            &["model", "user", "token_type"]
         )?;
 
-        let deployment_state = register_gauge_vec_with_registry!(
+        let deployment_state = register_gauge_vec!(
             format!("{}_deployment_state", namespace),
             "Deployment health state (1=healthy, 0=unhealthy)",
-            &["model", "api_base"],
-            registry
+            &["model", "api_base"]
         )?;
 
-        let deployment_tpm_limit = register_gauge_vec_with_registry!(
+        let deployment_tpm_limit = register_gauge_vec!(
             format!("{}_deployment_tpm_limit", namespace),
             "Deployment TPM limit",
-            &["model", "api_base"],
-            registry
+            &["model", "api_base"]
         )?;
 
-        let deployment_rpm_limit = register_gauge_vec_with_registry!(
+        let deployment_rpm_limit = register_gauge_vec!(
             format!("{}_deployment_rpm_limit", namespace),
             "Deployment RPM limit",
-            &["model", "api_base"],
-            registry
+            &["model", "api_base"]
         )?;
 
-        let deployment_cooled_down = register_int_counter_vec_with_registry!(
+        let deployment_cooled_down = register_int_counter_vec!(
             format!("{}_deployment_cooled_down", namespace),
             "Deployment cooldown events",
-            &["model", "api_base"],
-            registry
+            &["model", "api_base"]
         )?;
 
-        let deployment_success_responses = register_int_counter_vec_with_registry!(
+        let deployment_success_responses = register_int_counter_vec!(
             format!("{}_deployment_success_responses", namespace),
             "Deployment successful responses",
-            &["model", "api_base"],
-            registry
+            &["model", "api_base"]
         )?;
 
-        let deployment_failure_responses = register_int_counter_vec_with_registry!(
+        let deployment_failure_responses = register_int_counter_vec!(
             format!("{}_deployment_failure_responses", namespace),
             "Deployment failure responses",
-            &["model", "api_base"],
-            registry
+            &["model", "api_base"]
         )?;
 
         Ok(Self {
-            registry,
             total_requests,
             failed_requests,
             request_latency_seconds,
