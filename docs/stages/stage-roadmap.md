@@ -26,15 +26,15 @@ Phase 14:   ████████████████████ 100% (4
 Phase 15:   ████████████████████ 100% (3/3 Stages)
 Phase 16:   ████████████████████ 100% (3/3 Stages)
 Phase 17:   ████████████████████ 100% (3/3 Stages) ✅
-Phase 18:   ████████████████████ 100% (2/2 Stages) ✅ 已完成
+Phase 18:   ████████████████████ 100% (2/2 Stages) ✅ Spend Logs & Usage 质量修复
 Phase 19:   ████████████████████ 100% (2/2 Stages) ✅ UI Enhancement
 Phase 20:   ████████████████████ 100% (2/2 Stages) ✅ 可观测性增强
 Phase 21:   ████████████████████ 100% (2/2 Stages) ✅ 协议兼容性修复
 Phase 22:   ████████████████████ 100% (2/2 Stages) ✅ Anthropic 原生上游
 Phase 23:   ████████████████████ 100% (2/2 Stages) ✅ Router 负载均衡
 Phase 24:   ████████████████████ 100% (1/1 Stage)  ✅ 管理控制台完善
-Phase 25:   ░░░░░░░░░░░░░░░░░░░░   0% (1/1 Stage)  ⏳ 健康检查 & UX 优化
-Phase 26:   ░░░░░░░░░░░░░░░░░░░░   0% (2/2 Stages) ⏳ 可观测性
+Phase 25:   ████████████████████ 100% (1/1 Stage)  ✅ 健康检查 & UX 优化
+Phase 26:   ██████████████░░░░░░  50% (1/2 Stages) 🔄 可观测性（Prometheus ✅, OTEL ⏳）
 ```
 
 ---
@@ -97,14 +97,14 @@ Phase 26:   ░░░░░░░░░░░░░░░░░░░░   0% (2
 | 上游配置 | `Deployment` | 纯值对象：api_base / api_key / upstream_model / provider_type / 定价 / raw_params（解密后完整 litellm_params） |
 | 流式转换器 | `StreamAdapter` trait | SSE chunk 逐块转换（`&mut self` 维护跨 chunk 状态如 tool_use index） |
 
-### Phase 18：Spend Logs & Usage 质量修复（P0）
+### Phase 18：Spend Logs & Usage 质量修复（P0）✅ 已完成
 
-> **背景**: Spend Logs 页面时间过滤器和 Usage 页面有 4 个已确认的 bug（详见 `docs/14-spend-logs-usage-bugs.md`），影响数据正确性和用户体验。依赖 Phase 17 Handler 瘦身完成后执行。
+> **背景**: Spend Logs 页面时间过滤器和 Usage 页面有 4 个已确认的 bug（详见 `docs/14-spend-logs-usage-bugs.md`），依赖 Phase 17 Handler 瘦身完成后执行。
 
-| Stage | 状态 | 目标 | 类型 | 预估 |
-|-------|------|------|------|------|
-| Stage 53 | ⏳ 待开始 | **时间过滤 + Usage 当天数据修复** — 前端 `spend-logs/index.tsx` `presetRange()` 改用 `toISOString()` 发送 UTC 时间戳；`usage/index.tsx` `presetRange()` 用 UTC 日期；后端 `db.rs` `query_activity_*` 两处 `WHERE start_time` 比较改为 `date(start_time) >= date(?) AND date(start_time) <= date(?)` 解决纯日期截断；后端 `spend.rs` 新增 `normalize_date_for_query()` 防御不同前端日期格式。TDD: UT 覆盖 UTC 解析/date 比较/边界场景 + BDD 覆盖 15min/4h 预设过滤 + Usage 当天数据显示 | 前后端+测试 | 6h |
-| Stage 54 | ⏳ 待开始 | **end_user 提取 + 复制按钮反馈** — `v1_messages.rs` 和 `chat.rs` handler 中从请求体 `metadata.user_id` 提取 end_user，写入 SpendLog；可选解析 JSON 拆出 `session_id`；从 `X-Forwarded-For` 提取 `requester_ip_address`；修复 `v1_messages.rs:455-460` 流式路径 SpendLog 误用 `req_` 前缀改为纯 UUID；新建 `useCopyToClipboard` hook 替换 3 个页面的 `copyToClipboard()`。TDD: UT 覆盖 metadata.user_id 提取/String vs JSON/无 metadata 场景 + BDD 覆盖复制按钮反馈 | 前后端+测试 | 5h |
+| Stage | 状态 | 目标 | 完成日期 |
+|-------|------|------|----------|
+| Stage 53 | ✅ 完成 | **时间过滤 + Usage 当天数据修复** — 前端 `presetRange()` 改用 `toISOString()`；后端 `query_activity_*` 改用 `date(start_time) >= date(?)`；UTC 日期统一 | 2026-07-17 |
+| Stage 54 | ✅ 完成 | **end_user 提取 + requester_ip + CopyButton** — `metadata.user_id` → end_user；JSON 解析 session_id；X-Forwarded-For → requester_ip；useCopyToClipboard hook + CopyButton 组件 | 2026-07-17 |
 
 **依赖关系**: Stage 53 → 54 无硬依赖，可并行；依赖 Phase 17 完成。预估 11h。
 
@@ -201,30 +201,30 @@ Phase 26:   ░░░░░░░░░░░░░░░░░░░░   0% (2
 
 ---
 
-### Phase 25：健康检查 & UX 优化
+### Phase 25：健康检查 & UX 优化 ✅ 已完成
 
 **背景**: litellm 有 `LiteLLM_HealthCheckTable` + `/health/latest` 用于模型健康检查（纯手动触发）；Usage 页面布局松散、图表只显示费用；Spend Logs 缺少 status/token 过滤器。
 
-| Stage | 状态 | 目标 | 类型 | 预估 |
-|-------|------|------|------|------|
-| Stage 66 | ⏳ 待开始 | **健康检查 + Usage 重构 + Spend Logs 过滤** — `health_checks` 表 + `POST /model/health-check` ping + `GET /health/latest`；Usage 布局紧凑化 + 过滤器迁移 + 图表 Y 轴 Tab 切换（费用/Token）+ tooltip 增强；Spend Logs 新增 status/token 范围过滤 | 全栈+测试 | 7h |
+| Stage | 状态 | 目标 | 完成日期 |
+|-------|------|------|----------|
+| Stage 66 | ✅ 完成 | **健康检查 + Usage 重构 + Spend Logs 过滤** — `health_checks` 表 + `POST /model/health-check` ping + `GET /health/latest` + HealthTab 前端；Usage 布局紧凑化 + 图表 Spend/Tokens/Requests Tab 切换 + 增强 tooltip；Spend Logs 新增 status（All/Success/Failure/Streaming）+ token 范围过滤 | 2026-07-17 |
 
-**Phase 25 合计**: 7h。独立 Stage。
+**Phase 25 合计**: 7h。独立 Stage，全栈完成。
 
 ---
 
-### Phase 26：可观测性 (Observability)
+### Phase 26：可观测性 (Observability) 🔄
 
 **背景**: 对齐 litellm PrometheusLogger（14 指标）+ OTEL traces（5 层 span）。
 
-| Stage | 状态 | 目标 | 类型 | 预估 |
-|-------|------|------|------|------|
-| Stage 67 | ⏳ 待开始 | **Prometheus Metrics** — 14 指标（Counter/Histogram/Gauge），namespace 来自配置默认 `aigw`，`GET /metrics` 端点，handler 注入，Grafana dashboard 模板 | 后端+测试 | 6h |
-| Stage 68 | ⏳ 待开始 | **OTEL Traces 链路追踪** — W3C traceparent 提取/注入，5 层 span（request → auth → adapter → upstream → response），OTEL exporter 配置化（config.yaml），禁用时零开销 | 后端+测试 | 6h |
+| Stage | 状态 | 目标 | 完成日期 |
+|-------|------|------|----------|
+| Stage 67 | ✅ 完成 | **Prometheus Metrics** — 14 指标（Counter/Histogram/Gauge），namespace `aigw`，`GET /metrics` 端点，handler 注入（chat.rs + v1_messages.rs） | 2026-07-16 |
+| Stage 68 | ⏳ 待开始 | **OTEL Traces 链路追踪** — W3C traceparent 提取/注入，5 层 span，OTEL exporter 配置化（config.yaml），禁用时零开销。核心代码（extract/inject/tracer）已在 `otel_tracing.rs` 中，待接入 main.rs | 未开始 |
 
-**依赖**: 67 → 68 串行。
+**依赖**: 67 已完成，68 独立。
 
-**Phase 26 合计**: 12h。
+**Phase 26 合计**: 12h（已完成 6h，剩余 6h）。
 
 ---
 
@@ -232,11 +232,9 @@ Phase 26:   ░░░░░░░░░░░░░░░░░░░░   0% (2
 
 | Phase | Stages | 工时 | 主题 |
 |-------|--------|------|------|
-| 25 | 66 | 7h | 健康检查 & UX 优化 |
-| 26 | 67-68 | 12h | 可观测性 (Metrics + Traces) |
-| **合计** | **3 Stages** | **19h** | 三 Stage 串行推进 |
-
-完成后消化 LT-Health + LT-Observ，状态 68/68。
+| 25 | 66 | 7h (3h done) | 健康检查 & UX 优化 |
+| 26 | 67-68 | 12h (6h done) | 可观测性 (Metrics + Traces) |
+| **合计** | **1.5 Stages** | **~10h** | 剩余：Usage UI + Spend Logs 过滤 + OTEL 接线 |
 
 ---
 

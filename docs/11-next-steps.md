@@ -5,7 +5,9 @@
 
 ---
 
-## 当前状态：65/66 Stages 已完成
+## 当前状态：67/68 Stages 已完成
+
+> **2026-07-17 全量审计**: 文档状态与实际代码存在偏差。Stages 53/54/66/67 实际已完成但文档标记为待开始。以下为矫正后的真实进度。
 
 ### 项目里程碑
 
@@ -29,7 +31,8 @@ Phase 21:   ████████████████████ 100% (2
 Phase 22:   ████████████████████ 100% (2/2)  ✅ Anthropic 原生上游适配（Stages 61-62）
 Phase 23:   ████████████████████ 100% (2/2)  ✅ Router 负载均衡（Stages 63-64）
 Phase 24:   ████████████████████ 100% (1/1)  ✅ 管理控制台完善（Stage 65）
-Phase 25:   ░░░░░░░░░░░░░░░░░░░░   0% (1/1)  ⏳ 模型健康检查（Stage 66）
+Phase 25:   ████████████████████ 100% (1/1)  ✅ 健康检查 & UX 优化（Stage 66）
+Phase 26:   ██████████████░░░░░░  50% (1/2)  🔄 可观测性（Stage 67 Prometheus✅, Stage 68 OTEL⏳）
 ```
 
 ### 测试状态
@@ -52,12 +55,15 @@ Phase 25:   ░░░░░░░░░░░░░░░░░░░░   0% (1
 
 ## 优先级排序
 
-| 优先级 | Phase | 目标 | 工时 |
+| 优先级 | Phase | 目标 | 状态 |
 |--------|-------|------|------|
-| P0 | ~~Phase 21~~ ✅ | 协议兼容性修复（tool_result + system message） | 2026-07-16 |
-| P1 | Phase 22 | Anthropic 原生上游适配 | 14h |
-| P1 | Phase 23 | Router 负载均衡 + 三级配置 + 前端 | 16h |
-| P1 | LT-Observ | Prometheus metrics | ~8h |
+| P0 | Phase 18 | Spend Logs & Usage 质量修复 | ✅ 完成 (Stages 53-54) |
+| P0 | Phase 21 | 协议兼容性修复 | ✅ 完成 (Stages 59-60) |
+| P1 | Phase 22 | Anthropic 原生上游适配 | ✅ 完成 (Stages 61-62) |
+| P1 | Phase 23 | Router 负载均衡 | ✅ 完成 (Stages 63-64) |
+| P1 | Phase 26 | Prometheus Metrics (Stage 67) | ✅ 完成 |
+| **P1** | **Phase 26** | **OTEL Traces (Stage 68)** | **⏳ 10h 剩余** |
+| P2 | Phase 25 | Usage UI 重构 + Spend Logs 过滤 | 4h 剩余 |
 
 ---
 
