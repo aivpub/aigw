@@ -45,7 +45,8 @@ pub struct NewModelBody {
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateModelQuery {
-    pub model_id: String,
+    #[serde(default)]
+    pub model_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -221,7 +222,16 @@ pub async fn model_update(
     Json(body): Json<UpdateModelBody>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&auth)?;
-    let model_id = body.model_id.as_deref().unwrap_or(&q.model_id);
+    let model_id = body
+        .model_id
+        .as_deref()
+        .or(q.model_id.as_deref())
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": {"message": "model_id required in query or body"}})),
+            )
+        })?;
     let existing = state.db.get_model_by_id(model_id).await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,

@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS health_checks (
     unhealthy_count INTEGER NOT NULL DEFAULT 0,
     error_message   TEXT,
     response_time_ms DOUBLE,
-    details         TEXT NOT NULL DEFAULT '{}',
+    details         TEXT NOT NULL,
     checked_by      VARCHAR(255),
     checked_at      VARCHAR(255) NOT NULL,
     created_at      VARCHAR(255) NOT NULL,
