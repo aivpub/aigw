@@ -61,8 +61,9 @@ Then("I should see an auto-refresh banner indicating 15 second refresh", async (
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 When("I change the page size to {int}", async ({ page }, size: number) => {
-  // Click the select trigger and choose the option
-  const selectTrigger = page.locator("[role='combobox']").first();
+  // The page has multiple comboboxes (status filter, page size selectors).
+  // The first page-size selector is the second combobox (index 1).
+  const selectTrigger = page.locator("[role='combobox']").nth(1);
   await selectTrigger.click();
   await page.waitForTimeout(300);
   // Click the option with the size value

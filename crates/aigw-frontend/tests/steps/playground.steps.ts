@@ -62,18 +62,22 @@ Then("the chat area should show {string}", async ({ page }, text: string) => {
 });
 
 When("I select model {string} from the settings panel", async ({ page }, model: string) => {
-  // Open settings if on mobile
+  // Open settings if on mobile (force:true — sticky header or Sheet overlay may intercept clicks)
   const settingsBtn = page.getByRole("button", { name: /settings/i });
-  if (await settingsBtn.isVisible().catch(() => false)) {
-    await settingsBtn.click();
+  const isMobile = await settingsBtn.isVisible().catch(() => false);
+  if (isMobile) {
+    await settingsBtn.click({ force: true });
     await page.waitForTimeout(300);
   }
-  await page.getByRole("combobox").first().click();
+  // force:true on mobile — Sheet's fixed overlay intercepts all clicks inside the Sheet portal
+  await page.getByRole("combobox").first().click({ force: isMobile });
   await page.waitForTimeout(300);
-  await page.getByRole("option", { name: model }).click();
+  await page.getByRole("option", { name: model }).click({ force: isMobile });
   // Close sheet if on mobile
-  await page.keyboard.press("Escape");
-  await page.waitForTimeout(300);
+  if (isMobile) {
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(300);
+  }
 });
 
 Then("the model {string} should be shown as the active model", async ({ page }, model: string) => {
@@ -86,7 +90,8 @@ When("I type {string} into the chat input", async ({ page }, message: string) =>
 });
 
 When("I click the New Chat button", async ({ page }) => {
-  await page.getByRole("button", { name: /new chat/i }).click();
+  // force:true — small viewports may have sticky header overlap with buttons
+  await page.getByRole("button", { name: /new chat/i }).click({ force: true });
   await page.waitForTimeout(500);
 });
 
@@ -97,10 +102,11 @@ Then("the chat messages should be cleared", async ({ page }) => {
 When("I toggle streaming on", async ({ page }) => {
   // Check if streaming toggle is visible (desktop sidebar) or in dialog
   let switchBtn = page.locator("button[role='switch']").first();
-  if (!(await switchBtn.isVisible().catch(() => false))) {
+  const needsSheet = !(await switchBtn.isVisible().catch(() => false));
+  if (needsSheet) {
     const settingsBtn = page.getByRole("button", { name: /settings/i });
     if (await settingsBtn.isVisible().catch(() => false)) {
-      await settingsBtn.click();
+      await settingsBtn.click({ force: true });
       await page.waitForTimeout(400);
     }
     switchBtn = page.locator("button[role='switch']").first();
@@ -108,34 +114,40 @@ When("I toggle streaming on", async ({ page }) => {
   // Only toggle if not already checked
   const isChecked = await switchBtn.getAttribute("aria-checked");
   if (isChecked !== "true") {
-    await switchBtn.click();
+    await switchBtn.click({ force: needsSheet });
     await page.waitForTimeout(300);
   }
   // Close settings sheet if opened
-  await page.keyboard.press("Escape");
-  await page.waitForTimeout(400);
+  if (needsSheet) {
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(400);
+  }
 });
 
 When("I click the Send button", async ({ page }) => {
   // Make sure a model is selected first
   const modelText = await page.locator("main").textContent();
-  if (!modelText || !modelText.match(/gpt-4|claude/i)) {
+  const needsModel = !modelText || !modelText.match(/gpt-4|claude/i);
+  if (needsModel) {
     // Open settings sheet
     const settingsBtn = page.getByRole("button", { name: /settings/i });
-    if (await settingsBtn.isVisible().catch(() => false)) {
-      await settingsBtn.click();
+    const onMobile = await settingsBtn.isVisible().catch(() => false);
+    if (onMobile) {
+      await settingsBtn.click({ force: true });
       await page.waitForTimeout(300);
     }
     const combo = page.getByRole("combobox");
     if (await combo.first().isVisible().catch(() => false)) {
-      await combo.first().click();
+      await combo.first().click({ force: onMobile });
       await page.waitForTimeout(300);
       await page.getByRole("option").first().click();
       await page.waitForTimeout(300);
     }
     // Close sheet by pressing Escape
-    await page.keyboard.press("Escape");
-    await page.waitForTimeout(300);
+    if (onMobile) {
+      await page.keyboard.press("Escape");
+      await page.waitForTimeout(300);
+    }
   }
   // Click send button — may be disabled, wait for it to become enabled
   await page.waitForTimeout(500);
