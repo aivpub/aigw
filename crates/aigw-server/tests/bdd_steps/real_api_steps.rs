@@ -134,6 +134,15 @@ async fn bg_create_key_via_api(world: &mut TestWorld, alias: String) {
     create_key_via_api(world, &alias).await;
 }
 
+/// Helper: extract an existing key from TestWorld, or create one.
+async fn ensure_key(world: &mut TestWorld, alias: &str) -> String {
+    if let Some(t) = world.created_keys.get(alias) {
+        t.clone()
+    } else {
+        create_key_via_api(world, alias).await
+    }
+}
+
 /// Helper: set placeholder status/body when real API is disabled so
 /// subsequent Then steps (e.g. `then_status_is`) pass vacuously.
 fn set_skip_pass(world: &mut TestWorld, status: u16, body: serde_json::Value) {
@@ -154,11 +163,7 @@ async fn when_real_chat(world: &mut TestWorld, alias: String) {
         return;
     }
     // Ensure the key exists
-    let token = if let Some(t) = world.created_keys.get(&alias) {
-        t.clone()
-    } else {
-        create_key_via_api(world, &alias).await
-    };
+    let token = ensure_key(world, &alias).await;
     let url = format!("{}/v1/chat/completions", base_url());
     let body = serde_json::json!({
         "model": real_model().as_str(),
@@ -397,6 +402,85 @@ async fn when_real_claude_model(world: &mut TestWorld, model: String) {
     world.last_body = resp.json().await.ok();
 }
 
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// When — protocol conversion: Anthropic client (/v1/messages) → OpenAI upstream
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// POST /v1/messages → resolver env-var fallback → AnthropicToOpenAI → upstream litellm.
+/// Uses `real_model()` so the same model name works for both /v1/chat/completions
+/// and /v1/messages against a single litellm upstream.
+#[when(expr = "使用 key {string} 发送 POST \\/v1\\/messages 请求用默认模型")]
+async fn when_post_messages_default(world: &mut TestWorld, alias: String) {
+    let model = real_model();
+    if !real_api_enabled() {
+        set_skip_pass(world, 200, serde_json::json!({
+            "type": "message", "role": "assistant",
+            "content": [{"type": "text", "text": "hello"}],
+            "model": model, "stop_reason": "end_turn",
+            "usage": {"input_tokens": 5, "output_tokens": 3}
+        }));
+        return;
+    }
+    let token = ensure_key(world, &alias).await;
+    let url = format!("{}/v1/messages", base_url());
+    let body = serde_json::json!({
+        "model": model,
+        "messages": [{"role": "user", "content": "Say hello in one word."}],
+        "max_tokens": 100
+    });
+    let resp = client()
+        .post(&url)
+        .header("x-api-key", &token)
+        .header("anthropic-version", "2023-06-01")
+        .json(&body)
+        .send()
+        .await
+        .expect("/v1/messages request failed");
+    let status = resp.status().as_u16();
+    let json_body: Option<serde_json::Value> = resp.json().await.ok();
+    world.last_status = Some(status);
+    world.last_body = json_body;
+}
+
+/// POST /v1/messages stream=true → resolver env-var fallback → upstream litellm.
+#[when(expr = "使用 key {string} 发送 POST \\/v1\\/messages stream=true 请求用默认模型")]
+async fn when_post_messages_stream_default(world: &mut TestWorld, alias: String) {
+    let model = real_model();
+    if !real_api_enabled() {
+        set_skip_pass(world, 200, serde_json::json!({
+            "_sse_data_chunks": 3,
+            "_raw_sse_lines": 6,
+            "_raw_text": "event: message_start\ndata: {...}\n\n"
+        }));
+        return;
+    }
+    let token = ensure_key(world, &alias).await;
+    let url = format!("{}/v1/messages", base_url());
+    let body = serde_json::json!({
+        "model": model,
+        "messages": [{"role": "user", "content": "Count from 1 to 3."}],
+        "max_tokens": 100,
+        "stream": true
+    });
+    let resp = client()
+        .post(&url)
+        .header("x-api-key", &token)
+        .header("anthropic-version", "2023-06-01")
+        .json(&body)
+        .send()
+        .await
+        .expect("stream request failed");
+    let status = resp.status().as_u16();
+    let text = resp.text().await.unwrap_or_default();
+    world.last_status = Some(status);
+    let chunk_count = text.lines().filter(|l| l.starts_with("data: ")).count();
+    world.last_body = Some(serde_json::json!({
+        "_raw_sse_lines": text.lines().count(),
+        "_sse_data_chunks": chunk_count,
+        "_raw_text": text,
+    }));
+}
+
 #[when(expr = "不带 Authorization 头发送请求")]
 async fn when_real_no_auth(world: &mut TestWorld) {
     if !real_api_enabled() {
@@ -613,5 +697,55 @@ async fn then_error_type_is_real(world: &mut TestWorld, expected_type: String) {
         matches,
         "Expected error type '{}', got '{}'",
         expected_type, actual_type
+    );
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Then — protocol conversion assertions (Anthropic response format)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[then(expr = "响应为 Anthropic Messages 格式（type=message, role=assistant）")]
+async fn then_anthropic_message_format(world: &mut TestWorld) {
+    if !real_api_enabled() {
+        return;
+    }
+    let body = world.last_body.as_ref().expect("no response body");
+    let msg_type = body.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    assert_eq!(msg_type, "message",
+        "Expected type='message', got '{}' in: {}",
+        msg_type, serde_json::to_string_pretty(body).unwrap_or_default());
+    let role = body.get("role").and_then(|v| v.as_str()).unwrap_or("");
+    assert_eq!(role, "assistant",
+        "Expected role='assistant', got '{}'", role);
+}
+
+#[then(expr = "响应包含 content 数组")]
+async fn then_anthropic_has_content(world: &mut TestWorld) {
+    if !real_api_enabled() {
+        return;
+    }
+    let body = world.last_body.as_ref().expect("no response body");
+    let content = body.get("content").and_then(|v| v.as_array())
+        .expect("no content array in Anthropic response");
+    assert!(!content.is_empty(),
+        "Expected non-empty content array, got: {}",
+        serde_json::to_string_pretty(body).unwrap_or_default());
+}
+
+#[then(expr = "流式响应包含 Anthropic SSE 事件（message_start）")]
+async fn then_sse_has_anthropic_event(world: &mut TestWorld) {
+    if !real_api_enabled() {
+        return;
+    }
+    let body = world.last_body.as_ref().expect("no response body");
+    let text = body.get("_raw_text").and_then(|v| v.as_str()).unwrap_or("");
+    // Anthropic SSE: "event: message_start\ndata: {...}\n\n"
+    let has_event_prefix = text.contains("event: message_start");
+    let has_data_start = text.contains("\"type\":\"message_start\"") || text.contains("\"type\": \"message_start\"");
+    assert!(
+        has_event_prefix || has_data_start,
+        "Expected SSE to contain 'message_start' event. Got {} bytes. First 500 chars: {}",
+        text.len(),
+        &text[..text.len().min(500)]
     );
 }

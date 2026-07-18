@@ -393,9 +393,10 @@ pub async fn messages_handler(
     let upstream_model_id = resolved_deployment.model_id.clone();
     let upstream_model_group = resolved_deployment.model_group.clone();
     let upstream_custom_llm_provider = resolved_deployment.custom_llm_provider.clone();
+    let provider_type = resolved_deployment.provider_type.clone();
 
     // Select adapter based on client protocol + provider type
-    let adapter = select_adapter(ClientProtocol::Anthropic, &resolved_deployment.provider_type)
+    let adapter = select_adapter(ClientProtocol::Anthropic, &provider_type)
         .ok_or_else(|| {
             anthropic_error(
                 StatusCode::BAD_REQUEST,
@@ -414,7 +415,6 @@ pub async fn messages_handler(
     })?;
 
     // Build upstream URL path based on provider type
-    let provider_type = resolved_deployment.provider_type.clone();
     let upstream_path = match provider_type {
         aigw_core::deployment::ProviderType::AnthropicNative => "messages",
         _ => "chat/completions",

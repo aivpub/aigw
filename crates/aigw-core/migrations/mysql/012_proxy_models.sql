@@ -4,8 +4,8 @@
 CREATE TABLE IF NOT EXISTS proxy_models (
     model_id VARCHAR(255) NOT NULL PRIMARY KEY,
     model_name VARCHAR(255) NOT NULL,
-    litellm_params TEXT NOT NULL,
-    model_info TEXT NOT NULL,
+    litellm_params JSON NOT NULL,
+    model_info JSON NOT NULL,
     created_at VARCHAR(64) NOT NULL,
     created_by VARCHAR(255),
     updated_at VARCHAR(64) NOT NULL,

@@ -60,6 +60,7 @@ impl ServerGuard {
             if upper.starts_with("OPENAI_")
                 || upper.starts_with("OPENAPI_")
                 || upper.starts_with("AIGW_UPSTREAM_")
+                || upper.starts_with("ANTHROPIC_")
             {
                 cmd.env(&key, &val);
             }
