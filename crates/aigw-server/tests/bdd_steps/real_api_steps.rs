@@ -437,7 +437,15 @@ async fn when_post_messages_default(world: &mut TestWorld, alias: String) {
         .await
         .expect("/v1/messages request failed");
     let status = resp.status().as_u16();
-    let json_body: Option<serde_json::Value> = resp.json().await.ok();
+    let response_text = resp.text().await.unwrap_or_default();
+    let json_body: Option<serde_json::Value> = serde_json::from_str(&response_text).ok();
+    if status >= 400 {
+        eprintln!(
+            "[DEBUG] /v1/messages: status={} raw_body={}",
+            status,
+            &response_text[..response_text.len().min(800)]
+        );
+    }
     world.last_status = Some(status);
     world.last_body = json_body;
 }

@@ -42,13 +42,13 @@ impl ServerGuard {
             c.args(["run", "--bin", "aigw", "--"])
                 .current_dir(&workspace_root)
                 .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
+                .stderr(Stdio::inherit())
                 .kill_on_drop(true);
             (c, true)
         } else {
             let mut c = tokio::process::Command::new(&aigw_bin);
             c.stdout(Stdio::piped())
-                .stderr(Stdio::piped())
+                .stderr(Stdio::inherit())
                 .kill_on_drop(true);
             (c, false)
         };
