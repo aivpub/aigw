@@ -419,6 +419,8 @@ function DetailDrawer({ log, open, onClose }: { log: SpendLog | null; open: bool
 function loadLiveTailPref() { try { return sessionStorage.getItem("spend-logs-live-tail") === "true"; } catch { return false; } }
 function saveLiveTailPref(v: boolean) { try { sessionStorage.setItem("spend-logs-live-tail", String(v)); } catch { /* */ } }
 
+const LIVE_TAIL_INTERVAL = 15_000; // 15 seconds
+
 export function SpendLogsPage() {
   const queryClient = useQueryClient();
   const [preset, setPreset] = useState<TimePreset>("24h");
@@ -436,6 +438,8 @@ export function SpendLogsPage() {
   const [selectedLog, setSelectedLog] = useState<SpendLog | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [lastRefreshTime, setLastRefreshTime] = useState<number | null>(null);
+  const [countdownSec, setCountdownSec] = useState(LIVE_TAIL_INTERVAL / 1000);
 
   const handlePreset = useCallback((p: TimePreset) => {
     setPreset(p);
@@ -454,10 +458,28 @@ export function SpendLogsPage() {
   const effectiveLiveTail = liveTail && page === 1;
   const handleLiveTailToggle = useCallback((v: boolean) => { setLiveTail(v); saveLiveTailPref(v); if (v) setPage(1); }, []);
 
-  const { data: logsData, isLoading, isError, refetch } = useQuery<SpendLogsResponse>({
-    queryKey: ["global-spend-logs", startDate, endDate, modelFilter, requestIdFilter, statusFilter, minTokens, maxTokens, page, pageSize],
+  // Countdown ticker for Live Tail refresh indicator
+  useEffect(() => {
+    if (!effectiveLiveTail) {
+      setLastRefreshTime(null);
+      return;
+    }
+    const tick = setInterval(() => {
+      if (lastRefreshTime !== null) {
+        const elapsed = Date.now() - lastRefreshTime;
+        const remaining = Math.max(0, LIVE_TAIL_INTERVAL - elapsed);
+        setCountdownSec(Math.ceil(remaining / 1000));
+      }
+    }, 250);
+    return () => clearInterval(tick);
+  }, [effectiveLiveTail, lastRefreshTime]);
+
+  const { data: logsData, isLoading, isError, refetch, dataUpdatedAt } = useQuery<SpendLogsResponse>({
+    queryKey: ["global-spend-logs", startDate, endDate, modelFilter, requestIdFilter, statusFilter, minTokens, maxTokens, page, pageSize, effectiveLiveTail],
     queryFn: () => {
-      let url = `/global/spend/logs?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}&page=${page}&page_size=${pageSize}`;
+      // When Live Tail is on, slide the end_date to "now" so each poll sees fresh data
+      const effectiveEnd = effectiveLiveTail ? new Date().toISOString() : endDate;
+      let url = `/global/spend/logs?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(effectiveEnd)}&page=${page}&page_size=${pageSize}`;
       if (modelFilter.trim()) url += `&model=${encodeURIComponent(modelFilter.trim())}`;
       if (requestIdFilter) url += `&request_id=${encodeURIComponent(requestIdFilter)}`;
       if (statusFilter && statusFilter !== "all") url += `&status=${encodeURIComponent(statusFilter)}`;
@@ -465,8 +487,13 @@ export function SpendLogsPage() {
       if (maxTokens !== undefined) url += `&max_tokens=${maxTokens}`;
       return apiGet(url);
     },
-    refetchInterval: effectiveLiveTail ? 15_000 : false,
+    refetchInterval: effectiveLiveTail ? LIVE_TAIL_INTERVAL : false,
   });
+
+  // Track last successful fetch via dataUpdatedAt for countdown display
+  useEffect(() => {
+    if (dataUpdatedAt > 0) setLastRefreshTime(dataUpdatedAt);
+  }, [dataUpdatedAt]);
 
   const logs = logsData?.data ?? [];
   const totalCount = logsData?.total_count ?? 0;
@@ -481,10 +508,16 @@ export function SpendLogsPage() {
         </div>
         <div className="flex items-center gap-3">
           {effectiveLiveTail ? (
-            <div className="flex items-center gap-2 text-xs text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-950 rounded-md px-2 py-1 animate-pulse">
-              <span className="relative flex h-2 w-2"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"/><span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"/></span>
-              ● LIVE
-              <Button variant="ghost" size="icon" className="h-4 w-4 ml-1" onClick={() => handleLiveTailToggle(false)}><X className="h-3 w-3"/></Button>
+            <div className="flex items-center gap-2 text-xs text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-950 rounded-md pl-2 pr-1 py-1">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"/>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"/>
+              </span>
+              <span className="font-medium">LIVE</span>
+              <span className="text-muted-foreground tabular-nums">
+                · {lastRefreshTime ? `${countdownSec}s` : "…"}
+              </span>
+              <Button variant="ghost" size="icon" className="h-4 w-4 ml-0.5" onClick={() => handleLiveTailToggle(false)}><X className="h-3 w-3"/></Button>
             </div>
           ) : null}
           <div className="flex items-center gap-2">

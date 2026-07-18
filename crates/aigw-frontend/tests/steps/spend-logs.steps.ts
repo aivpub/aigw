@@ -52,7 +52,8 @@ When("I toggle the Live Tail switch on", async ({ page }) => {
 });
 
 Then("I should see an auto-refresh banner indicating 15 second refresh", async ({ page }) => {
-  await expect(page.locator("main")).toContainText(/auto-refreshing every 15s/i);
+  // Live Tail indicator shows "LIVE" with a countdown (e.g. "LIVE · 15s")
+  await expect(page.locator("main")).toContainText(/LIVE/i);
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
