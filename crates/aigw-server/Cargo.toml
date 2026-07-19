@@ -9,7 +9,7 @@ name = "aigw"
 path = "src/main.rs"
 
 [dependencies]
-aigw-core = { path = "../aigw-core" }
+aigw-core = { path = "../aigw-core", features = ["reqwest"] }
 tokio = { workspace = true }
 axum = { workspace = true }
 reqwest = { workspace = true }

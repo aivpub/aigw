@@ -152,6 +152,22 @@ tasks:
       - cargo build --workspace --release
       - echo "build passed"
 
+  setup-cross:
+    desc: "install cross-rs if not already present"
+    cmds:
+      - cargo install cross --locked
+    status:
+      - which cross
+
+  build-migrate:
+    desc: "cross-compile aigw-migrate for Linux x86_64 (musl, static) using cross-rs"
+    deps:
+      - setup-cross
+    env:
+      DOCKER_DEFAULT_PLATFORM: linux/amd64
+    cmds:
+      - cross build --release -p aigw-migrate --target x86_64-unknown-linux-musl
+
   dev:
     desc: "start server (debug build, embeds frontend)"
     cmds:

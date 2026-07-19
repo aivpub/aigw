@@ -8,7 +8,7 @@ description = "AI Gateway core library — data models, database, router, middle
 tokio = { workspace = true }
 axum = { workspace = true }
 sqlx = { workspace = true }
-reqwest = { workspace = true }
+reqwest = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
@@ -41,4 +41,6 @@ testcontainers = "0.23"
 testcontainers-modules = { version = "0.11", features = ["postgres", "mysql"] }
 
 [features]
+default = []
+reqwest-dep = ["reqwest"]
 integration = []
