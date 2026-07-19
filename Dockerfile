@@ -51,6 +51,7 @@ FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    wget \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -73,9 +74,7 @@ LABEL org.opencontainers.image.version="0.1.0"
 LABEL org.opencontainers.image.licenses="MIT"
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD which wget >/dev/null && wget --no-verbose --tries=1 --spider http://localhost:4000/health || \
-        which curl >/dev/null && curl --fail --silent http://localhost:4000/health || \
-        exit 1
+    CMD wget -qO- http://localhost:4000/health || exit 1
 
 ENTRYPOINT ["aigw"]
 CMD ["--bind", "0.0.0.0:4000"]

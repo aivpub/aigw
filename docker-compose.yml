@@ -1,53 +1,37 @@
-version: "3.8"
+# =============================================================================
+# aigw Production Deployment
+#
+# Requires an external PostgreSQL or MySQL database.
+# Configure via .env (copy from .env.example).
+#
+# Quick start:
+#   cp .env.example .env
+#   $EDITOR .env
+#   docker compose up -d
+# =============================================================================
 
 services:
   aigw:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ghcr.io/aivpub/aigw:latest
+    # If building locally instead:
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
     ports:
-      - "4000:4000"
+      - "${SERVER_PORT:-4000}:4000"
+    env_file:
+      - .env
     environment:
-      - DATABASE_URL=sqlite:/app/data/aigw.db
-      - MASTER_KEY=${MASTER_KEY:-sk-master-change-me}
-      - RUST_LOG=info
-      - DEPLOYMENT_MODE=onprem
+      - DATABASE_URL=${DATABASE_URL}
+      - MASTER_KEY=${MASTER_KEY:?MASTER_KEY must be set in .env}
+      - RUST_LOG=${RUST_LOG:-info}
+      - DEPLOYMENT_MODE=${DEPLOYMENT_MODE:-onprem}
     volumes:
-      - aigw_data:/app/data
       - ./config.yaml:/app/config.yaml:ro
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:4000/health"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/health || exit 1"]
       interval: 30s
-      timeout: 3s
-      retries: 3
-      start_period: 5s
-
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
       timeout: 5s
-      retries: 5
-
-  mysql:
-    image: mysql:8.4
-    environment:
-      MYSQL_ROOT_PASSWORD: root
-    ports:
-      - "3306:3306"
-    volumes:
-      - mysql_data:/var/lib/mysql
-
-volumes:
-  aigw_data:
-  postgres_data:
-  mysql_data:
+      retries: 3
+      start_period: 10s

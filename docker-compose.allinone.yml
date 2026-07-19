@@ -1,0 +1,56 @@
+# =============================================================================
+# aigw All-in-One Deployment (PostgreSQL included)
+#
+# Everything in one file — aigw + PostgreSQL.
+# Ideal for self-hosted setups that want a real database without external infra.
+#
+# Quick start:
+#   docker compose -f docker-compose.allinone.yml up -d
+# =============================================================================
+
+services:
+  aigw:
+    image: ghcr.io/aivpub/aigw:latest
+    # If building locally instead:
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+    ports:
+      - "4000:4000"
+    environment:
+      - DATABASE_URL=postgres://aigw:aigw@postgres:5432/aigw
+      - MASTER_KEY=${MASTER_KEY:-sk-master-change-me}
+      - RUST_LOG=${RUST_LOG:-info}
+      - DEPLOYMENT_MODE=${DEPLOYMENT_MODE:-onprem}
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: aigw
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aigw}
+      POSTGRES_DB: aigw
+    ports:
+      - "${PG_PORT:-5432}:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aigw -d aigw"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  pg_data:

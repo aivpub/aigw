@@ -1,11 +1,35 @@
 # aigw Deployment Guide
 
-## Quick Start (Docker Compose)
+## Compose Files
+
+| File | Database | Use Case |
+|------|----------|----------|
+| `docker-compose.yml` | External (PG/MySQL) | **Production** — point `DATABASE_URL` to your existing DB |
+| `docker-compose.allinone.yml` | PostgreSQL (included) | **Self-hosted** — aigw + PG in one command |
+| `docker-compose.test.yml` | PG + MySQL (included) | **Testing/CI** — BDD and cross-DB verification |
+
+## Quick Start
+
+### Production
 
 ```bash
 cp .env.example .env
-# Edit .env with your API keys
-docker-compose up -d
+$EDITOR .env   # set MASTER_KEY, DATABASE_URL, API keys
+docker compose up -d
+```
+
+### All-in-One (with PostgreSQL)
+
+```bash
+docker compose -f docker-compose.allinone.yml up -d
+```
+
+### Test / CI
+
+```bash
+docker compose -f docker-compose.test.yml up -d
+task bdd-real-pg
+task bdd-real-mysql
 ```
 
 ## Configuration
@@ -14,34 +38,41 @@ docker-compose up -d
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `DATABASE_URL` | No | `sqlite:aigw.db` | Database connection string |
-| `MASTER_KEY` | Yes | — | API key for authenticating proxy requests |
-| `RUST_LOG` | No | `info` | Log level: trace, debug, info, warn, error |
-| `DEPLOYMENT_MODE` | No | `single` | Deployment mode: single, cluster |
+| `DATABASE_URL` | Yes (prod) | — | `postgres://user:pass@host/db` or `mysql://user:pass@host/db` |
+| `MASTER_KEY` | Yes | — | Master admin key for proxy authentication |
+| `RUST_LOG` | No | `info` | Log level: `trace`, `debug`, `info`, `warn`, `error` |
+| `DEPLOYMENT_MODE` | No | `onprem` | `onprem` or `saas` |
 | `OPENAI_API_KEY` | No | — | Default OpenAI API key for proxied requests |
 | `ANTHROPIC_API_KEY` | No | — | Default Anthropic API key for proxied requests |
-| `SERVER_HOST` | No | `0.0.0.0` | Server bind address |
 | `SERVER_PORT` | No | `4000` | Server bind port |
 
 ### Database Options
 
-- **SQLite** (default): Simple, single-instance. Good for testing and small deployments.
+- **SQLite**: Simple, single-instance. Good for testing and small deployments.
 - **PostgreSQL**: Production, multi-instance support. Set `DATABASE_URL` to `postgres://user:pass@host/db`.
 - **MySQL**: Alternative for existing MySQL infrastructure. Set `DATABASE_URL` to `mysql://user:pass@host/db`.
 
 ## Deployment Scenarios
 
-### 1. Single Instance (Docker)
+### 1. Docker Compose (Production)
 
 ```bash
-docker build -t aigw:latest .
+cp .env.example .env
+$EDITOR .env
+docker compose up -d
+```
+
+### 2. Single Binary (Docker)
+
+```bash
 docker run -d -p 4000:4000 \
   -v $(pwd)/config.yaml:/app/config.yaml \
   -e MASTER_KEY=sk-your-key \
-  aigw:latest
+  -e DATABASE_URL=postgres://user:pass@host:5432/aigw \
+  ghcr.io/aivpub/aigw:latest
 ```
 
-### 2. Behind Nginx Reverse Proxy
+### 3. Behind Nginx Reverse Proxy
 
 ```nginx
 location /v1/ {
@@ -56,7 +87,7 @@ location /v1/ {
 }
 ```
 
-### 3. Systemd Service
+### 4. Systemd Service
 
 ```ini
 [Unit]
@@ -81,6 +112,8 @@ WantedBy=multi-user.target
 | `GET /health` | Overall health status |
 | `GET /health/readiness` | Service readiness (ready to serve traffic) |
 | `GET /health/liveliness` | Service liveness (process is alive) |
+| `GET /health/metrics` | DB pool stats, uptime, key/model counts |
+| `GET /metrics` | Prometheus metrics |
 
 ## Logging
 
@@ -96,6 +129,6 @@ Example log output:
 
 For production, consider:
 
-- **Prometheus metrics** — coming in a future release
+- **Prometheus metrics** — available on `GET /metrics`
 - **Log aggregation** — ELK / Loki for centralized log collection
 - **Health check monitoring** — poll `/health` endpoint for uptime alerts

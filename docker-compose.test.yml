@@ -1,0 +1,59 @@
+# =============================================================================
+# aigw Test / CI Deployment
+#
+# Multi-DB test environment — aigw + PostgreSQL + MySQL.
+# Used for BDD tests and cross-database verification.
+#
+# Quick start:
+#   docker compose -f docker-compose.test.yml up -d
+#   task bdd-real-pg
+#   task bdd-real-mysql
+# =============================================================================
+
+services:
+  aigw:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "4000:4000"
+    environment:
+      - RUST_LOG=${RUST_LOG:-debug}
+      - DEPLOYMENT_MODE=onprem
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+    restart: "no"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_test_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_test_data:/var/lib/mysql
+
+volumes:
+  pg_test_data:
+  mysql_test_data:
