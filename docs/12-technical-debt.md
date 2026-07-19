@@ -2,6 +2,22 @@
 
 ## Active Items
 
+### TD-004: BDD @real_api tests leak virtual keys in upstream DB
+
+- **Date**: 2026-07-20
+- **Priority**: P2
+- **Description**: Real API BDD tests (`@real_api` scenarios) create virtual keys
+  via `POST /key/generate` against the upstream litellm PostgreSQL database
+  (`real_api_steps.rs:create_key_via_api()`). These keys never get cleaned up —
+  there is no `after_scenario` hook or `DELETE /key/delete` call.
+  217 stale keys accumulated before first manual cleanup (`hack/backup-bdd-test-keys.sql`).
+- **Impact**: upstream `LiteLLM_VerificationToken` table grows unboundedly on each
+  test run. After ~30 runs the table had 217 test keys.
+- **Resolution**: Add `after_scenario` hook in `bdd.rs` (or a new step module) that
+  iterates `TestWorld.created_keys` and calls `DELETE /key/delete` for each key
+  created during the scenario. Must guard on `AIGW_REAL_API=1` and handle cleanup
+  gracefully (key may have been deleted mid-test).
+
 ### TD-003: BDD coverage reporting not automated
 
 - **Date**: 2026-07-04

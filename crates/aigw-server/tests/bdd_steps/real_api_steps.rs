@@ -7,8 +7,124 @@
 //! The cucumber @real_api tag already filters scenarios at the runner level;
 //! these guards add a runtime safety net so a misconfigured run won't panic.
 
-use cucumber::{given, then, when};
+use cucumber::{given, then, when, codegen::LocalBoxFuture};
 use crate::TestWorld;
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Cucumber hooks — called from bdd.rs via .before()/.after()
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Known aliases used by @real_api feature files.
+const KNOWN_TEST_ALIASES: &[&str] = &[
+    "real-openai-user",
+    "real-spend-user",
+    "real-bad-model-user",
+    "real-stream-user",
+    "real-tokens-user",
+    "compat-err-user",
+    "compat-claude-user",
+    "real-an2oa-user",
+    "real-stream-an-user",
+];
+
+/// Before-scenario hook: pre-delete any keys matching known test aliases
+/// left over from a previous crashed/aborted test run.
+pub(crate) fn before_scenario_hook<'a>(
+    _feature: &'a cucumber::gherkin::Feature,
+    _rule: Option<&'a cucumber::gherkin::Rule>,
+    _scenario: &'a cucumber::gherkin::Scenario,
+    world: &'a mut TestWorld,
+) -> LocalBoxFuture<'a, ()> {
+    Box::pin(async move {
+        if !real_api_enabled() {
+            return;
+        }
+        let mk = world.master_key.clone();
+        let url = format!("{}/key/info", base_url());
+        let client = client();
+        for alias in KNOWN_TEST_ALIASES {
+            let resp = client
+                .get(&url)
+                .query(&[("key_alias", *alias)])
+                .header("Authorization", format!("Bearer {}", &mk))
+                .send()
+                .await;
+            match resp {
+                Ok(r) if r.status().is_success() => {
+                    if let Ok(body) = r.json::<serde_json::Value>().await {
+                        if let Some(raw_key) = body.get("key").and_then(|v| v.as_str()).map(String::from) {
+                            eprintln!("[bdd cleanup] pre-deleting stale key alias={}", alias);
+                            let _ = delete_key_via_api_inner(&client, &base_url(), &mk, &raw_key).await;
+                        }
+                    }
+                }
+                _ => { /* Key not found — nothing to clean. */ }
+            }
+        }
+    })
+}
+
+/// After-scenario hook: delete all virtual keys created during this
+/// scenario from the upstream litellm database.
+pub(crate) fn after_scenario_hook<'a>(
+    _feature: &'a cucumber::gherkin::Feature,
+    _rule: Option<&'a cucumber::gherkin::Rule>,
+    _scenario: &'a cucumber::gherkin::Scenario,
+    _finished: &'a cucumber::event::ScenarioFinished,
+    world: Option<&'a mut TestWorld>,
+) -> LocalBoxFuture<'a, ()> {
+    Box::pin(async move {
+        let world = match world {
+            Some(w) => w,
+            None => return,
+        };
+        if !real_api_enabled() {
+            return;
+        }
+        let mk = &world.master_key;
+        let client = client();
+        let base = base_url();
+        for (alias, raw_key) in &world.created_keys {
+            if raw_key == mk {
+                continue;
+            }
+            eprintln!("[bdd cleanup] deleting upstream key alias={}", alias);
+            let _ = delete_key_via_api_inner(&client, &base, mk, raw_key).await;
+        }
+    })
+}
+
+/// Call DELETE /key/delete for a single key token. Best-effort — logs
+/// failures but never panics.
+async fn delete_key_via_api_inner(
+    client: &reqwest::Client,
+    base_url: &str,
+    master_key: &str,
+    raw_key: &str,
+) {
+    let url = format!("{}/key/delete", base_url);
+    let resp = client
+        .delete(&url)
+        .query(&[("key", raw_key)])
+        .header("Authorization", format!("Bearer {}", master_key))
+        .send()
+        .await;
+    match resp {
+        Ok(r) if r.status().is_success() => {}
+        Ok(r) => {
+            let status = r.status().as_u16();
+            let body = r.text().await.unwrap_or_default();
+            eprintln!(
+                "[bdd cleanup] DELETE /key/delete returned {}: {}",
+                status,
+                &body[..body.len().min(100)],
+            );
+        }
+        Err(e) => {
+            eprintln!("[bdd cleanup] DELETE /key/delete failed: {}", e);
+        }
+    }
+}
 
 /// Base URL of the running aigw server for real API tests.
 /// Defaults to http://localhost:4000; override with AIGW_BASE_URL.

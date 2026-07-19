@@ -113,10 +113,10 @@ async fn main() {
     let real_api_mode = std::env::var("AIGW_REAL_API").as_deref() == Ok("1");
     TestWorld::cucumber()
         .max_concurrent_scenarios(1)
+        .before(bdd_steps::real_api_steps::before_scenario_hook)
+        .after(bdd_steps::real_api_steps::after_scenario_hook)
         .filter_run("tests/features", move |feature, _rule, scenario| {
             if real_api_mode {
-                // @real_api is a Feature-level tag (cucumber's custom filter
-                // doesn't auto-inherit Feature tags). Check both levels.
                 feature.tags.iter().chain(scenario.tags.iter())
                     .any(|t| t == "real_api")
             } else {
