@@ -227,7 +227,7 @@ async fn main() -> anyhow::Result<()> {
             let target_key = resolve_target_master_key(target_master_key)?;
 
             if skip_body {
-                println!("  --skip-body: will skip messages, response columns in spend_logs");
+                println!("  --skip-body: will skip messages, response, proxy_server_request columns in spend_logs");
             }
             if !skip_columns.is_empty() {
                 println!("  --skip-columns: {:?}", skip_columns);
@@ -239,6 +239,7 @@ async fn main() -> anyhow::Result<()> {
             if skip_body {
                 skip_columns_set.insert(("spend_logs".to_string(), "messages".to_string()));
                 skip_columns_set.insert(("spend_logs".to_string(), "response".to_string()));
+                skip_columns_set.insert(("spend_logs".to_string(), "proxy_server_request".to_string()));
             }
             for spec in &skip_columns {
                 if let Some((table, col)) = spec.split_once('.') {
