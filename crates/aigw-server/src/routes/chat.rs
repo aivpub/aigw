@@ -878,7 +878,7 @@ pub async fn chat_completions(
 
     // 5. Build and send upstream request
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
+        .timeout(std::time::Duration::from_secs(600))
         .build()
         .map_err(|e| {
             (
@@ -926,12 +926,91 @@ pub async fn chat_completions(
     let start_time = chrono::Utc::now();
 
     let upstream_resp = upstream_req.send().await.map_err(|e| {
+        let is_timeout = e.is_timeout();
+        let err_msg = format!("Upstream request failed: {}", e);
+        let err_type = if is_timeout {
+            tracing::error!(
+                "upstream request TIMEOUT after {}s for model '{}', upstream_url={}",
+                600, _model, upstream_url
+            );
+            "timeout_error"
+        } else {
+            tracing::error!(
+                "upstream request failed for model '{}': {}",
+                _model, e
+            );
+            "upstream_error"
+        };
+        // Record failure spend_log on timeout (before returning error)
+        if is_timeout {
+            let state2 = state.clone();
+            let fail_upstream_body = upstream_body_val.clone();
+            let fail_model = deployment.upstream_model.clone();
+            let fail_api_base = deployment.api_base.clone();
+            let fail_model_id = deployment.model_id.clone();
+            let fail_model_group = deployment.model_group.clone();
+            let fail_custom_llm_provider = deployment.custom_llm_provider.clone();
+            let fail_token_hash = auth.token_hash.clone();
+            let fail_user_id = auth.user_id.clone();
+            let fail_end_user = end_user.clone();
+            let fail_session_id = session_id.clone();
+            let fail_requester_ip = requester_ip.clone();
+            let fail_psr = proxy_server_request.clone();
+            let fail_metadata = metadata.clone();
+            let fail_url = upstream_url.clone();
+            let fail_model_name = _model.to_string();
+            let err_msg_for_log = err_msg.clone();
+            tokio::spawn(async move {
+                let sl = SpendLog {
+                    request_id: uuid::Uuid::new_v4().to_string(),
+                    call_type: "completion".to_string(),
+                    api_key: fail_token_hash,
+                    spend: 0.0,
+                    total_tokens: 0,
+                    prompt_tokens: 0,
+                    completion_tokens: 0,
+                    start_time,
+                    end_time: chrono::Utc::now(),
+                    request_duration_ms: Some(
+                        (chrono::Utc::now() - start_time).num_milliseconds() as i32,
+                    ),
+                    completion_start_time: None,
+                    model: fail_model,
+                    model_id: fail_model_id,
+                    model_group: fail_model_group,
+                    custom_llm_provider: fail_custom_llm_provider,
+                    api_base: Some(fail_api_base),
+                    user: fail_user_id,
+                    metadata: fail_metadata,
+                    cache_hit: None,
+                    cache_key: None,
+                    request_tags: None,
+                    team_id: None,
+                    organization_id: None,
+                    end_user: fail_end_user,
+                    requester_ip_address: fail_requester_ip,
+                    messages: Some(fail_upstream_body),
+                    response: Some(json!({
+                        "error": err_msg_for_log,
+                        "failure_reason": "upstream_timeout",
+                        "upstream_url": fail_url,
+                        "model": fail_model_name,
+                    })),
+                    session_id: fail_session_id,
+                    status: Some("timeout:upstream".to_string()),
+                    mcp_namespaced_tool_name: None,
+                    agent_id: None,
+                    proxy_server_request: fail_psr,
+                };
+                let _ = state2.db.insert_spend_log(&sl).await;
+            });
+        }
         (
             StatusCode::BAD_GATEWAY,
             Json(json!({
                 "error": {
-                    "message": format!("Upstream request failed: {}", e),
-                    "type": "upstream_error",
+                    "message": err_msg,
+                    "type": err_type,
                     "code": null
                 }
             })),

@@ -427,7 +427,7 @@ pub async fn messages_handler(
 
     // 7. Call upstream
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
+        .timeout(std::time::Duration::from_secs(600))
         .build()
         .map_err(|e| {
             anthropic_error(
@@ -470,10 +470,92 @@ pub async fn messages_handler(
     let start_time = chrono::Utc::now();
 
     let upstream_resp = upstream_req.send().await.map_err(|e| {
+        let is_timeout = e.is_timeout();
+        let err_msg = format!("Upstream request failed: {}", e);
+        let err_type = if is_timeout {
+            tracing::error!(
+                "upstream request TIMEOUT after {}s for model '{}', upstream_url={}",
+                600, model, upstream_base_url
+            );
+            "timeout_error"
+        } else {
+            tracing::error!(
+                "upstream request failed for model '{}': {}",
+                model, e
+            );
+            "upstream_error"
+        };
+        // Record failure spend_log on timeout
+        if is_timeout {
+            let state2 = Arc::clone(&state);
+            let upstream_body_clone = upstream_body.clone();
+            let model_clone = model.clone();
+            let auth_token_hash_clone = auth_token_hash.clone();
+            let auth_user_id_clone = auth_user_id.clone();
+            let end_user_clone = end_user.clone();
+            let psr = proxy_server_request.clone();
+            let session_id_clone = session_id.clone();
+            let requester_ip_clone = requester_ip.clone();
+            let mid = upstream_model_id.clone();
+            let mg = upstream_model_group.clone();
+            let ccp = upstream_custom_llm_provider.clone();
+            let mdata = metadata.clone();
+            let call_type2 = call_type.to_string();
+            let err_clone = err_msg.clone();
+            let url_clone = upstream_base_url.clone();
+            let model_clone2 = model_clone.clone();
+            let url_for_resp = url_clone.clone();
+            let model_for_resp = model_clone2.clone();
+            tokio::spawn(async move {
+                let end_time = chrono::Utc::now();
+                let sl = SpendLog {
+                    request_id: uuid::Uuid::new_v4().to_string(),
+                    call_type: call_type2,
+                    api_key: auth_token_hash_clone,
+                    spend: 0.0,
+                    total_tokens: 0,
+                    prompt_tokens: 0,
+                    completion_tokens: 0,
+                    start_time,
+                    end_time,
+                    request_duration_ms: Some(
+                        end_time.signed_duration_since(start_time).num_milliseconds() as i32,
+                    ),
+                    completion_start_time: None,
+                    model: model_clone2,
+                    model_id: mid,
+                    model_group: mg,
+                    custom_llm_provider: ccp,
+                    api_base: Some(url_clone),
+                    user: auth_user_id_clone,
+                    metadata: mdata,
+                    cache_hit: None,
+                    cache_key: None,
+                    request_tags: None,
+                    team_id: None,
+                    organization_id: None,
+                    end_user: end_user_clone,
+                    requester_ip_address: requester_ip_clone,
+                    messages: Some(upstream_body_clone),
+                    response: Some(json!({
+                        "error": err_clone,
+                        "failure_reason": "upstream_timeout",
+                        "upstream_url": url_for_resp,
+                        "model": model_for_resp,
+                    })),
+                    session_id: session_id_clone,
+                    status: Some("timeout:upstream".to_string()),
+                    mcp_namespaced_tool_name: None,
+                    agent_id: None,
+                    proxy_server_request: psr,
+                };
+                let _ = state2.db.insert_spend_log(&sl).await;
+            });
+        }
         anthropic_error(
             StatusCode::BAD_GATEWAY,
-            "upstream_error",
-            &format!("Upstream request failed: {}", e),
+            err_type,
+            &err_msg,
         )
     })?;
 
