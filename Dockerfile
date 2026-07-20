@@ -88,6 +88,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 COPY crates/aigw-core/src/      crates/aigw-core/src/
 COPY crates/aigw-core/migrations/ crates/aigw-core/migrations/
 COPY crates/aigw-server/src/    crates/aigw-server/src/
+COPY crates/aigw-server/build.rs crates/aigw-server/build.rs
 COPY crates/aigw-migrate/src/   crates/aigw-migrate/src/
 
 # Copy pre-built frontend dist/ for rust-embed
