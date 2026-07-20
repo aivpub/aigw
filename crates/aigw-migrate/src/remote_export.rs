@@ -143,7 +143,7 @@ async fn migrate_credentials(
         return Ok(0);
     }
 
-    let values_col = tgt_col_info.iter().position(|(n, _)| n == "credential_values");
+    let values_col = tgt_col_info.iter().position(|(n, _, _)| n == "credential_values");
 
     let mut inserted = 0usize;
     let mut skipped = 0usize;
@@ -154,7 +154,7 @@ async fn migrate_credentials(
         let values: Vec<String> = tgt_col_info
             .iter()
             .enumerate()
-            .map(|(idx, (col_name, col_type))| {
+            .map(|(idx, (col_name, col_type, is_nullable))| {
                 if values_col == Some(idx) {
                     // credential_values: decrypt with source key, re-encrypt with target key
                     let encrypted = row_map.get(col_name.as_str())
@@ -163,7 +163,7 @@ async fn migrate_credentials(
                     if encrypted.is_empty() || encrypted == "{}" {
                         native::value_to_target_literal(
                             &serde_json::Value::String(encrypted.to_string()),
-                            col_type, target.kind(),
+                            col_type, target.kind(), false,
                         )
                     } else {
                         match aigw_core::decrypt_litellm_value(encrypted, source_key) {
@@ -171,14 +171,14 @@ async fn migrate_credentials(
                                 match aigw_core::encrypt_litellm_value(&plaintext, target_key) {
                                     Ok(re_encrypted) => native::value_to_target_literal(
                                         &serde_json::Value::String(re_encrypted),
-                                        col_type, target.kind(),
+                                        col_type, target.kind(), false,
                                     ),
                                     Err(e) => {
                                         eprintln!("  [WARN] Re-encrypt: {}", e);
                                         skipped += 1;
                                         native::value_to_target_literal(
                                             &serde_json::Value::String(encrypted.to_string()),
-                                            col_type, target.kind(),
+                                            col_type, target.kind(), false,
                                         )
                                     }
                                 }
@@ -188,7 +188,7 @@ async fn migrate_credentials(
                                 skipped += 1;
                                 native::value_to_target_literal(
                                     &serde_json::Value::String(encrypted.to_string()),
-                                    col_type, target.kind(),
+                                    col_type, target.kind(), false,
                                 )
                             }
                         }
@@ -199,12 +199,12 @@ async fn migrate_credentials(
                             .and_then(|m| row_map.get(m.as_str())))
                         .copied()
                         .unwrap_or(&serde_json::Value::Null);
-                    native::value_to_target_literal(v, col_type, target.kind())
+                    native::value_to_target_literal(v, col_type, target.kind(), *is_nullable)
                 }
             })
             .collect();
 
-        let quoted_cols: Vec<String> = tgt_col_info.iter().map(|(n, _)| target.quote_ident(n)).collect();
+        let quoted_cols: Vec<String> = tgt_col_info.iter().map(|(n, _, _)| target.quote_ident(n)).collect();
         let sql = format!(
             "{}{} ({}) VALUES ({}){}",
             target.insert_prefix(), tbl_quoted,
@@ -254,7 +254,7 @@ async fn migrate_proxy_models(
         return Ok(0);
     }
 
-    let params_col = tgt_col_info.iter().position(|(n, _)| n == "litellm_params");
+    let params_col = tgt_col_info.iter().position(|(n, _, _)| n == "litellm_params");
 
     let mut inserted = 0usize;
     let mut skipped = 0usize;
@@ -265,7 +265,7 @@ async fn migrate_proxy_models(
         let values: Vec<String> = tgt_col_info
             .iter()
             .enumerate()
-            .map(|(idx, (col_name, col_type))| {
+            .map(|(idx, (col_name, col_type, is_nullable))| {
                 if params_col == Some(idx) {
                     let value_str = row_map.get(col_name.as_str())
                         .and_then(|v| v.as_str())
@@ -274,7 +274,7 @@ async fn migrate_proxy_models(
                         // JSON value, not encrypted
                         native::value_to_target_literal(
                             &serde_json::Value::String(value_str.to_string()),
-                            col_type, target.kind(),
+                            col_type, target.kind(), false,
                         )
                     } else {
                         match aigw_core::decrypt_litellm_value(value_str, source_key) {
@@ -282,14 +282,14 @@ async fn migrate_proxy_models(
                                 match aigw_core::encrypt_litellm_value(&plaintext, target_key) {
                                     Ok(re_encrypted) => native::value_to_target_literal(
                                         &serde_json::Value::String(re_encrypted),
-                                        col_type, target.kind(),
+                                        col_type, target.kind(), false,
                                     ),
                                     Err(e) => {
                                         eprintln!("  [WARN] Re-encrypt: {}", e);
                                         skipped += 1;
                                         native::value_to_target_literal(
                                             &serde_json::Value::String(value_str.to_string()),
-                                            col_type, target.kind(),
+                                            col_type, target.kind(), false,
                                         )
                                     }
                                 }
@@ -299,7 +299,7 @@ async fn migrate_proxy_models(
                                 skipped += 1;
                                 native::value_to_target_literal(
                                     &serde_json::Value::String(value_str.to_string()),
-                                    col_type, target.kind(),
+                                    col_type, target.kind(), false,
                                 )
                             }
                         }
@@ -310,12 +310,12 @@ async fn migrate_proxy_models(
                             .and_then(|m| row_map.get(m.as_str())))
                         .copied()
                         .unwrap_or(&serde_json::Value::Null);
-                    native::value_to_target_literal(v, col_type, target.kind())
+                    native::value_to_target_literal(v, col_type, target.kind(), *is_nullable)
                 }
             })
             .collect();
 
-        let quoted_cols: Vec<String> = tgt_col_info.iter().map(|(n, _)| target.quote_ident(n)).collect();
+        let quoted_cols: Vec<String> = tgt_col_info.iter().map(|(n, _, _)| target.quote_ident(n)).collect();
         let sql = format!(
             "{}{} ({}) VALUES ({}){}",
             target.insert_prefix(), tbl_quoted,

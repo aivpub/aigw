@@ -206,13 +206,13 @@ async fn migrate_credentials(
 
     let values_col = tgt_col_info
         .iter()
-        .position(|(n, _)| n == "credential_values");
+        .position(|(n, _, _)| n == "credential_values");
     // `credential_info` is also a JSON payload in aigw-core (see Credential in
     // models.rs); force JSON coercion for it too so that ports where the
     // target column is plain TEXT don't fall through to raw string storage.
     let info_col = tgt_col_info
         .iter()
-        .position(|(n, _)| n == "credential_info");
+        .position(|(n, _, _)| n == "credential_info");
 
     let mut inserted = 0usize;
     let mut skipped = 0usize;
@@ -222,7 +222,7 @@ async fn migrate_credentials(
         let values: Vec<String> = tgt_col_info
             .iter()
             .enumerate()
-            .map(|(idx, (col_name, col_type))| {
+            .map(|(idx, (col_name, col_type, is_nullable))| {
                 if values_col == Some(idx) {
                     // credential_values: same shape variance as litellm_params —
                     // PG jsonb → Object/Array, PG text / SQLite → String.
@@ -241,7 +241,7 @@ async fn migrate_credentials(
                         let rotated = rotate_field(&encrypted_str, source_key, target_key, &mut skipped);
                         Value::String(rotated.unwrap_or(encrypted_str))
                     };
-                    native::value_to_target_literal(&v, &literal_type, target.kind())
+                    native::value_to_target_literal(&v, &literal_type, target.kind(), false)
                 } else if info_col == Some(idx) {
                     let v = row_map
                         .get(col_name.as_str())
@@ -250,7 +250,7 @@ async fn migrate_credentials(
                         .copied()
                         .unwrap_or(&Value::Null);
                     let literal_type = json_column_type_for(col_type, target.kind());
-                    native::value_to_target_literal(v, &literal_type, target.kind())
+                    native::value_to_target_literal(v, &literal_type, target.kind(), false)
                 } else {
                     let v = row_map
                         .get(col_name.as_str())
@@ -258,13 +258,13 @@ async fn migrate_credentials(
                             .and_then(|m| row_map.get(m.as_str())))
                         .copied()
                         .unwrap_or(&Value::Null);
-                    native::value_to_target_literal(v, col_type, target.kind())
+                    native::value_to_target_literal(v, col_type, target.kind(), *is_nullable)
                 }
             })
             .collect();
 
         let tbl_quoted = target.quote_ident("credentials");
-        let quoted_cols: Vec<String> = tgt_col_info.iter().map(|(n, _)| target.quote_ident(n)).collect();
+        let quoted_cols: Vec<String> = tgt_col_info.iter().map(|(n, _, _)| target.quote_ident(n)).collect();
         let sql = format!(
             "{}{} ({}) VALUES ({}){}",
             target.insert_prefix(),
@@ -339,9 +339,9 @@ async fn migrate_proxy_models(
         return Ok(0);
     }
 
-    let params_col = tgt_col_info.iter().position(|(n, _)| n == "litellm_params");
+    let params_col = tgt_col_info.iter().position(|(n, _, _)| n == "litellm_params");
     // model_info is also a JSON payload the runtime decodes as serde_json::Value.
-    let info_col = tgt_col_info.iter().position(|(n, _)| n == "model_info");
+    let info_col = tgt_col_info.iter().position(|(n, _, _)| n == "model_info");
 
     let mut inserted = 0usize;
     let mut skipped = 0usize;
@@ -351,7 +351,7 @@ async fn migrate_proxy_models(
         let values: Vec<String> = tgt_col_info
             .iter()
             .enumerate()
-            .map(|(idx, (col_name, col_type))| {
+            .map(|(idx, (col_name, col_type, is_nullable))| {
                 if params_col == Some(idx) {
                     // litellm's `litellm_params` may arrive as:
                     //   * PG `jsonb`   → decoded as `Value::Object` / `Value::Array`
@@ -379,11 +379,12 @@ async fn migrate_proxy_models(
                             &Value::String("".into()),
                             &literal_type,
                             target.kind(),
+                            false,
                         );
                     }
                     let rotated = rotate_field(&value_str, source_key, target_key, &mut skipped);
                     let v = Value::String(rotated.unwrap_or(value_str));
-                    native::value_to_target_literal(&v, &literal_type, target.kind())
+                    native::value_to_target_literal(&v, &literal_type, target.kind(), false)
                 } else if info_col == Some(idx) {
                     let v = row_map
                         .get(col_name.as_str())
@@ -392,7 +393,7 @@ async fn migrate_proxy_models(
                         .copied()
                         .unwrap_or(&Value::Null);
                     let literal_type = json_column_type_for(col_type, target.kind());
-                    native::value_to_target_literal(v, &literal_type, target.kind())
+                    native::value_to_target_literal(v, &literal_type, target.kind(), false)
                 } else {
                     let v = row_map
                         .get(col_name.as_str())
@@ -400,13 +401,13 @@ async fn migrate_proxy_models(
                             .and_then(|m| row_map.get(m.as_str())))
                         .copied()
                         .unwrap_or(&Value::Null);
-                    native::value_to_target_literal(v, col_type, target.kind())
+                    native::value_to_target_literal(v, col_type, target.kind(), *is_nullable)
                 }
             })
             .collect();
 
         let tbl_quoted = target.quote_ident("proxy_models");
-        let quoted_cols: Vec<String> = tgt_col_info.iter().map(|(n, _)| target.quote_ident(n)).collect();
+        let quoted_cols: Vec<String> = tgt_col_info.iter().map(|(n, _, _)| target.quote_ident(n)).collect();
         let sql = format!(
             "{}{} ({}) VALUES ({}){}",
             target.insert_prefix(),
@@ -443,16 +444,16 @@ async fn migrate_spend_logs(
 
     let skipped_list: Vec<String> = tgt_col_info_all
         .iter()
-        .filter(|(col, _)| skip_columns_set.contains(&("spend_logs".to_string(), col.clone())))
-        .map(|(col, _)| format!("spend_logs.{}", col))
+        .filter(|(col, _, _)| skip_columns_set.contains(&("spend_logs".to_string(), col.clone())))
+        .map(|(col, _, _)| format!("spend_logs.{}", col))
         .collect();
     if !skipped_list.is_empty() {
         eprintln!("  [SKIP-COLUMNS] spend_logs: {:?}", skipped_list);
     }
 
-    let filtered_cols: Vec<(String, String)> = tgt_col_info_all
+    let filtered_cols: Vec<(String, String, bool)> = tgt_col_info_all
         .into_iter()
-        .filter(|(col, _)| !skip_columns_set.contains(&("spend_logs".to_string(), col.clone())))
+        .filter(|(col, _, _)| !skip_columns_set.contains(&("spend_logs".to_string(), col.clone())))
         .collect();
 
     if filtered_cols.is_empty() {
@@ -470,7 +471,7 @@ async fn migrate_spend_logs(
     // preserved unconditionally because pagination needs it.
     let src_col_info = source.column_types("LiteLLM_SpendLogs").await?;
     let src_col_names_all: Vec<String> =
-        src_col_info.iter().map(|(n, _)| n.clone()).collect();
+        src_col_info.iter().map(|(n, _, _)| n.clone()).collect();
     let mut select_columns: Vec<String> = src_col_names_all
         .iter()
         .filter(|src_name| {

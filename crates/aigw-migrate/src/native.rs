@@ -316,7 +316,7 @@ impl SourcePool {
     }
 
     /// Get target column names and types for INSERT generation.
-    pub async fn column_types(&self, table: &str) -> anyhow::Result<Vec<(String, String)>> {
+    pub async fn column_types(&self, table: &str) -> anyhow::Result<Vec<(String, String, bool)>> {
         match self {
             SourcePool::Postgres(p) => pg_column_types(p, table).await,
             SourcePool::Sqlite(p) => sqlite_column_types(p, table).await,
@@ -554,10 +554,11 @@ fn try_mysql_get(row: &sqlx::mysql::MySqlRow, col: &str) -> Value {
 // Column type metadata readers (target DB)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-async fn pg_column_types(pool: &PgPool, table: &str) -> anyhow::Result<Vec<(String, String)>> {
+async fn pg_column_types(pool: &PgPool, table: &str) -> anyhow::Result<Vec<(String, String, bool)>> {
     let rows = sqlx::query(
         "SELECT column_name::text, \
-                CASE WHEN data_type = 'ARRAY' THEN udt_name ELSE data_type END::text \
+                CASE WHEN data_type = 'ARRAY' THEN udt_name ELSE data_type END::text, \
+                is_nullable::text \
          FROM information_schema.columns \
          WHERE lower(table_name) = lower($1) \
          ORDER BY ordinal_position",
@@ -567,11 +568,14 @@ async fn pg_column_types(pool: &PgPool, table: &str) -> anyhow::Result<Vec<(Stri
     .await?;
     Ok(rows
         .iter()
-        .map(|r| (r.get::<String, _>(0), r.get::<String, _>(1)))
+        .map(|r| {
+            let nullable: String = r.get(2);
+            (r.get::<String, _>(0), r.get::<String, _>(1), nullable == "YES")
+        })
         .collect())
 }
 
-async fn sqlite_column_types(pool: &SqlitePool, table: &str) -> anyhow::Result<Vec<(String, String)>> {
+async fn sqlite_column_types(pool: &SqlitePool, table: &str) -> anyhow::Result<Vec<(String, String, bool)>> {
     let sql = format!("PRAGMA table_info(\"{}\")", table);
     let rows = sqlx::query(&sql).fetch_all(pool).await?;
     Ok(rows
@@ -579,14 +583,15 @@ async fn sqlite_column_types(pool: &SqlitePool, table: &str) -> anyhow::Result<V
         .map(|r| {
             let name: String = r.get(1);
             let ty: String = r.try_get::<String, _>(2).unwrap_or_default();
-            (name, ty)
+            let notnull: bool = r.try_get::<i32, _>(3).unwrap_or(0) != 0;
+            (name, ty, !notnull)
         })
         .collect())
 }
 
-async fn mysql_column_types(pool: &MySqlPool, table: &str) -> anyhow::Result<Vec<(String, String)>> {
+async fn mysql_column_types(pool: &MySqlPool, table: &str) -> anyhow::Result<Vec<(String, String, bool)>> {
     let rows = sqlx::query(
-        "SELECT COLUMN_NAME, DATA_TYPE \
+        "SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE \
          FROM INFORMATION_SCHEMA.COLUMNS \
          WHERE TABLE_NAME = ? AND TABLE_SCHEMA = DATABASE() \
          ORDER BY ORDINAL_POSITION",
@@ -602,7 +607,11 @@ async fn mysql_column_types(pool: &MySqlPool, table: &str) -> anyhow::Result<Vec
                 .try_get::<Vec<u8>, _>(1)
                 .map(|b| String::from_utf8_lossy(&b).to_string())
                 .unwrap_or_default();
-            (name, normalize_mysql_type(&ty))
+            let nullable: String = r
+                .try_get::<Vec<u8>, _>(2)
+                .map(|b| String::from_utf8_lossy(&b).to_string())
+                .unwrap_or_default();
+            (name, normalize_mysql_type(&ty), nullable == "YES")
         })
         .collect())
 }
@@ -649,7 +658,7 @@ fn mysql_json_hex_literal(s: &str) -> String {
 ///   - JSON/JSONB: reject empty strings (→ NULL), wrap with ::jsonb for PG
 ///   - BOOLEAN: SQLite INTEGER(0/1) → PG true/false; PG bool → SQLite 1/0
 ///   - Numeric: native decode gives us f64/i64, direct string conversion
-pub fn value_to_target_literal(v: &Value, col_type: &str, target: DbKind) -> String {
+pub fn value_to_target_literal(v: &Value, col_type: &str, target: DbKind, is_nullable: bool) -> String {
     let ty = col_type.to_lowercase();
     // Determine if this PG column is an array type.
     // information_schema returns udt_name like `_text`, `_varchar` for array columns.
@@ -659,6 +668,10 @@ pub fn value_to_target_literal(v: &Value, col_type: &str, target: DbKind) -> Str
     };
     match v {
         Value::Null => {
+            // If the target column is nullable, NULL is the correct value.
+            if is_nullable {
+                return "NULL".to_string();
+            }
             // For NOT NULL columns, provide a type-appropriate default
             // instead of NULL — otherwise INSERT OR IGNORE (SQLite)
             // silently drops the entire row.
@@ -1003,7 +1016,7 @@ fn would_reject_empty_string(col_type: &str, target: DbKind) -> bool {
 pub async fn insert_rows(
     target: &SourcePool,
     table: &str,
-    target_cols: &[(String, String)],
+    target_cols: &[(String, String, bool)],
     rows: &[UnifiedRow],
     column_override: &HashMap<String, String>,
 ) -> anyhow::Result<usize> {
@@ -1016,7 +1029,7 @@ pub async fn insert_rows(
     let conflict = target.conflict_clause();
 
     // Build column list for INSERT (target columns that exist in source)
-    let col_names: Vec<&str> = target_cols.iter().map(|(n, _)| n.as_str()).collect();
+    let col_names: Vec<&str> = target_cols.iter().map(|(n, _, _)| n.as_str()).collect();
     let quoted_cols: Vec<String> = col_names.iter().map(|n| target.quote_ident(n)).collect();
 
     let mut inserted = 0;
@@ -1031,7 +1044,7 @@ pub async fn insert_rows(
 
         let values: Vec<String> = target_cols
             .iter()
-            .map(|(col_name, col_type)| {
+            .map(|(col_name, col_type, is_nullable)| {
                 // Try source column name first, then override mapping
                 let v = row_map
                     .get(col_name.as_str())
@@ -1042,7 +1055,7 @@ pub async fn insert_rows(
                     })
                     .copied()
                     .unwrap_or(&Value::Null);
-                value_to_target_literal(v, col_type, target_kind)
+                value_to_target_literal(v, col_type, target_kind, *is_nullable)
             })
             .collect();
 
@@ -1088,14 +1101,14 @@ pub async fn insert_rows(
 /// source→target column-name overrides.
 fn build_row_values(
     target_kind: DbKind,
-    target_cols: &[(String, String)],
+    target_cols: &[(String, String, bool)],
     row: &UnifiedRow,
     column_override: &HashMap<String, String>,
 ) -> String {
     let row_map: HashMap<&str, &Value> = row.iter().map(|(n, v)| (n.as_str(), v)).collect();
     let values: Vec<String> = target_cols
         .iter()
-        .map(|(col_name, col_type)| {
+        .map(|(col_name, col_type, is_nullable)| {
             let v = row_map
                 .get(col_name.as_str())
                 .or_else(|| {
@@ -1105,7 +1118,7 @@ fn build_row_values(
                 })
                 .copied()
                 .unwrap_or(&Value::Null);
-            value_to_target_literal(v, col_type, target_kind)
+            value_to_target_literal(v, col_type, target_kind, *is_nullable)
         })
         .collect();
     format!("({})", values.join(", "))
@@ -1124,7 +1137,7 @@ fn build_row_values(
 pub async fn insert_rows_batch(
     target: &SourcePool,
     table: &str,
-    target_cols: &[(String, String)],
+    target_cols: &[(String, String, bool)],
     rows: &[UnifiedRow],
     column_override: &HashMap<String, String>,
 ) -> anyhow::Result<(usize, usize)> {
@@ -1137,7 +1150,7 @@ pub async fn insert_rows_batch(
     let conflict = target.conflict_clause();
     let quoted_cols: Vec<String> = target_cols
         .iter()
-        .map(|(n, _)| target.quote_ident(n))
+        .map(|(n, _, _)| target.quote_ident(n))
         .collect();
 
     let tuples: Vec<String> = rows
@@ -1202,7 +1215,7 @@ mod tests {
     fn pg_jsonb_wraps_encrypted_string_as_json_scalar() {
         // Typical NaCl-encrypted litellm value (base64-ish, no braces).
         let v = Value::String("gAAAAABmR1KzLmxk-notjson".to_string());
-        let out = value_to_target_literal(&v, "jsonb", DbKind::Postgres);
+        let out = value_to_target_literal(&v, "jsonb", DbKind::Postgres, false);
         // Must NOT collapse to '{}'::jsonb — that's the bug we just fixed.
         assert_ne!(out, "'{}'::jsonb", "encrypted blob must not be lost");
         // Must be a valid jsonb scalar string literal so `sqlx` decodes it
@@ -1214,7 +1227,7 @@ mod tests {
     fn pg_jsonb_passes_through_valid_json_object() {
         // Object payload — must be inlined verbatim, no double-wrapping.
         let v = Value::String(r#"{"api_key":"k","api_base":"http://x"}"#.to_string());
-        let out = value_to_target_literal(&v, "jsonb", DbKind::Postgres);
+        let out = value_to_target_literal(&v, "jsonb", DbKind::Postgres, false);
         assert_eq!(out, "'{\"api_base\":\"http://x\",\"api_key\":\"k\"}'::jsonb");
     }
 
@@ -1224,7 +1237,7 @@ mod tests {
         // default (the existing empty-string arm handles this — we're just
         // pinning the behaviour so it doesn't regress alongside the fix.).
         let v = Value::String(String::new());
-        let out = value_to_target_literal(&v, "jsonb", DbKind::Postgres);
+        let out = value_to_target_literal(&v, "jsonb", DbKind::Postgres, false);
         assert_eq!(out, "'{}'::jsonb");
     }
 
@@ -1233,7 +1246,7 @@ mod tests {
         // Value::Object should serialize inline as jsonb — separate arm from
         // the Value::String path, but sharing the same "must not be empty" rule.
         let v: Value = serde_json::json!({"k": "v"});
-        let out = value_to_target_literal(&v, "jsonb", DbKind::Postgres);
+        let out = value_to_target_literal(&v, "jsonb", DbKind::Postgres, false);
         assert_eq!(out, "'{\"k\":\"v\"}'::jsonb");
     }
 
@@ -1242,8 +1255,42 @@ mod tests {
         // Parity check: the SQLite branch already wraps non-JSON strings as
         // JSON scalars, ensuring parity with the PG fix above.
         let v = Value::String("gAAAAABmR1KzLmxk".to_string());
-        let out = value_to_target_literal(&v, "json", DbKind::Sqlite);
+        let out = value_to_target_literal(&v, "json", DbKind::Sqlite, false);
         assert_eq!(out, "'\"gAAAAABmR1KzLmxk\"'");
+    }
+
+    // ── nullable column handling ──
+    //
+    // Regression: `value_to_target_literal` used to unconditionally convert
+    // `Value::Null` to type-appropriate defaults (e.g. epoch 0 for timestamps)
+    // even for nullable columns, corrupting migration data.
+
+    #[test]
+    fn null_to_nullable_timestamptz_returns_null() {
+        let v = Value::Null;
+        let out = value_to_target_literal(&v, "timestamptz", DbKind::Postgres, true);
+        assert_eq!(out, "NULL");
+    }
+
+    #[test]
+    fn null_to_notnull_timestamptz_returns_epoch() {
+        let v = Value::Null;
+        let out = value_to_target_literal(&v, "timestamptz", DbKind::Postgres, false);
+        assert_eq!(out, "'1970-01-01 00:00:00+00'::timestamptz");
+    }
+
+    #[test]
+    fn null_to_nullable_text_returns_null() {
+        let v = Value::Null;
+        let out = value_to_target_literal(&v, "text", DbKind::Postgres, true);
+        assert_eq!(out, "NULL");
+    }
+
+    #[test]
+    fn null_to_notnull_text_returns_empty_string() {
+        let v = Value::Null;
+        let out = value_to_target_literal(&v, "text", DbKind::Postgres, false);
+        assert_eq!(out, "''");
     }
 
     // ── build_cursor_sql — column projection ──
