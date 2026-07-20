@@ -19,6 +19,17 @@ use std::collections::HashMap;
 /// A row from any source DB, uniformly represented as (column_name, JSON Value).
 pub type UnifiedRow = Vec<(String, Value)>;
 
+/// Cursor range for paginated spend_logs reads.
+/// Uses `startTime` as anchor — the litellm source table has `@@index([startTime])`.
+/// Same-second overlap is harmless because target inserts are idempotent on `request_id`.
+#[derive(Debug, Clone, Default)]
+pub struct CursorRange {
+    /// ISO 8601 datetime. `WHERE startTime >= resume_after`.
+    pub resume_after: Option<String>,
+    /// ISO 8601 datetime. `WHERE startTime < end_before`.
+    pub end_before: Option<String>,
+}
+
 /// Which database we're connected to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DbKind {
@@ -176,6 +187,78 @@ impl SourcePool {
             SourcePool::Postgres(p) => read_pg_rows(p, &sql).await,
             SourcePool::Sqlite(p) => read_sqlite_rows(p, &sql).await,
             SourcePool::Mysql(p) => read_mysql_rows(p, &sql).await,
+        }
+    }
+
+    /// Read spend_logs with `startTime`-based cursor pagination.
+    ///
+    /// Generates SQL like:
+    /// ```sql
+    /// SELECT * FROM "LiteLLM_SpendLogs"
+    ///   WHERE "startTime" >= '2026-07-15 10:30:00'
+    ///     AND "startTime" < '2026-08-01 00:00:00'
+    ///   ORDER BY "startTime" ASC
+    ///   LIMIT 10000
+    /// ```
+    ///
+    /// The source litellm table has `@@index([startTime])` so both the WHERE
+    /// filter and ORDER BY hit the index.
+    pub async fn read_rows_with_cursor(
+        &self,
+        table: &str,
+        cursor: &CursorRange,
+        limit: Option<usize>,
+    ) -> anyhow::Result<Vec<UnifiedRow>> {
+        let quoted = self.quote_ident(table);
+        let mut parts = vec![format!("SELECT * FROM {}", quoted)];
+
+        let mut conditions: Vec<String> = Vec::new();
+
+        if let Some(ref t) = cursor.resume_after {
+            let lit = self.time_literal(t);
+            conditions.push(format!("\"startTime\" >= {}", lit));
+        }
+        if let Some(ref end) = cursor.end_before {
+            let lit = self.time_literal(end);
+            conditions.push(format!("\"startTime\" < {}", lit));
+        }
+
+        if !conditions.is_empty() {
+            parts.push(format!("WHERE {}", conditions.join(" AND ")));
+        }
+
+        parts.push("ORDER BY \"startTime\" ASC".to_string());
+
+        if let Some(n) = limit {
+            parts.push(format!("LIMIT {}", n));
+        }
+
+        let sql = parts.join(" ");
+
+        match self {
+            SourcePool::Postgres(p) => read_pg_rows(p, &sql).await,
+            SourcePool::Sqlite(p) => read_sqlite_rows(p, &sql).await,
+            SourcePool::Mysql(p) => read_mysql_rows(p, &sql).await,
+        }
+    }
+
+    /// Convert an ISO 8601 datetime string to a SQL literal accepted by this DB.
+    ///
+    /// | DB    | Output                                       |
+    /// |-------|----------------------------------------------|
+    /// | PG    | `'2026-07-15 10:30:00+00'::timestamptz`     |
+    /// | MySQL | `'2026-07-15 10:30:00'`                     |
+    /// | SQLite| `'2026-07-15 10:30:00'`                     |
+    pub fn time_literal(&self, iso8601: &str) -> String {
+        // Accept both "2026-07-15T10:30:00Z" and "2026-07-15 10:30:00"
+        let normalized = iso8601.replace('T', " ").replace('Z', "");
+        match self.kind() {
+            DbKind::Postgres => {
+                format!("'{}'::timestamptz", normalized)
+            }
+            _ => {
+                format!("'{}'", normalized)
+            }
         }
     }
 

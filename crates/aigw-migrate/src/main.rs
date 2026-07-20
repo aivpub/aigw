@@ -120,9 +120,18 @@ enum Commands {
         /// Target master key (falls back to AIGW_MASTER_KEY env var)
         #[arg(long = "target-master-key")]
         target_master_key: Option<String>,
-        /// Limit spend_logs rows (None = import all, ordered by start_time ASC)
+        /// Limit spend_logs rows per batch (None = import all, ordered by startTime ASC)
         #[arg(long = "spend-log-limit")]
         spend_log_limit: Option<usize>,
+        /// Resume spend_logs from this timestamp (ISO 8601, inclusive).
+        /// `WHERE "startTime" >= value ORDER BY "startTime" ASC`.
+        /// Same-second overlap is harmless — target writes are idempotent on request_id.
+        #[arg(long = "spend-log-resume-after")]
+        spend_log_resume_after: Option<String>,
+        /// Stop spend_logs before this timestamp (ISO 8601, exclusive).
+        /// `WHERE "startTime" < value`.
+        #[arg(long = "spend-log-end-before")]
+        spend_log_end_before: Option<String>,
         /// Run only a single migration step: 2=plain, 3=credentials, 4=proxy_models, 5=spend_logs
         #[arg(long = "step-filter")]
         step_filter: Option<u8>,
@@ -218,6 +227,8 @@ async fn main() -> anyhow::Result<()> {
             source_master_key,
             target_master_key,
             spend_log_limit,
+            spend_log_resume_after,
+            spend_log_end_before,
             step_filter,
             skip_body,
             skip_columns,
@@ -247,6 +258,17 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
 
+            let cursor = native::CursorRange {
+                resume_after: spend_log_resume_after,
+                end_before: spend_log_end_before,
+            };
+
+            if let Some(ref t) = cursor.resume_after {
+                println!("  --spend-log-resume-after: \"{t}\"");
+            }
+            if let Some(ref t) = cursor.end_before {
+                println!("  --spend-log-end-before: \"{t}\"");
+            }
             if let Some(limit) = spend_log_limit {
                 println!(
                     "Remote import: litellm ({source_url}) → aigw ({target_url}) [spend_logs limit={limit}]"
@@ -262,6 +284,7 @@ async fn main() -> anyhow::Result<()> {
                 source_master_key.as_deref(),
                 &target_key,
                 spend_log_limit,
+                &cursor,
                 step_filter,
                 skip_body,
                 &skip_columns_set,

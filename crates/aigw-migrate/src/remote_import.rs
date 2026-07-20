@@ -10,7 +10,7 @@
 //!
 //! All cross-database type coercion is handled by [crate::native].
 
-use crate::native::{self, SourcePool};
+use crate::native::{self, CursorRange, SourcePool};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
@@ -328,11 +328,12 @@ async fn migrate_spend_logs(
     source: &SourcePool,
     target: &SourcePool,
     limit: Option<usize>,
+    cursor: &CursorRange,
     _skip_body: bool,
     skip_columns_set: &HashSet<(String, String)>,
 ) -> anyhow::Result<usize> {
     let t_fetch = std::time::Instant::now();
-    let rows = match source.read_rows_with_limit("LiteLLM_SpendLogs", limit).await {
+    let rows = match source.read_rows_with_cursor("LiteLLM_SpendLogs", cursor, limit).await {
         Ok(r) => r,
         Err(e) => {
             eprintln!("  [SKIP] LiteLLM_SpendLogs: {}", e);
@@ -370,6 +371,13 @@ async fn migrate_spend_logs(
 
     let overrides = build_snake_overrides(&src_col_names);
 
+    // Snapshot last row's startTime for progress / resume hint
+    let last_start_time: Option<String> = rows.last().and_then(|row| {
+        row.iter()
+            .find(|(col, _)| col == "startTime")
+            .and_then(|(_, v)| v.as_str().map(|s| s.to_string()))
+    });
+
     let t_insert = std::time::Instant::now();
     let count = native::insert_rows(target, "spend_logs", &filtered_cols, &rows, &overrides).await?;
     eprintln!(
@@ -378,6 +386,13 @@ async fn migrate_spend_logs(
         count,
         t_insert.elapsed() / count.max(1) as u32
     );
+
+    if let Some(ts) = last_start_time {
+        eprintln!(
+            "  [PROGRESS] spend_logs: {} rows migrated. resume: {}",
+            count, ts
+        );
+    }
 
     Ok(count)
 }
@@ -392,6 +407,7 @@ pub async fn run_filtered(
     source_master_key: Option<&str>,
     target_master_key: &str,
     spend_log_limit: Option<usize>,
+    spend_log_cursor: &CursorRange,
     step_filter: Option<u8>,
     skip_body: bool,
     skip_columns_set: &HashSet<(String, String)>,
@@ -462,7 +478,7 @@ pub async fn run_filtered(
     if run_step(5) {
         eprintln!("Step 5: Migrating spend_logs...");
         let t0 = std::time::Instant::now();
-        let spend_count = migrate_spend_logs(&source, &target, spend_log_limit, skip_body, skip_columns_set).await?;
+        let spend_count = migrate_spend_logs(&source, &target, spend_log_limit, spend_log_cursor, skip_body, skip_columns_set).await?;
         eprintln!("  LiteLLM_SpendLogs -> spend_logs ({} rows, {:?})", spend_count, t0.elapsed());
     } else {
         eprintln!("Step 5: [SKIP]");
@@ -617,9 +633,10 @@ mod tests {
 
         // Run
         let target_key = "sk-aigw-target-key-99999";
+        let cursor = CursorRange::default();
         let result = run_filtered(
             &src_str_sqlite, &tgt_str_sqlite,
-            None, target_key, None, None, false,
+            None, target_key, None, &cursor, None, false,
             &HashSet::new(),
         ).await;
         assert!(result.is_ok(), "remote_import failed: {:?}", result.err());
@@ -693,5 +710,282 @@ mod tests {
         let target = SourcePool::connect(&tgt_str).await.unwrap();
         let count = migrate_plain_table(&source, &target, "LiteLLM_OrganizationTable", "organizations").await.unwrap();
         assert_eq!(count, 0, "empty table should migrate 0 rows");
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // Breakpoint resume tests
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    /// Create an in-memory SQLite DB with `LiteLLM_SpendLogs` table and `n` rows.
+    /// Each row has sequential startTime values for cursor testing.
+    struct SpendLogsDb {
+        db_path: String,
+        _dir: tempfile::TempDir,
+    }
+
+    async fn setup_spend_logs_db(n: usize) -> SpendLogsDb {
+        use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let db_path_str = db_path.to_str().unwrap().to_string();
+
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                SqliteConnectOptions::new()
+                    .filename(&db_path_str)
+                    .create_if_missing(true),
+            )
+            .await
+            .unwrap();
+
+        sqlx::query(
+            r#"CREATE TABLE "LiteLLM_SpendLogs" (
+                request_id TEXT PRIMARY KEY, model TEXT, spend REAL DEFAULT 0,
+                startTime TEXT NOT NULL, call_type TEXT DEFAULT '', api_key TEXT DEFAULT '',
+                total_tokens INTEGER DEFAULT 0, prompt_tokens INTEGER DEFAULT 0,
+                completion_tokens INTEGER DEFAULT 0, endTime TEXT DEFAULT ''
+            )"#,
+        ).execute(&pool).await.unwrap();
+
+        // Insert rows with sequential timestamps (1 second apart)
+        for i in 0..n {
+            let rid = format!("req-{:04}", i);
+            let hour = 10 + (i / 3600) % 24;
+            let minute = (i / 60) % 60;
+            let second = i % 60;
+            let ts = format!(
+                "2026-07-20 {:02}:{:02}:{:02}",
+                hour, minute, second
+            );
+            sqlx::query(
+                "INSERT INTO \"LiteLLM_SpendLogs\" (request_id, model, startTime) VALUES (?, 'gpt-4', ?)",
+            )
+            .bind(&rid)
+            .bind(&ts)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        pool.close().await;
+
+        SpendLogsDb {
+            db_path: db_path_str,
+            _dir: dir,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_read_rows_with_cursor_full_scan() {
+        sqlx::any::install_default_drivers();
+        let pool = setup_spend_logs_db(3).await;
+
+        let source = SourcePool::connect(&format!("sqlite://{}", pool.db_path)).await.unwrap();
+        let cursor = CursorRange::default();
+        let rows = source
+            .read_rows_with_cursor("LiteLLM_SpendLogs", &cursor, None)
+            .await
+            .unwrap();
+
+        // Should return all rows, ordered by startTime ASC
+        assert_eq!(rows.len(), 3);
+        let times: Vec<String> = rows
+            .iter()
+            .map(|r| {
+                r.iter()
+                    .find(|(col, _)| col == "startTime")
+                    .and_then(|(_, v)| v.as_str().map(|s| s.to_string()))
+                    .unwrap()
+            })
+            .collect();
+        assert!(times[0] <= times[1] && times[1] <= times[2],
+            "rows should be ordered by startTime ASC");
+    }
+
+    #[tokio::test]
+    async fn test_read_rows_with_cursor_resume_after() {
+        sqlx::any::install_default_drivers();
+        let pool = setup_spend_logs_db(5).await;
+
+        let source = SourcePool::connect(&format!("sqlite://{}", pool.db_path)).await.unwrap();
+
+        // Read all rows first to find the middle timestamp
+        let all = source
+            .read_rows_with_cursor("LiteLLM_SpendLogs", &CursorRange::default(), None)
+            .await
+            .unwrap();
+        assert!(all.len() >= 3);
+
+        // Get the 3rd row's startTime as resume_after
+        let mid_time = all[2]
+            .iter()
+            .find(|(col, _)| col == "startTime")
+            .and_then(|(_, v)| v.as_str().map(|s| s.to_string()))
+            .unwrap();
+
+        let cursor = CursorRange {
+            resume_after: Some(mid_time.clone()),
+            end_before: None,
+        };
+        let resumed = source
+            .read_rows_with_cursor("LiteLLM_SpendLogs", &cursor, None)
+            .await
+            .unwrap();
+
+        // Should return rows from mid_time onwards (inclusive)
+        assert!(!resumed.is_empty(), "should have rows >= mid_time");
+        let first_time = resumed[0]
+            .iter()
+            .find(|(col, _)| col == "startTime")
+            .and_then(|(_, v)| v.as_str().map(|s| s.to_string()))
+            .unwrap();
+        assert!(first_time >= mid_time);
+    }
+
+    #[tokio::test]
+    async fn test_read_rows_with_cursor_time_window() {
+        sqlx::any::install_default_drivers();
+        let pool = setup_spend_logs_db(6).await;
+
+        let source = SourcePool::connect(&format!("sqlite://{}", pool.db_path)).await.unwrap();
+
+        // Read all rows to find middle timestamps
+        let all = source
+            .read_rows_with_cursor("LiteLLM_SpendLogs", &CursorRange::default(), None)
+            .await
+            .unwrap();
+        assert!(all.len() >= 4);
+
+        let start_time = all[1]
+            .iter()
+            .find(|(col, _)| col == "startTime")
+            .and_then(|(_, v)| v.as_str().map(|s| s.to_string()))
+            .unwrap();
+        let end_time = all[all.len() - 2]
+            .iter()
+            .find(|(col, _)| col == "startTime")
+            .and_then(|(_, v)| v.as_str().map(|s| s.to_string()))
+            .unwrap();
+
+        let cursor = CursorRange {
+            resume_after: Some(start_time.clone()),
+            end_before: Some(end_time.clone()),
+        };
+        let window = source
+            .read_rows_with_cursor("LiteLLM_SpendLogs", &cursor, None)
+            .await
+            .unwrap();
+
+        assert!(!window.is_empty());
+        for row in &window {
+            let ts = row
+                .iter()
+                .find(|(col, _)| col == "startTime")
+                .and_then(|(_, v)| v.as_str().map(|s| s.to_string()))
+                .unwrap();
+            assert!(ts >= start_time, "row time {} < start boundary {}", ts, start_time);
+            assert!(ts < end_time, "row time {} >= end boundary {}", ts, end_time);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_read_rows_with_cursor_and_limit() {
+        sqlx::any::install_default_drivers();
+        let pool = setup_spend_logs_db(10).await;
+
+        let source = SourcePool::connect(&format!("sqlite://{}", pool.db_path)).await.unwrap();
+
+        let cursor = CursorRange::default();
+        let rows = source
+            .read_rows_with_cursor("LiteLLM_SpendLogs", &cursor, Some(4))
+            .await
+            .unwrap();
+
+        assert_eq!(rows.len(), 4, "LIMIT should cap result count");
+    }
+
+    #[tokio::test]
+    async fn test_migrate_spend_logs_resume_idempotent() {
+        // Full migration then "resume" from same startTime — target count must not double.
+        sqlx::any::install_default_drivers();
+        let dir = tempfile::tempdir().unwrap();
+        let src_path = dir.path().join("src.db");
+        let tgt_path = dir.path().join("tgt.db");
+        let src_str = src_path.to_str().unwrap();
+        let tgt_str = tgt_path.to_str().unwrap();
+
+        let src_pool = create_pool(src_str).await;
+        sqlx::query(
+            r#"CREATE TABLE "LiteLLM_SpendLogs" (
+                request_id TEXT PRIMARY KEY, model TEXT, spend REAL DEFAULT 0,
+                startTime TEXT NOT NULL, call_type TEXT DEFAULT '', api_key TEXT DEFAULT '',
+                total_tokens INTEGER DEFAULT 0, prompt_tokens INTEGER DEFAULT 0,
+                completion_tokens INTEGER DEFAULT 0, endTime TEXT DEFAULT ''
+            )"#,
+        ).execute(&src_pool).await.unwrap();
+        // Insert 5 rows with distinct timestamps
+        for i in 0..5 {
+            let rid = format!("rid-{:02}", i);
+            let ts = format!("2026-07-{:02}T10:00:00Z", 15 + i); // Jul 15-19
+            sqlx::query(
+                "INSERT INTO \"LiteLLM_SpendLogs\" (request_id, model, startTime) VALUES (?, 'gpt-4', ?)",
+            )
+            .bind(&rid)
+            .bind(&ts)
+            .execute(&src_pool)
+            .await
+            .unwrap();
+        }
+        src_pool.close().await;
+
+        let tgt_pool = create_pool(tgt_str).await;
+        sqlx::query(
+            r#"CREATE TABLE IF NOT EXISTS "spend_logs" (
+                request_id TEXT PRIMARY KEY, call_type TEXT NOT NULL DEFAULT '',
+                api_key TEXT NOT NULL DEFAULT '', spend REAL DEFAULT 0,
+                total_tokens INTEGER DEFAULT 0, prompt_tokens INTEGER DEFAULT 0,
+                completion_tokens INTEGER DEFAULT 0, start_time TEXT NOT NULL,
+                end_time TEXT DEFAULT '', model TEXT NOT NULL DEFAULT '',
+                model_id TEXT, model_group TEXT,
+                custom_llm_provider TEXT, api_base TEXT, "user" TEXT,
+                metadata BLOB,
+                cache_hit TEXT, cache_key TEXT,
+                request_tags BLOB,
+                team_id TEXT, organization_id TEXT,
+                end_user TEXT, requester_ip_address TEXT,
+                messages BLOB, response BLOB,
+                session_id TEXT, status TEXT,
+                mcp_namespaced_tool_name TEXT, agent_id TEXT,
+                proxy_server_request BLOB
+            )"#,
+        ).execute(&tgt_pool).await.unwrap();
+        tgt_pool.close().await;
+
+        let source = SourcePool::connect(src_str).await.unwrap();
+        let target = SourcePool::connect(tgt_str).await.unwrap();
+
+        let skip_set = HashSet::new();
+
+        // First: migrate all
+        let count1 = migrate_spend_logs(&source, &target, None, &CursorRange::default(), false, &skip_set)
+            .await
+            .unwrap();
+        assert_eq!(count1, 5, "first migration should insert 5 rows");
+
+        // Second: "resume" with the same cursor (simulating restart from earliest)
+        let count2 = migrate_spend_logs(&source, &target, None, &CursorRange::default(), false, &skip_set)
+            .await
+            .unwrap();
+        assert_eq!(count2, 0, "second migration should insert 0 rows (all conflict)");
+
+        // Verify target still has 5 rows
+        let tgt_pool2 = create_pool(tgt_str).await;
+        let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM spend_logs")
+            .fetch_one(&tgt_pool2)
+            .await
+            .unwrap();
+        assert_eq!(row.0, 5, "target should still have 5 rows after idempotent resume");
     }
 }
