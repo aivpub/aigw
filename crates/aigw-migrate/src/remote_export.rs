@@ -34,11 +34,27 @@ const PLAIN_TABLES: &[(&str, &str)] = &[
 
 async fn extract_target_master_key(target: &SourcePool) -> anyhow::Result<Option<String>> {
     let tbl = target.quote_ident("LiteLLM_Config");
+    // On PG target, `param_value` may be `jsonb` — cast to text so the
+    // scalar can be decoded as `String` uniformly.
+    let col = if target.kind() == native::DbKind::Postgres {
+        "param_value::text"
+    } else {
+        "param_value"
+    };
     let sql = format!(
-        "SELECT param_value FROM {} WHERE param_name = 'litellm_master_key'",
+        "SELECT {col} FROM {} WHERE param_name = 'litellm_master_key'",
         tbl
     );
-    target.query_scalar_string(&sql).await
+    let raw = target.query_scalar_string(&sql).await?;
+    // JSONB scalar → text produces `"sk-..."` (with quotes).  Strip them so
+    // callers get the raw key.
+    Ok(raw.map(|s| {
+        if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
+            serde_json::from_str::<String>(&s).unwrap_or(s)
+        } else {
+            s
+        }
+    }))
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

@@ -99,6 +99,7 @@ version = "0.1.0"
 dependencies = [
  "aigw-core",
  "anyhow",
+ "chrono",
  "clap",
  "dotenvy",
  "serde",

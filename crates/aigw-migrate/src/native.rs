@@ -5,6 +5,7 @@
 //! so migration logic works on neutral representation, then convert back
 //! to target DB types on write.
 
+use futures::stream::{BoxStream, StreamExt};
 use serde_json::{json, Value};
 use sqlx::mysql::MySqlPoolOptions;
 use sqlx::postgres::PgPoolOptions;
@@ -148,6 +149,10 @@ impl SourcePool {
     }
 
     /// Read a single optional value from the source (used for config extraction).
+    ///
+    /// Callers pass PG SQL with `::text` casts when the underlying column may be
+    /// `jsonb` (see `extract_source_master_key` in `remote_import.rs`) — this
+    /// keeps decoding uniform as `String` across TEXT and JSONB.
     pub async fn query_scalar_string(&self, sql: &str) -> anyhow::Result<Option<String>> {
         let opt: Option<String> = match self {
             SourcePool::Postgres(p) => {
@@ -203,17 +208,51 @@ impl SourcePool {
     ///
     /// The source litellm table has `@@index([startTime])` so both the WHERE
     /// filter and ORDER BY hit the index.
+    ///
+    /// Retained for BDD / integration tests that want a simple "read
+    /// everything into memory" cursor path.  Production migrations use
+    /// [`stream_rows_with_cursor`] instead.
+    #[allow(dead_code)]
     pub async fn read_rows_with_cursor(
         &self,
         table: &str,
         cursor: &CursorRange,
         limit: Option<usize>,
     ) -> anyhow::Result<Vec<UnifiedRow>> {
+        let sql = self.build_cursor_sql(table, cursor, limit, None);
+        match self {
+            SourcePool::Postgres(p) => read_pg_rows(p, &sql).await,
+            SourcePool::Sqlite(p) => read_sqlite_rows(p, &sql).await,
+            SourcePool::Mysql(p) => read_mysql_rows(p, &sql).await,
+        }
+    }
+
+    /// Build the cursor SQL with an optional column projection.
+    ///
+    /// `select_columns` supplies the *source-side* column names (upstream
+    /// litellm uses camelCase like `startTime`; the migration layer maps
+    /// them to target snake_case).  Callers that want to skip large columns
+    /// (e.g. `--skip-body`) should exclude those column names here so the
+    /// SELECT never reads them from disk / ships them over the network.
+    pub fn build_cursor_sql(
+        &self,
+        table: &str,
+        cursor: &CursorRange,
+        limit: Option<usize>,
+        select_columns: Option<&[String]>,
+    ) -> String {
         let quoted = self.quote_ident(table);
-        let mut parts = vec![format!("SELECT * FROM {}", quoted)];
+        let projection = match select_columns {
+            Some(cols) if !cols.is_empty() => cols
+                .iter()
+                .map(|c| self.quote_ident(c))
+                .collect::<Vec<_>>()
+                .join(", "),
+            _ => "*".to_string(),
+        };
+        let mut parts = vec![format!("SELECT {} FROM {}", projection, quoted)];
 
         let mut conditions: Vec<String> = Vec::new();
-
         if let Some(ref t) = cursor.resume_after {
             let lit = self.time_literal(t);
             conditions.push(format!("\"startTime\" >= {}", lit));
@@ -222,23 +261,37 @@ impl SourcePool {
             let lit = self.time_literal(end);
             conditions.push(format!("\"startTime\" < {}", lit));
         }
-
         if !conditions.is_empty() {
             parts.push(format!("WHERE {}", conditions.join(" AND ")));
         }
-
         parts.push("ORDER BY \"startTime\" ASC".to_string());
-
         if let Some(n) = limit {
             parts.push(format!("LIMIT {}", n));
         }
+        parts.join(" ")
+    }
 
-        let sql = parts.join(" ");
 
+    /// Stream rows from a paginated cursor query (used by pipelined migrations).
+    ///
+    /// Producer-side of the pipeline: yields one `UnifiedRow` at a time driven
+    /// by the driver's server-side cursor.  Callers typically forward these
+    /// into a bounded channel and feed a target-side consumer that batches
+    /// INSERTs inside a transaction — see `migrate_spend_logs`.
+    ///
+    /// See `build_cursor_sql` for the semantics of `select_columns`.
+    pub fn stream_rows_with_cursor<'a>(
+        &'a self,
+        table: &str,
+        cursor: &CursorRange,
+        limit: Option<usize>,
+        select_columns: Option<&[String]>,
+    ) -> BoxStream<'a, anyhow::Result<UnifiedRow>> {
+        let sql = self.build_cursor_sql(table, cursor, limit, select_columns);
         match self {
-            SourcePool::Postgres(p) => read_pg_rows(p, &sql).await,
-            SourcePool::Sqlite(p) => read_sqlite_rows(p, &sql).await,
-            SourcePool::Mysql(p) => read_mysql_rows(p, &sql).await,
+            SourcePool::Postgres(p) => stream_pg_rows(p, sql),
+            SourcePool::Sqlite(p) => stream_sqlite_rows(p, sql),
+            SourcePool::Mysql(p) => stream_mysql_rows(p, sql),
         }
     }
 
@@ -299,6 +352,25 @@ fn try_pg_get(row: &sqlx::postgres::PgRow, col: &str) -> Value {
     if let Ok(v) = row.try_get::<f32, _>(col) { return json!(v); }
     if let Ok(v) = row.try_get::<i64, _>(col) { return json!(v); }
     if let Ok(v) = row.try_get::<i32, _>(col) { return json!(v); }
+    // PG timestamps come back as `timestamp` / `timestamptz` — sqlx can't
+    // decode them as `String` directly, so we try chrono types before
+    // falling through to `Value::Null`.  Format uniformly as RFC 3339 with
+    // seconds precision so target coercion / runtime `DateTime<Utc>` decode
+    // both work.
+    if let Ok(v) = row.try_get::<chrono::DateTime<chrono::Utc>, _>(col) {
+        return Value::String(v.to_rfc3339());
+    }
+    if let Ok(v) = row.try_get::<chrono::NaiveDateTime, _>(col) {
+        // Assume UTC (upstream litellm columns are `timestamp(3) without time
+        // zone` but are UTC by convention).
+        return Value::String(
+            chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(v, chrono::Utc)
+                .to_rfc3339(),
+        );
+    }
+    if let Ok(v) = row.try_get::<chrono::NaiveDate, _>(col) {
+        return Value::String(v.format("%Y-%m-%d").to_string());
+    }
     if let Ok(v) = row.try_get::<String, _>(col) {
         if v.is_empty() { return Value::Null; }
         return Value::String(v);
@@ -372,6 +444,84 @@ async fn read_mysql_rows(pool: &MySqlPool, sql: &str) -> anyhow::Result<Vec<Unif
     Ok(result)
 }
 
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Row streaming (for pipelined migrations — see migrate_spend_logs)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Stream rows from a PG source one at a time (driver-side cursor).
+///
+/// Unlike `fetch_all`, this avoids materialising the whole result set in
+/// server memory before the client sees the first row, which is essential
+/// for tables like `LiteLLM_SpendLogs` (~800k rows, GB-scale payload).
+fn stream_pg_rows<'a>(
+    pool: &'a PgPool,
+    sql: String,
+) -> BoxStream<'a, anyhow::Result<UnifiedRow>> {
+    // Move the owned SQL into the stream so the returned future outlives the
+    // caller's local `sql` binding.
+    async_stream::try_stream! {
+        // We box the query so we can use its stream form.
+        let mut stream = sqlx::query(&sql).fetch(pool);
+        while let Some(row_res) = stream.next().await {
+            let row = row_res?;
+            let cols = row.columns();
+            let mut unified = Vec::with_capacity(cols.len());
+            for col in cols {
+                let name = col.name().to_string();
+                let val = try_pg_get(&row, &name);
+                unified.push((name, val));
+            }
+            yield unified;
+        }
+    }
+    .boxed()
+}
+
+/// Stream rows from a SQLite source one at a time.
+fn stream_sqlite_rows<'a>(
+    pool: &'a SqlitePool,
+    sql: String,
+) -> BoxStream<'a, anyhow::Result<UnifiedRow>> {
+    async_stream::try_stream! {
+        let mut stream = sqlx::query(&sql).fetch(pool);
+        while let Some(row_res) = stream.next().await {
+            let row = row_res?;
+            let cols = row.columns();
+            let mut unified = Vec::with_capacity(cols.len());
+            for col in cols {
+                let name = col.name().to_string();
+                let val = try_sqlite_get(&row, &name);
+                unified.push((name, val));
+            }
+            yield unified;
+        }
+    }
+    .boxed()
+}
+
+/// Stream rows from a MySQL source one at a time.
+fn stream_mysql_rows<'a>(
+    pool: &'a MySqlPool,
+    sql: String,
+) -> BoxStream<'a, anyhow::Result<UnifiedRow>> {
+    async_stream::try_stream! {
+        let mut stream = sqlx::query(&sql).fetch(pool);
+        while let Some(row_res) = stream.next().await {
+            let row = row_res?;
+            let cols = row.columns();
+            let mut unified = Vec::with_capacity(cols.len());
+            for col in cols {
+                let name = col.name().to_string();
+                let val = try_mysql_get(&row, &name);
+                unified.push((name, val));
+            }
+            yield unified;
+        }
+    }
+    .boxed()
+}
+
 fn try_mysql_get(row: &sqlx::mysql::MySqlRow, col: &str) -> Value {
     if let Ok(v) = row.try_get::<Value, _>(col) { return v; }
     if let Ok(v) = row.try_get::<bool, _>(col) { return Value::Bool(v); }
@@ -379,6 +529,20 @@ fn try_mysql_get(row: &sqlx::mysql::MySqlRow, col: &str) -> Value {
     if let Ok(v) = row.try_get::<f32, _>(col) { return json!(v); }
     if let Ok(v) = row.try_get::<i64, _>(col) { return json!(v); }
     if let Ok(v) = row.try_get::<i32, _>(col) { return json!(v); }
+    // MySQL datetime/timestamp columns don't decode straight into String.
+    // Same treatment as PG: format uniformly as RFC 3339 UTC.
+    if let Ok(v) = row.try_get::<chrono::DateTime<chrono::Utc>, _>(col) {
+        return Value::String(v.to_rfc3339());
+    }
+    if let Ok(v) = row.try_get::<chrono::NaiveDateTime, _>(col) {
+        return Value::String(
+            chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(v, chrono::Utc)
+                .to_rfc3339(),
+        );
+    }
+    if let Ok(v) = row.try_get::<chrono::NaiveDate, _>(col) {
+        return Value::String(v.format("%Y-%m-%d").to_string());
+    }
     if let Ok(v) = row.try_get::<String, _>(col) {
         if v.is_empty() { return Value::Null; }
         return Value::String(v);
@@ -650,9 +814,23 @@ pub fn value_to_target_literal(v: &Value, col_type: &str, target: DbKind) -> Str
                                     format!("'{}'::jsonb", escaped)
                                 }
                                 Err(_) => {
-                                    // Not valid JSON (e.g. empty blob, binary data) —
-                                    // use empty JSON object instead of raw text
-                                    "'{}'::jsonb".to_string()
+                                    // Not a JSON expression on its own — this
+                                    // happens for opaque encrypted blobs like
+                                    // `gAAAAAB...` that the runtime expects to
+                                    // decode back as `Value::String(_)`.  Wrap
+                                    // as a JSON scalar string so the value
+                                    // round-trips: source blob → target jsonb
+                                    // scalar → sqlx `Value::String(_)` at read.
+                                    //
+                                    // Previous behaviour was to drop the value
+                                    // as `'{}'::jsonb`, which silently emptied
+                                    // credential_values / litellm_params in PG
+                                    // targets and made all downstream decrypts
+                                    // fail.
+                                    let wrapped = serde_json::to_string(s)
+                                        .unwrap_or_else(|_| "\"\"".to_string());
+                                    let escaped = wrapped.replace('\'', "''");
+                                    format!("'{}'::jsonb", escaped)
                                 }
                             }
                         }
@@ -842,6 +1020,12 @@ pub async fn insert_rows(
     let quoted_cols: Vec<String> = col_names.iter().map(|n| target.quote_ident(n)).collect();
 
     let mut inserted = 0;
+    // Debug-only counters: how many rows the DB ignored (unique/NOT-NULL/CHECK
+    // violations under INSERT OR IGNORE / INSERT IGNORE / ON CONFLICT DO
+    // NOTHING).  This surfaces silent drops that used to make rows vanish
+    // without any error.
+    let mut ignored = 0usize;
+    let mut first_ignored_sql: Option<String> = None;
     for row in rows {
         let row_map: HashMap<&str, &Value> = row.iter().map(|(n, v)| (n.as_str(), v)).collect();
 
@@ -872,9 +1056,236 @@ pub async fn insert_rows(
         );
 
         let affected = target.execute_raw(&sql).await?;
+        if affected == 0 {
+            ignored += 1;
+            if first_ignored_sql.is_none() {
+                first_ignored_sql = Some(sql.clone());
+            }
+        }
         // INSERT OR IGNORE / ON CONFLICT DO NOTHING: count only actual inserts.
         inserted += affected as usize;
     }
 
+    if ignored > 0 {
+        eprintln!(
+            "  [WARN] {}: {}/{} rows ignored by target (INSERT OR IGNORE / ON CONFLICT DO NOTHING)",
+            table,
+            ignored,
+            rows.len()
+        );
+        if let Some(sql) = first_ignored_sql {
+            let preview: String = sql.chars().take(500).collect();
+            eprintln!("  [WARN] first ignored SQL preview: {}", preview);
+        }
+    }
+
     Ok(inserted)
+}
+
+
+/// Build the (comma-separated column list, comma-separated VALUES tuple)
+/// for a single unified row, given the target column schema and any
+/// source→target column-name overrides.
+fn build_row_values(
+    target_kind: DbKind,
+    target_cols: &[(String, String)],
+    row: &UnifiedRow,
+    column_override: &HashMap<String, String>,
+) -> String {
+    let row_map: HashMap<&str, &Value> = row.iter().map(|(n, v)| (n.as_str(), v)).collect();
+    let values: Vec<String> = target_cols
+        .iter()
+        .map(|(col_name, col_type)| {
+            let v = row_map
+                .get(col_name.as_str())
+                .or_else(|| {
+                    column_override
+                        .get(col_name.as_str())
+                        .and_then(|mapped| row_map.get(mapped.as_str()))
+                })
+                .copied()
+                .unwrap_or(&Value::Null);
+            value_to_target_literal(v, col_type, target_kind)
+        })
+        .collect();
+    format!("({})", values.join(", "))
+}
+
+/// Insert a batch of rows inside a single transaction using ONE
+/// multi-row INSERT statement.  Returns (rows_affected, ignored_rows).
+///
+/// `rows_affected` counts real inserts (target-side `rows_affected()`),
+/// `ignored_rows = rows.len() - rows_affected` covers UNIQUE / NOT NULL
+/// / CHECK collisions swallowed by INSERT OR IGNORE / ON CONFLICT DO NOTHING.
+///
+/// This is a strictly better shape than the row-at-a-time `insert_rows` for
+/// pipelined workloads: one round trip per batch instead of `batch` round
+/// trips, and a single implicit fsync per commit.
+pub async fn insert_rows_batch(
+    target: &SourcePool,
+    table: &str,
+    target_cols: &[(String, String)],
+    rows: &[UnifiedRow],
+    column_override: &HashMap<String, String>,
+) -> anyhow::Result<(usize, usize)> {
+    if rows.is_empty() {
+        return Ok((0, 0));
+    }
+
+    let target_kind = target.kind();
+    let tbl_quoted = target.quote_ident(table);
+    let conflict = target.conflict_clause();
+    let quoted_cols: Vec<String> = target_cols
+        .iter()
+        .map(|(n, _)| target.quote_ident(n))
+        .collect();
+
+    let tuples: Vec<String> = rows
+        .iter()
+        .map(|row| build_row_values(target_kind, target_cols, row, column_override))
+        .collect();
+
+    let sql = format!(
+        "{}{} ({}) VALUES {}{}",
+        target.insert_prefix(),
+        tbl_quoted,
+        quoted_cols.join(", "),
+        tuples.join(", "),
+        conflict,
+    );
+
+    let affected: u64 = match target {
+        SourcePool::Postgres(p) => {
+            let mut tx = p.begin().await?;
+            let r = sqlx::query(&sql).execute(&mut *tx).await?.rows_affected();
+            tx.commit().await?;
+            r
+        }
+        SourcePool::Sqlite(p) => {
+            let mut tx = p.begin().await?;
+            let r = sqlx::query(&sql).execute(&mut *tx).await?.rows_affected();
+            tx.commit().await?;
+            r
+        }
+        SourcePool::Mysql(p) => {
+            let mut tx = p.begin().await?;
+            let r = sqlx::query(&sql).execute(&mut *tx).await?.rows_affected();
+            tx.commit().await?;
+            r
+        }
+    };
+    let inserted = affected as usize;
+    let ignored = rows.len().saturating_sub(inserted);
+    Ok((inserted, ignored))
+}
+
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Unit tests
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── value_to_target_literal — JSON coercion for encrypted opaque blobs ──
+    //
+    // The `credentials.credential_values` and `proxy_models.litellm_params`
+    // columns hold values the runtime decodes as `serde_json::Value`.  When
+    // upstream litellm stores them as a single encrypted string (`"gAAAAAB..."`),
+    // the migration layer normalises it back to `Value::String(...)` and asks
+    // `value_to_target_literal` to render a valid `jsonb` literal.  The
+    // previous PG jsonb `Err(_)` branch dropped the value as `'{}'::jsonb`,
+    // silently blanking credential_values in PG targets.
+
+    #[test]
+    fn pg_jsonb_wraps_encrypted_string_as_json_scalar() {
+        // Typical NaCl-encrypted litellm value (base64-ish, no braces).
+        let v = Value::String("gAAAAABmR1KzLmxk-notjson".to_string());
+        let out = value_to_target_literal(&v, "jsonb", DbKind::Postgres);
+        // Must NOT collapse to '{}'::jsonb — that's the bug we just fixed.
+        assert_ne!(out, "'{}'::jsonb", "encrypted blob must not be lost");
+        // Must be a valid jsonb scalar string literal so `sqlx` decodes it
+        // back as `serde_json::Value::String(_)` at read time.
+        assert_eq!(out, "'\"gAAAAABmR1KzLmxk-notjson\"'::jsonb");
+    }
+
+    #[test]
+    fn pg_jsonb_passes_through_valid_json_object() {
+        // Object payload — must be inlined verbatim, no double-wrapping.
+        let v = Value::String(r#"{"api_key":"k","api_base":"http://x"}"#.to_string());
+        let out = value_to_target_literal(&v, "jsonb", DbKind::Postgres);
+        assert_eq!(out, "'{\"api_base\":\"http://x\",\"api_key\":\"k\"}'::jsonb");
+    }
+
+    #[test]
+    fn pg_jsonb_empty_string_becomes_empty_object_default() {
+        // Empty strings for a NOT-NULL jsonb column should still get a sane
+        // default (the existing empty-string arm handles this — we're just
+        // pinning the behaviour so it doesn't regress alongside the fix.).
+        let v = Value::String(String::new());
+        let out = value_to_target_literal(&v, "jsonb", DbKind::Postgres);
+        assert_eq!(out, "'{}'::jsonb");
+    }
+
+    #[test]
+    fn pg_jsonb_object_value_inlined() {
+        // Value::Object should serialize inline as jsonb — separate arm from
+        // the Value::String path, but sharing the same "must not be empty" rule.
+        let v: Value = serde_json::json!({"k": "v"});
+        let out = value_to_target_literal(&v, "jsonb", DbKind::Postgres);
+        assert_eq!(out, "'{\"k\":\"v\"}'::jsonb");
+    }
+
+    #[test]
+    fn sqlite_json_column_wraps_non_json_string() {
+        // Parity check: the SQLite branch already wraps non-JSON strings as
+        // JSON scalars, ensuring parity with the PG fix above.
+        let v = Value::String("gAAAAABmR1KzLmxk".to_string());
+        let out = value_to_target_literal(&v, "json", DbKind::Sqlite);
+        assert_eq!(out, "'\"gAAAAABmR1KzLmxk\"'");
+    }
+
+    // ── build_cursor_sql — column projection ──
+    //
+    // Regression: `--skip-body` used to keep `SELECT *`, causing 1.6 GB of
+    // response text to be read then discarded.  Ensuring the projection is
+    // respected keeps that fix locked down.
+
+    #[tokio::test]
+    async fn build_cursor_sql_projects_selected_columns() {
+        // In-memory sqlite is enough — build_cursor_sql is pure string work
+        // that only depends on the pool's DbKind + identifier quoting.
+        let pool = SourcePool::connect("sqlite::memory:").await.unwrap();
+        let cursor = CursorRange {
+            resume_after: Some("2026-01-01T00:00:00Z".into()),
+            end_before: None,
+        };
+        let cols: Vec<String> = vec![
+            "startTime".into(),
+            "request_id".into(),
+            "spend".into(),
+        ];
+
+        let sql = pool.build_cursor_sql("LiteLLM_SpendLogs", &cursor, Some(10), Some(&cols));
+
+        assert!(
+            sql.starts_with(
+                "SELECT \"startTime\", \"request_id\", \"spend\" FROM \"LiteLLM_SpendLogs\""
+            ),
+            "projection must include exactly the requested columns in order; got: {sql}"
+        );
+        assert!(!sql.contains(" * "), "must not fall back to SELECT *; got: {sql}");
+        assert!(sql.contains("ORDER BY \"startTime\" ASC"));
+        assert!(sql.contains("LIMIT 10"));
+        assert!(sql.contains("\"startTime\" >="));
+    }
+
+    #[tokio::test]
+    async fn build_cursor_sql_defaults_to_star() {
+        let pool = SourcePool::connect("sqlite::memory:").await.unwrap();
+        let sql =
+            pool.build_cursor_sql("LiteLLM_SpendLogs", &CursorRange::default(), None, None);
+        assert!(sql.starts_with("SELECT * FROM \"LiteLLM_SpendLogs\""));
+    }
 }

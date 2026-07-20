@@ -105,6 +105,13 @@ impl MakeRequestId for UuidV7RequestId {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Load .env from cwd (falls back to parent dirs) so operators can supply
+    // AIGW_MASTER_KEY / AIGW_DATABASE_URL / etc. via a dotenv file instead of
+    // exporting them in the shell.  Silent on absence — .env is optional and
+    // real deployments typically inject via env vars or systemd unit files.
+    // MUST run before tracing init so subsequent std::env::var reads see it.
+    let _ = dotenvy::dotenv();
+
     // Initialize tracing
     tracing_subscriber::fmt()
         .with_env_filter(

@@ -108,7 +108,7 @@ async fn when_sync_plain_tables(world: &mut TestWorld) {
         &target_key,
         Some(0),
         &aigw_migrate::CursorRange::default(),
-        migrate_step_filter(), false, &std::collections::HashSet::new(),
+        migrate_step_filter(), false, &std::collections::HashSet::new(), 1000,
     ).await;
 
     match result {
@@ -161,7 +161,7 @@ async fn when_sync_credentials(world: &mut TestWorld) {
         &target_key,
         Some(0),
         &aigw_migrate::CursorRange::default(),
-        migrate_step_filter(), false, &std::collections::HashSet::new(),
+        migrate_step_filter(), false, &std::collections::HashSet::new(), 1000,
     ).await;
 
     match result {
@@ -201,7 +201,7 @@ async fn when_sync_proxy_models(world: &mut TestWorld) {
         &target_key,
         Some(0),
         &aigw_migrate::CursorRange::default(),
-        migrate_step_filter(), false, &std::collections::HashSet::new(),
+        migrate_step_filter(), false, &std::collections::HashSet::new(), 1000,
     ).await;
 
     match result {
@@ -241,7 +241,7 @@ async fn when_sync_spend_logs_limit_10(world: &mut TestWorld) {
         &target_key,
         Some(10),
         &aigw_migrate::CursorRange::default(),
-        migrate_step_filter(), false, &std::collections::HashSet::new(),
+        migrate_step_filter(), false, &std::collections::HashSet::new(), 1000,
     ).await;
 
     match result {

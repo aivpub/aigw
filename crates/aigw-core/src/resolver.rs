@@ -186,7 +186,13 @@ impl ModelResolver {
                 )
             })?;
 
-            let cred_values_str = cred.credential_values.to_string();
+            // Use as_str() for string values to avoid JSON quoting from to_string()
+            // (mirrors the litellm_params path above).
+            let cred_values_str = cred
+                .credential_values
+                .as_str()
+                .map(String::from)
+                .unwrap_or_else(|| cred.credential_values.to_string());
             let cred_values: Value = if cred_values_str.starts_with('{') {
                 cred.credential_values.clone()
             } else {

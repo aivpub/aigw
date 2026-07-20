@@ -11,6 +11,7 @@
 //! All cross-database type coercion is handled by [crate::native].
 
 use crate::native::{self, CursorRange, SourcePool};
+use futures::StreamExt;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
@@ -41,19 +42,55 @@ fn build_snake_overrides(src_columns: &[String]) -> HashMap<String, String> {
         .collect()
 }
 
+
+/// Return a col-type string that forces JSON-literal coercion in
+/// `value_to_target_literal`, unless the target already advertises a JSON type.
+///
+/// aigw-core's `proxy_models.litellm_params` / `credentials.credential_values`
+/// hold JSON values decoded at runtime as `serde_json::Value`.  Their storage
+/// types differ per backend:
+///   * PG      → JSONB  (contains "json", passthrough)
+///   * MySQL   → JSON   (contains "json", passthrough)
+///   * SQLite  → TEXT   (would NOT match, so we override to "json")
+fn json_column_type_for(actual: &str, kind: native::DbKind) -> String {
+    let ty = actual.to_lowercase();
+    if ty.contains("json") {
+        return actual.to_string();
+    }
+    match kind {
+        native::DbKind::Sqlite => "json".to_string(),
+        // On PG/MySQL the actual storage IS JSON/JSONB — this branch is
+        // defensive: if `column_types` ever returned something odd, we still
+        // route through the JSON literal path so encrypted blobs get wrapped.
+        _ => "json".to_string(),
+    }
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Master key extraction
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 async fn extract_source_master_key(source: &SourcePool) -> anyhow::Result<Option<String>> {
     let tbl = source.quote_ident("LiteLLM_Config");
+    // On PG, `param_value` may be `jsonb` (litellm >= v1.61) or `text` (older
+    // versions).  Casting to text with `::text` handles both uniformly so
+    // `query_scalar_string` can always decode it as `String`.
+    let col = if source.kind() == native::DbKind::Postgres {
+        "param_value::text"
+    } else {
+        "param_value"
+    };
 
     // Strategy 1: legacy flat key
     let sql = format!(
-        "SELECT param_value FROM {} WHERE param_name = 'litellm_master_key'",
+        "SELECT {col} FROM {} WHERE param_name = 'litellm_master_key'",
         tbl
     );
     if let Some(val) = source.query_scalar_string(&sql).await? {
+        // JSONB always wraps scalar strings in double quotes (e.g. `"sk-..."`).
+        // Strip them so the caller sees the raw key regardless of source
+        // column type.
+        let val = strip_jsonb_quotes(&val);
         if !val.is_empty() {
             return Ok(Some(val));
         }
@@ -61,7 +98,7 @@ async fn extract_source_master_key(source: &SourcePool) -> anyhow::Result<Option
 
     // Strategy 2: general_settings JSON
     let sql = format!(
-        "SELECT param_value FROM {} WHERE param_name = 'general_settings'",
+        "SELECT {col} FROM {} WHERE param_name = 'general_settings'",
         tbl
     );
     if let Some(val) = source.query_scalar_string(&sql).await? {
@@ -75,6 +112,19 @@ async fn extract_source_master_key(source: &SourcePool) -> anyhow::Result<Option
     }
 
     Ok(None)
+}
+
+/// JSONB scalar strings are serialised with surrounding double quotes when cast
+/// to text (e.g. `"sk-...".to_string()`).  TEXT columns don't.  Strip a single
+/// pair of outer quotes if present.
+fn strip_jsonb_quotes(s: &str) -> String {
+    if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
+        // serde_json handles escape sequences like \" and \\ correctly.
+        if let Ok(v) = serde_json::from_str::<String>(s) {
+            return v;
+        }
+    }
+    s.to_string()
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -157,6 +207,12 @@ async fn migrate_credentials(
     let values_col = tgt_col_info
         .iter()
         .position(|(n, _)| n == "credential_values");
+    // `credential_info` is also a JSON payload in aigw-core (see Credential in
+    // models.rs); force JSON coercion for it too so that ports where the
+    // target column is plain TEXT don't fall through to raw string storage.
+    let info_col = tgt_col_info
+        .iter()
+        .position(|(n, _)| n == "credential_info");
 
     let mut inserted = 0usize;
     let mut skipped = 0usize;
@@ -167,26 +223,43 @@ async fn migrate_credentials(
             .iter()
             .enumerate()
             .map(|(idx, (col_name, col_type))| {
-                let v: Value = if values_col == Some(idx) {
-                    // credential_values: decrypt with source key, re-encrypt with target key
-                    let encrypted = row_map.get(col_name.as_str()).copied().unwrap_or(&Value::Null);
-                    let encrypted_str = encrypted.as_str().unwrap_or("");
-                    if encrypted_str.is_empty() || encrypted_str == "{}" {
-                        Value::String(encrypted_str.to_string())
+                if values_col == Some(idx) {
+                    // credential_values: same shape variance as litellm_params —
+                    // PG jsonb → Object/Array, PG text / SQLite → String.
+                    // Normalise to a JSON string before rotating.
+                    let raw = row_map.get(col_name.as_str()).copied().unwrap_or(&Value::Null);
+                    let encrypted_str: String = match raw {
+                        Value::Null => String::new(),
+                        Value::String(s) => s.clone(),
+                        Value::Object(_) | Value::Array(_) => raw.to_string(),
+                        other => other.to_string(),
+                    };
+                    let literal_type = json_column_type_for(col_type, target.kind());
+                    let v = if encrypted_str.is_empty() || encrypted_str == "{}" {
+                        Value::String(encrypted_str)
                     } else {
-                        let rotated = rotate_field(encrypted_str, source_key, target_key, &mut skipped);
-                        Value::String(rotated.unwrap_or_else(|| encrypted_str.to_string()))
-                    }
-                } else {
-                    row_map
+                        let rotated = rotate_field(&encrypted_str, source_key, target_key, &mut skipped);
+                        Value::String(rotated.unwrap_or(encrypted_str))
+                    };
+                    native::value_to_target_literal(&v, &literal_type, target.kind())
+                } else if info_col == Some(idx) {
+                    let v = row_map
                         .get(col_name.as_str())
                         .or_else(|| overrides.get(col_name.as_str())
                             .and_then(|m| row_map.get(m.as_str())))
                         .copied()
-                        .unwrap_or(&Value::Null)
-                        .clone()
-                };
-                native::value_to_target_literal(&v, col_type, target.kind())
+                        .unwrap_or(&Value::Null);
+                    let literal_type = json_column_type_for(col_type, target.kind());
+                    native::value_to_target_literal(v, &literal_type, target.kind())
+                } else {
+                    let v = row_map
+                        .get(col_name.as_str())
+                        .or_else(|| overrides.get(col_name.as_str())
+                            .and_then(|m| row_map.get(m.as_str())))
+                        .copied()
+                        .unwrap_or(&Value::Null);
+                    native::value_to_target_literal(v, col_type, target.kind())
+                }
             })
             .collect();
 
@@ -270,6 +343,8 @@ async fn migrate_proxy_models(
     }
 
     let params_col = tgt_col_info.iter().position(|(n, _)| n == "litellm_params");
+    // model_info is also a JSON payload the runtime decodes as serde_json::Value.
+    let info_col = tgt_col_info.iter().position(|(n, _)| n == "model_info");
 
     let mut inserted = 0usize;
     let mut skipped = 0usize;
@@ -281,13 +356,46 @@ async fn migrate_proxy_models(
             .enumerate()
             .map(|(idx, (col_name, col_type))| {
                 if params_col == Some(idx) {
-                    let value_str = row_map.get(col_name.as_str()).and_then(|v| v.as_str()).unwrap_or("");
+                    // litellm's `litellm_params` may arrive as:
+                    //   * PG `jsonb`   → decoded as `Value::Object` / `Value::Array`
+                    //   * PG `text`    → decoded as `Value::String` (full JSON text)
+                    //   * SQLite TEXT  → decoded as `Value::String` or (via BLOB fallback) `Value::Object`
+                    //   * whole-blob encrypted → `Value::String` not starting with `{`
+                    // Normalise to a JSON string so `rotate_field` can walk it uniformly.
+                    let raw = row_map.get(col_name.as_str()).copied().unwrap_or(&Value::Null);
+                    let value_str: String = match raw {
+                        Value::Null => String::new(),
+                        Value::String(s) => s.clone(),
+                        Value::Object(_) | Value::Array(_) => raw.to_string(),
+                        other => other.to_string(),
+                    };
+                    // Force JSON coercion at the target side even when the target
+                    // column type is plain TEXT (SQLite / older PG variants).  The
+                    // runtime always decodes `litellm_params` as `serde_json::Value`
+                    // (see `ProxyModel` in aigw-core), so a bare encrypted string
+                    // like "gAAAAAB..." would fail with EOF at line 1 col 0.
+                    // `value_to_target_literal` with `col_type = "json"` wraps
+                    // non-JSON strings in JSON double quotes.
+                    let literal_type = json_column_type_for(col_type, target.kind());
                     if value_str.is_empty() {
-                        return native::value_to_target_literal(&Value::String("".into()), col_type, target.kind());
+                        return native::value_to_target_literal(
+                            &Value::String("".into()),
+                            &literal_type,
+                            target.kind(),
+                        );
                     }
-                    let rotated = rotate_field(value_str, source_key, target_key, &mut skipped);
-                    let v = Value::String(rotated.unwrap_or_else(|| value_str.to_string()));
-                    native::value_to_target_literal(&v, col_type, target.kind())
+                    let rotated = rotate_field(&value_str, source_key, target_key, &mut skipped);
+                    let v = Value::String(rotated.unwrap_or(value_str));
+                    native::value_to_target_literal(&v, &literal_type, target.kind())
+                } else if info_col == Some(idx) {
+                    let v = row_map
+                        .get(col_name.as_str())
+                        .or_else(|| overrides.get(col_name.as_str())
+                            .and_then(|m| row_map.get(m.as_str())))
+                        .copied()
+                        .unwrap_or(&Value::Null);
+                    let literal_type = json_column_type_for(col_type, target.kind());
+                    native::value_to_target_literal(v, &literal_type, target.kind())
                 } else {
                     let v = row_map
                         .get(col_name.as_str())
@@ -331,26 +439,12 @@ async fn migrate_spend_logs(
     cursor: &CursorRange,
     _skip_body: bool,
     skip_columns_set: &HashSet<(String, String)>,
+    batch_size: usize,
 ) -> anyhow::Result<usize> {
-    let t_fetch = std::time::Instant::now();
-    let rows = match source.read_rows_with_cursor("LiteLLM_SpendLogs", cursor, limit).await {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("  [SKIP] LiteLLM_SpendLogs: {}", e);
-            return Ok(0);
-        }
-    };
+    // ── Step A: figure out target columns (filter out skips) ─────────────
+    let tgt_col_info_all = target.column_types("spend_logs").await?;
 
-    eprintln!("  [TIMING] spend_logs fetch: {:?} ({} rows)", t_fetch.elapsed(), rows.len());
-    if rows.is_empty() {
-        return Ok(0);
-    }
-
-    let src_col_names: Vec<String> = rows[0].iter().map(|(n, _)| n.clone()).collect();
-    let tgt_col_info = target.column_types("spend_logs").await?;
-
-    // Filter columns to skip
-    let skipped_list: Vec<String> = tgt_col_info
+    let skipped_list: Vec<String> = tgt_col_info_all
         .iter()
         .filter(|(col, _)| skip_columns_set.contains(&("spend_logs".to_string(), col.clone())))
         .map(|(col, _)| format!("spend_logs.{}", col))
@@ -359,7 +453,7 @@ async fn migrate_spend_logs(
         eprintln!("  [SKIP-COLUMNS] spend_logs: {:?}", skipped_list);
     }
 
-    let filtered_cols: Vec<(String, String)> = tgt_col_info
+    let filtered_cols: Vec<(String, String)> = tgt_col_info_all
         .into_iter()
         .filter(|(col, _)| !skip_columns_set.contains(&("spend_logs".to_string(), col.clone())))
         .collect();
@@ -369,32 +463,144 @@ async fn migrate_spend_logs(
         return Ok(0);
     }
 
-    let overrides = build_snake_overrides(&src_col_names);
-
-    // Snapshot last row's startTime for progress / resume hint
-    let last_start_time: Option<String> = rows.last().and_then(|row| {
-        row.iter()
-            .find(|(col, _)| col == "startTime")
-            .and_then(|(_, v)| v.as_str().map(|s| s.to_string()))
-    });
-
-    let t_insert = std::time::Instant::now();
-    let count = native::insert_rows(target, "spend_logs", &filtered_cols, &rows, &overrides).await?;
+    // ── Step B: figure out source columns to SELECT ─────────────────────
+    //
+    // Upstream `LiteLLM_SpendLogs` mixes camelCase (`startTime`, `endTime`,
+    // `completionStartTime`) with snake_case.  We drop any source column
+    // whose snake_case-mapped name is in `skip_columns_set` — this makes
+    // `--skip-body` prune messages/response/proxy_server_request from the
+    // SELECT itself, so they never leave the source DB.  `startTime` is
+    // preserved unconditionally because pagination needs it.
+    let src_col_info = source.column_types("LiteLLM_SpendLogs").await?;
+    let src_col_names_all: Vec<String> =
+        src_col_info.iter().map(|(n, _)| n.clone()).collect();
+    let mut select_columns: Vec<String> = src_col_names_all
+        .iter()
+        .filter(|src_name| {
+            let mapped = camel_to_snake(src_name);
+            !skip_columns_set.contains(&("spend_logs".to_string(), mapped))
+                && !skip_columns_set.contains(&("spend_logs".to_string(), src_name.to_string()))
+        })
+        .cloned()
+        .collect();
+    if !select_columns.iter().any(|c| c == "startTime")
+        && src_col_names_all.iter().any(|c| c == "startTime")
+    {
+        select_columns.push("startTime".to_string());
+    }
     eprintln!(
-        "  [TIMING] spend_logs insert: {:?} ({} rows, avg {:?}/row)",
-        t_insert.elapsed(),
-        count,
-        t_insert.elapsed() / count.max(1) as u32
+        "  [SELECT] spend_logs source cols: {} / {} (pruned {} skipped)",
+        select_columns.len(),
+        src_col_names_all.len(),
+        src_col_names_all.len() - select_columns.len()
     );
 
+    // Snake-case overrides so target-side lookup finds camelCase source cols.
+    let overrides = build_snake_overrides(&select_columns);
+
+    // ── Step C: producer/consumer pipeline ───────────────────────────────
+    //
+    // Producer streams rows from the source (server-side cursor) and pushes
+    // Vec<UnifiedRow> batches into a bounded channel.  Consumer drains the
+    // channel and runs `insert_rows_batch` — one multi-row INSERT per batch
+    // inside a transaction.  Channel capacity 4 balances backpressure vs
+    // throughput: producer stays a couple of batches ahead.
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<native::UnifiedRow>>(4);
+    let cursor_owned = cursor.clone();
+    let select_cols_for_producer = select_columns.clone();
+    let t_pipe = std::time::Instant::now();
+    let progress_every = batch_size.saturating_mul(10).max(1);
+
+    let producer = async {
+        let mut stream = source.stream_rows_with_cursor(
+            "LiteLLM_SpendLogs",
+            &cursor_owned,
+            limit,
+            Some(&select_cols_for_producer),
+        );
+        let mut buf: Vec<native::UnifiedRow> = Vec::with_capacity(batch_size);
+        while let Some(row_res) = stream.next().await {
+            let row = row_res?;
+            buf.push(row);
+            if buf.len() >= batch_size {
+                let batch = std::mem::replace(&mut buf, Vec::with_capacity(batch_size));
+                if tx.send(batch).await.is_err() {
+                    anyhow::bail!("spend_logs consumer closed the channel unexpectedly");
+                }
+            }
+        }
+        if !buf.is_empty() && tx.send(buf).await.is_err() {
+            anyhow::bail!("spend_logs consumer closed the channel unexpectedly");
+        }
+        drop(tx);
+        Ok::<(), anyhow::Error>(())
+    };
+
+    let consumer = async {
+        let mut inserted_total: usize = 0;
+        let mut ignored_total: usize = 0;
+        let mut last_start_time: Option<String> = None;
+        let mut since_last_log: usize = 0;
+
+        while let Some(batch) = rx.recv().await {
+            if let Some(last) = batch.last() {
+                if let Some((_, v)) = last.iter().find(|(c, _)| c == "startTime") {
+                    if let Some(s) = v.as_str() {
+                        last_start_time = Some(s.to_string());
+                    }
+                }
+            }
+
+            let (ins, ign) = native::insert_rows_batch(
+                target,
+                "spend_logs",
+                &filtered_cols,
+                &batch,
+                &overrides,
+            )
+            .await?;
+            inserted_total += ins;
+            ignored_total += ign;
+            since_last_log += batch.len();
+
+            if since_last_log >= progress_every {
+                let elapsed = t_pipe.elapsed().as_secs_f64().max(0.001);
+                let rate = inserted_total as f64 / elapsed;
+                eprintln!(
+                    "  [PROGRESS] spend_logs: inserted={} ignored={} ({:.0} rows/s, cursor={})",
+                    inserted_total,
+                    ignored_total,
+                    rate,
+                    last_start_time.as_deref().unwrap_or("<none>"),
+                );
+                since_last_log = 0;
+            }
+        }
+        Ok::<(usize, usize, Option<String>), anyhow::Error>((
+            inserted_total,
+            ignored_total,
+            last_start_time,
+        ))
+    };
+
+    let (prod_res, cons_res) = tokio::join!(producer, consumer);
+    prod_res?;
+    let (inserted_total, ignored_total, last_start_time) = cons_res?;
+
+    let elapsed = t_pipe.elapsed();
+    let rate = inserted_total as f64 / elapsed.as_secs_f64().max(0.001);
+    eprintln!(
+        "  [TIMING] spend_logs pipeline: {:?} ({} inserted, {} ignored, {:.0} rows/s)",
+        elapsed, inserted_total, ignored_total, rate
+    );
     if let Some(ts) = last_start_time {
         eprintln!(
             "  [PROGRESS] spend_logs: {} rows migrated. resume: {}",
-            count, ts
+            inserted_total, ts
         );
     }
 
-    Ok(count)
+    Ok(inserted_total)
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -411,6 +617,7 @@ pub async fn run_filtered(
     step_filter: Option<u8>,
     skip_body: bool,
     skip_columns_set: &HashSet<(String, String)>,
+    batch_size: usize,
 ) -> anyhow::Result<bool> {
     let total_start = std::time::Instant::now();
 
@@ -478,7 +685,16 @@ pub async fn run_filtered(
     if run_step(5) {
         eprintln!("Step 5: Migrating spend_logs...");
         let t0 = std::time::Instant::now();
-        let spend_count = migrate_spend_logs(&source, &target, spend_log_limit, spend_log_cursor, skip_body, skip_columns_set).await?;
+        let spend_count = migrate_spend_logs(
+            &source,
+            &target,
+            spend_log_limit,
+            spend_log_cursor,
+            skip_body,
+            skip_columns_set,
+            batch_size,
+        )
+        .await?;
         eprintln!("  LiteLLM_SpendLogs -> spend_logs ({} rows, {:?})", spend_count, t0.elapsed());
     } else {
         eprintln!("Step 5: [SKIP]");
@@ -638,6 +854,7 @@ mod tests {
             &src_str_sqlite, &tgt_str_sqlite,
             None, target_key, None, &cursor, None, false,
             &HashSet::new(),
+            1000,
         ).await;
         assert!(result.is_ok(), "remote_import failed: {:?}", result.err());
 
@@ -650,7 +867,13 @@ mod tests {
         let cred_row: (String,) = sqlx::query_as(
             "SELECT credential_values FROM credentials WHERE credential_id = 'cred-1'",
         ).fetch_one(&tgt_pool).await.unwrap();
-        let decrypted = aigw_core::decrypt_litellm_value(&cred_row.0, target_key).unwrap();
+        // Storage format: opaque encrypted blobs are wrapped as JSON scalar
+        // strings so runtime `serde_json::Value` decode round-trips as
+        // `Value::String(_)` (see native.rs Postgres jsonb / SQLite json
+        // literal handling).  Unwrap here to mirror what the server does at
+        // read time via `.as_str()`.
+        let raw = serde_json::from_str::<String>(&cred_row.0).unwrap_or(cred_row.0);
+        let decrypted = aigw_core::decrypt_litellm_value(&raw, target_key).unwrap();
         assert_eq!(decrypted, plain_cred);
 
         let model_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM proxy_models")
@@ -660,7 +883,8 @@ mod tests {
         let model_row: (String,) = sqlx::query_as(
             "SELECT litellm_params FROM proxy_models WHERE model_id = 'model-1'",
         ).fetch_one(&tgt_pool).await.unwrap();
-        let decrypted_params = aigw_core::decrypt_litellm_value(&model_row.0, target_key).unwrap();
+        let raw_params = serde_json::from_str::<String>(&model_row.0).unwrap_or(model_row.0);
+        let decrypted_params = aigw_core::decrypt_litellm_value(&raw_params, target_key).unwrap();
         assert_eq!(decrypted_params, plain_params);
 
         tgt_pool.close().await;
@@ -969,13 +1193,13 @@ mod tests {
         let skip_set = HashSet::new();
 
         // First: migrate all
-        let count1 = migrate_spend_logs(&source, &target, None, &CursorRange::default(), false, &skip_set)
+        let count1 = migrate_spend_logs(&source, &target, None, &CursorRange::default(), false, &skip_set, 1000)
             .await
             .unwrap();
         assert_eq!(count1, 5, "first migration should insert 5 rows");
 
         // Second: "resume" with the same cursor (simulating restart from earliest)
-        let count2 = migrate_spend_logs(&source, &target, None, &CursorRange::default(), false, &skip_set)
+        let count2 = migrate_spend_logs(&source, &target, None, &CursorRange::default(), false, &skip_set, 1000)
             .await
             .unwrap();
         assert_eq!(count2, 0, "second migration should insert 0 rows (all conflict)");

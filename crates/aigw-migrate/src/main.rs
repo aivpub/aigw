@@ -141,6 +141,11 @@ enum Commands {
         /// Comma-separated table.column pairs to skip during import
         #[arg(long = "skip-columns", value_delimiter = ',')]
         skip_columns: Vec<String>,
+        /// Rows per target-side INSERT transaction for spend_logs (default 1000).
+        /// Larger = fewer commits but bigger memory / WAL spikes.
+        /// Smaller = smoother progress, tighter memory ceiling.
+        #[arg(long = "batch-size", default_value_t = 1000)]
+        batch_size: usize,
     },
     /// Pre-migration checks: verify source/target connectivity, keys, and data
     PreCheck {
@@ -232,6 +237,7 @@ async fn main() -> anyhow::Result<()> {
             step_filter,
             skip_body,
             skip_columns,
+            batch_size,
         } => {
             let source_url = resolve_source_url(source_url)?;
             let target_url = resolve_target_url(target_url)?;
@@ -288,6 +294,7 @@ async fn main() -> anyhow::Result<()> {
                 step_filter,
                 skip_body,
                 &skip_columns_set,
+                batch_size,
             )
             .await?;
             if all_match {

@@ -3615,14 +3615,12 @@ impl Database {
 
     /// Upsert a config value. INSERT if not exists, UPDATE if exists.
     pub async fn upsert_config(&self, param_name: &str, param_value: &str) -> Result<()> {
-        let id = format!("cfg-{}", param_name);
         match self {
             Database::Sqlite(p) => {
                 sqlx::query(
-                    "INSERT INTO config (id, param_name, param_value) VALUES (?1, ?2, ?3) \
+                    "INSERT INTO config (param_name, param_value) VALUES (?1, ?2) \
                      ON CONFLICT(param_name) DO UPDATE SET param_value = excluded.param_value"
                 )
-                    .bind(&id)
                     .bind(param_name)
                     .bind(param_value)
                     .execute(p)
@@ -3630,10 +3628,9 @@ impl Database {
             }
             Database::Mysql(p) => {
                 sqlx::query(
-                    "INSERT INTO config (id, param_name, param_value) VALUES (?, ?, ?) \
+                    "INSERT INTO config (param_name, param_value) VALUES (?, ?) \
                      ON DUPLICATE KEY UPDATE param_value = VALUES(param_value)"
                 )
-                    .bind(&id)
                     .bind(param_name)
                     .bind(param_value)
                     .execute(p)
@@ -3641,10 +3638,9 @@ impl Database {
             }
             Database::Postgres(p) => {
                 sqlx::query(
-                    "INSERT INTO config (id, param_name, param_value) VALUES ($1, $2, $3) \
+                    "INSERT INTO config (param_name, param_value) VALUES ($1, $2) \
                      ON CONFLICT(param_name) DO UPDATE SET param_value = excluded.param_value"
                 )
-                    .bind(&id)
                     .bind(param_name)
                     .bind(param_value)
                     .execute(p)
@@ -3861,11 +3857,17 @@ impl Database {
         let mut conditions = Vec::new();
         let _params: Vec<String> = Vec::new();
 
+        // PostgreSQL requires explicit timestamp casts; SQLite/MySQL are lenient
+        let ts_cast = match self {
+            Database::Postgres(_) => "::TIMESTAMPTZ",
+            _ => "",
+        };
+
         if let Some(k) = api_key { conditions.push(format!("api_key = '{}'", k.replace('\'', "''"))); }
         if let Some(m) = model { conditions.push(format!("model = '{}'", m.replace('\'', "''"))); }
         if let Some(p) = provider { conditions.push(format!("custom_llm_provider = '{}'", p.replace('\'', "''"))); }
-        if let Some(s) = start_date { conditions.push(format!("start_time >= '{}'", s.replace('\'', "''"))); }
-        if let Some(e) = end_date { conditions.push(format!("start_time <= '{}'", e.replace('\'', "''"))); }
+        if let Some(s) = start_date { conditions.push(format!("start_time >= '{}'{}", s.replace('\'', "''"), ts_cast)); }
+        if let Some(e) = end_date { conditions.push(format!("start_time <= '{}'{}", e.replace('\'', "''"), ts_cast)); }
         if let Some(rid) = request_id { conditions.push(format!("request_id = '{}'", rid.replace('\'', "''"))); }
         if let Some(st) = status {
             if st == "success" { conditions.push("status = 'success'".to_string()); }
@@ -4638,8 +4640,7 @@ mod tests {
         // Insert via raw SQL (no dedicated insert_config method yet)
         match &db {
             Database::Sqlite(pool) => {
-                sqlx::query("INSERT INTO config (id, param_name, param_value) VALUES (?1, ?2, ?3)")
-                    .bind("id-1")
+                sqlx::query("INSERT INTO config (param_name, param_value) VALUES (?1, ?2)")
                     .bind("general_settings")
                     .bind(general_settings)
                     .execute(pool)
@@ -4657,8 +4658,7 @@ mod tests {
         let db = Database::init("sqlite::memory:").await.expect("init");
         match &db {
             Database::Sqlite(pool) => {
-                sqlx::query("INSERT INTO config (id, param_name, param_value) VALUES (?1, ?2, ?3)")
-                    .bind("id-2")
+                sqlx::query("INSERT INTO config (param_name, param_value) VALUES (?1, ?2)")
                     .bind("litellm_master_key")
                     .bind("sk-legacy-key")
                     .execute(pool)
@@ -4683,8 +4683,7 @@ mod tests {
         let db = Database::init("sqlite::memory:").await.expect("init");
         match &db {
             Database::Sqlite(pool) => {
-                sqlx::query("INSERT INTO config (id, param_name, param_value) VALUES (?1, ?2, ?3)")
-                    .bind("id-3")
+                sqlx::query("INSERT INTO config (param_name, param_value) VALUES (?1, ?2)")
                     .bind("general_settings")
                     .bind("not-valid-json{{{")
                     .execute(pool)
@@ -4704,15 +4703,13 @@ mod tests {
         match &db {
             Database::Sqlite(pool) => {
                 // Insert both general_settings and legacy
-                sqlx::query("INSERT INTO config (id, param_name, param_value) VALUES (?1, ?2, ?3)")
-                    .bind("id-4")
+                sqlx::query("INSERT INTO config (param_name, param_value) VALUES (?1, ?2)")
                     .bind("general_settings")
                     .bind(r#"{"master_key": "sk-from-json"}"#)
                     .execute(pool)
                     .await
                     .expect("insert general_settings");
-                sqlx::query("INSERT INTO config (id, param_name, param_value) VALUES (?1, ?2, ?3)")
-                    .bind("id-5")
+                sqlx::query("INSERT INTO config (param_name, param_value) VALUES (?1, ?2)")
                     .bind("litellm_master_key")
                     .bind("sk-from-legacy")
                     .execute(pool)
