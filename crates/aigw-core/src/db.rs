@@ -1902,23 +1902,30 @@ impl SpendLogStore for PgPool {
 
     async fn aggregate_spend_by_model(&self, api_key: Option<&str>, start_date: Option<&str>, end_date: Option<&str>) -> Result<Vec<SpendModelAgg>> {
         let date_filter = if start_date.is_some() && end_date.is_some() {
-            " AND start_time >= $2 AND start_time <= $3"
-        } else { "" };
+            format!(
+                " AND start_time >= '{}'::TIMESTAMPTZ AND start_time <= '{}'::TIMESTAMPTZ",
+                start_date.unwrap().replace('\'', "''"),
+                end_date.unwrap().replace('\'', "''")
+            )
+        } else { String::new() };
         let sql = match api_key {
             Some(_) => format!("SELECT model, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE api_key = $1{date_filter} GROUP BY model ORDER BY total_tokens DESC"),
             None => format!("SELECT model, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE 1=1{date_filter} GROUP BY model ORDER BY total_tokens DESC"),
         };
         let mut q = sqlx::query_as(&sql);
         if let Some(k) = api_key { q = q.bind(k); }
-        if let Some(s) = start_date { q = q.bind(s); }
-        if let Some(e) = end_date { q = q.bind(e); }
+        // start_date / end_date already inlined with ::TIMESTAMPTZ cast above — no bind needed
         q.fetch_all(self).await.map_err(DbError::from)
     }
 
     async fn aggregate_spend_by_provider(&self, start_date: Option<&str>, end_date: Option<&str>) -> Result<Vec<SpendProviderAgg>> {
         let date_filter = if start_date.is_some() && end_date.is_some() {
-            " AND sl.start_time >= $1 AND sl.start_time <= $2"
-        } else { "" };
+            format!(
+                " AND sl.start_time >= '{}'::TIMESTAMPTZ AND sl.start_time <= '{}'::TIMESTAMPTZ",
+                start_date.unwrap().replace('\'', "''"),
+                end_date.unwrap().replace('\'', "''")
+            )
+        } else { String::new() };
         let sql = format!(
             r#"SELECT COALESCE(NULLIF(sl.custom_llm_provider, ''), 'unknown') as provider,
                COALESCE(SUM(sl.total_tokens), 0) as total_tokens,
@@ -1929,14 +1936,16 @@ impl SpendLogStore for PgPool {
                GROUP BY provider
                ORDER BY total_tokens DESC"#
         );
-        let mut q = sqlx::query_as(&sql);
-        if let Some(s) = start_date { q = q.bind(s); }
-        if let Some(e) = end_date { q = q.bind(e); }
-        q.fetch_all(self).await.map_err(DbError::from).map(|rows: Vec<(String, i64, f64, i64)>| {
-            rows.into_iter().map(|(provider, total_tokens, total_spend, requests)| {
-                SpendProviderAgg { provider, total_tokens, total_spend, requests }
-            }).collect()
-        })
+        // start_date / end_date already inlined with ::TIMESTAMPTZ cast above — no bind needed
+        sqlx::query_as(&sql)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
+            .map(|rows: Vec<(String, i64, f64, i64)>| {
+                rows.into_iter().map(|(provider, total_tokens, total_spend, requests)| {
+                    SpendProviderAgg { provider, total_tokens, total_spend, requests }
+                }).collect()
+            })
     }
 
     async fn query_spend_logs_filtered(
@@ -1984,19 +1993,20 @@ impl SpendLogStore for PgPool {
         end_date: Option<&str>,
         request_id: Option<&str>,
     ) -> Result<i64> {
+        let ts_cast = "::TIMESTAMPTZ";
+
         let mut sql = String::from("SELECT COUNT(*) FROM spend_logs WHERE 1=1");
-        let mut i = 1;
+        let mut i: usize = 1;
         if api_key.is_some() { sql.push_str(&format!(" AND api_key = ${}", i)); i += 1; }
         if model.is_some() { sql.push_str(&format!(" AND model = ${}", i)); i += 1; }
-        if start_date.is_some() { sql.push_str(&format!(" AND start_time >= ${}", i)); i += 1; }
-        if end_date.is_some() { sql.push_str(&format!(" AND start_time <= ${}", i)); i += 1; }
+        if start_date.is_some() { sql.push_str(&format!(" AND start_time >= '{}'{}", start_date.unwrap().replace('\'', "''"), ts_cast)); }
+        if end_date.is_some() { sql.push_str(&format!(" AND start_time <= '{}'{}", end_date.unwrap().replace('\'', "''"), ts_cast)); }
         if request_id.is_some() { sql.push_str(&format!(" AND request_id = ${}", i)); }
 
         let mut query = sqlx::query_as::<_, (i64,)>(&sql);
         if let Some(k) = api_key { query = query.bind(k); }
         if let Some(m) = model { query = query.bind(m); }
-        if let Some(sd) = start_date { query = query.bind(sd); }
-        if let Some(ed) = end_date { query = query.bind(ed); }
+        // start_date / end_date already inlined with ::TIMESTAMPTZ cast above — no bind needed
         if let Some(rid) = request_id { query = query.bind(rid); }
 
         query.fetch_one(self).await.map(|row: (i64,)| row.0).map_err(DbError::from)
@@ -2180,9 +2190,7 @@ impl Database {
         team_id: Option<&str>,
         organization_id: Option<&str>,
     ) -> Result<(f64, i64, i64, i64, i64, i64, i64)> {
-        let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id);
-        let sql = format!(
-            r#"SELECT
+        let sql_base = r#"SELECT
                 COALESCE(SUM(spend), 0),
                 COUNT(request_id),
                 COUNT(CASE WHEN status = 'success' THEN 1 END),
@@ -2191,24 +2199,27 @@ impl Database {
                 COALESCE(SUM(prompt_tokens), 0),
                 COALESCE(SUM(completion_tokens), 0)
             FROM spend_logs
-            WHERE date(start_time) >= date(?) AND date(start_time) <= date(?) {}"#,
-            filter_clause
-        );
-
+            WHERE date(start_time) >= date({p1}) AND date(start_time) <= date({p2}) {filter}"#;
         match self {
             Database::Sqlite(pool) => {
+                let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false);
+                let sql = sql_base.replace("{p1}", "?").replace("{p2}", "?").replace("{filter}", &filter_clause);
                 let mut q = sqlx::query_as(&sql)
                     .bind(start_date).bind(end_date);
                 for p in &params { q = q.bind(p); }
                 q.fetch_one(pool).await.map_err(DbError::from)
             }
             Database::Mysql(pool) => {
+                let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false);
+                let sql = sql_base.replace("{p1}", "?").replace("{p2}", "?").replace("{filter}", &filter_clause);
                 let mut q = sqlx::query_as(&sql)
                     .bind(start_date).bind(end_date);
                 for p in &params { q = q.bind(p); }
                 q.fetch_one(pool).await.map_err(DbError::from)
             }
             Database::Postgres(pool) => {
+                let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 3, true);
+                let sql = sql_base.replace("{p1}", "$1").replace("{p2}", "$2").replace("{filter}", &filter_clause);
                 let mut q = sqlx::query_as(&sql)
                     .bind(start_date).bind(end_date);
                 for p in &params { q = q.bind(p); }
@@ -2226,34 +2237,35 @@ impl Database {
         team_id: Option<&str>,
         organization_id: Option<&str>,
     ) -> Result<Vec<(String, f64, i64, i64)>> {
-        let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id);
-        let sql = format!(
-            r#"SELECT
+        let sql_base = r#"SELECT
                 DATE(start_time),
                 COALESCE(SUM(spend), 0),
                 COALESCE(SUM(total_tokens), 0),
                 COUNT(request_id)
             FROM spend_logs
-            WHERE date(start_time) >= date(?) AND date(start_time) <= date(?) {}
+            WHERE date(start_time) >= date({p1}) AND date(start_time) <= date({p2}) {filter}
             GROUP BY 1
-            ORDER BY 1 ASC"#,
-            filter_clause
-        );
-
+            ORDER BY 1 ASC"#;
         match self {
             Database::Sqlite(pool) => {
+                let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false);
+                let sql = sql_base.replace("{p1}", "?").replace("{p2}", "?").replace("{filter}", &filter_clause);
                 let mut q = sqlx::query_as(&sql)
                     .bind(start_date).bind(end_date);
                 for p in &params { q = q.bind(p); }
                 q.fetch_all(pool).await.map_err(DbError::from)
             }
             Database::Mysql(pool) => {
+                let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false);
+                let sql = sql_base.replace("{p1}", "?").replace("{p2}", "?").replace("{filter}", &filter_clause);
                 let mut q = sqlx::query_as(&sql)
                     .bind(start_date).bind(end_date);
                 for p in &params { q = q.bind(p); }
                 q.fetch_all(pool).await.map_err(DbError::from)
             }
             Database::Postgres(pool) => {
+                let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 3, true);
+                let sql = sql_base.replace("{p1}", "$1").replace("{p2}", "$2").replace("{filter}", &filter_clause);
                 let mut q = sqlx::query_as(&sql)
                     .bind(start_date).bind(end_date);
                 for p in &params { q = q.bind(p); }
@@ -2264,23 +2276,43 @@ impl Database {
 }
 
 /// Build WHERE filter clause and parameter list for activity queries.
+///
+/// `start_index` — first positional parameter index (1-based for PG `$N`, 0 for sqlite/mysql `?`).
+/// `use_dollar` — if true, emits `$N` placeholders (PG); otherwise `?` (sqlite/mysql).
 fn build_activity_filter<'a>(
     user_id: Option<&'a str>,
     team_id: Option<&'a str>,
     organization_id: Option<&'a str>,
+    start_index: usize,
+    use_dollar: bool,
 ) -> (String, Vec<&'a str>) {
     let mut clauses = Vec::new();
     let mut params = Vec::new();
+    let mut idx = start_index;
     if let Some(uid) = user_id {
-        clauses.push(r#""user" = ?"#.to_string());
+        if use_dollar {
+            clauses.push(format!(r#""user" = ${}"#, idx));
+        } else {
+            clauses.push(r#""user" = ?"#.to_string());
+        }
         params.push(uid);
+        idx += 1;
     }
     if let Some(tid) = team_id {
-        clauses.push("team_id = ?".to_string());
+        if use_dollar {
+            clauses.push(format!("team_id = ${}", idx));
+        } else {
+            clauses.push("team_id = ?".to_string());
+        }
         params.push(tid);
+        idx += 1;
     }
     if let Some(oid) = organization_id {
-        clauses.push("organization_id = ?".to_string());
+        if use_dollar {
+            clauses.push(format!("organization_id = ${}", idx));
+        } else {
+            clauses.push("organization_id = ?".to_string());
+        }
         params.push(oid);
     }
     let filter = if clauses.is_empty() {
