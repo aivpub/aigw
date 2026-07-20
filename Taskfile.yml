@@ -192,11 +192,16 @@ tasks:
   # docker-compose.yml (which references ghcr.io/aivpub/aigw:latest) can pick
   # them up without editing the compose file.
   #
+  # Optimized with cargo-chef + BuildKit cache mounts:
+  # - Dependency layer cached until Cargo.toml changes
+  # - cargo registry + target/ cache mounts survive across builds
+  # - Source-only changes recompile in seconds
+  #
   # `IMAGE_REPO` / `IMAGE_TAG` are overridable if you need a different name
   # (e.g. `task docker-build IMAGE_TAG=dev`).
 
   docker-build:
-    desc: "build native-arch Docker image, tag ghcr.io/aivpub/aigw:{git-describe} + :latest"
+    desc: "build native-arch Docker image (cached), tag ghcr.io/aivpub/aigw:{git-describe} + :latest"
     vars:
       IMAGE_REPO: '{{.IMAGE_REPO | default "ghcr.io/aivpub/aigw"}}'
       IMAGE_TAG:
@@ -206,7 +211,7 @@ tasks:
       - 'echo "built {{.IMAGE_REPO}}:{{.IMAGE_TAG}} + :latest"'
 
   docker-build-amd64:
-    desc: "build linux/amd64 image, load into local docker (for deploying to amd64 hosts from an arm64 mac)"
+    desc: "build linux/amd64 image (cached), load into local docker"
     vars:
       IMAGE_REPO: '{{.IMAGE_REPO | default "ghcr.io/aivpub/aigw"}}'
       IMAGE_TAG:
@@ -215,8 +220,18 @@ tasks:
       - docker buildx build --platform linux/amd64 --load -t {{.IMAGE_REPO}}:{{.IMAGE_TAG}} -t {{.IMAGE_REPO}}:latest .
       - 'echo "built {{.IMAGE_REPO}}:{{.IMAGE_TAG}} + :latest (linux/amd64)"'
 
+  docker-build-amd64-nocache:
+    desc: "build linux/amd64 image WITHOUT cache (full rebuild from scratch)"
+    vars:
+      IMAGE_REPO: '{{.IMAGE_REPO | default "ghcr.io/aivpub/aigw"}}'
+      IMAGE_TAG:
+        sh: git describe --tags --always --dirty
+    cmds:
+      - docker buildx build --no-cache --platform linux/amd64 --load -t {{.IMAGE_REPO}}:{{.IMAGE_TAG}} -t {{.IMAGE_REPO}}:latest .
+      - 'echo "built {{.IMAGE_REPO}}:{{.IMAGE_TAG}} + :latest (linux/amd64, no-cache)"'
+
   docker-build-arm64:
-    desc: "build linux/arm64 image, load into local docker"
+    desc: "build linux/arm64 image (cached), load into local docker"
     vars:
       IMAGE_REPO: '{{.IMAGE_REPO | default "ghcr.io/aivpub/aigw"}}'
       IMAGE_TAG:

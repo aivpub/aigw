@@ -1,0 +1,39 @@
+# Rust build artifacts (huge, never needed in Docker context)
+target/
+.cargo/
+
+# Node modules (frontend deps are installed inside Docker)
+crates/aigw-frontend/node_modules/
+crates/aigw-frontend/dist/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.*
+
+# Data
+data/
+*.db
+*.db-journal
+*.db-wal
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docs & plans (not needed at runtime)
+docs/
+hack/
+
+# Docker
+docker-compose.yml
+.dockerignore
