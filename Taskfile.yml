@@ -186,10 +186,58 @@ tasks:
       - cargo clippy --workspace -- -D warnings
       - echo "lint passed"
 
+  # ── Docker image build ──────────────────────────────────────
+  # All build tasks tag as ghcr.io/aivpub/aigw:$(git describe --tags --always --dirty).
+  # The registry prefix is fixed even for local-only builds so that
+  # docker-compose.yml (which references ghcr.io/aivpub/aigw:latest) can pick
+  # them up without editing the compose file.
+  #
+  # `IMAGE_REPO` / `IMAGE_TAG` are overridable if you need a different name
+  # (e.g. `task docker-build IMAGE_TAG=dev`).
+
   docker-build:
-    desc: "build Docker image"
+    desc: "build native-arch Docker image, tag ghcr.io/aivpub/aigw:{git-describe} + :latest"
+    vars:
+      IMAGE_REPO: '{{.IMAGE_REPO | default "ghcr.io/aivpub/aigw"}}'
+      IMAGE_TAG:
+        sh: git describe --tags --always --dirty
     cmds:
-      - docker build -t aigw:latest .
+      - docker build -t {{.IMAGE_REPO}}:{{.IMAGE_TAG}} -t {{.IMAGE_REPO}}:latest .
+      - 'echo "built {{.IMAGE_REPO}}:{{.IMAGE_TAG}} + :latest"'
+
+  docker-build-amd64:
+    desc: "build linux/amd64 image, load into local docker (for deploying to amd64 hosts from an arm64 mac)"
+    vars:
+      IMAGE_REPO: '{{.IMAGE_REPO | default "ghcr.io/aivpub/aigw"}}'
+      IMAGE_TAG:
+        sh: git describe --tags --always --dirty
+    cmds:
+      - docker buildx build --platform linux/amd64 --load -t {{.IMAGE_REPO}}:{{.IMAGE_TAG}} -t {{.IMAGE_REPO}}:latest .
+      - 'echo "built {{.IMAGE_REPO}}:{{.IMAGE_TAG}} + :latest (linux/amd64)"'
+
+  docker-build-arm64:
+    desc: "build linux/arm64 image, load into local docker"
+    vars:
+      IMAGE_REPO: '{{.IMAGE_REPO | default "ghcr.io/aivpub/aigw"}}'
+      IMAGE_TAG:
+        sh: git describe --tags --always --dirty
+    cmds:
+      - docker buildx build --platform linux/arm64 --load -t {{.IMAGE_REPO}}:{{.IMAGE_TAG}} -t {{.IMAGE_REPO}}:latest .
+      - 'echo "built {{.IMAGE_REPO}}:{{.IMAGE_TAG}} + :latest (linux/arm64)"'
+
+  docker-build-multiarch:
+    desc: |
+      build & push multi-arch (linux/amd64,linux/arm64) manifest list to ghcr.io/aivpub/aigw.
+      Requires prior `docker login ghcr.io`.  `--push` is mandatory:
+      buildx cannot --load a manifest list into local docker.
+    vars:
+      IMAGE_REPO: '{{.IMAGE_REPO | default "ghcr.io/aivpub/aigw"}}'
+      IMAGE_TAG:
+        sh: git describe --tags --always --dirty
+      PLATFORMS: '{{.PLATFORMS | default "linux/amd64,linux/arm64"}}'
+    cmds:
+      - docker buildx build --platform {{.PLATFORMS}} --push -t {{.IMAGE_REPO}}:{{.IMAGE_TAG}} -t {{.IMAGE_REPO}}:latest .
+      - 'echo "pushed {{.IMAGE_REPO}}:{{.IMAGE_TAG}} + :latest ({{.PLATFORMS}})"'
 
   docker-up:
     desc: "start docker-compose"
@@ -207,10 +255,14 @@ tasks:
       - docker-compose logs -f
 
   docker-test:
-    desc: "build and test Docker image"
+    desc: "build native-arch image and smoke-test it (aigw --help)"
+    vars:
+      IMAGE_REPO: '{{.IMAGE_REPO | default "ghcr.io/aivpub/aigw"}}'
+      IMAGE_TAG:
+        sh: git describe --tags --always --dirty
     cmds:
-      - docker build -t aigw:test .
-      - docker run --rm aigw:test aigw --help
+      - docker build -t {{.IMAGE_REPO}}:{{.IMAGE_TAG}} .
+      - docker run --rm {{.IMAGE_REPO}}:{{.IMAGE_TAG}} aigw --help
 
   clean:
     desc: "clean build artifacts"
