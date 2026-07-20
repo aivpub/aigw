@@ -53,7 +53,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::request_id::{MakeRequestId, RequestId, SetRequestIdLayer};
-use tower_http::trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer};
+use tower_http::trace::{DefaultOnResponse, TraceLayer};
 use tracing::Level;
 use tracing::Span;
 use tracing_subscriber::EnvFilter;
@@ -98,8 +98,30 @@ struct UuidV7RequestId;
 impl MakeRequestId for UuidV7RequestId {
     fn make_request_id<B>(&mut self, _request: &axum::http::Request<B>) -> Option<RequestId> {
         let id = Uuid::now_v7().to_string();
-        Span::current().record("request_id", &id);
         Some(RequestId::new(id.parse().ok()?))
+    }
+}
+
+/// Custom `MakeSpan` that reads `RequestId` from request extensions (injected by
+/// the outer `SetRequestIdLayer`) and records it as a span field so every
+/// `tracing` event emitted within the request scope carries `request_id` in JSON logs.
+#[derive(Clone, Default)]
+struct RequestIdMakeSpan;
+
+impl<B> tower_http::trace::MakeSpan<B> for RequestIdMakeSpan {
+    fn make_span(&mut self, request: &axum::http::Request<B>) -> Span {
+        let request_id = request
+            .extensions()
+            .get::<RequestId>()
+            .and_then(|id| id.header_value().to_str().ok())
+            .unwrap_or("unknown");
+        tracing::span!(
+            Level::INFO,
+            "request",
+            request_id = %request_id,
+            method = %request.method(),
+            uri = %request.uri(),
+        )
     }
 }
 
@@ -349,11 +371,7 @@ async fn main() -> anyhow::Result<()> {
         // HTTP request tracing — JSON logs with request_id, method, path, latency
         .layer(
             TraceLayer::new_for_http()
-                .make_span_with(
-                    DefaultMakeSpan::new()
-                        .include_headers(false)
-                        .level(Level::INFO),
-                )
+                .make_span_with(RequestIdMakeSpan::default())
                 .on_response(
                     DefaultOnResponse::new()
                         .include_headers(false)

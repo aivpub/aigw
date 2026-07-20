@@ -512,17 +512,22 @@ impl KeyStore for SqlitePool {
             Some(k) => {
                 // Check blocked
                 if k.blocked == Some(true) {
+                    tracing::warn!(%token_hash, "API key blocked");
                     return Ok(None);
                 }
                 // Check expiry
                 if let Some(expires) = k.expires {
                     if expires <= Utc::now() {
+                        tracing::warn!(%token_hash, "API key expired");
                         return Ok(None);
                     }
                 }
                 Ok(Some(k))
             }
-            None => Ok(None),
+            None => {
+                tracing::warn!(%token_hash, "API key not found in database");
+                Ok(None)
+            }
         }
     }
 
@@ -741,16 +746,21 @@ impl KeyStore for MySqlPool {
         match key {
             Some(k) => {
                 if k.blocked == Some(true) {
+                    tracing::warn!(%token_hash, "API key blocked");
                     return Ok(None);
                 }
                 if let Some(expires) = k.expires {
                     if expires <= Utc::now() {
+                        tracing::warn!(%token_hash, "API key expired");
                         return Ok(None);
                     }
                 }
                 Ok(Some(k))
             }
-            None => Ok(None),
+            None => {
+                tracing::warn!(%token_hash, "API key not found in database");
+                Ok(None)
+            }
         }
     }
 
@@ -986,16 +996,21 @@ impl KeyStore for PgPool {
         match key {
             Some(k) => {
                 if k.blocked == Some(true) {
+                    tracing::warn!(%token_hash, "API key blocked");
                     return Ok(None);
                 }
                 if let Some(expires) = k.expires {
                     if expires <= Utc::now() {
+                        tracing::warn!(%token_hash, "API key expired");
                         return Ok(None);
                     }
                 }
                 Ok(Some(k))
             }
-            None => Ok(None),
+            None => {
+                tracing::warn!(%token_hash, "API key not found in database");
+                Ok(None)
+            }
         }
     }
 
