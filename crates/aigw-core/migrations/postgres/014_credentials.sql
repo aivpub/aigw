@@ -4,8 +4,8 @@
 CREATE TABLE IF NOT EXISTS credentials (
     credential_id TEXT NOT NULL PRIMARY KEY,
     credential_name TEXT NOT NULL UNIQUE,
-    credential_values TEXT NOT NULL DEFAULT '{}',
-    credential_info TEXT NOT NULL DEFAULT '{}',
+    credential_values JSONB NOT NULL DEFAULT '{}',
+    credential_info JSONB NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL,
     created_by TEXT,
     updated_at TEXT NOT NULL,
