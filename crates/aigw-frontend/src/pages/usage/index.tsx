@@ -124,9 +124,9 @@ type ChartMode = "spend" | "tokens" | "requests";
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 export function UsagePage() {
-  const [preset, setPreset] = useState<DatePreset>("30d");
-  const [startDate, setStartDate] = useState(presetRange("30d").start);
-  const [endDate, setEndDate] = useState(presetRange("30d").end);
+  const [preset, setPreset] = useState<DatePreset>("3d");
+  const [startDate, setStartDate] = useState(presetRange("3d").start);
+  const [endDate, setEndDate] = useState(presetRange("3d").end);
   const [chartMode, setChartMode] = useState<ChartMode>("spend");
 
   const handlePreset = (p: DatePreset) => {

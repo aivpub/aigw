@@ -423,9 +423,9 @@ const LIVE_TAIL_INTERVAL = 15_000; // 15 seconds
 
 export function SpendLogsPage() {
   const queryClient = useQueryClient();
-  const [preset, setPreset] = useState<TimePreset>("24h");
-  const [startDate, setStartDate] = useState(presetRange("24h").start);
-  const [endDate, setEndDate] = useState(presetRange("24h").end);
+  const [preset, setPreset] = useState<TimePreset>("4h");
+  const [startDate, setStartDate] = useState(presetRange("4h").start);
+  const [endDate, setEndDate] = useState(presetRange("4h").end);
   const [modelFilter, setModelFilter] = useState("");
   const [requestIdFilter, setRequestIdFilter] = useState("");
   const [requestIdInput, setRequestIdInput] = useState("");
