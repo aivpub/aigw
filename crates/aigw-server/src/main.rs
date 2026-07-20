@@ -12,6 +12,31 @@ mod frontend;
 mod openapi;
 mod routes;
 
+// ── Build-time version info (injected by build.rs) ──
+/// Full version string: `0.1.0 (abc1234)` or `0.1.0 (abc1234-dirty)`
+pub const VERSION_INFO: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    " (",
+    env!("GIT_COMMIT_HASH"),
+    env!("GIT_DIRTY"),
+    ")"
+);
+pub const BUILD_DATE: &str = env!("BUILD_DATE");
+pub const GIT_COMMIT_HASH: &str = env!("GIT_COMMIT_HASH");
+pub const GIT_DESCRIBE: &str = env!("GIT_DESCRIBE");
+
+/// Long version string for `--version`
+pub const LONG_VERSION: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    " (",
+    env!("GIT_COMMIT_HASH"),
+    env!("GIT_DIRTY"),
+    ")\nbuild date: ",
+    env!("BUILD_DATE"),
+    "\ngit describe: ",
+    env!("GIT_DESCRIBE"),
+);
+
 use aigw_core::config::AigwConfig;
 use aigw_core::daily_spend_queue::DailySpendQueue;
 use aigw_core::db::Database;
@@ -36,7 +61,12 @@ use uuid::Uuid;
 
 /// AI Gateway — litellm-compatible LLM proxy in Rust
 #[derive(Parser, Debug)]
-#[command(name = "aigw", version, about)]
+#[command(
+    name = "aigw",
+    version = VERSION_INFO,
+    long_version = LONG_VERSION,
+    about
+)]
 struct Cli {
     /// Path to config file (litellm-compatible YAML)
     #[arg(short, long, default_value = "config.yaml")]
@@ -101,7 +131,8 @@ async fn main() -> anyhow::Result<()> {
     };
 
     tracing::info!(
-        "aigw starting (mode: {}, bind: {})",
+        "aigw {} starting (mode: {}, bind: {})",
+        VERSION_INFO,
         cli.deployment_mode,
         cli.bind
     );

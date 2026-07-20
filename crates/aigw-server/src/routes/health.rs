@@ -41,8 +41,11 @@ pub async fn liveliness() -> Json<Value> {
 /// GET /system/info — System information (version, deployment mode, available routes)
 pub async fn system_info(State(state): State<SharedState>) -> Json<Value> {
     Json(json!({
-        "version": env!("CARGO_PKG_VERSION"),
+        "version": crate::VERSION_INFO,
         "name": "aigw",
+        "build_date": crate::BUILD_DATE,
+        "commit": crate::GIT_COMMIT_HASH,
+        "git_describe": crate::GIT_DESCRIBE,
         "deployment_mode": state.deployment_mode,
         "database_type": state.db.database_type(),
         "routes": [
@@ -392,7 +395,9 @@ pub async fn health_metrics(
             "teams": teams,
             "users": users,
         },
-        "version": env!("CARGO_PKG_VERSION"),
+        "version": crate::VERSION_INFO,
+        "build_date": crate::BUILD_DATE,
+        "commit": crate::GIT_COMMIT_HASH,
     })))
 }
 
@@ -516,9 +521,11 @@ mod tests {
             .await
             .unwrap();
         let json_val: JsonValue = serde_json::from_slice(&body_bytes).unwrap();
-        assert_eq!(
-            json_val.get("version").and_then(|v| v.as_str()),
-            Some(env!("CARGO_PKG_VERSION"))
+        assert!(
+            json_val.get("version").and_then(|v| v.as_str())
+                .map(|v| v.starts_with(env!("CARGO_PKG_VERSION")))
+                .unwrap_or(false),
+            "version should start with CARGO_PKG_VERSION"
         );
         assert_eq!(json_val.get("name").and_then(|v| v.as_str()), Some("aigw"));
         assert_eq!(

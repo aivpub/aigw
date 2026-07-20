@@ -20,7 +20,7 @@ pub fn generate_openapi_spec() -> Value {
         "info": {
             "title": "aigw AI Gateway API",
             "description": "Rust-based litellm-compatible AI Gateway — OpenAI-compatible chat completions, virtual key management, and usage tracking.",
-            "version": "0.1.0",
+            "version": env!("CARGO_PKG_VERSION"),
             "contact": {
                 "name": "aigw project",
                 "url": "https://github.com/aivpub/aigw"
