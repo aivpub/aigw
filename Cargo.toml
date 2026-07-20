@@ -46,6 +46,9 @@ jsonwebtoken = "9"
 scrypt = "0.11"
 # Async traits
 async-trait = "0.1"
+# Async streams / combinators (used by aigw-migrate spend_logs pipeline)
+futures = "0.3"
+async-stream = "0.3"
 # Embedded static files
 rust-embed = "8"
 # Tower service
