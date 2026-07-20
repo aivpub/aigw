@@ -110,8 +110,14 @@ impl ModelResponse {
             }
             Value::String(s) => {
                 if s.starts_with('{') {
-                    return params.clone();
+                    // Plaintext JSON string — parse and then walk fields for
+                    // individually encrypted values inside.
+                    let parsed: Value = serde_json::from_str(s).unwrap_or_else(|_| params.clone());
+                    return decrypt_json_fields(&parsed, key);
                 }
+                // Encrypted blob (e.g. legacy whole-value encryption) — decrypt
+                // outer layer first, then walk fields for individually encrypted
+                // values inside.
                 let decrypted = match decrypt_litellm_value(s, key) {
                     Ok(d) => d,
                     Err(e) => {
@@ -119,7 +125,8 @@ impl ModelResponse {
                         return params.clone();
                     }
                 };
-                serde_json::from_str(&decrypted).unwrap_or_else(|_| params.clone())
+                let parsed: Value = serde_json::from_str(&decrypted).unwrap_or_else(|_| params.clone());
+                decrypt_json_fields(&parsed, key)
             }
             _ => params.clone(),
         }

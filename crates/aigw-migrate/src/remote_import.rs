@@ -285,23 +285,20 @@ async fn migrate_credentials(
 
 fn rotate_field(encrypted: &str, source_key: &str, target_key: &str, skipped: &mut usize) -> Option<String> {
     if encrypted.starts_with('{') {
-        // JSON object — rotate individual encrypted fields
+        // JSON object — rotate individual encrypted fields.
+        // `rotate_json_fields` already re-encrypts each field with target_key,
+        // so we return the rotated JSON string AS-IS — no outer encryption.
         match serde_json::from_str::<Value>(encrypted) {
             Ok(json_val) => {
                 match aigw_core::rotate_json_fields(&json_val, source_key, target_key) {
-                    Ok(rotated) => {
-                        match aigw_core::encrypt_litellm_value(&rotated, target_key) {
-                            Ok(re_encrypted) => return Some(re_encrypted),
-                            Err(_) => { *skipped += 1; }
-                        }
-                    }
+                    Ok(rotated) => return Some(rotated),
                     Err(_) => { *skipped += 1; }
                 }
             }
-            Err(_) => {}
+            Err(_) => { *skipped += 1; }
         }
     } else {
-        // Simple encrypted string
+        // Simple encrypted string — decrypt with source key, re-encrypt with target key
         if let Ok(plaintext) = aigw_core::decrypt_litellm_value(encrypted, source_key) {
             if let Ok(re_encrypted) = aigw_core::encrypt_litellm_value(&plaintext, target_key) {
                 return Some(re_encrypted);
