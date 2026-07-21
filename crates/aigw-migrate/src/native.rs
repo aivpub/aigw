@@ -63,7 +63,30 @@ impl SourcePool {
         sqlx::any::install_default_drivers();
         match DbKind::from_url(url) {
             DbKind::Postgres => {
-                let pool = PgPoolOptions::new().max_connections(5).connect(url).await?;
+                let pool = PgPoolOptions::new()
+                    .max_connections(5)
+                    .after_connect(|conn, _meta| {
+                        Box::pin(async move {
+                            // Skip WAL fsync per commit — migration is
+                            // restartable so crash-safety is unnecessary.
+                            sqlx::query("SET synchronous_commit = off")
+                                .execute(&mut *conn)
+                                .await?;
+                            // JIT is pure overhead for simple INSERT
+                            // statements with no complex WHERE clauses.
+                            sqlx::query("SET jit = off")
+                                .execute(&mut *conn)
+                                .await?;
+                            // More memory for sort/hash operations per
+                            // statement (default 4MB → 64MB).
+                            sqlx::query("SET work_mem = '64MB'")
+                                .execute(&mut *conn)
+                                .await?;
+                            Ok(())
+                        })
+                    })
+                    .connect(url)
+                    .await?;
                 Ok(SourcePool::Postgres(pool))
             }
             DbKind::Sqlite => {
