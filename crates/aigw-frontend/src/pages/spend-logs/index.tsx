@@ -58,8 +58,23 @@ function presetRange(p: TimePreset) {
     case "4h":  return { start: new Date(now - 4 * 3600 * 1000).toISOString(), end: new Date(now).toISOString() };
     case "24h": return { start: new Date(now - 24 * 3600 * 1000).toISOString(), end: new Date(now).toISOString() };
     case "7d":  return { start: new Date(now - 7 * 24 * 3600 * 1000).toISOString(), end: new Date(now).toISOString() };
-    case "custom": return { start: "", end: "" };
+    case "custom": return { start: new Date(now - 4 * 3600 * 1000).toISOString(), end: new Date(now).toISOString() };
   }
+}
+
+// Convert ISO string → datetime-local input format (YYYY-MM-DDTHH:MM in local time)
+function toDatetimeLocalValue(iso: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  // datetime-local 输入框期望本地时间（YYYY-MM-DDTHH:mm）
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function fromDatetimeLocalValue(local: string): string {
+  if (!local) return "";
+  return new Date(local).toISOString();
 }
 
 function safeStringify(v: unknown): string {
@@ -181,9 +196,9 @@ function TimePresetBar({ preset, onPreset, startDate, endDate, onStartDate, onEn
       ))}
       {preset === "custom" && (
         <div className="flex items-center gap-2 ml-2">
-          <Input type="datetime-local" value={startDate} onChange={e => onStartDate(e.target.value)} className="h-7 w-44 text-xs" />
+          <Input type="datetime-local" value={toDatetimeLocalValue(startDate)} onChange={e => onStartDate(fromDatetimeLocalValue(e.target.value))} className="h-7 w-44 text-xs" />
           <span className="text-xs text-muted-foreground">–</span>
-          <Input type="datetime-local" value={endDate} onChange={e => onEndDate(e.target.value)} className="h-7 w-44 text-xs" />
+          <Input type="datetime-local" value={toDatetimeLocalValue(endDate)} onChange={e => onEndDate(fromDatetimeLocalValue(e.target.value))} className="h-7 w-44 text-xs" />
         </div>
       )}
     </div>
@@ -443,7 +458,9 @@ export function SpendLogsPage() {
 
   const handlePreset = useCallback((p: TimePreset) => {
     setPreset(p);
-    if (p !== "custom") { const r = presetRange(p); setStartDate(r.start); setEndDate(r.end); }
+    const r = presetRange(p);
+    setStartDate(r.start);
+    setEndDate(r.end);
     setPage(1);
   }, []);
 
@@ -537,9 +554,9 @@ export function SpendLogsPage() {
             ))}
             {preset === "custom" && (
               <>
-                <Input type="datetime-local" value={startDate} onChange={e => setStartDate(e.target.value)} className="h-7 w-36 text-xs" />
+                <Input type="datetime-local" value={toDatetimeLocalValue(startDate)} onChange={e => setStartDate(fromDatetimeLocalValue(e.target.value))} className="h-7 w-36 text-xs" />
                 <span className="text-xs text-muted-foreground">–</span>
-                <Input type="datetime-local" value={endDate} onChange={e => setEndDate(e.target.value)} className="h-7 w-36 text-xs" />
+                <Input type="datetime-local" value={toDatetimeLocalValue(endDate)} onChange={e => setEndDate(fromDatetimeLocalValue(e.target.value))} className="h-7 w-36 text-xs" />
               </>
             )}
             <div className="h-5 w-px bg-border mx-1" />
