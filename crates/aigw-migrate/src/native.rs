@@ -12,6 +12,7 @@ use sqlx::postgres::PgPoolOptions;
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::{Column, MySqlPool, PgPool, Row, SqlitePool};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Types
@@ -286,12 +287,13 @@ impl SourcePool {
         cursor: &CursorRange,
         limit: Option<usize>,
         select_columns: Option<&[String]>,
+        batch_size: usize,
     ) -> BoxStream<'a, anyhow::Result<UnifiedRow>> {
         let sql = self.build_cursor_sql(table, cursor, limit, select_columns);
         match self {
-            SourcePool::Postgres(p) => stream_pg_rows(p, sql),
-            SourcePool::Sqlite(p) => stream_sqlite_rows(p, sql),
-            SourcePool::Mysql(p) => stream_mysql_rows(p, sql),
+            SourcePool::Postgres(p) => stream_pg_rows(p, sql, batch_size),
+            SourcePool::Sqlite(p) => stream_sqlite_rows(p, sql, batch_size),
+            SourcePool::Mysql(p) => stream_mysql_rows(p, sql, batch_size),
         }
     }
 
@@ -449,31 +451,58 @@ async fn read_mysql_rows(pool: &MySqlPool, sql: &str) -> anyhow::Result<Vec<Unif
 // Row streaming (for pipelined migrations — see migrate_spend_logs)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/// Stream rows from a PG source one at a time (driver-side cursor).
+/// Stream rows from a PG source using a named server-side cursor.
 ///
-/// Unlike `fetch_all`, this avoids materialising the whole result set in
-/// server memory before the client sees the first row, which is essential
-/// for tables like `LiteLLM_SpendLogs` (~800k rows, GB-scale payload).
+/// Opens a transaction, declares a cursor for the given SQL, and fetches
+/// `batch_size` rows at a time.  Each row is decoded and yielded individually
+/// through the stream.  The transaction is committed (releasing the server-side
+/// portal) when the cursor is exhausted or the stream is dropped.
+///
+/// This avoids the Simple Query Protocol's client-side buffering behaviour —
+/// `sqlx::query(&sql).fetch(pool)` *without* bind parameters buffers the
+/// entire result set on the client, which for ~800k-row tables with JSONB
+/// blobs can consume 10+ GB of RSS.
 fn stream_pg_rows<'a>(
     pool: &'a PgPool,
     sql: String,
+    batch_size: usize,
 ) -> BoxStream<'a, anyhow::Result<UnifiedRow>> {
-    // Move the owned SQL into the stream so the returned future outlives the
-    // caller's local `sql` binding.
+    // Cursor names must be unique within a session.  We use a monotonic
+    // counter; the PG pool has max_connections=5 so there are at most 5
+    // concurrent sessions, each with its own counter.
+    static CURSOR_ID: AtomicU64 = AtomicU64::new(0);
+    let cursor_name = format!("aigw_migrate_pg_cursor_{}", CURSOR_ID.fetch_add(1, Ordering::Relaxed));
+    let fetch_sql = format!("FETCH {} FROM \"{}\"", batch_size, cursor_name);
+
     async_stream::try_stream! {
-        // We box the query so we can use its stream form.
-        let mut stream = sqlx::query(&sql).fetch(pool);
-        while let Some(row_res) = stream.next().await {
-            let row = row_res?;
-            let cols = row.columns();
-            let mut unified = Vec::with_capacity(cols.len());
-            for col in cols {
-                let name = col.name().to_string();
-                let val = try_pg_get(&row, &name);
-                unified.push((name, val));
+        // 1. Open a transaction and declare the cursor.
+        let mut tx = pool.begin().await?;
+        sqlx::query(&format!("DECLARE \"{}\" CURSOR FOR {}", cursor_name, sql))
+            .execute(&mut *tx)
+            .await?;
+
+        // 2. Fetch batches until empty.
+        loop {
+            let rows = sqlx::query(&fetch_sql)
+                .fetch_all(&mut *tx)
+                .await?;
+            if rows.is_empty() {
+                break;
             }
-            yield unified;
+            for row in &rows {
+                let cols = row.columns();
+                let mut unified = Vec::with_capacity(cols.len());
+                for col in cols {
+                    let name = col.name().to_string();
+                    let val = try_pg_get(row, &name);
+                    unified.push((name, val));
+                }
+                yield unified;
+            }
         }
+
+        // 3. Release server-side resources.
+        tx.commit().await?;
     }
     .boxed()
 }
@@ -482,6 +511,7 @@ fn stream_pg_rows<'a>(
 fn stream_sqlite_rows<'a>(
     pool: &'a SqlitePool,
     sql: String,
+    _batch_size: usize,
 ) -> BoxStream<'a, anyhow::Result<UnifiedRow>> {
     async_stream::try_stream! {
         let mut stream = sqlx::query(&sql).fetch(pool);
@@ -504,6 +534,7 @@ fn stream_sqlite_rows<'a>(
 fn stream_mysql_rows<'a>(
     pool: &'a MySqlPool,
     sql: String,
+    _batch_size: usize,
 ) -> BoxStream<'a, anyhow::Result<UnifiedRow>> {
     async_stream::try_stream! {
         let mut stream = sqlx::query(&sql).fetch(pool);

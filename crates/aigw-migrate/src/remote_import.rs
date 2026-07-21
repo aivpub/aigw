@@ -515,6 +515,7 @@ async fn migrate_spend_logs(
             &cursor_owned,
             limit,
             Some(&select_cols_for_producer),
+            batch_size,
         );
         let mut buf: Vec<native::UnifiedRow> = Vec::with_capacity(batch_size);
         while let Some(row_res) = stream.next().await {
