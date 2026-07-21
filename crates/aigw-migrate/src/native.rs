@@ -354,23 +354,26 @@ async fn read_pg_rows(pool: &PgPool, sql: &str) -> anyhow::Result<Vec<UnifiedRow
 }
 
 fn try_pg_get(row: &sqlx::postgres::PgRow, col: &str) -> Value {
+    // ── String BEFORE Value ──────────────────────────────────
+    // PG JSONB columns arrive as wire-protocol text.  Decoding as
+    // `serde_json::Value` builds an entire object tree (128 KB × 800k =
+    // 10+ GB of transient allocations per batch), while `String` is a
+    // single allocation that round-trips cleanly through PG→PG migration
+    // without any JSON manipulation.
+    if let Ok(v) = row.try_get::<String, _>(col) {
+        if v.is_empty() { return Value::Null; }
+        return Value::String(v);
+    }
     if let Ok(v) = row.try_get::<Value, _>(col) { return v; }
     if let Ok(v) = row.try_get::<bool, _>(col) { return Value::Bool(v); }
     if let Ok(v) = row.try_get::<f64, _>(col) { return json!(v); }
     if let Ok(v) = row.try_get::<f32, _>(col) { return json!(v); }
     if let Ok(v) = row.try_get::<i64, _>(col) { return json!(v); }
     if let Ok(v) = row.try_get::<i32, _>(col) { return json!(v); }
-    // PG timestamps come back as `timestamp` / `timestamptz` — sqlx can't
-    // decode them as `String` directly, so we try chrono types before
-    // falling through to `Value::Null`.  Format uniformly as RFC 3339 with
-    // seconds precision so target coercion / runtime `DateTime<Utc>` decode
-    // both work.
     if let Ok(v) = row.try_get::<chrono::DateTime<chrono::Utc>, _>(col) {
         return Value::String(v.to_rfc3339());
     }
     if let Ok(v) = row.try_get::<chrono::NaiveDateTime, _>(col) {
-        // Assume UTC (upstream litellm columns are `timestamp(3) without time
-        // zone` but are UTC by convention).
         return Value::String(
             chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(v, chrono::Utc)
                 .to_rfc3339(),
@@ -378,10 +381,6 @@ fn try_pg_get(row: &sqlx::postgres::PgRow, col: &str) -> Value {
     }
     if let Ok(v) = row.try_get::<chrono::NaiveDate, _>(col) {
         return Value::String(v.format("%Y-%m-%d").to_string());
-    }
-    if let Ok(v) = row.try_get::<String, _>(col) {
-        if v.is_empty() { return Value::Null; }
-        return Value::String(v);
     }
     Value::Null
 }
