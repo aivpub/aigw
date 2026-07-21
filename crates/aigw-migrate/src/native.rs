@@ -548,11 +548,12 @@ fn stream_pg_rows_keyset<'a>(
 
         loop {
             // Build the keyset SQL with bind parameters.
-            // Use expanded comparison instead of row-constructor so we can
-            // explicitly cast $1 to timestamp (startTime is `timestamp
-            // without time zone` in upstream litellm, not `timestamptz`).
+            // Use row-constructor comparison so PG can use the
+            // (startTime, request_id) composite index directly (Index
+            // Range Scan, not Filter).  $1::timestamp is required
+            // because PG's timestamp without time zone ≠ text.
             let mut sql = format!(
-                "SELECT {} FROM {} WHERE (\"startTime\" > $1::timestamp OR (\"startTime\" = $1::timestamp AND \"request_id\" > $2))",
+                "SELECT {} FROM {} WHERE (\"startTime\", \"request_id\") > ($1::timestamp, $2)",
                 projection, quoted_table,
             );
             if let Some(ref end) = end_before_lit {
