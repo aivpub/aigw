@@ -483,7 +483,7 @@ fn stream_pg_rows_keyset<'a>(
         // allows TEXT (25) / VARCHAR (1043) → String.  By casting on the PG
         // side we make every JSONB column arrive as wire-protocol text,
         // bypassing the serde_json::Value object-tree decode entirely.
-        let src_col_info: Vec<(String, String, bool)> = sqlx::query_as(
+        let src_col_info: Vec<(String, String, String)> = sqlx::query_as(
             "SELECT column_name::text, \
                     CASE WHEN data_type = 'ARRAY' THEN udt_name ELSE data_type END::text, \
                     is_nullable::text \
