@@ -913,32 +913,26 @@ pub fn value_to_target_literal(v: &Value, col_type: &str, target: DbKind, is_nul
                 DbKind::Postgres => {
                     match ty.as_str() {
                         "jsonb" | "json" => {
-                            // For JSON columns: try parse as JSON first
-                            // (SQLite BLOB→JSON arrives as String of JSON text)
-                            match serde_json::from_str::<Value>(s) {
-                                Ok(json_val) => {
-                                    let escaped = json_val.to_string().replace('\'', "''");
-                                    format!("'{}'::jsonb", escaped)
-                                }
-                                Err(_) => {
-                                    // Not a JSON expression on its own — this
-                                    // happens for opaque encrypted blobs like
-                                    // `gAAAAAB...` that the runtime expects to
-                                    // decode back as `Value::String(_)`.  Wrap
-                                    // as a JSON scalar string so the value
-                                    // round-trips: source blob → target jsonb
-                                    // scalar → sqlx `Value::String(_)` at read.
-                                    //
-                                    // Previous behaviour was to drop the value
-                                    // as `'{}'::jsonb`, which silently emptied
-                                    // credential_values / litellm_params in PG
-                                    // targets and made all downstream decrypts
-                                    // fail.
-                                    let wrapped = serde_json::to_string(s)
-                                        .unwrap_or_else(|_| "\"\"".to_string());
-                                    let escaped = wrapped.replace('\'', "''");
-                                    format!("'{}'::jsonb", escaped)
-                                }
+                            // PG→PG migration: the source JSONB is already
+                            // valid JSON text (try_pg_get returns raw String).
+                            // Skip the serde_json::from_str() → to_string()
+                            // round-trip — for 128KB proxy_server_request blobs
+                            // this saves millions of allocs per batch.
+                            //
+                            // Health-check: if the text starts with '{' or '['
+                            // it's good to go.  Opaque encrypted blobs
+                            // (gAAAAAB…) will match neither and fall through to
+                            // JSON-scalar wrapping, preserving credential_values
+                            // / litellm_params rotation.
+                            let trimmed = s.trim();
+                            if trimmed.starts_with('{') || trimmed.starts_with('[') {
+                                let escaped = trimmed.replace('\'', "''");
+                                format!("'{}'::jsonb", escaped)
+                            } else {
+                                let wrapped = serde_json::to_string(s)
+                                    .unwrap_or_else(|_| "\"\"".to_string());
+                                let escaped = wrapped.replace('\'', "''");
+                                format!("'{}'::jsonb", escaped)
                             }
                         }
                         "boolean" | "bool" => {
@@ -1319,10 +1313,11 @@ mod tests {
 
     #[test]
     fn pg_jsonb_passes_through_valid_json_object() {
-        // Object payload — must be inlined verbatim, no double-wrapping.
+        // Object payload — keys preserved in source order (no longer
+        // sorted via serde_json round-trip).
         let v = Value::String(r#"{"api_key":"k","api_base":"http://x"}"#.to_string());
         let out = value_to_target_literal(&v, "jsonb", DbKind::Postgres, false);
-        assert_eq!(out, "'{\"api_base\":\"http://x\",\"api_key\":\"k\"}'::jsonb");
+        assert_eq!(out, "'{\"api_key\":\"k\",\"api_base\":\"http://x\"}'::jsonb");
     }
 
     #[test]
