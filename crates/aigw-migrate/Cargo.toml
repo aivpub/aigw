@@ -8,6 +8,14 @@ license.workspace = true
 name = "aigw-migrate"
 path = "src/main.rs"
 
+[[bin]]
+name = "generate_fixtures"
+path = "src/bin/generate_fixtures.rs"
+
+[[bin]]
+name = "export_fixtures"
+path = "src/bin/export_fixtures.rs"
+
 [dependencies]
 aigw-core = { path = "../aigw-core" }
 tokio.workspace = true
