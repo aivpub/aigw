@@ -2252,35 +2252,38 @@ impl Database {
         team_id: Option<&str>,
         organization_id: Option<&str>,
     ) -> Result<Vec<(String, f64, i64, i64)>> {
-        let sql_base = r#"SELECT
-                DATE(start_time),
-                COALESCE(SUM(spend), 0),
-                COALESCE(SUM(total_tokens), 0),
-                COUNT(request_id)
-            FROM spend_logs
-            WHERE date(start_time) >= date({p1}) AND date(start_time) <= date({p2}) {filter}
-            GROUP BY 1
-            ORDER BY 1 ASC"#;
         match self {
             Database::Sqlite(pool) => {
+                // SQLite: DATE() already returns TEXT — no cast needed.
+                let sql = "SELECT DATE(start_time), COALESCE(SUM(spend), 0), COALESCE(SUM(total_tokens), 0), COUNT(request_id) \
+                    FROM spend_logs WHERE date(start_time) >= date(?) AND date(start_time) <= date(?) {filter} \
+                    GROUP BY 1 ORDER BY 1 ASC";
                 let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false);
-                let sql = sql_base.replace("{p1}", "?").replace("{p2}", "?").replace("{filter}", &filter_clause);
+                let sql = sql.replace("{filter}", &filter_clause);
                 let mut q = sqlx::query_as(&sql)
                     .bind(start_date).bind(end_date);
                 for p in &params { q = q.bind(p); }
                 q.fetch_all(pool).await.map_err(DbError::from)
             }
             Database::Mysql(pool) => {
+                // MySQL: CAST(DATE(…) AS CHAR) converts DATE → TEXT.
+                let sql = "SELECT CAST(DATE(start_time) AS CHAR), COALESCE(SUM(spend), 0), COALESCE(SUM(total_tokens), 0), COUNT(request_id) \
+                    FROM spend_logs WHERE date(start_time) >= date(?) AND date(start_time) <= date(?) {filter} \
+                    GROUP BY 1 ORDER BY 1 ASC";
                 let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false);
-                let sql = sql_base.replace("{p1}", "?").replace("{p2}", "?").replace("{filter}", &filter_clause);
+                let sql = sql.replace("{filter}", &filter_clause);
                 let mut q = sqlx::query_as(&sql)
                     .bind(start_date).bind(end_date);
                 for p in &params { q = q.bind(p); }
                 q.fetch_all(pool).await.map_err(DbError::from)
             }
             Database::Postgres(pool) => {
+                // PostgreSQL: DATE(…)::TEXT converts DATE → TEXT.
+                let sql = "SELECT DATE(start_time)::TEXT, COALESCE(SUM(spend), 0), COALESCE(SUM(total_tokens), 0), COUNT(request_id) \
+                    FROM spend_logs WHERE date(start_time) >= date($1) AND date(start_time) <= date($2) {filter} \
+                    GROUP BY 1 ORDER BY 1 ASC";
                 let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 3, true);
-                let sql = sql_base.replace("{p1}", "$1").replace("{p2}", "$2").replace("{filter}", &filter_clause);
+                let sql = sql.replace("{filter}", &filter_clause);
                 let mut q = sqlx::query_as(&sql)
                     .bind(start_date).bind(end_date);
                 for p in &params { q = q.bind(p); }
