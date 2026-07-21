@@ -53,6 +53,6 @@ async-stream = "0.3"
 rust-embed = "8"
 # Tower service
 tower = "0.5"
-tower-http = { version = "0.6", features = ["trace", "request-id", "util", "fs"] }
+tower-http = { version = "0.6", features = ["trace", "request-id", "util", "fs", "compression-gzip", "compression-deflate", "compression-br"] }
 # OpenAPI (Stage 4)
 # utoipa = { version = "5", features = ["axum_extras"] }

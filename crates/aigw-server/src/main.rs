@@ -37,7 +37,7 @@ pub const LONG_VERSION: &str = concat!(
     env!("GIT_DESCRIBE"),
 );
 
-use aigw_core::config::AigwConfig;
+use aigw_core::config::{AigwConfig, CompressionConfig};
 use aigw_core::daily_spend_queue::DailySpendQueue;
 use aigw_core::db::Database;
 use aigw_core::provider::ProviderRegistry;
@@ -54,6 +54,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::request_id::{MakeRequestId, RequestId, SetRequestIdLayer};
 use tower_http::trace::{DefaultOnResponse, TraceLayer};
+use tower_http::compression::CompressionLayer;
 use tracing::Level;
 use tracing::Span;
 use tracing_subscriber::EnvFilter;
@@ -269,6 +270,14 @@ async fn main() -> anyhow::Result<()> {
         resolver,
     });
 
+    // Build compression config from general_settings
+    let compression_cfg = config
+        .as_ref()
+        .and_then(|c| c.general_settings.as_ref())
+        .and_then(|gs| gs.compression.as_ref())
+        .cloned()
+        .unwrap_or_default();
+
     // Build router
     let app = Router::new()
         .route("/docs", get(docs::docs_ui))
@@ -380,7 +389,9 @@ async fn main() -> anyhow::Result<()> {
                 ),
         )
         // CORS middleware — allows browser-based frontend to call API
-        .layer(middleware::from_fn(cors_layer::add_cors_headers));
+        .layer(middleware::from_fn(cors_layer::add_cors_headers))
+        // Response compression — gzip, deflate, brotli (configurable via general_settings.compression)
+        .layer(build_compression_layer(&compression_cfg));
 
     // Bind and serve
     let addr: SocketAddr = cli.bind.parse()?;
@@ -419,4 +430,263 @@ async fn shutdown_signal() {
     }
 
     tracing::info!("Shutdown signal received, shutting down gracefully");
+}
+
+/// Build a `CompressionLayer` from configuration.
+fn build_compression_layer(cfg: &CompressionConfig) -> CompressionLayer {
+    use tower_http::compression::CompressionLevel;
+
+    if !cfg.enabled {
+        return CompressionLayer::new()
+            .gzip(false)
+            .deflate(false)
+            .br(false);
+    }
+
+    let level = match cfg.level {
+        0..=3 => CompressionLevel::Fastest,
+        7..=9 => CompressionLevel::Best,
+        4..=6 => CompressionLevel::Default,
+        _ => CompressionLevel::Default,
+    };
+
+    let has = |name: &str| cfg.algorithms.iter().any(|a| a.eq_ignore_ascii_case(name));
+
+    CompressionLayer::new()
+        .quality(level)
+        .gzip(has("gzip"))
+        .deflate(has("deflate"))
+        .br(has("brotli"))
+}
+
+// ── Unit tests for compression ──
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aigw_core::config::CompressionConfig;
+    use axum::{body::Body, Router};
+    use tower::ServiceExt;
+    /// Helper: build a minimal Router with the compression layer and a fixed JSON response.
+    fn test_app(cfg: &CompressionConfig) -> Router {
+        async fn handler() -> axum::http::Response<Body> {
+            let body = serde_json::json!({"long_text": "I am Kofj".repeat(200)}).to_string();
+            axum::http::Response::builder()
+                .header("Content-Type", "application/json")
+                .body(Body::from(body))
+                .unwrap()
+        }
+
+        Router::new()
+            .route("/test", axum::routing::get(handler))
+            .layer(build_compression_layer(cfg))
+    }
+
+    #[tokio::test]
+    async fn compression_gzip_enabled() {
+        let app = test_app(&CompressionConfig::default());
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/test")
+                    .header("Accept-Encoding", "gzip")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), 200);
+
+        let has_encoding = response
+            .headers()
+            .get("Content-Encoding")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.to_string());
+
+        // With a large enough JSON body, the response should be gzip-compressed.
+        assert_eq!(
+            has_encoding.as_deref(),
+            Some("gzip"),
+            "Expected Content-Encoding: gzip, got: {has_encoding:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn compression_brotli_negotiation() {
+        let app = test_app(&CompressionConfig::default());
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/test")
+                    .header("Accept-Encoding", "br")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), 200);
+
+        let has_encoding = response
+            .headers()
+            .get("Content-Encoding")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.to_string());
+
+        assert_eq!(
+            has_encoding.as_deref(),
+            Some("br"),
+            "Expected Content-Encoding: br for brotli request, got: {has_encoding:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn compression_deflate_negotiation() {
+        let app = test_app(&CompressionConfig::default());
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/test")
+                    .header("Accept-Encoding", "deflate")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), 200);
+
+        let has_encoding = response
+            .headers()
+            .get("Content-Encoding")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.to_string());
+
+        assert_eq!(
+            has_encoding.as_deref(),
+            Some("deflate"),
+            "Expected Content-Encoding: deflate, got: {has_encoding:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn compression_disabled() {
+        let cfg = CompressionConfig {
+            enabled: false,
+            ..Default::default()
+        };
+        let app = test_app(&cfg);
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/test")
+                    .header("Accept-Encoding", "gzip, deflate, br")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), 200);
+
+        // When compression is disabled, Content-Encoding should be absent.
+        let has_encoding = response
+            .headers()
+            .get("Content-Encoding")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.to_string());
+
+        assert_eq!(
+            has_encoding, None,
+            "Expected no Content-Encoding when disabled, got: {has_encoding:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn compression_algorithm_selection() {
+        // Only allow gzip — brotli should NOT be used even if requested.
+        let cfg = CompressionConfig {
+            algorithms: vec!["gzip".into()],
+            ..Default::default()
+        };
+        let app = test_app(&cfg);
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/test")
+                    .header("Accept-Encoding", "br")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), 200);
+
+        let has_encoding = response
+            .headers()
+            .get("Content-Encoding")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.to_string());
+
+        // Brotli was disallowed → no compression applied.
+        assert_eq!(
+            has_encoding, None,
+            "Expected no Content-Encoding when only gzip is allowed for br request, got: {has_encoding:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn compression_with_no_accept_encoding() {
+        // No Accept-Encoding header → no compression should be applied.
+        let app = test_app(&CompressionConfig::default());
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/test")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), 200);
+
+        let has_encoding = response
+            .headers()
+            .get("Content-Encoding")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.to_string());
+
+        assert_eq!(
+            has_encoding, None,
+            "Expected no Content-Encoding without Accept-Encoding header, got: {has_encoding:?}"
+        );
+    }
+
+    #[test]
+    fn compression_level_mapping() {
+        // Verify level mapping helper
+        use tower_http::compression::CompressionLevel;
+
+        // Helper to test the mapping logic (duplicated from build_compression_layer for testing)
+        fn map_level(level: u32) -> CompressionLevel {
+            match level {
+                0..=3 => CompressionLevel::Fastest,
+                7..=9 => CompressionLevel::Best,
+                _ => CompressionLevel::Default,
+            }
+        }
+
+        assert!(matches!(map_level(0), CompressionLevel::Fastest));
+        assert!(matches!(map_level(3), CompressionLevel::Fastest));
+        assert!(matches!(map_level(4), CompressionLevel::Default));
+        assert!(matches!(map_level(6), CompressionLevel::Default));
+        assert!(matches!(map_level(7), CompressionLevel::Best));
+        assert!(matches!(map_level(9), CompressionLevel::Best));
+        // Values above 9 default to Default (defensive fallback)
+        assert!(matches!(map_level(10), CompressionLevel::Default));
+        assert!(matches!(map_level(42), CompressionLevel::Default));
+    }
 }

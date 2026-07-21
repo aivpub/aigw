@@ -55,6 +55,43 @@ pub struct GeneralSettings {
     /// ```
     #[serde(rename = "metrics_buckets", skip_serializing_if = "Option::is_none")]
     pub metrics_buckets: Option<MetricsBuckets>,
+
+    /// Compression settings for HTTP response compression (Content-Encoding)
+    #[serde(rename = "compression", skip_serializing_if = "Option::is_none")]
+    pub compression: Option<CompressionConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompressionConfig {
+    /// Enable response compression (default: true)
+    #[serde(default = "default_compression_enabled")]
+    pub enabled: bool,
+
+    /// Compression level 0-9 (default: 6). Applied to gzip and deflate.
+    /// Brotli uses its own quality scale (0-11) mapped from this value.
+    #[serde(default = "default_compression_level")]
+    pub level: u32,
+
+    /// Allowed algorithms in preference order. Supported: "gzip", "deflate", "brotli".
+    /// Default: ["gzip", "deflate", "brotli"]
+    #[serde(default = "default_compression_algorithms")]
+    pub algorithms: Vec<String>,
+}
+
+impl Default for CompressionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            level: 6,
+            algorithms: default_compression_algorithms(),
+        }
+    }
+}
+
+fn default_compression_enabled() -> bool { true }
+fn default_compression_level() -> u32 { 6 }
+fn default_compression_algorithms() -> Vec<String> {
+    vec!["gzip".into(), "deflate".into(), "brotli".into()]
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
