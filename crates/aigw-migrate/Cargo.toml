@@ -19,7 +19,7 @@ path = "src/bin/export_fixtures.rs"
 [dependencies]
 aigw-core = { path = "../aigw-core" }
 tokio.workspace = true
-sqlx = { workspace = true, features = ["sqlite", "postgres", "mysql", "any", "runtime-tokio-rustls", "chrono"] }
+sqlx = { workspace = true, features = ["sqlite", "postgres", "mysql", "any", "runtime-tokio-rustls", "chrono", "json"] }
 serde.workspace = true
 serde_json.workspace = true
 chrono.workspace = true
