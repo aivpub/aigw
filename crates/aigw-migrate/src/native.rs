@@ -476,14 +476,62 @@ fn stream_pg_rows_keyset<'a>(
     batch_size: usize,
 ) -> BoxStream<'a, anyhow::Result<UnifiedRow>> {
     async_stream::try_stream! {
+        // ── Build projection with ::text cast for JSONB columns ──────
+        //
+        // sqlx refuses to decode PG JSONB (OID 3802) as String — even with
+        // the "json" feature — because its type-check compares OIDs and only
+        // allows TEXT (25) / VARCHAR (1043) → String.  By casting on the PG
+        // side we make every JSONB column arrive as wire-protocol text,
+        // bypassing the serde_json::Value object-tree decode entirely.
+        let src_col_info: Vec<(String, String, bool)> = sqlx::query_as(
+            "SELECT column_name::text, \
+                    CASE WHEN data_type = 'ARRAY' THEN udt_name ELSE data_type END::text, \
+                    is_nullable::text \
+             FROM information_schema.columns \
+             WHERE lower(table_name) = lower($1) \
+             ORDER BY ordinal_position",
+        )
+        .bind(table)
+        .fetch_all(pool)
+        .await?;
+
+        // Set of jsonb column names for fast projection lookup.
+        let jsonb_cols: std::collections::HashSet<&str> = src_col_info
+            .iter()
+            .filter(|(_, ty, _)| ty == "jsonb")
+            .map(|(n, _, _)| n.as_str())
+            .collect();
+
         // Build the projection once — it never changes across batches.
         let projection: String = match select_columns {
             Some(cols) if !cols.is_empty() => cols
                 .iter()
-                .map(|c| format!("\"{}\"", c))
+                .map(|c| {
+                    let quoted = format!("\"{}\"", c);
+                    if jsonb_cols.contains(c.as_str()) {
+                        format!("{}::text", quoted)
+                    } else {
+                        quoted
+                    }
+                })
                 .collect::<Vec<_>>()
                 .join(", "),
-            _ => "*".to_string(),
+            _ => {
+                // SELECT * — build explicit projection with ::text casts.
+                let col_names: Vec<&str> = src_col_info.iter().map(|(n, _, _)| n.as_str()).collect();
+                col_names
+                    .iter()
+                    .map(|c| {
+                        let quoted = format!("\"{}\"", c);
+                        if jsonb_cols.contains(c) {
+                            format!("{}::text", quoted)
+                        } else {
+                            quoted
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }
         };
         let quoted_table = format!("\"{}\"", table);
         let end_before_lit = cursor.end_before.as_ref().map(|t| format!("'{}'::timestamptz", t.replace('T', " ").replace('Z', "")));
