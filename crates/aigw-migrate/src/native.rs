@@ -12,7 +12,6 @@ use sqlx::postgres::PgPoolOptions;
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::{Column, MySqlPool, PgPool, Row, SqlitePool};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Types
@@ -283,17 +282,24 @@ impl SourcePool {
     /// See `build_cursor_sql` for the semantics of `select_columns`.
     pub fn stream_rows_with_cursor<'a>(
         &'a self,
-        table: &str,
+        table: &'a str,
         cursor: &CursorRange,
         limit: Option<usize>,
-        select_columns: Option<&[String]>,
+        select_columns: Option<&'a [String]>,
         batch_size: usize,
     ) -> BoxStream<'a, anyhow::Result<UnifiedRow>> {
-        let sql = self.build_cursor_sql(table, cursor, limit, select_columns);
         match self {
-            SourcePool::Postgres(p) => stream_pg_rows(p, sql, batch_size),
-            SourcePool::Sqlite(p) => stream_sqlite_rows(p, sql, batch_size),
-            SourcePool::Mysql(p) => stream_mysql_rows(p, sql, batch_size),
+            SourcePool::Postgres(p) => {
+                stream_pg_rows_keyset(p, table, cursor.clone(), limit, select_columns, batch_size)
+            }
+            SourcePool::Sqlite(p) => {
+                let sql = self.build_cursor_sql(table, cursor, limit, select_columns);
+                stream_sqlite_rows(p, sql, batch_size)
+            }
+            SourcePool::Mysql(p) => {
+                let sql = self.build_cursor_sql(table, cursor, limit, select_columns);
+                stream_mysql_rows(p, sql, batch_size)
+            }
         }
     }
 
@@ -451,58 +457,113 @@ async fn read_mysql_rows(pool: &MySqlPool, sql: &str) -> anyhow::Result<Vec<Unif
 // Row streaming (for pipelined migrations — see migrate_spend_logs)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/// Stream rows from a PG source using a named server-side cursor.
+/// Stream rows from a PG source using keyset pagination on `(startTime, request_id)`.
 ///
-/// Opens a transaction, declares a cursor for the given SQL, and fetches
-/// `batch_size` rows at a time.  Each row is decoded and yielded individually
-/// through the stream.  The transaction is committed (releasing the server-side
-/// portal) when the cursor is exhausted or the stream is dropped.
+/// Each iteration issues a standalone query with bind parameters ($1, $2, $3),
+/// which forces the Extended Query Protocol — PG streams rows one at a time
+/// without server-side materialisation.  After the batch is consumed the
+/// keyset anchor is advanced to the last row seen, so the next iteration
+/// picks up where the previous one left off.
 ///
-/// This avoids the Simple Query Protocol's client-side buffering behaviour —
-/// `sqlx::query(&sql).fetch(pool)` *without* bind parameters buffers the
-/// entire result set on the client, which for ~800k-row tables with JSONB
-/// blobs can consume 10+ GB of RSS.
-fn stream_pg_rows<'a>(
+/// This replaces the DECLARE/FETCH cursor approach which materialised the
+/// entire result set on the PG server (119 GB text → 16 GB RAM on a 2C6G
+/// instance) and kept an open transaction for hours.
+fn stream_pg_rows_keyset<'a>(
     pool: &'a PgPool,
-    sql: String,
+    table: &'a str,
+    cursor: CursorRange,
+    limit: Option<usize>,
+    select_columns: Option<&'a [String]>,
     batch_size: usize,
 ) -> BoxStream<'a, anyhow::Result<UnifiedRow>> {
-    // Cursor names must be unique within a session.  We use a monotonic
-    // counter; the PG pool has max_connections=5 so there are at most 5
-    // concurrent sessions, each with its own counter.
-    static CURSOR_ID: AtomicU64 = AtomicU64::new(0);
-    let cursor_name = format!("aigw_migrate_pg_cursor_{}", CURSOR_ID.fetch_add(1, Ordering::Relaxed));
-    let fetch_sql = format!("FETCH {} FROM \"{}\"", batch_size, cursor_name);
-
     async_stream::try_stream! {
-        // 1. Open a transaction and declare the cursor.
-        let mut tx = pool.begin().await?;
-        sqlx::query(&format!("DECLARE \"{}\" CURSOR FOR {}", cursor_name, sql))
-            .execute(&mut *tx)
-            .await?;
+        // Build the projection once — it never changes across batches.
+        let projection: String = match select_columns {
+            Some(cols) if !cols.is_empty() => cols
+                .iter()
+                .map(|c| format!("\"{}\"", c))
+                .collect::<Vec<_>>()
+                .join(", "),
+            _ => "*".to_string(),
+        };
+        let quoted_table = format!("\"{}\"", table);
+        let end_before_lit = cursor.end_before.as_ref().map(|t| format!("'{}'::timestamptz", t.replace('T', " ").replace('Z', "")));
 
-        // 2. Fetch batches until empty.
+        // Anchor: (last_start_time, last_request_id).
+        // Initial value comes from --spend-log-resume-after, defaulting to epoch.
+        let mut anchor_time: String = cursor.resume_after
+            .map(|t| t.replace('T', " ").replace('Z', ""))
+            .unwrap_or_else(|| "1970-01-01 00:00:00".to_string());
+        let mut anchor_id: String = String::new();
+
+        // If the caller set a global limit, track how many rows remain.
+        let mut remaining = limit;
+
         loop {
-            let rows = sqlx::query(&fetch_sql)
-                .fetch_all(&mut *tx)
+            // Build the keyset SQL with bind parameters.
+            let mut sql = format!(
+                "SELECT {} FROM {} WHERE (\"startTime\", \"request_id\") > ($1, $2)",
+                projection, quoted_table,
+            );
+            if let Some(ref end) = end_before_lit {
+                sql.push_str(&format!(" AND \"startTime\" < {}", end));
+            }
+            sql.push_str(" ORDER BY \"startTime\" ASC, \"request_id\" ASC");
+
+            // Clamp batch size to remaining limit when one is set.
+            let limit_clause = match remaining {
+                Some(rem) if (rem as usize) < batch_size => rem as usize,
+                _ => batch_size,
+            };
+            sql.push_str(&format!(" LIMIT {}", limit_clause));
+
+            // Bind parameters: $1=anchor_time, $2=anchor_id.
+            let rows = sqlx::query(&sql)
+                .bind(&anchor_time)
+                .bind(&anchor_id)
+                .fetch_all(pool)
                 .await?;
+
             if rows.is_empty() {
                 break;
             }
+
+            // Track the last row for the next keyset anchor.
             for row in &rows {
                 let cols = row.columns();
                 let mut unified = Vec::with_capacity(cols.len());
                 for col in cols {
                     let name = col.name().to_string();
                     let val = try_pg_get(row, &name);
+                    if name == "startTime" {
+                        if let Value::String(ref s) = val {
+                            anchor_time = s.replace('T', " ").replace('Z', "");
+                        }
+                    }
+                    if name == "request_id" {
+                        if let Value::String(ref s) = val {
+                            anchor_id.clone_from(s);
+                        }
+                    }
                     unified.push((name, val));
                 }
                 yield unified;
             }
-        }
 
-        // 3. Release server-side resources.
-        tx.commit().await?;
+            // Decrement remaining if a global limit was set.
+            if let Some(ref mut rem) = remaining {
+                let count = rows.len();
+                if count >= *rem {
+                    break;
+                }
+                *rem -= count;
+            }
+
+            // If this batch was smaller than requested, we've hit the end.
+            if rows.len() < limit_clause {
+                break;
+            }
+        }
     }
     .boxed()
 }
