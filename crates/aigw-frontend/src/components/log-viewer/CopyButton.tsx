@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Copy, Check } from "lucide-react";
 import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
+import { toast } from "sonner";
 
 interface CopyButtonProps {
   text: string;
@@ -9,7 +10,9 @@ interface CopyButtonProps {
 }
 
 export function CopyButton({ text, label, className = "" }: CopyButtonProps) {
-  const { copied, copy } = useCopyToClipboard();
+  const { copied, copy } = useCopyToClipboard({
+    onError: () => toast.error("Copy failed — clipboard unavailable"),
+  });
 
   return (
     <Button

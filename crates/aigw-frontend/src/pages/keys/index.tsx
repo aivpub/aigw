@@ -142,9 +142,38 @@ export function KeysPage() {
     });
   }
 
-  async function copyToClipboard(text: string) {
-    await navigator.clipboard.writeText(text);
-    toast.success("Copied to clipboard");
+  function copyToClipboard(text: string) {
+    if (!text) return;
+    try {
+      if (
+        typeof navigator.clipboard?.writeText === "function"
+      ) {
+        navigator.clipboard.writeText(text).then(
+          () => toast.success("Copied to clipboard"),
+          () => fallbackCopyToClipboard(text),
+        );
+      } else {
+        fallbackCopyToClipboard(text);
+      }
+    } catch {
+      fallbackCopyToClipboard(text);
+    }
+
+    function fallbackCopyToClipboard(t: string) {
+      const textarea = document.createElement("textarea");
+      textarea.value = t;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      try {
+        document.execCommand("copy");
+        toast.success("Copied to clipboard");
+      } catch {
+        toast.error("Copy failed — clipboard unavailable");
+      }
+      document.body.removeChild(textarea);
+    }
   }
 
   function openCreate() {

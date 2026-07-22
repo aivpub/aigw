@@ -29,3 +29,17 @@ Feature: Key Management
     When I click the delete button for the first key
     And I confirm the deletion
     Then the key should be removed from the list
+
+  Scenario: Copy key token to clipboard
+    When I click the copy button for the first key's token
+    Then I should see a "Copied to clipboard" notification
+
+  Scenario: Copy key token via fallback when Clipboard API is unavailable
+    Given Clipboard API is unavailable
+    When I click the copy button for the first key's token
+    Then I should see a "Copied to clipboard" notification
+
+  Scenario: Copy failure shows error toast when all copy methods fail
+    Given all copy methods are unavailable
+    When I click the copy button for the first key's token
+    Then I should see a "Copy failed" error notification

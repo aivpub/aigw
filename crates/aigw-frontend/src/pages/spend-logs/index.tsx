@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
+import { toast } from "sonner";
 import { InputCard } from "@/components/log-viewer/InputCard";
 import { OutputCard } from "@/components/log-viewer/OutputCard";
 import { parseMessages } from "@/components/log-viewer/MessageViewer";
@@ -145,7 +146,7 @@ function ProviderLogo({ provider }: { provider?: string | null }) {
 /* ───────────────────────────────── Row-level copy ── */
 
 function RowCopyButton({ text }: { text: string }) {
-  const { copied, copy } = useCopyToClipboard();
+  const { copied, copy } = useCopyToClipboard({ onError: () => toast.error("Copy failed — clipboard unavailable") });
   return (
     <Button variant="ghost" size="icon" className="h-4 w-4" onClick={e => { e.stopPropagation(); copy(text); }}>
       {copied ? <Check className="h-2.5 w-2.5 text-green-500" /> : <Copy className="h-2.5 w-2.5" />}
@@ -154,7 +155,7 @@ function RowCopyButton({ text }: { text: string }) {
 }
 
 function CopyIconButton({ text, className }: { text: string; className?: string }) {
-  const { copied, copy } = useCopyToClipboard();
+  const { copied, copy } = useCopyToClipboard({ onError: () => toast.error("Copy failed — clipboard unavailable") });
   return (
     <button type="button" tabIndex={-1} className={className ?? "p-0.5 hover:text-foreground text-muted-foreground"} onClick={() => copy(text)} title="Copy">
       {copied ? <Check className="h-3.5 w-3.5 text-green-500" /> : <Copy className="h-3.5 w-3.5" />}

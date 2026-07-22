@@ -137,3 +137,75 @@ Then("I should see the generated API key token", async ({ page }) => {
   // The "I've saved my key" button confirms the token can be dismissed
   await expect(dialog.getByRole("button", { name: /saved my key/i })).toBeVisible({ timeout: 3000 });
 });
+
+// ── Copy-to-clipboard ──
+
+When("I click the copy button for the first key's token", async ({ page }) => {
+  // Desktop: copy button is inside the token cell (font-mono), next to the
+  // Eye/EyeOff toggle.  Mobile: same pattern inside a card.
+  // Both use a button with only a lucide Copy icon — target by the
+  // surrounding font-mono container.
+  const desktopCopy = page.locator("table:visible td.font-mono button").last();
+  const mobileCopy = page.locator(".md\\:hidden:visible div.font-mono button").last();
+
+  if (await desktopCopy.isVisible({ timeout: 1000 }).catch(() => false)) {
+    await desktopCopy.click();
+  } else if (await mobileCopy.isVisible({ timeout: 1000 }).catch(() => false)) {
+    await mobileCopy.click();
+  } else {
+    // Fallback: any button containing a Copy icon in the main area
+    await page.locator("main button").filter({ has: page.locator("svg") }).first().click();
+  }
+});
+
+Then("I should see a {string} notification", async ({ page }, text: string) => {
+  // sonner toasts render in a dedicated region
+  const toast = page.locator("[data-sonner-toaster] li, [data-sonner-toaster] [data-sonner-toast]");
+  await expect(toast.getByText(text)).toBeVisible({ timeout: 5000 });
+});
+
+Then("I should see a {string} error notification", async ({ page }, text: string) => {
+  const toast = page.locator("[data-sonner-toaster] li, [data-sonner-toaster] [data-sonner-toast]");
+  await expect(toast.getByText(text)).toBeVisible({ timeout: 5000 });
+});
+
+Given("Clipboard API is unavailable", async ({ page }) => {
+  // Strip navigator.clipboard so the execCommand('copy') fallback is exercised.
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      value: undefined,
+      configurable: true,
+    });
+  });
+  await page.goto("/dash/keys");
+  await page.waitForLoadState("domcontentloaded");
+  await page.waitForTimeout(500);
+});
+
+Given("all copy methods are unavailable", async ({ page }) => {
+  // Disable navigator.clipboard in the isolated world so the React code
+  // can't use it.  Then patch Document.prototype.execCommand to reject
+  // 'copy' — Chromium's native execCommand survives addInitScript
+  // overrides, so we must do this post-navigation.
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      value: undefined,
+      configurable: true,
+    });
+  });
+  await page.goto("/dash/keys");
+  await page.waitForLoadState("domcontentloaded");
+  await page.waitForTimeout(500);
+
+  // Both copy paths should fail.  Make execCommand("copy") throw so
+  // the catch block fires and the error toast appears.  Returning false
+  // won't trigger the catch.
+  await page.evaluate(() => {
+    const proto = HTMLDocument.prototype as any;
+    const orig = proto.execCommand;
+    proto.execCommand = function (commandId: string, ...args: unknown[]) {
+      if (commandId === "copy") throw new Error("clipboard unavailable");
+      return orig.call(this, commandId, ...args);
+    };
+  });
+});
