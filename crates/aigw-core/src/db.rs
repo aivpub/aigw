@@ -2308,11 +2308,14 @@ impl Database {
         end_date: &str,
         limit: u32,
     ) -> Result<Vec<crate::models::SpendKeyRanking>> {
+        // GROUP BY must list every non-aggregated SELECT column (PostgreSQL enforces this;
+        // SQLite/MySQL are lenient). vk.key_alias is functionally dependent on sl.api_key
+        // via the LEFT JOIN on vk.token (PK), so grouping by it does not change cardinality.
         let sql = "SELECT sl.api_key, vk.key_alias, \
             COALESCE(SUM(sl.spend), 0) AS total_spend, COUNT(sl.request_id) AS total_requests, COALESCE(SUM(sl.total_tokens), 0) AS total_tokens \
             FROM spend_logs sl LEFT JOIN virtual_keys vk ON sl.api_key = vk.token \
             WHERE date(sl.start_time) >= date({p1}) AND date(sl.start_time) <= date({p2}) \
-            GROUP BY sl.api_key ORDER BY 3 DESC LIMIT {limit}";
+            GROUP BY sl.api_key, vk.key_alias ORDER BY 3 DESC LIMIT {limit}";
         let sql = sql.replace("{limit}", &limit.to_string());
         match self {
             Database::Sqlite(pool) => {
