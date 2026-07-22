@@ -1,11 +1,11 @@
 # aigw -- 下一步行动
 
 **上次更新**: 2026-07-22
-**当前阶段**: Phase 27 ✅ 全栈质量修复 + Usage 页面图表增强 全部完成
+**当前阶段**: Phase 28 ⏳ 安全与质量加固 / Phase 29 ⏳ Cross-DB BDD Hardening（文档就绪，待命）
 
 ---
 
-## 当前状态：71/71 Stages 已完成 ✅ 全部交付
+## 当前状态：71/72 Stages 已完成（Phase 28/29 待实施）
 
 ### 项目里程碑
 
@@ -57,7 +57,9 @@ Phase 27:   ████████████████████ 100% (3
 | P0 | Phase 27 | 后端质量修复+数据增强 (Stage 69) | ✅ 完成 |
 | P0 | Phase 27 | 前端页面修复 Models/Keys/Users/SpendLogs (Stage 70) | ✅ 完成 |
 | P1 | Phase 27 | Usage 图表增强 堆叠+排行榜 (Stage 71) | ✅ 完成 |
-| P2 | Phase 26 | OTEL Traces (Stage 68) | ⏳ 下一步 |
+| P2 | Phase 26 | OTEL Traces (Stage 68) | ⏳ |
+| P1 | Phase 28 | 安全与质量加固 (Stage 72) | ⏳ |
+| P2 | Phase 29 | Cross-DB BDD — keys/rankings 多 DB 覆盖 (Stage 73) | ⏳ 文档就绪，待命 |
 
 ---
 
@@ -81,14 +83,15 @@ Stage 69（数据层 + 端点）→ Stage 70 / 71 可并行 ✅ 全部完成
 
 | ID | 主题 | 优先级 | 状态 |
 |----|------|--------|------|
-| LT-Observ | Observability (OTEL Traces) | P1 | Stage 68 待开始 —— **下一步** |
+| LT-Observ | Observability (OTEL Traces) | P1 | Stage 68 待开始 |
+| LT-CrossDB | Cross-DB 真实端到端 BDD 全量覆盖 | P2 | Phase 29 Stage 73（keys/rankings 首接口，文档就绪待命） |
 | LT-Usage | Usage 多视角聚合 | P2 | 已消化 → Phase 27 |
 | LT-Redis | Redis 缓存 | P2 | QPS > 1000 |
 | LT-PG | PostgreSQL 生产级 | P2 | 多实例 + 高可用 |
 | LT-SSO | SSO/OAuth | P3 | 企业客户需求 |
 | LT-K8s | Kubernetes Operator | P3 | 云原生客户需求 |
 
-> **已消化**: LT-Native → Phase 22, LT-Router → Phase 23, LT-Settings → Phase 24, LT-Usage → Phase 27
+> **已消化**: LT-Native → Phase 22, LT-Router → Phase 23, LT-Settings → Phase 24, LT-Usage → Phase 27, LT-CrossDB（首接口）→ Phase 29
 
 ## ADR 记录
 

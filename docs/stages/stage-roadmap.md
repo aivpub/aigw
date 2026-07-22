@@ -7,9 +7,9 @@
 
 ## 当前状态
 
-- **当前 Phase**: Phase 28 — 安全与质量加固
-- **状态**: 71/72 Stages 已完成 (Phase 27 ✅, Phase 28 ⏳)
-- **下一里程碑**: Stage 72 — 安全与质量加固 (16h)
+- **当前 Phase**: Phase 28 — 安全与质量加固 / Phase 29 — Cross-DB BDD Hardening（待命）
+- **状态**: 71/72 Stages 已完成 (Phase 27 ✅, Phase 28 ⏳, Phase 29 ⏳ 文档就绪待实施)
+- **下一里程碑**: Stage 72 — 安全与质量加固 (16h)；Stage 73 — 多 DB 真实端到端 BDD (6h，待命)
 
 ### 整体进度
 
@@ -37,6 +37,7 @@ Phase 25:   ████████████████████ 100% (1
 Phase 26:   ██████████████░░░░░░  50% (1/2 Stages) 🔄 可观测性（Prometheus ✅, OTEL ⏳）
 Phase 27:   ████████████████████ 100% (3/3 Stages) ✅ 全栈质量修复 + Usage 图表增强
 Phase 28:   ░░░░░░░░░░░░░░░░░░░░   0% (0/1 Stage)  ⏳ 安全与质量加固
+Phase 29:   ░░░░░░░░░░░░░░░░░░░░   0% (0/1 Stage)  ⏳ Cross-DB BDD Hardening（待命）
 ```
 
 ---
@@ -279,6 +280,27 @@ Phase 28:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 ---
 
+### Phase 29：Cross-DB BDD Hardening ⏳（待命）
+
+**背景**: `GET /global/spend/keys/rankings` 在 PostgreSQL 部署报错 `column "vk.key_alias" must appear in the GROUP BY clause`（commit `29168b5` 已修复）。根因 SQL 的 `SELECT vk.key_alias` 不在 `GROUP BY` —— SQLite/MySQL 宽松只在 PG 暴露。这暴露了一个系统性缺口：mock BDD 默认跑 SQLite，**无法发现跨 DB SQL 方言差异**。已有 DB 层 testcontainers 回归测试，但接口层（路由/鉴权/HTTP 响应）无多 DB 覆盖。本 Phase 把 spend 聚合类接口纳入多 DB 真实端到端 BDD（复用现成的 `bdd-real-pg/mysql/sqlite` task 基础设施）。
+
+| Stage | 状态 | 目标 | 类型 | 预估 |
+|-------|------|------|------|------|
+| Stage 73 | ⏳ 待开始（文档就绪，待命） | **多 DB 真实端到端 BDD — Spend 聚合接口覆盖** — 新增 `@real_api @needs_upstream_db` 场景，HTTP 打真实 aigw 调 `/global/spend/keys/rankings`，复用 `SourcePool::execute_raw` 直连测试库灌确定性 spend_logs；无上游库时 SKIP；红→绿验证复现 42803 报错。SQLite/PG/MySQL 三 DB 一致覆盖 | 后端+测试 | 6h |
+
+**依赖**: Stage 69（提供端点）。与 Stage 72 无硬依赖，可并行。
+
+**Phase 29 合计**: 6h，1 Stage。
+
+**设计文档**: `docs/stages/stage-73.md`
+
+**关键决策**:
+- 方向选 B（打真实服务器）而非改 mock 多 DB 化 —— 复用 `bdd-real-*` task，不改 mock SQLite 快测
+- 灌数据走 `SourcePool::execute_raw` + `time_literal()` 跨方言，不写方言分支
+- `real_api_steps.rs` 的 `base_url()/client()/real_api_enabled()` 提为 `pub(crate)` 复用，避免重复
+
+---
+
 ## 已完成 Phase 回顾
 
 ### Phase 0：项目基础设施
@@ -393,8 +415,9 @@ Phase 28:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 | LT-SSO | SSO/OAuth 鉴权 | P3 | 企业客户需求 |
 | LT-PG | PostgreSQL 生产级支持 + 迁移工具 | P2 | 多实例 + 高可用 |
 | LT-K8s | Kubernetes Operator + Helm Chart | P3 | 云原生客户需求 |
+| LT-CrossDB | Cross-DB 真实端到端 BDD 全量覆盖（spend 聚合/models/providers/logs） | P2 | PG/MySQL 生产部署后 |
 
-> **已消化**: LT-Router → Phase 23, LT-Native → Phase 22, LT-Usage → Phase 27
+> **已消化**: LT-Router → Phase 23, LT-Native → Phase 22, LT-Usage → Phase 27, LT-CrossDB（首接口 keys/rankings）→ Phase 29 Stage 73
 
 ### 状态图标说明
 
@@ -419,3 +442,4 @@ Phase 28:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 | v21.0 | 2026-07-22 | **Stage 69 完成**：model_group 语义修复、reqwest-retry HTTP 重试、axum-client-ip 提取器、Daily trends 8 字段扩展、Top Keys 聚合端点。总进度 69/71，Phase 27 进度 1/3。|
 | v22.0 | 2026-07-22 | **Phase 27 全部完成**：Stage 70 前端页面修复（Expires 表单字段、virtual_keys_count 子查询）+ Stage 71 Usage 图表增强（堆叠 bar、Top Keys/Models 排行榜）。总进度 71/71。✅ Phase 27 闭环交付。|
 | v23.0 | 2026-07-22 | **Phase 28 规划**：新增 Phase 28（Stage 72，安全与质量加固, 16h）：OptionalClientIp 三层 fallback + requester_ip_address 序列化修复 + /router/settings 鉴权加固 + 前端 401 自动跳转。3 子任务可并行。设计文档：`docs/stages/stage-72.md`。总进度 71/72。|
+| v24.0 | 2026-07-22 | **Phase 29 规划（待命）**：新增 Phase 29（Stage 73，Cross-DB BDD Hardening, 6h）。起因 `/global/spend/keys/rankings` 在 PG 部署报错（commit `29168b5` 已修复），暴露 mock BDD 跑 SQLite 无法发现跨 DB 方言差异。Stage 73 新增 `@real_api @needs_upstream_db` 场景，复用 `bdd-real-pg/mysql/sqlite` task 端到端覆盖三 DB，仅文档就绪待实施。设计文档：`docs/stages/stage-73.md`。|
