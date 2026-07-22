@@ -15,6 +15,9 @@ import {
   Tooltip,
   ResponsiveContainer,
   Legend,
+  PieChart,
+  Pie,
+  Cell,
 } from "recharts";
 import {
   DollarSign,
@@ -144,6 +147,14 @@ function truncateApiKey(apiKey: string): string {
   return `${apiKey.slice(0, 6)}...${apiKey.slice(-4)}`;
 }
 
+function yAxisTick(v: number): string {
+  if (v >= 1_000_000_000) return `${(v / 1_000_000_000).toFixed(1)}B`;
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000) return `${(v / 1_000).toFixed(1)}K`;
+  if (Number.isInteger(v)) return v.toString();
+  return v.toFixed(2);
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Component
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -153,9 +164,11 @@ export function UsagePage() {
   const [startDate, setStartDate] = useState(presetRange("3d").start);
   const [endDate, setEndDate] = useState(presetRange("3d").end);
   const [dailyChartMode, setDailyChartMode] = useState<ChartMode>("spend");
+  const [modelChartMode, setModelChartMode] = useState<ChartMode>("spend");
   const [providerChartMode, setProviderChartMode] = useState<ChartMode>("spend");
   const [rankingChartMode, setRankingChartMode] = useState<ChartMode>("spend");
   const [modelViewMode, setModelViewMode] = useState<ModelViewMode>("chart");
+  const [providerViewMode, setProviderViewMode] = useState<ModelViewMode>("chart");
 
   const handlePreset = (p: DatePreset) => {
     setPreset(p);
@@ -194,7 +207,7 @@ export function UsagePage() {
   const { data: keyRankings, isLoading: keyRankingsLoading } = useQuery<KeyRankingResponse>({
     queryKey: ["key-rankings", startDate, endDate],
     queryFn: () =>
-      apiGet(`/global/spend/keys/rankings?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}&limit=10`),
+      apiGet(`/global/spend/keys/rankings?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}&limit=5`),
     refetchInterval: 30_000,
   });
 
@@ -392,7 +405,7 @@ export function UsagePage() {
                 <BarChart data={dailyChartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
                   <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
                   <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="hsl(var(--muted-foreground))" />
-                  <YAxis tick={{ fontSize: 11 }} stroke="hsl(var(--muted-foreground))" />
+                  <YAxis tick={{ fontSize: 11 }} stroke="hsl(var(--muted-foreground))" tickFormatter={yAxisTick} />
                   <Tooltip
                     contentStyle={{
                       backgroundColor: "hsl(var(--card))",
@@ -465,7 +478,7 @@ export function UsagePage() {
             </div>
           ) : (
             <div className="space-y-2">
-              {rankings.map((r, i) => {
+              {rankings.slice(0, 5).map((r, i) => {
                 const metricValue =
                   rankingChartMode === "tokens" ? r.total_tokens :
                   rankingChartMode === "requests" ? r.total_requests :
@@ -520,7 +533,7 @@ export function UsagePage() {
                 </TabsList>
               </Tabs>
               {modelViewMode === "chart" && (
-                <Tabs defaultValue="spend" value={dailyChartMode} onValueChange={(v) => setDailyChartMode(v as ChartMode)}>
+                <Tabs defaultValue="spend" value={modelChartMode} onValueChange={(v) => setModelChartMode(v as ChartMode)}>
                   <TabsList className="h-7">
                     <TabsTrigger value="spend" className="text-xs px-3 h-5">💰</TabsTrigger>
                     <TabsTrigger value="tokens" className="text-xs px-3 h-5">📊</TabsTrigger>
@@ -529,7 +542,7 @@ export function UsagePage() {
                 </Tabs>
               )}
               {modelViewMode === "ranking" && (
-                <Tabs defaultValue="spend" value={dailyChartMode} onValueChange={(v) => setDailyChartMode(v as ChartMode)}>
+                <Tabs defaultValue="spend" value={modelChartMode} onValueChange={(v) => setModelChartMode(v as ChartMode)}>
                   <TabsList className="h-7">
                     <TabsTrigger value="spend" className="text-xs px-3 h-5">💰</TabsTrigger>
                     <TabsTrigger value="tokens" className="text-xs px-3 h-5">📊</TabsTrigger>
@@ -549,10 +562,16 @@ export function UsagePage() {
             ) : modelViewMode === "chart" ? (
               <div className="h-[200px] md:h-[260px]">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={modelChartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+                  <BarChart data={[...modelChartData]
+                    .sort((a, b) => {
+                      if (modelChartMode === "tokens") return b.total_tokens - a.total_tokens;
+                      if (modelChartMode === "requests") return b.requests - a.requests;
+                      return b.total_spend - a.total_spend;
+                    })
+                    .slice(0, 5)} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
                     <XAxis dataKey="model" tick={{ fontSize: 11 }} stroke="hsl(var(--muted-foreground))" />
-                    <YAxis tick={{ fontSize: 11 }} stroke="hsl(var(--muted-foreground))" />
+                    <YAxis tick={{ fontSize: 11 }} stroke="hsl(var(--muted-foreground))" tickFormatter={yAxisTick} />
                     <Tooltip
                       contentStyle={{
                         backgroundColor: "hsl(var(--card))",
@@ -561,14 +580,14 @@ export function UsagePage() {
                         fontSize: "12px",
                       }}
                       formatter={(value) => {
-                        if (dailyChartMode === "tokens") return [fmtTokens(value as number), "Tokens"];
-                        if (dailyChartMode === "requests") return [value, "Requests"];
+                        if (modelChartMode === "tokens") return [fmtTokens(value as number), "Tokens"];
+                        if (modelChartMode === "requests") return [value, "Requests"];
                         return [fmtSpend(value as number), "Spend"];
                       }}
                     />
-                    {dailyChartMode === "spend" && <Bar dataKey="total_spend" name="Spend" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />}
-                    {dailyChartMode === "tokens" && <Bar dataKey="total_tokens" name="Tokens" fill="#f59e0b" radius={[4, 4, 0, 0]} />}
-                    {dailyChartMode === "requests" && <Bar dataKey="requests" name="Requests" fill="#22c55e" radius={[4, 4, 0, 0]} />}
+                    {modelChartMode === "spend" && <Bar dataKey="total_spend" name="Spend" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />}
+                    {modelChartMode === "tokens" && <Bar dataKey="total_tokens" name="Tokens" fill="#f59e0b" radius={[4, 4, 0, 0]} />}
+                    {modelChartMode === "requests" && <Bar dataKey="requests" name="Requests" fill="#22c55e" radius={[4, 4, 0, 0]} />}
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -576,18 +595,19 @@ export function UsagePage() {
               <div className="space-y-2">
                 {[...modelChartData]
                   .sort((a, b) => {
-                    if (dailyChartMode === "tokens") return b.total_tokens - a.total_tokens;
-                    if (dailyChartMode === "requests") return b.requests - a.requests;
+                    if (modelChartMode === "tokens") return b.total_tokens - a.total_tokens;
+                    if (modelChartMode === "requests") return b.requests - a.requests;
                     return b.total_spend - a.total_spend;
                   })
+                  .slice(0, 5)
                   .map((m, i) => {
                     const metricValue =
-                      dailyChartMode === "tokens" ? m.total_tokens :
-                      dailyChartMode === "requests" ? m.requests :
+                      modelChartMode === "tokens" ? m.total_tokens :
+                      modelChartMode === "requests" ? m.requests :
                       m.total_spend;
                     const maxValue =
-                      dailyChartMode === "tokens" ? modelRankingMaxTokens :
-                      dailyChartMode === "requests" ? modelRankingMaxRequests :
+                      modelChartMode === "tokens" ? modelRankingMaxTokens :
+                      modelChartMode === "requests" ? modelRankingMaxRequests :
                       modelRankingMaxSpend;
                     const pct = maxValue > 0 ? (metricValue / maxValue) * 100 : 0;
 
@@ -605,9 +625,9 @@ export function UsagePage() {
                           />
                         </div>
                         <span className="text-xs font-mono w-[80px] text-right">
-                          {dailyChartMode === "tokens"
+                          {modelChartMode === "tokens"
                             ? fmtTokens(metricValue)
-                            : dailyChartMode === "requests"
+                            : modelChartMode === "requests"
                               ? metricValue.toLocaleString()
                               : fmtSpend(metricValue)}
                         </span>
@@ -619,17 +639,25 @@ export function UsagePage() {
           </CardContent>
         </Card>
 
-        {/* Provider card — independent tab state from daily chart */}
+        {/* Provider card — donut chart default, toggle to ranking */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2 pt-4 px-4">
             <CardTitle className="text-sm font-medium">Spend by Provider</CardTitle>
-            <Tabs defaultValue="spend" value={providerChartMode} onValueChange={(v) => setProviderChartMode(v as ChartMode)}>
-              <TabsList className="h-7">
-                <TabsTrigger value="spend" className="text-xs px-3 h-5">💰</TabsTrigger>
-                <TabsTrigger value="tokens" className="text-xs px-3 h-5">📊</TabsTrigger>
-                <TabsTrigger value="requests" className="text-xs px-3 h-5">📋</TabsTrigger>
-              </TabsList>
-            </Tabs>
+            <div className="flex items-center gap-2">
+              <Tabs defaultValue="chart" value={providerViewMode} onValueChange={(v) => setProviderViewMode(v as ModelViewMode)}>
+                <TabsList className="h-7">
+                  <TabsTrigger value="chart" className="text-xs px-3 h-5">📊 Chart</TabsTrigger>
+                  <TabsTrigger value="ranking" className="text-xs px-3 h-5"><ListOrdered className="h-3 w-3" /></TabsTrigger>
+                </TabsList>
+              </Tabs>
+              <Tabs defaultValue="spend" value={providerChartMode} onValueChange={(v) => setProviderChartMode(v as ChartMode)}>
+                <TabsList className="h-7">
+                  <TabsTrigger value="spend" className="text-xs px-3 h-5">💰</TabsTrigger>
+                  <TabsTrigger value="tokens" className="text-xs px-3 h-5">📊</TabsTrigger>
+                  <TabsTrigger value="requests" className="text-xs px-3 h-5">📋</TabsTrigger>
+                </TabsList>
+              </Tabs>
+            </div>
           </CardHeader>
           <CardContent>
             {providerLoading ? (
@@ -637,6 +665,34 @@ export function UsagePage() {
             ) : providerChartData.length === 0 ? (
               <div className="flex items-center justify-center h-64 text-sm text-muted-foreground">
                 No data available
+              </div>
+            ) : providerViewMode === "chart" ? (
+              <div className="h-[200px] md:h-[260px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={providerChartData}
+                      dataKey={providerChartMode === "tokens" ? "tokens" : providerChartMode === "requests" ? "requests" : "value"}
+                      nameKey="name"
+                      cx="50%"
+                      cy="50%"
+                      outerRadius={80}
+                      label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
+                      labelLine={true}
+                    >
+                      {providerChartData.map((_, i) => (
+                        <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      formatter={(value) => {
+                        if (providerChartMode === "tokens") return [fmtTokens(value as number), "Tokens"];
+                        if (providerChartMode === "requests") return [value, "Requests"];
+                        return [fmtSpend(value as number), "Spend"];
+                      }}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
               </div>
             ) : (
               <div className="space-y-2">
@@ -646,6 +702,7 @@ export function UsagePage() {
                     if (providerChartMode === "requests") return b.requests - a.requests;
                     return b.value - a.value;
                   })
+                  .slice(0, 5)
                   .map((p, i) => {
                     const metricValue =
                       providerChartMode === "tokens" ? p.tokens :
