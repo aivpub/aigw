@@ -7,9 +7,9 @@
 
 ## 当前状态
 
-- **当前 Phase**: Phase 28 — 安全与质量加固 / Phase 29 — Cross-DB BDD Hardening（待命）
-- **状态**: 71/72 Stages 已完成 (Phase 27 ✅, Phase 28 ⏳, Phase 29 ⏳ 文档就绪待实施)
-- **下一里程碑**: Stage 72 — 安全与质量加固 (16h)；Stage 73 — 多 DB 真实端到端 BDD (6h，待命)
+- **当前 Phase**: Phase 28 — 安全与质量加固 / Phase 29 — Cross-DB BDD Hardening（4 Stage 文档就绪，待命）
+- **状态**: 71/72 Stages 已完成 (Phase 27 ✅, Phase 28 ⏳, Phase 29 ⏳ 4 Stage 已规划待实施)
+- **下一里程碑**: Stage 72 — 安全与质量加固 (16h)；Phase 29 — Stage 73-76 多 DB 真实端到端 BDD (44h，待命)
 
 ### 整体进度
 
@@ -37,7 +37,7 @@ Phase 25:   ████████████████████ 100% (1
 Phase 26:   ██████████████░░░░░░  50% (1/2 Stages) 🔄 可观测性（Prometheus ✅, OTEL ⏳）
 Phase 27:   ████████████████████ 100% (3/3 Stages) ✅ 全栈质量修复 + Usage 图表增强
 Phase 28:   ░░░░░░░░░░░░░░░░░░░░   0% (0/1 Stage)  ⏳ 安全与质量加固
-Phase 29:   ░░░░░░░░░░░░░░░░░░░░   0% (0/1 Stage)  ⏳ Cross-DB BDD Hardening（待命）
+Phase 29:   ░░░░░░░░░░░░░░░░░░░░   0% (0/4 Stages) ⏳ Cross-DB BDD Hardening（4 Stage 文档就绪待实施）
 ```
 
 ---
@@ -280,24 +280,31 @@ Phase 29:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 ---
 
-### Phase 29：Cross-DB BDD Hardening ⏳（待命）
+### Phase 29：Cross-DB BDD Hardening ⏳（待命，4 Stage 已规划）
 
-**背景**: `GET /global/spend/keys/rankings` 在 PostgreSQL 部署报错 `column "vk.key_alias" must appear in the GROUP BY clause`（commit `29168b5` 已修复）。根因 SQL 的 `SELECT vk.key_alias` 不在 `GROUP BY` —— SQLite/MySQL 宽松只在 PG 暴露。这暴露了一个系统性缺口：mock BDD 默认跑 SQLite，**无法发现跨 DB SQL 方言差异**。已有 DB 层 testcontainers 回归测试，但接口层（路由/鉴权/HTTP 响应）无多 DB 覆盖。本 Phase 把 spend 聚合类接口纳入多 DB 真实端到端 BDD（复用现成的 `bdd-real-pg/mysql/sqlite` task 基础设施）。
+**背景**: `GET /global/spend/keys/rankings` 在 PostgreSQL 部署报错 `column "vk.key_alias" must appear in the GROUP BY clause`（commit `29168b5` 已修复）。根因 SQL 的 `SELECT vk.key_alias` 不在 `GROUP BY` —— SQLite/MySQL 宽松只在 PG 暴露。这暴露一个系统性缺口：mock BDD 默认跑 SQLite（`bdd.rs:46` `sqlite::memory:`），**无法发现跨 DB SQL 方言差异**。已有 DB 层 testcontainers 回归测试，但接口层（路由/鉴权/HTTP 响应）无多 DB 覆盖。
+
+**调研**（见各 stage-7X 附录 A）：13 个 spend 接口中 4 个零 BDD 覆盖（`/spend/users`、`/spend/tags`、`/global/spend/activity`、`/global/spend/keys/rankings`），后两个方言代码最多、风险极高。本 Phase 按"每 Stage 8-16h"拆成 4 个 Stage，复用现成 `bdd-real-pg/mysql/sqlite` task 基础设施，端到端覆盖 11/13 spend 接口。
 
 | Stage | 状态 | 目标 | 类型 | 预估 |
 |-------|------|------|------|------|
-| Stage 73 | ⏳ 待开始（文档就绪，待命） | **多 DB 真实端到端 BDD — Spend 聚合接口覆盖** — 新增 `@real_api @needs_upstream_db` 场景，HTTP 打真实 aigw 调 `/global/spend/keys/rankings`，复用 `SourcePool::execute_raw` 直连测试库灌确定性 spend_logs；无上游库时 SKIP；红→绿验证复现 42803 报错。SQLite/PG/MySQL 三 DB 一致覆盖 | 后端+测试 | 6h |
+| Stage 73 | ⏳ 待开始（文档就绪，待命） | **基础设施 + keys/rankings** — 提取 `pub(crate)` helper + 封装可复用 `real_db_seed` 灌数据工具（供 74-76 复用）；新增 `@real_api @needs_upstream_db` 场景覆盖 `/global/spend/keys/rankings`（唯一 LEFT JOIN，极高，已修）；红→绿复现 42803。SQLite/PG/MySQL 三 DB 一致 | 后端+测试 | 10h |
+| Stage 74 | ⏳ 待开始（文档就绪，待命） | **activity 覆盖** — `/global/spend/activity`（方言代码量全模块第一，三 DB 占位符 `$N`/`?` + 日期转换 `CAST AS CHAR`/`::TEXT`/`DATE()` + `build_activity_filter` 动态过滤，零覆盖，极高）；metadata 7 字段 + daily 分组 + user_id/team_id 过滤三 DB 一致 | 后端+测试 | 12h |
+| Stage 75 | ⏳ 待开始（文档就绪，待命） | **models + providers 覆盖** — `/spend/{models,providers}` + `/global/spend/{models,providers}`（GROUP BY，PG 版日期 `::TIMESTAMPTZ` 内联 vs SQLite/MySQL bind，高）；重点验证日期过滤三 DB 一致 + 空 provider 兜底 unknown | 后端+测试 | 10h |
+| Stage 76 | ⏳ 待开始（文档就绪，待命） | **SUM 聚合簇 + 应用层 keys** — `/spend/{keys,users,tags}` + `/global/spend` + `/global/spend/keys`；重点 `/spend/users` 的 `"user"` 引号列名 + `/spend/tags` 的 LIKE 转义（三 DB 差异，零覆盖，高）；红→绿验证引号/cast | 后端+测试 | 12h |
 
-**依赖**: Stage 69（提供端点）。与 Stage 72 无硬依赖，可并行。
+**依赖**: Stage 73（基础设施）→ 74/75/76（可并行，均复用 73 的 `real_db_seed`）。与 Stage 72 无硬依赖可并行。
 
-**Phase 29 合计**: 6h，1 Stage。
+**Phase 29 合计**: 44h，4 Stage。覆盖 11/13 spend 接口（全部 5 聚合高风险 + 2 极高）；明细 logs 低风险不纳入。
 
-**设计文档**: `docs/stages/stage-73.md`
+**设计文档**: `docs/stages/stage-73.md` ~ `stage-76.md`
 
 **关键决策**:
 - 方向选 B（打真实服务器）而非改 mock 多 DB 化 —— 复用 `bdd-real-*` task，不改 mock SQLite 快测
 - 灌数据走 `SourcePool::execute_raw` + `time_literal()` 跨方言，不写方言分支
-- `real_api_steps.rs` 的 `base_url()/client()/real_api_enabled()` 提为 `pub(crate)` 复用，避免重复
+- Stage 73 先建 `real_db_seed` 可复用工具，74-76 直接复用，避免重复造轮子
+- 每 Stage 8-16h：73=10h、74=12h、75=10h、76=12h
+- 拆分维度按方言风险聚类：73(LEFT JOIN/极高) → 74(activity/极高) → 75(GROUP BY/高) → 76(SUM+引号/高)
 
 ---
 
@@ -442,4 +449,4 @@ Phase 29:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 | v21.0 | 2026-07-22 | **Stage 69 完成**：model_group 语义修复、reqwest-retry HTTP 重试、axum-client-ip 提取器、Daily trends 8 字段扩展、Top Keys 聚合端点。总进度 69/71，Phase 27 进度 1/3。|
 | v22.0 | 2026-07-22 | **Phase 27 全部完成**：Stage 70 前端页面修复（Expires 表单字段、virtual_keys_count 子查询）+ Stage 71 Usage 图表增强（堆叠 bar、Top Keys/Models 排行榜）。总进度 71/71。✅ Phase 27 闭环交付。|
 | v23.0 | 2026-07-22 | **Phase 28 规划**：新增 Phase 28（Stage 72，安全与质量加固, 16h）：OptionalClientIp 三层 fallback + requester_ip_address 序列化修复 + /router/settings 鉴权加固 + 前端 401 自动跳转。3 子任务可并行。设计文档：`docs/stages/stage-72.md`。总进度 71/72。|
-| v24.0 | 2026-07-22 | **Phase 29 规划（待命）**：新增 Phase 29（Stage 73，Cross-DB BDD Hardening, 6h）。起因 `/global/spend/keys/rankings` 在 PG 部署报错（commit `29168b5` 已修复），暴露 mock BDD 跑 SQLite 无法发现跨 DB 方言差异。Stage 73 新增 `@real_api @needs_upstream_db` 场景，复用 `bdd-real-pg/mysql/sqlite` task 端到端覆盖三 DB，仅文档就绪待实施。设计文档：`docs/stages/stage-73.md`。|
+| v24.0 | 2026-07-22 | **Phase 29 规划（待命，4 Stage）**：起因 `/global/spend/keys/rankings` 在 PG 报错（commit `29168b5` 已修复），暴露 mock BDD 跑 SQLite 无法发现跨 DB 方言差异。调研 13 个 spend 接口（4 个零覆盖）后按"每 Stage 8-16h"拆 4 Stage：73 基础设施+keys/rankings(10h)、74 activity(12h)、75 models+providers(10h)、76 SUM 簇+应用层(12h)，共 44h 覆盖 11/13 接口。复用 `bdd-real-pg/mysql/sqlite` task，仅文档就绪待实施。设计文档：`stage-73~76.md`。|

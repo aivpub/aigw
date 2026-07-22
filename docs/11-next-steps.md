@@ -59,7 +59,10 @@ Phase 27:   ████████████████████ 100% (3
 | P1 | Phase 27 | Usage 图表增强 堆叠+排行榜 (Stage 71) | ✅ 完成 |
 | P2 | Phase 26 | OTEL Traces (Stage 68) | ⏳ |
 | P1 | Phase 28 | 安全与质量加固 (Stage 72) | ⏳ |
-| P2 | Phase 29 | Cross-DB BDD — keys/rankings 多 DB 覆盖 (Stage 73) | ⏳ 文档就绪，待命 |
+| P2 | Phase 29 | Cross-DB BDD — 基础设施+keys/rankings (Stage 73) | ⏳ 文档就绪，待命 |
+| P2 | Phase 29 | Cross-DB BDD — activity (Stage 74) | ⏳ 文档就绪，待命 |
+| P2 | Phase 29 | Cross-DB BDD — models+providers (Stage 75) | ⏳ 文档就绪，待命 |
+| P2 | Phase 29 | Cross-DB BDD — SUM 簇+应用层 (Stage 76) | ⏳ 文档就绪，待命 |
 
 ---
 
@@ -84,7 +87,7 @@ Stage 69（数据层 + 端点）→ Stage 70 / 71 可并行 ✅ 全部完成
 | ID | 主题 | 优先级 | 状态 |
 |----|------|--------|------|
 | LT-Observ | Observability (OTEL Traces) | P1 | Stage 68 待开始 |
-| LT-CrossDB | Cross-DB 真实端到端 BDD 全量覆盖 | P2 | Phase 29 Stage 73（keys/rankings 首接口，文档就绪待命） |
+| LT-CrossDB | Cross-DB 真实端到端 BDD 全量覆盖 | P2 | Phase 29 Stage 73-76（spend 接口，4 Stage 文档就绪待命，共 44h） |
 | LT-Usage | Usage 多视角聚合 | P2 | 已消化 → Phase 27 |
 | LT-Redis | Redis 缓存 | P2 | QPS > 1000 |
 | LT-PG | PostgreSQL 生产级 | P2 | 多实例 + 高可用 |
