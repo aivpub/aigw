@@ -3827,6 +3827,26 @@ impl Database {
         }
     }
 
+    /// Ping the database — acquire a connection to verify the DB is reachable.
+    ///
+    /// Returns `Ok(())` if a connection was successfully acquired
+    /// (and therefore the database is ready to serve requests).
+    /// Returns `Err` if the pool is exhausted or the database is unreachable.
+    pub async fn ping(&self) -> Result<()> {
+        match self {
+            Database::Sqlite(p) => {
+                p.acquire().await?;
+            }
+            Database::Mysql(p) => {
+                p.acquire().await?;
+            }
+            Database::Postgres(p) => {
+                p.acquire().await?;
+            }
+        }
+        Ok(())
+    }
+
     async fn _count(&self, table: &str) -> Result<i64> {
         let query = format!("SELECT COUNT(*) FROM {}", table);
         let row: (i64,) = match self {

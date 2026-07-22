@@ -28,9 +28,14 @@ pub async fn health() -> Json<Value> {
     Json(json!({"status": "ok"}))
 }
 
-/// GET /health/readiness — readiness check (DB connected)
-pub async fn readiness() -> Json<Value> {
-    Json(json!({"status": "ok", "ready": true}))
+/// GET /health/readiness — readiness check (DB ping + accepting traffic)
+pub async fn readiness(State(state): State<SharedState>) -> Json<Value> {
+    // Actually ping the database, not just return static true.
+    // This is critical for graceful updates: docker-compose healthcheck
+    // should report "not ready" if the DB is unreachable so the load
+    // balancer / orchestrator can stop sending traffic.
+    let db_ok = state.db.ping().await.is_ok();
+    Json(json!({"status": if db_ok { "ok" } else { "error" }, "ready": db_ok}))
 }
 
 /// GET /health/liveliness — liveness check (always ok if running)
@@ -440,7 +445,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_readiness_returns_ok() {
-        let app = Router::new().route("/health/readiness", axum::routing::get(readiness));
+        use aigw_core::db::Database;
+
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let state = test_state(db);
+
+        let app = Router::new()
+            .route("/health/readiness", axum::routing::get(readiness))
+            .with_state(state);
 
         let request = Request::builder()
             .method(Method::GET)
@@ -457,6 +469,28 @@ mod tests {
         let json_val: JsonValue = serde_json::from_slice(&body_bytes).unwrap();
         assert_eq!(json_val.get("status").and_then(|v| v.as_str()), Some("ok"));
         assert_eq!(json_val.get("ready").and_then(|v| v.as_bool()), Some(true));
+    }
+
+    /// Build a minimal `SharedState` for tests that need a real DB handle.
+    fn test_state(db: Database) -> SharedState {
+        use aigw_core::resolver::ModelResolver;
+        use aigw_core::router::Router as AigwRouter;
+        std::sync::Arc::new(AppState {
+            resolver: ModelResolver::new(db.clone(), None, "test"),
+            router: AigwRouter::default(),
+            db,
+            master_key: None,
+            aigw_master_key: None,
+            provider_registry: Default::default(),
+            router_state: std::sync::Arc::new(tokio::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            )),
+            rate_limiter: std::sync::Arc::new(Default::default()),
+            deployment_mode: "test".to_string(),
+            started_at: std::time::Instant::now(),
+            daily_spend_queue: None,
+            metrics: None,
+        })
     }
 
     #[tokio::test]

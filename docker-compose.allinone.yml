@@ -28,9 +28,26 @@ services:
       postgres:
         condition: service_healthy
     restart: unless-stopped
+    # ── Graceful shutdown ────────────────────────────────
+    stop_grace_period: 120s
+    stop_signal: SIGTERM
+    # ── Rolling update (Docker Swarm) ────────────────────
+    deploy:
+      update_config:
+        order: start-first
+        failure_action: rollback
+        delay: 10s
+      rollback_config:
+        parallelism: 0
+        delay: 5s
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 3
+        window: 120s
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/health || exit 1"]
-      interval: 30s
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/health/readiness || exit 1"]
+      interval: 10s
       timeout: 5s
       retries: 3
       start_period: 10s

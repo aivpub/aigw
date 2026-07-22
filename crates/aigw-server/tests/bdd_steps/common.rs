@@ -39,7 +39,7 @@ pub fn build_key_router(state: SharedState) -> Router {
 }
 
 /// Build an axum Router for health check routes
-pub fn build_health_router() -> Router {
+pub fn build_health_router(state: SharedState) -> Router {
     Router::new()
         .route("/health", axum::routing::get(aigw_server::routes::health::health))
         .route(
@@ -50,6 +50,7 @@ pub fn build_health_router() -> Router {
             "/health/liveliness",
             axum::routing::get(aigw_server::routes::health::liveliness),
         )
+        .with_state(state)
 }
 
 /// Build an axum Router for spend routes with the given SharedState
@@ -98,6 +99,14 @@ pub fn build_spend_router(state: SharedState) -> Router {
         .route(
             "/global/spend/providers",
             axum::routing::get(aigw_server::routes::spend::global_spend_providers),
+        )
+        .route(
+            "/global/spend/keys/rankings",
+            axum::routing::get(aigw_server::routes::spend::global_spend_keys_rankings),
+        )
+        .route(
+            "/global/spend/activity",
+            axum::routing::get(aigw_server::routes::spend::global_spend_activity),
         )
         .with_state(state)
 }

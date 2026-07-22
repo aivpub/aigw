@@ -8,7 +8,8 @@ use crate::TestWorld;
 
 #[when(expr = "发送 GET \\/health 请求")]
 async fn get_health(world: &mut TestWorld) {
-    let app = build_health_router();
+    let state = world.ensure_state().await;
+    let app = build_health_router(state);
     let (s, b) = make_request(&app, Method::GET, "/health", None, None).await;
     world.last_status = Some(s);
     world.last_body = b;
@@ -16,7 +17,8 @@ async fn get_health(world: &mut TestWorld) {
 
 #[when(expr = "发送 GET \\/health\\/liveliness 请求")]
 async fn get_liveliness(world: &mut TestWorld) {
-    let app = build_health_router();
+    let state = world.ensure_state().await;
+    let app = build_health_router(state);
     let (s, b) = make_request(&app, Method::GET, "/health/liveliness", None, None).await;
     world.last_status = Some(s);
     world.last_body = b;
@@ -24,7 +26,8 @@ async fn get_liveliness(world: &mut TestWorld) {
 
 #[when(expr = "发送 GET \\/health\\/readiness 请求")]
 async fn get_readiness(world: &mut TestWorld) {
-    let app = build_health_router();
+    let state = world.ensure_state().await;
+    let app = build_health_router(state);
     let (s, b) = make_request(&app, Method::GET, "/health/readiness", None, None).await;
     world.last_status = Some(s);
     world.last_body = b;
