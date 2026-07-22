@@ -290,19 +290,68 @@ fn rotate_field(encrypted: &str, source_key: &str, target_key: &str, skipped: &m
         // so we return the rotated JSON string AS-IS — no outer encryption.
         match serde_json::from_str::<Value>(encrypted) {
             Ok(json_val) => {
+                eprintln!("  [ROTATE] JSON object, {} bytes, keys: {:?}",
+                    encrypted.len(),
+                    json_val.as_object().map(|o| o.keys().collect::<Vec<_>>()).unwrap_or_default()
+                );
                 match aigw_core::rotate_json_fields(&json_val, source_key, target_key) {
-                    Ok(rotated) => return Some(rotated),
-                    Err(_) => { *skipped += 1; }
+                    Ok(rotated) => {
+                        eprintln!("  [ROTATE] success, output {} bytes", rotated.len());
+                        return Some(rotated);
+                    }
+                    Err(e) => {
+                        eprintln!("  [ROTATE] rotate_json_fields failed: {}", e);
+                        *skipped += 1;
+                    }
                 }
             }
-            Err(_) => { *skipped += 1; }
+            Err(e) => {
+                eprintln!("  [ROTATE] JSON parse failed: {}", e);
+                *skipped += 1;
+            }
         }
     } else {
-        // Simple encrypted string — decrypt with source key, re-encrypt with target key
+        // Whole-blob encrypted string — decrypt the outer envelope, then
+        // inspect the plaintext: if it's a JSON object, fields inside it
+        // (e.g. `litellm_credential_name`) may also be individually encrypted
+        // with source_key.  `rotate_json_fields` handles that by walking the
+        // JSON tree and re-encrypting each encrypted leaf with target_key.
+        // After the inner fields have been rotated, we re-encrypt the entire
+        // JSON string as a single blob with target_key (restoring the
+        // outer-encryption storage format).
+        eprintln!("  [ROTATE] whole-blob encrypted, {} bytes", encrypted.len());
         if let Ok(plaintext) = aigw_core::decrypt_litellm_value(encrypted, source_key) {
-            if let Ok(re_encrypted) = aigw_core::encrypt_litellm_value(&plaintext, target_key) {
+            eprintln!("  [ROTATE] decrypted outer blob, {} bytes, starts_with_bracket={}",
+                plaintext.len(), plaintext.trim_start().starts_with('{'));
+            // Check whether the decrypted payload is a JSON object with
+            // individually-encrypted fields that also need rotation.
+            let final_plaintext = if plaintext.trim_start().starts_with('{') {
+                match serde_json::from_str::<Value>(&plaintext) {
+                    Ok(json_val) => {
+                        match aigw_core::rotate_json_fields(&json_val, source_key, target_key) {
+                            Ok(rotated) => {
+                                eprintln!("  [ROTATE] inner fields rotated, output {} bytes", rotated.len());
+                                rotated
+                            }
+                            Err(e) => {
+                                eprintln!("  [ROTATE] inner rotate_json_fields failed: {}", e);
+                                plaintext
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("  [ROTATE] inner JSON parse failed: {}", e);
+                        plaintext
+                    }
+                }
+            } else {
+                plaintext
+            };
+            if let Ok(re_encrypted) = aigw_core::encrypt_litellm_value(&final_plaintext, target_key) {
                 return Some(re_encrypted);
             }
+        } else {
+            eprintln!("  [ROTATE] decrypt_litellm_value failed for outer blob");
         }
         *skipped += 1;
     }
@@ -873,7 +922,11 @@ mod tests {
         // read time via `.as_str()`.
         let raw = serde_json::from_str::<String>(&cred_row.0).unwrap_or(cred_row.0);
         let decrypted = aigw_core::decrypt_litellm_value(&raw, target_key).unwrap();
-        assert_eq!(decrypted, plain_cred);
+        // Compare as JSON values — `rotate_json_fields` may reorder keys
+        // (serde_json sorts alphabetically) while semantically equivalent.
+        let decrypted_json: Value = serde_json::from_str(&decrypted).unwrap();
+        let expected_json: Value = serde_json::from_str(plain_cred).unwrap();
+        assert_eq!(decrypted_json, expected_json);
 
         let model_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM proxy_models")
             .fetch_one(&tgt_pool).await.unwrap();
@@ -884,7 +937,9 @@ mod tests {
         ).fetch_one(&tgt_pool).await.unwrap();
         let raw_params = serde_json::from_str::<String>(&model_row.0).unwrap_or(model_row.0);
         let decrypted_params = aigw_core::decrypt_litellm_value(&raw_params, target_key).unwrap();
-        assert_eq!(decrypted_params, plain_params);
+        let decrypted_json: Value = serde_json::from_str(&decrypted_params).unwrap();
+        let expected_json: Value = serde_json::from_str(plain_params).unwrap();
+        assert_eq!(decrypted_json, expected_json);
 
         tgt_pool.close().await;
     }

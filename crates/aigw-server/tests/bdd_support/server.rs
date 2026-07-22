@@ -41,13 +41,13 @@ impl ServerGuard {
             let mut c = tokio::process::Command::new("cargo");
             c.args(["run", "--bin", "aigw", "--"])
                 .current_dir(&workspace_root)
-                .stdout(Stdio::piped())
+                .stdout(Stdio::null())
                 .stderr(Stdio::inherit())
                 .kill_on_drop(true);
             (c, true)
         } else {
             let mut c = tokio::process::Command::new(&aigw_bin);
-            c.stdout(Stdio::piped())
+            c.stdout(Stdio::null())
                 .stderr(Stdio::inherit())
                 .kill_on_drop(true);
             (c, false)
@@ -78,6 +78,11 @@ impl ServerGuard {
             "--bind",
             &format!("127.0.0.1:{port}"),
         ]);
+
+        // Set AIGW_MASTER_KEY so the server can decrypt credentials/proxy_models
+        // that were re-encrypted with this key during migration sync.
+        // (--master-key is for admin auth; AIGW_MASTER_KEY is for field-decryption.)
+        cmd.env("AIGW_MASTER_KEY", master_key);
 
         eprintln!("==> Starting aigw server on {base_url} (db={database_url})");
         let child = cmd.spawn().map_err(|e| format!("spawn aigw-server: {e}"))?;

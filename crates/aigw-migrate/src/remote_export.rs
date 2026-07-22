@@ -156,7 +156,9 @@ async fn migrate_credentials(
             .enumerate()
             .map(|(idx, (col_name, col_type, is_nullable))| {
                 if values_col == Some(idx) {
-                    // credential_values: decrypt with source key, re-encrypt with target key
+                    // credential_values: decrypt with source key, re-encrypt with target key.
+                    // The plaintext may be a JSON object with individually encrypted
+                    // fields that also need key rotation (e.g. `api_key`, `api_base`).
                     let encrypted = row_map.get(col_name.as_str())
                         .and_then(|v| v.as_str())
                         .unwrap_or("");
@@ -168,7 +170,20 @@ async fn migrate_credentials(
                     } else {
                         match aigw_core::decrypt_litellm_value(encrypted, source_key) {
                             Ok(plaintext) => {
-                                match aigw_core::encrypt_litellm_value(&plaintext, target_key) {
+                                // If the decrypted payload is JSON, rotate any
+                                // individually encrypted fields inside it.
+                                let rotated_text = if plaintext.trim_start().starts_with('{') {
+                                    match serde_json::from_str::<serde_json::Value>(&plaintext) {
+                                        Ok(json_val) => {
+                                            aigw_core::rotate_json_fields(&json_val, source_key, target_key)
+                                                .unwrap_or(plaintext)
+                                        }
+                                        Err(_) => plaintext,
+                                    }
+                                } else {
+                                    plaintext
+                                };
+                                match aigw_core::encrypt_litellm_value(&rotated_text, target_key) {
                                     Ok(re_encrypted) => native::value_to_target_literal(
                                         &serde_json::Value::String(re_encrypted),
                                         col_type, target.kind(), false,
@@ -279,7 +294,20 @@ async fn migrate_proxy_models(
                     } else {
                         match aigw_core::decrypt_litellm_value(value_str, source_key) {
                             Ok(plaintext) => {
-                                match aigw_core::encrypt_litellm_value(&plaintext, target_key) {
+                                // If the decrypted payload is JSON, rotate any
+                                // individually encrypted fields inside it.
+                                let rotated_text = if plaintext.trim_start().starts_with('{') {
+                                    match serde_json::from_str::<serde_json::Value>(&plaintext) {
+                                        Ok(json_val) => {
+                                            aigw_core::rotate_json_fields(&json_val, source_key, target_key)
+                                                .unwrap_or(plaintext)
+                                        }
+                                        Err(_) => plaintext,
+                                    }
+                                } else {
+                                    plaintext
+                                };
+                                match aigw_core::encrypt_litellm_value(&rotated_text, target_key) {
                                     Ok(re_encrypted) => native::value_to_target_literal(
                                         &serde_json::Value::String(re_encrypted),
                                         col_type, target.kind(), false,
@@ -567,7 +595,11 @@ mod tests {
             "SELECT credential_values FROM \"LiteLLM_CredentialsTable\" WHERE credential_id = 'cred-1'",
         ).fetch_one(&tgt_pool).await.unwrap();
         let decrypted = aigw_core::decrypt_litellm_value(&cred_row.0, litellm_key).unwrap();
-        assert_eq!(decrypted, plain_cred);
+        // Compare as JSON values — `rotate_json_fields` may reorder keys
+        // (serde_json sorts alphabetically) while semantically equivalent.
+        let decrypted_json: serde_json::Value = serde_json::from_str(&decrypted).unwrap();
+        let expected_json: serde_json::Value = serde_json::from_str(plain_cred).unwrap();
+        assert_eq!(decrypted_json, expected_json);
 
         let model_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM \"LiteLLM_ProxyModelTable\"")
             .fetch_one(&tgt_pool).await.unwrap();
@@ -577,7 +609,9 @@ mod tests {
             "SELECT litellm_params FROM \"LiteLLM_ProxyModelTable\" WHERE model_id = 'model-1'",
         ).fetch_one(&tgt_pool).await.unwrap();
         let decrypted_params = aigw_core::decrypt_litellm_value(&model_row.0, litellm_key).unwrap();
-        assert_eq!(decrypted_params, plain_params);
+        let decrypted_json: serde_json::Value = serde_json::from_str(&decrypted_params).unwrap();
+        let expected_json: serde_json::Value = serde_json::from_str(plain_params).unwrap();
+        assert_eq!(decrypted_json, expected_json);
 
         tgt_pool.close().await;
     }

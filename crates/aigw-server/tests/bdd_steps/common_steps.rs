@@ -8,14 +8,32 @@ use crate::TestWorld;
 #[given(expr = "管理员已认证")]
 async fn admin_authenticated(_world: &mut TestWorld) {}
 
+/// Format a response diagnostic string: status + pretty-printed JSON body.
+fn response_diag(status: &Option<u16>, body: &Option<serde_json::Value>) -> String {
+    let status_str = match status {
+        Some(s) => format!("status={}", s),
+        None => "status=None".to_string(),
+    };
+    let body_str = match body {
+        Some(b) => {
+            let pretty = serde_json::to_string_pretty(b).unwrap_or_else(|_| b.to_string());
+            format!("\n  body={}", pretty)
+        }
+        None => "\n  body=None".to_string(),
+    };
+    format!("{}{}", status_str, body_str)
+}
+
 #[then(expr = "响应状态码为 {int}")]
 async fn then_status_is(world: &mut TestWorld, expected: u16) {
+    let diag = response_diag(&world.last_status, &world.last_body);
     assert_eq!(
         world.last_status,
         Some(expected),
-        "Expected status {}, got {:?}",
+        "Expected status {}, got {:?}\n  ── Full response ──\n  {}",
         expected,
-        world.last_status
+        world.last_status,
+        diag
     );
 }
 
