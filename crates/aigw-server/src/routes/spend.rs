@@ -319,6 +319,7 @@ pub async fn spend_logs(
                 "cache_key": log.cache_key,
                 "status": log.status,
                 "mcp_namespaced_tool_name": log.mcp_namespaced_tool_name,
+                "requester_ip_address": &log.requester_ip_address,
                 // Include body blobs when page_size is small
                 "messages": if page_size <= 50 { &log.messages } else { &None },
                 "response": if page_size <= 50 { &log.response } else { &None },
@@ -546,6 +547,7 @@ pub async fn global_spend_logs(
                 "cache_key": log.cache_key,
                 "status": log.status,
                 "mcp_namespaced_tool_name": log.mcp_namespaced_tool_name,
+                "requester_ip_address": &log.requester_ip_address,
                 // Include body blobs when page_size is small
                 "messages": if page_size <= 50 { &log.messages } else { &None },
                 "response": if page_size <= 50 { &log.response } else { &None },

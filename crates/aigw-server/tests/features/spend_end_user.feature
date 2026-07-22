@@ -20,3 +20,13 @@ Feature: SpendLog end_user 提取与留存
     When master-key 查询 global spend logs 获取 end_user 相关 SpendLog
     Then 响应状态码为 200
     And 响应 data 第一条记录 end_user 为空或不存在
+
+  Scenario: spend logs 返回 requester_ip_address 字段
+    Given 一个普通 key "e2u-ip-test-key" 已生成
+    And 已插入一条带 end_user 和 session_id 和 requester_ip 的 SpendLog
+      """
+      {"end_user":"ip-test-user","session_id":"sess-xyz","requester_ip":"192.168.1.1"}
+      """
+    When master-key 查询 global spend logs 获取 end_user 相关 SpendLog
+    Then 响应状态码为 200
+    And 第一条日志的 requester_ip_address 为 "192.168.1.1"

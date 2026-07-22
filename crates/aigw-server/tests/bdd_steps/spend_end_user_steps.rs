@@ -159,3 +159,24 @@ async fn then_first_record_end_user_empty(world: &mut TestWorld) {
         }
     }
 }
+
+#[then(regex = r#"^第一条日志的 requester_ip_address 为 "(.+)"$"#)]
+async fn then_first_log_requester_ip_is(world: &mut TestWorld, expected: String) {
+    let body = world.last_body.as_ref().expect("no response body");
+    let data = body
+        .get("data")
+        .and_then(|d| d.as_array())
+        .expect("data is not array");
+    assert!(!data.is_empty(), "data array is empty");
+
+    let ip = data[0]
+        .get("requester_ip_address")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    assert_eq!(
+        ip, expected,
+        "Expected requester_ip_address = '{}', got '{}'",
+        expected, ip
+    );
+}

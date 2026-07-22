@@ -26,3 +26,20 @@ Feature: 授权 (Authorization)
     When 使用 key "auth-self" 发送 GET /spend/models 请求
     Then 响应状态码为 200
     And 响应 JSON 包含 "data" 字段
+
+  Scenario: 无认证访问路由设置返回 401
+    When 不携带 Authorization 发送 GET /router/settings 请求
+    Then 响应状态码为 401
+
+  Scenario: 普通 key 无法修改路由设置
+    Given 一个普通 key "router-regular" 已生成
+    When 使用 key "router-regular" 发送 PUT /router/settings 请求
+    Then 响应状态码为 403
+
+  Scenario: Master key 可以读取路由设置
+    When 使用 master-key 发送 GET /router/settings 请求
+    Then 响应状态码为 200
+
+  Scenario: Master key 可以修改路由设置
+    When 使用 master-key 带有效 body 发送 PUT /router/settings 请求
+    Then 响应状态码为 200

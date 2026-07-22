@@ -4,10 +4,22 @@ function authHeaders(): Record<string, string> {
   return { "Content-Type": "application/json" };
 }
 
+export class UnauthorizedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UnauthorizedError";
+  }
+}
+
 async function handleResponse(res: Response) {
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error?.message || `API ${res.status}`);
+    const message = err.error?.message || `API ${res.status}`;
+    if (res.status === 401) {
+      window.dispatchEvent(new Event("auth:unauthenticated"));
+      throw new UnauthorizedError(message);
+    }
+    throw new Error(message);
   }
   return res.json();
 }

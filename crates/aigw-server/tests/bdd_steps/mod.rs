@@ -15,5 +15,6 @@ pub mod migration_rollback_steps;
 pub mod migration_sync_steps;
 pub mod model_steps;
 pub mod real_api_steps;
+pub mod router_settings_steps;
 pub mod spend_steps;
 pub mod spend_end_user_steps;

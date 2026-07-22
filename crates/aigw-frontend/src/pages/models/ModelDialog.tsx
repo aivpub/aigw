@@ -156,12 +156,13 @@ interface FormFieldProps {
   required?: boolean;
   description?: string;
   children: React.ReactNode;
+  htmlFor?: string;
 }
 
-function FormField({ label, required, description, children }: FormFieldProps) {
+function FormField({ label, required, description, children, htmlFor }: FormFieldProps) {
   return (
     <div className="space-y-1">
-      <Label className="text-xs font-medium">
+      <Label className="text-xs font-medium" htmlFor={htmlFor}>
         {label}
         {required && <span className="text-destructive ml-0.5">*</span>}
       </Label>
@@ -273,8 +274,9 @@ export function ModelDialog({ open, onOpenChange, model, onSaved, onError }: Mod
 
         <div className="space-y-4 py-2">
           {/* Model Name */}
-          <FormField label="Model Name" required description="Proxy model group name exposed via /v1/models">
+          <FormField label="Model Name" required htmlFor="model_name" description="Proxy model group name exposed via /v1/models">
             <Input
+              id="model_name"
               value={form.model_name}
               onChange={(e) => handleModelNameChange(e.target.value)}
               placeholder="my-gpt-4"
@@ -283,8 +285,9 @@ export function ModelDialog({ open, onOpenChange, model, onSaved, onError }: Mod
           </FormField>
 
           {/* Upstream Model */}
-          <FormField label="Upstream Model" required description="Auto-fills from Model Name. Edit to override (e.g. openai/gpt-4)">
+          <FormField label="Upstream Model" required htmlFor="upstream_model" description="Auto-fills from Model Name. Edit to override (e.g. openai/gpt-4)">
             <Input
+              id="upstream_model"
               value={form.upstream_model}
               onChange={(e) => handleUpstreamModelChange(e.target.value)}
             />

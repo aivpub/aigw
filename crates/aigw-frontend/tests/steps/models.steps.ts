@@ -87,9 +87,15 @@ Then("the dialog closes", async ({ page }) => {
 });
 
 When("I click the edit button on the first model row", async ({ page }) => {
-  // Find the first edit (pencil) button
+  // Find the first visible edit (pencil) button on desktop or mobile
   const editBtn = page.locator("button:has(.lucide-pencil)").first();
-  await editBtn.click();
+  try {
+    await editBtn.click({ timeout: 3000 });
+  } catch {
+    const mobileBtn = page.locator("button:has(.lucide-pencil)").last();
+    await mobileBtn.scrollIntoViewIfNeeded();
+    await mobileBtn.click();
+  }
   await page.waitForTimeout(500);
 });
 
@@ -107,7 +113,13 @@ Then("the model name field is disabled", async ({ page }) => {
 
 When("I click the delete button on the first model row", async ({ page }) => {
   const delBtn = page.locator("button:has(.lucide-trash2)").first();
-  await delBtn.click();
+  try {
+    await delBtn.click({ timeout: 3000 });
+  } catch {
+    const mobileBtn = page.locator("button:has(.lucide-trash2)").last();
+    await mobileBtn.scrollIntoViewIfNeeded();
+    await mobileBtn.click();
+  }
   await page.waitForTimeout(500);
 });
 

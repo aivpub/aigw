@@ -5,6 +5,7 @@ interface AuthState {
   isLoading: boolean;
   login: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  setUnauthenticated: () => void;
 }
 
 const AuthContext = createContext<AuthState>({
@@ -12,6 +13,7 @@ const AuthContext = createContext<AuthState>({
   isLoading: true,
   login: async () => {},
   logout: async () => {},
+  setUnauthenticated: () => {},
 });
 
 export function useAuth() {
@@ -38,6 +40,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => { cancelled = true; };
   }, []);
 
+  // Listen for global auth:unauthenticated events (fired by handleResponse on 401)
+  useEffect(() => {
+    const handler = () => setIsAuthenticated(false);
+    window.addEventListener("auth:unauthenticated", handler);
+    return () => window.removeEventListener("auth:unauthenticated", handler);
+  }, []);
+
+  const setUnauthenticated = useCallback(() => {
+    setIsAuthenticated(false);
+  }, []);
+
   const login = useCallback(async (username: string, password: string) => {
     const res = await fetch("/v2/login", {
       method: "POST",
@@ -61,7 +74,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ isAuthenticated, isLoading, login, logout }}>
+    <AuthContext.Provider value={{ isAuthenticated, isLoading, login, logout, setUnauthenticated }}>
       {children}
     </AuthContext.Provider>
   );
