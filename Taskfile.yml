@@ -58,7 +58,7 @@ tasks:
         AIGW_REAL_API=1 AIGW_TEST_DB_DRIVER=sqlite AIGW_TEST_START_SERVER=1 \
           AIGW_REAL_MODEL="${AIGW_REAL_MODEL:-${OPENAPI_MODEL:-}}" \
           AIGW_UPSTREAM_DB_URL="${AIGW_UPSTREAM_DB_URL:-}" \
-          AIGW_UPSTREAM_MASTER_KEY="${AIGW_UPSTREAM_MASTER_KEY:-}" \
+          AIGW_UPSTREAM_ENCRYPT_KEY="${AIGW_UPSTREAM_ENCRYPT_KEY:-}" \
           cargo test --test bdd -p aigw-server
 
   bdd-real-pg:
@@ -74,7 +74,7 @@ tasks:
         AIGW_REAL_API=1 AIGW_TEST_DB_DRIVER=postgres AIGW_TEST_START_SERVER=1 \
           AIGW_REAL_MODEL="${AIGW_REAL_MODEL:-${OPENAPI_MODEL:-}}" \
           AIGW_UPSTREAM_DB_URL="${AIGW_UPSTREAM_DB_URL:-}" \
-          AIGW_UPSTREAM_MASTER_KEY="${AIGW_UPSTREAM_MASTER_KEY:-}" \
+          AIGW_UPSTREAM_ENCRYPT_KEY="${AIGW_UPSTREAM_ENCRYPT_KEY:-}" \
           cargo test --test bdd -p aigw-server
 
   bdd-real-mysql:
@@ -88,7 +88,7 @@ tasks:
         export OPENAI_BASE_URL="${OPENAI_BASE_URL:-${OPENAPI_BASE_URL:-}}"
         AIGW_REAL_API=1 AIGW_TEST_DB_DRIVER=mysql AIGW_TEST_START_SERVER=1 \
           AIGW_UPSTREAM_DB_URL="${AIGW_UPSTREAM_DB_URL:-}" \
-          AIGW_UPSTREAM_MASTER_KEY="${AIGW_UPSTREAM_MASTER_KEY:-}" \
+          AIGW_UPSTREAM_ENCRYPT_KEY="${AIGW_UPSTREAM_ENCRYPT_KEY:-}" \
           cargo test --test bdd -p aigw-server
 
   bdd-all:

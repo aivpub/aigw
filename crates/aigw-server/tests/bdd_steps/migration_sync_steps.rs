@@ -3,7 +3,7 @@
 //! Uses aigw-migrate library to sync data from the upstream litellm database
 //! into the test aigw database. The upstream DB URL is configured via
 //! `AIGW_UPSTREAM_DB_URL` env var, and the upstream master key via
-//! `AIGW_UPSTREAM_MASTER_KEY`.
+//! `AIGW_UPSTREAM_ENCRYPT_KEY`.
 
 use cucumber::{given, then, when};
 #[allow(unused_imports)]
@@ -29,8 +29,8 @@ fn migration_enabled() -> bool {
 }
 
 /// Returns the upstream litellm master key.
-fn upstream_master_key() -> Option<String> {
-    std::env::var("AIGW_UPSTREAM_MASTER_KEY").ok()
+fn upstream_encrypt_key() -> Option<String> {
+    std::env::var("AIGW_UPSTREAM_ENCRYPT_KEY").ok()
 }
 
 /// Returns the target aigw database URL for the test.
@@ -98,7 +98,7 @@ async fn when_sync_plain_tables(world: &mut TestWorld) {
     }
     let source_url = upstream_db_url().expect("AIGW_UPSTREAM_DB_URL not set");
     let target_url = target_db_url();
-    let source_key = upstream_master_key();
+    let source_key = upstream_encrypt_key();
     let target_key = target_master_key();
 
     let result = aigw_migrate::remote_import_run_filtered(
@@ -151,7 +151,7 @@ async fn when_sync_credentials(world: &mut TestWorld) {
     }
     let source_url = upstream_db_url().expect("AIGW_UPSTREAM_DB_URL not set");
     let target_url = target_db_url();
-    let source_key = upstream_master_key();
+    let source_key = upstream_encrypt_key();
     let target_key = target_master_key();
 
     let result = aigw_migrate::remote_import_run_filtered(
@@ -191,7 +191,7 @@ async fn when_sync_proxy_models(world: &mut TestWorld) {
     }
     let source_url = upstream_db_url().expect("AIGW_UPSTREAM_DB_URL not set");
     let target_url = target_db_url();
-    let source_key = upstream_master_key();
+    let source_key = upstream_encrypt_key();
     let target_key = target_master_key();
 
     let result = aigw_migrate::remote_import_run_filtered(
@@ -231,7 +231,7 @@ async fn when_sync_spend_logs_limit_10(world: &mut TestWorld) {
     }
     let source_url = upstream_db_url().expect("AIGW_UPSTREAM_DB_URL not set");
     let target_url = target_db_url();
-    let source_key = upstream_master_key();
+    let source_key = upstream_encrypt_key();
     let target_key = target_master_key();
 
     let result = aigw_migrate::remote_import_run_filtered(

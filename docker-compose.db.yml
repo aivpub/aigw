@@ -1,7 +1,7 @@
 # =============================================================================
 # aigw Test / CI Deployment
 #
-# Multi-DB test environment — PostgreSQL + MySQL.
+# Multi-DB test environment — aigw + PostgreSQL + MySQL.
 # Used for BDD tests and cross-database verification.
 #
 # Quick start:

@@ -75,7 +75,9 @@ cp /path/to/aigw.db /backup/aigw-$(date +%Y%m%d-%H%M%S).db
 
 ```bash
 # Test connectivity and key extraction without writing data
-# (use --source-master-key to skip auto-extraction if preferred)
+# (use --source-master-key to override auto-extraction if preferred;
+#  by default the upstream field-encryption key is auto-extracted
+#  from LiteLLM_Config, so you rarely need to set it manually)
 aigw-migrate remote-import \
   --source-url sqlite:///path/to/litellm-backup.db \
   --target-url sqlite:///tmp/aigw-dryrun.db \
@@ -356,7 +358,18 @@ Error: No source master_key found. Provide --source-master-key or ensure source 
 [WARN] Skipped credential my-creds: decryption failed
 ```
 
-The row is skipped (not migrated). This happens when the encryption key doesn't match. Verify the correct `LITELLM_MASTER_KEY` is being used.
+The row is skipped (not migrated). This happens when the upstream **field-encryption key** doesn't match.
+
+> **Most common cause:** the litellm **API-auth key** (the one used for
+> `Authorization: Bearer`, i.e. `OPENAPI_KEY`/`OPENAI_API_KEY`) was mistakenly
+> configured as the upstream encryption key. They are **frequently different
+> values** in real deployments:
+> - field-encryption key → `LiteLLM_Config.general_settings.master_key` (decrypts `litellm_params`/`credential_values`)
+> - API-auth key → the `sk-...` used to call litellm's HTTP API
+>
+> **Fix:** leave `AIGW_UPSTREAM_ENCRYPT_KEY` unset and let migrate auto-extract
+> the real key from `LiteLLM_Config`, or set it to the
+> `general_settings.master_key` value explicitly.
 
 ### B.4 Row count mismatch after migration
 
@@ -369,3 +382,15 @@ Check that `proxy_models` table was migrated and the model name matches exactly.
 ```bash
 sqlite3 /path/to/aigw.db "SELECT model_name FROM proxy_models"
 ```
+
+### B.6 Runtime `Credential '...' not found` (500) after migration
+
+Symptom: migrated `proxy_models` rows exist, but calling the model returns
+`500 Credential '<base64...>' not found`. The `<base64...>` is an **encrypted**
+`litellm_credential_name` — meaning the field wasn't decrypted during
+resolution, because migration silently skipped key rotation (see B.3).
+
+Root cause: wrong `AIGW_UPSTREAM_ENCRYPT_KEY` (or the env var wasn't forwarded
+to the migrate subprocess). Fix the key, re-run migration, and the encrypted
+`litellm_credential_name` will be rotated to the aigw master key and decrypt
+correctly at runtime.

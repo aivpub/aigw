@@ -3,7 +3,11 @@
 //! Usage:
 //!   cargo run --bin export_fixtures --features postgres
 //!
-//! Reads .env for AIGW_UPSTREAM_DB_URL and AIGW_UPSTREAM_MASTER_KEY,
+//! Reads .env for AIGW_UPSTREAM_DB_URL and AIGW_UPSTREAM_ENCRYPT_KEY,
+//! NOTE: AIGW_UPSTREAM_ENCRYPT_KEY is the upstream litellm *field-encryption*
+//! key (stored in LiteLLM_Config.general_settings.master_key), NOT the
+//! API-auth master key. They can differ in real deployments — only the
+//! field-encryption key can decrypt litellm_params / credential_values.
 //! connects to the upstream PG DB, fetches litellm_params and
 //! credential_values for a hardcoded model list, decrypts them with the
 //! upstream master key, then re-encrypts the plaintext with a fixed
@@ -70,7 +74,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let db_url = std::env::var("AIGW_UPSTREAM_DB_URL")?;
-    let master_key = std::env::var("AIGW_UPSTREAM_MASTER_KEY").unwrap_or_default();
+    let master_key = std::env::var("AIGW_UPSTREAM_ENCRYPT_KEY").unwrap_or_default();
 
     let pool = PgPoolOptions::new()
         .max_connections(1)

@@ -69,7 +69,7 @@ async fn when_rollback_plain_tables(world: &mut TestWorld) {
     }
     let upstream_url = upstream_db_url().expect("AIGW_UPSTREAM_DB_URL not set");
     let aigw_url = target_db_url();
-    let upstream_key = std::env::var("AIGW_UPSTREAM_MASTER_KEY").ok();
+    let upstream_key = std::env::var("AIGW_UPSTREAM_ENCRYPT_KEY").ok();
     let aigw_key = source_master_key();
 
     // Step 1: Forward sync first to ensure aigw has data
@@ -135,7 +135,7 @@ async fn when_rollback_credentials(world: &mut TestWorld) {
     }
     let upstream_url = upstream_db_url().expect("AIGW_UPSTREAM_DB_URL not set");
     let aigw_url = target_db_url();
-    let upstream_key = std::env::var("AIGW_UPSTREAM_MASTER_KEY").ok();
+    let upstream_key = std::env::var("AIGW_UPSTREAM_ENCRYPT_KEY").ok();
     let aigw_key = source_master_key();
 
     // Forward sync first to ensure aigw has data

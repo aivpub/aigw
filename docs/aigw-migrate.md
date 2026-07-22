@@ -174,7 +174,16 @@ aigw-migrate pre-check \
 |----------|-------------|------|
 | `AIGW_UPSTREAM_DB_URL` | `--source-url`（remote-import）/ `--target-url`（remote-export） | litellm 侧数据库 URL |
 | `AIGW_DATABASE_URL` | `--target-url`（remote-import）/ `--source-url`（remote-export） | aigw 侧数据库 URL |
+| `AIGW_UPSTREAM_ENCRYPT_KEY` | `--source-master-key`（remote-import）/ `--target-master-key`（remote-export） | 上游 litellm **字段加密 key**（解密 `litellm_params`/`credential_values`）。**非 API 鉴权 key** |
 | `AIGW_MASTER_KEY` | `--target-master-key`（remote-import）/ `--source-master-key`（remote-export） | aigw 的 master 加密密钥 |
+
+> ⚠️ **`AIGW_UPSTREAM_ENCRYPT_KEY` vs API 鉴权 key**
+> 上游 litellm 有两个容易混淆的 key：
+> - **字段加密 key**：存在 `LiteLLM_Config.general_settings.master_key`，用于加密数据库里的 `litellm_params`/`credential_values`。`AIGW_UPSTREAM_ENCRYPT_KEY` 必须填这个。
+> - **API 鉴权 master_key**：调 litellm HTTP API 用的 `Authorization: Bearer`，对应 `OPENAPI_KEY`/`OPENAI_API_KEY`。
+>
+> 两者**可能不同**（取决于上游部署配置）。若误把 API 鉴权 key 填进 `AIGW_UPSTREAM_ENCRYPT_KEY`，迁移会静默跳过加密字段（`[WARN] Skipped N rows due to crypto errors`），下游运行时再因 credential 解密失败报 `Credential '...' not found`。
+> 不传时，migrate 会自动从上游 `LiteLLM_Config` 表提取真实加密 key。
 
 支持 `.env` 文件（`dotenvy`），自动从当前目录向上查找。
 
@@ -291,7 +300,7 @@ litellm DB（LITELLM_MASTER_KEY 加密）
 
 | 密钥 | 来源优先级 |
 |------|----------|
-| 源 litellm master key | 1. `--source-master-key` CLI 参数<br>2. 从 `LiteLLM_Config` 表自动提取（`param_name='litellm_master_key'` 或 `param_name='general_settings'` 的 JSON 中 `master_key` 字段） |
+| 源 litellm 字段加密 key | 1. `--source-master-key` CLI 参数<br>2. `AIGW_UPSTREAM_ENCRYPT_KEY` 环境变量<br>3. 从 `LiteLLM_Config` 表自动提取（`param_name='litellm_master_key'` 或 `param_name='general_settings'` 的 JSON 中 `master_key` 字段） |
 | 目标 aigw master key | 1. `--target-master-key` CLI 参数<br>2. `AIGW_MASTER_KEY` 环境变量 |
 
 ---
@@ -327,7 +336,15 @@ aigw-migrate remote-import --source-master-key "sk-litellm-xxxxxxxx"
 
 #### credential 解密失败：`[WARN] Skipped N credential rows due to crypto errors`
 
-源 litellm master key 与加密数据不匹配。检查密钥是否正确，或加密数据是否被修改过。被跳过的行不会被迁移。
+源 litellm **字段加密 key**（`AIGW_UPSTREAM_ENCRYPT_KEY`）与加密数据不匹配。
+
+> 常见误因：把 litellm 的 **API 鉴权 key**（`OPENAPI_KEY`/`OPENAI_API_KEY` 用的那个）误填进了 `AIGW_UPSTREAM_ENCRYPT_KEY`。两者在真实部署中经常是不同值——字段加密 key 存于 `LiteLLM_Config.general_settings.master_key`。
+>
+> 验证方法：连上游库 `SELECT param_value->'master_key' FROM "LiteLLM_Config" WHERE param_name='general_settings'`，对照填的值。
+>
+> 不确定时，**留空 `AIGW_UPSTREAM_ENCRYPT_KEY`**，migrate 会自动从 `LiteLLM_Config` 提取真实加密 key。
+
+被跳过的行不会被迁移，下游运行时会因 credential 解不出报 `Credential '...' not found`。
 
 #### 行数校验不匹配：`[MISMATCH]`
 
