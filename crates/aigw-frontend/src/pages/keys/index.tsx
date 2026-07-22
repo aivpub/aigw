@@ -11,6 +11,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -78,6 +79,7 @@ export function KeysPage() {
   const [formBudget, setFormBudget] = useState("");
   const [formTPM, setFormTPM] = useState("");
   const [formRPM, setFormRPM] = useState("");
+  const [formExpires, setFormExpires] = useState("");
 
   const { data, isLoading, error } = useQuery<KeyListResponse>({
     queryKey: ["virtual-keys"],
@@ -151,6 +153,7 @@ export function KeysPage() {
     setFormBudget("");
     setFormTPM("");
     setFormRPM("");
+    setFormExpires("");
     setGeneratedToken(null);
     setCreateOpen(true);
   }
@@ -162,6 +165,7 @@ export function KeysPage() {
     setFormBudget(key.max_budget?.toString() ?? "");
     setFormTPM(key.tpm_limit?.toString() ?? "");
     setFormRPM(key.rpm_limit?.toString() ?? "");
+    setFormExpires(key.expires ?? "");
     setEditOpen(true);
   }
 
@@ -179,6 +183,7 @@ export function KeysPage() {
     if (formBudget.trim()) body.max_budget = parseFloat(formBudget);
     if (formTPM.trim()) body.tpm_limit = parseInt(formTPM);
     if (formRPM.trim()) body.rpm_limit = parseInt(formRPM);
+    if (formExpires.trim()) body.expires = formExpires.trim();
     return body;
   }
 
@@ -197,6 +202,7 @@ export function KeysPage() {
       ...(formBudget.trim() && { max_budget: parseFloat(formBudget) }),
       ...(formTPM.trim() && { tpm_limit: parseInt(formTPM) }),
       ...(formRPM.trim() && { rpm_limit: parseInt(formRPM) }),
+      ...(formExpires.trim() && { expires: formExpires.trim() }),
     });
   }
 
@@ -247,6 +253,7 @@ export function KeysPage() {
                       <TableHead>Models</TableHead>
                       <TableHead className="text-right">Spend</TableHead>
                       <TableHead className="text-right">Budget</TableHead>
+                      <TableHead>Expires</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
@@ -255,7 +262,7 @@ export function KeysPage() {
                     {isLoading
                       ? Array.from({ length: 3 }).map((_, i) => (
                           <TableRow key={i}>
-                            {Array.from({ length: 8 }).map((_, j) => (
+                            {Array.from({ length: 9 }).map((_, j) => (
                               <TableCell key={j}>
                                 <Skeleton className="h-4 w-full" />
                               </TableCell>
@@ -309,12 +316,35 @@ export function KeysPage() {
                                 ? `$${key.max_budget.toFixed(2)}`
                                 : "∞"}
                             </TableCell>
+                            <TableCell className="text-xs text-muted-foreground">
+                              {key.expires
+                                ? new Date(key.expires).toLocaleDateString()
+                                : "∞"}
+                            </TableCell>
                             <TableCell>
-                              {key.blocked ? (
-                                <Badge variant="destructive">blocked</Badge>
-                              ) : (
-                                <Badge variant="default">active</Badge>
-                              )}
+                              <div className="flex items-center gap-2">
+                                <Switch
+                                  checked={!key.blocked}
+                                  onCheckedChange={async (checked) => {
+                                    try {
+                                      if (checked) {
+                                        await apiPost("/key/unblock", { key: key.token });
+                                      } else {
+                                        await apiPost("/key/block", { key: key.token });
+                                      }
+                                      queryClient.invalidateQueries({ queryKey: ["virtual-keys"] });
+                                      toast.success(checked ? "Key unblocked" : "Key blocked");
+                                    } catch (err) {
+                                      toast.error((err as Error).message);
+                                    }
+                                  }}
+                                />
+                                {key.blocked ? (
+                                  <Badge variant="destructive">blocked</Badge>
+                                ) : (
+                                  <Badge variant="default">active</Badge>
+                                )}
+                              </div>
                             </TableCell>
                             <TableCell className="text-right">
                               <div className="flex justify-end gap-1">
@@ -404,6 +434,12 @@ export function KeysPage() {
                                 ? `$${key.max_budget.toFixed(2)}`
                                 : "∞"}
                             </span>
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            Expires:{" "}
+                            {key.expires
+                              ? new Date(key.expires).toLocaleDateString()
+                              : "∞"}
                           </div>
                           <div className="flex justify-end gap-1 pt-1">
                             <Button
@@ -528,6 +564,15 @@ export function KeysPage() {
                     />
                   </div>
                 </div>
+                <div>
+                  <Label htmlFor="expires">Expires</Label>
+                  <Input
+                    id="expires"
+                    type="date"
+                    value={formExpires}
+                    onChange={(e) => setFormExpires(e.target.value)}
+                  />
+                </div>
               </div>
               <DialogFooter>
                 <Button
@@ -605,6 +650,15 @@ export function KeysPage() {
                   onChange={(e) => setFormRPM(e.target.value)}
                 />
               </div>
+            </div>
+            <div>
+              <Label htmlFor="edit-expires">Expires</Label>
+              <Input
+                id="edit-expires"
+                type="date"
+                value={formExpires}
+                onChange={(e) => setFormExpires(e.target.value)}
+              />
             </div>
           </div>
           <DialogFooter>

@@ -37,7 +37,7 @@ interface SpendLog {
   model: string; model_id?: string | null; model_group?: string | null;
   custom_llm_provider?: string | null; api_base?: string | null;
   user: string | null; team_id?: string | null; organization_id?: string | null;
-  end_user?: string | null; session_id?: string | null;
+  end_user?: string | null; session_id?: string | null; requester_ip_address?: string | null;
   request_tags: unknown; metadata?: unknown; cache_hit?: unknown; cache_key?: string | null;
   mcp_namespaced_tool_name?: string | null; status: string | null;
   messages?: unknown; response?: unknown;
@@ -586,6 +586,7 @@ export function SpendLogsPage() {
                       <TableHead className="text-xs whitespace-nowrap">Model</TableHead>
                       <TableHead className="text-xs whitespace-nowrap">Key</TableHead>
                       <TableHead className="text-xs whitespace-nowrap">End User</TableHead>
+                      <TableHead className="text-xs whitespace-nowrap">IP</TableHead>
                       <TableHead className="text-xs whitespace-nowrap">Status</TableHead>
                       <TableHead className="text-xs whitespace-nowrap">Request ID</TableHead>
                       <TableHead className="text-xs whitespace-nowrap text-right">TTFT</TableHead>
@@ -603,6 +604,12 @@ export function SpendLogsPage() {
                         <TableCell className="text-xs whitespace-nowrap text-muted-foreground max-w-[100px] truncate">{log.key_name || log.user || "—"}</TableCell>
                         <TableCell className="text-xs whitespace-nowrap text-muted-foreground max-w-[120px]">
                           <code className="text-[10px] truncate block">{truncateEndUser(log.end_user || "")}</code>
+                        </TableCell>
+                        <TableCell className="text-xs font-mono whitespace-nowrap">
+                          <span className="inline-flex items-center gap-1">
+                            <span>{log.requester_ip_address ?? "—"}</span>
+                            {log.requester_ip_address && <RowCopyButton text={log.requester_ip_address} />}
+                          </span>
                         </TableCell>
                         <TableCell><Badge variant={log.status==="success"?"default":"destructive"} className="text-[10px] px-1.5 py-0">{log.status || "—"}</Badge></TableCell>
                         <TableCell className="text-xs font-mono"><div className="flex items-center gap-1">{truncate8(log.request_id)}<RowCopyButton text={log.request_id}/></div></TableCell>

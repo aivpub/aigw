@@ -16,7 +16,7 @@ import {
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { toast } from "sonner";
-import { Plus, Search, Pencil, Trash2, Users, ChevronLeft, ChevronRight } from "lucide-react";
+import { Plus, Search, Pencil, Trash2, Users, ChevronLeft, ChevronRight, Copy } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -36,6 +36,7 @@ interface UserItem {
   rpm_limit: number | null;
   organization_id: string | null;
   team_id: string | null;
+  virtual_keys_count?: number;
 }
 
 interface UserListResponse {
@@ -175,11 +176,13 @@ export function UsersPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead>User ID</TableHead>
                       <TableHead>Alias</TableHead>
                       <TableHead>Email</TableHead>
                       <TableHead>Role</TableHead>
                       <TableHead className="text-right">Spend</TableHead>
                       <TableHead className="text-right">Budget</TableHead>
+                      <TableHead className="text-right">Keys</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -187,13 +190,25 @@ export function UsersPage() {
                     {isLoading
                       ? Array.from({ length: 3 }).map((_, i) => (
                           <TableRow key={i}>
-                            {Array.from({ length: 6 }).map((_, j) => (
+                            {Array.from({ length: 8 }).map((_, j) => (
                               <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
                             ))}
                           </TableRow>
                         ))
                       : filtered.map((u) => (
                           <TableRow key={u.user_id}>
+                            <TableCell className="font-mono text-xs">
+                              <span className="inline-flex items-center gap-1">
+                                <span className="truncate max-w-[100px]">{u.user_id.slice(0, 12)}…</span>
+                                <button
+                                  type="button"
+                                  onClick={() => { navigator.clipboard.writeText(u.user_id); toast.success("Copied user ID"); }}
+                                  className="text-muted-foreground hover:text-foreground"
+                                >
+                                  <Copy className="h-3.5 w-3.5" />
+                                </button>
+                              </span>
+                            </TableCell>
                             <TableCell className="font-medium">{u.user_alias ?? "—"}</TableCell>
                             <TableCell className="text-sm">{u.user_email ?? "—"}</TableCell>
                             <TableCell>
@@ -204,6 +219,15 @@ export function UsersPage() {
                             <TableCell className="text-right text-sm">${u.spend.toFixed(4)}</TableCell>
                             <TableCell className="text-right text-sm">
                               {u.max_budget != null ? `$${u.max_budget.toFixed(2)}` : "∞"}
+                            </TableCell>
+                            <TableCell className="text-right text-sm">
+                              {(u.virtual_keys_count ?? 0) > 0 ? (
+                                <a href="/dash/keys" className="text-primary hover:underline">
+                                  {u.virtual_keys_count}
+                                </a>
+                              ) : (
+                                <span className="text-muted-foreground">0</span>
+                              )}
                             </TableCell>
                             <TableCell className="text-right">
                               <div className="flex justify-end gap-1">

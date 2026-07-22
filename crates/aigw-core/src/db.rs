@@ -3278,12 +3278,12 @@ FROM users WHERE user_email = ?
 "#;
 
 const LIST_USERS_SQLITE: &str = r#"
-SELECT user_id, user_alias, team_id, sso_user_id, organization_id, object_permission_id, password, teams, user_role, max_budget, spend, user_email, models, metadata, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, allowed_cache_controls, policies, model_spend, model_max_budget, created_at, updated_at
+SELECT user_id, user_alias, team_id, sso_user_id, organization_id, object_permission_id, password, teams, user_role, max_budget, spend, user_email, models, metadata, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, allowed_cache_controls, policies, model_spend, model_max_budget, created_at, updated_at, (SELECT COUNT(*) FROM virtual_keys WHERE user_id = users.user_id) AS virtual_keys_count
 FROM users ORDER BY user_alias
 "#;
 
 const LIST_USERS_BY_ORG_SQLITE: &str = r#"
-SELECT user_id, user_alias, team_id, sso_user_id, organization_id, object_permission_id, password, teams, user_role, max_budget, spend, user_email, models, metadata, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, allowed_cache_controls, policies, model_spend, model_max_budget, created_at, updated_at
+SELECT user_id, user_alias, team_id, sso_user_id, organization_id, object_permission_id, password, teams, user_role, max_budget, spend, user_email, models, metadata, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, allowed_cache_controls, policies, model_spend, model_max_budget, created_at, updated_at, (SELECT COUNT(*) FROM virtual_keys WHERE user_id = users.user_id) AS virtual_keys_count
 FROM users WHERE organization_id = ? ORDER BY user_alias
 "#;
 
@@ -3381,9 +3381,9 @@ impl UserStore for MySqlPool {
 
     async fn list_users(&self, org_id: Option<&str>) -> Result<Vec<User>> {
         match org_id {
-            Some(_) => sqlx::query_as("SELECT user_id, user_alias, team_id, sso_user_id, organization_id, object_permission_id, password, teams, user_role, max_budget, spend, user_email, models, metadata, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, allowed_cache_controls, policies, model_spend, model_max_budget, created_at, updated_at FROM users WHERE organization_id = ? ORDER BY user_alias")
+            Some(_) => sqlx::query_as("SELECT user_id, user_alias, team_id, sso_user_id, organization_id, object_permission_id, password, teams, user_role, max_budget, spend, user_email, models, metadata, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, allowed_cache_controls, policies, model_spend, model_max_budget, created_at, updated_at, (SELECT COUNT(*) FROM virtual_keys WHERE user_id = users.user_id) AS virtual_keys_count FROM users WHERE organization_id = ? ORDER BY user_alias")
                 .bind(org_id).fetch_all(self).await.map_err(DbError::from),
-            None => sqlx::query_as("SELECT user_id, user_alias, team_id, sso_user_id, organization_id, object_permission_id, password, teams, user_role, max_budget, spend, user_email, models, metadata, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, allowed_cache_controls, policies, model_spend, model_max_budget, created_at, updated_at FROM users ORDER BY user_alias")
+            None => sqlx::query_as("SELECT user_id, user_alias, team_id, sso_user_id, organization_id, object_permission_id, password, teams, user_role, max_budget, spend, user_email, models, metadata, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, allowed_cache_controls, policies, model_spend, model_max_budget, created_at, updated_at, (SELECT COUNT(*) FROM virtual_keys WHERE user_id = users.user_id) AS virtual_keys_count FROM users ORDER BY user_alias")
                 .fetch_all(self).await.map_err(DbError::from),
         }
     }
@@ -3445,9 +3445,9 @@ impl UserStore for PgPool {
 
     async fn list_users(&self, org_id: Option<&str>) -> Result<Vec<User>> {
         match org_id {
-            Some(_) => sqlx::query_as("SELECT user_id, user_alias, team_id, sso_user_id, organization_id, object_permission_id, password, teams, user_role, max_budget, spend, user_email, models, metadata, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, allowed_cache_controls, policies, model_spend, model_max_budget, created_at, updated_at FROM users WHERE organization_id = $1 ORDER BY user_alias")
+            Some(_) => sqlx::query_as("SELECT user_id, user_alias, team_id, sso_user_id, organization_id, object_permission_id, password, teams, user_role, max_budget, spend, user_email, models, metadata, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, allowed_cache_controls, policies, model_spend, model_max_budget, created_at, updated_at, (SELECT COUNT(*) FROM virtual_keys WHERE user_id = users.user_id) AS virtual_keys_count FROM users WHERE organization_id = $1 ORDER BY user_alias")
                 .bind(org_id).fetch_all(self).await.map_err(DbError::from),
-            None => sqlx::query_as("SELECT user_id, user_alias, team_id, sso_user_id, organization_id, object_permission_id, password, teams, user_role, max_budget, spend, user_email, models, metadata, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, allowed_cache_controls, policies, model_spend, model_max_budget, created_at, updated_at FROM users ORDER BY user_alias")
+            None => sqlx::query_as("SELECT user_id, user_alias, team_id, sso_user_id, organization_id, object_permission_id, password, teams, user_role, max_budget, spend, user_email, models, metadata, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, allowed_cache_controls, policies, model_spend, model_max_budget, created_at, updated_at, (SELECT COUNT(*) FROM virtual_keys WHERE user_id = users.user_id) AS virtual_keys_count FROM users ORDER BY user_alias")
                 .fetch_all(self).await.map_err(DbError::from),
         }
     }

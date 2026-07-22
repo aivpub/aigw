@@ -80,6 +80,7 @@ pub async fn user_new(
         policies: body.get("policies").cloned().unwrap_or(json!([])),
         model_spend: body.get("model_spend").cloned().unwrap_or(json!({})),
         model_max_budget: body.get("model_max_budget").cloned().unwrap_or(json!({})),
+        virtual_keys_count: None,
         created_at: Some(now),
         updated_at: Some(now),
     };

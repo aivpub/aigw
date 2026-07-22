@@ -323,6 +323,7 @@ pub struct User {
     pub policies: serde_json::Value,               // String[]
     pub model_spend: serde_json::Value,
     pub model_max_budget: serde_json::Value,
+    pub virtual_keys_count: Option<i64>,
     pub created_at: Option<DateTime<Utc>>,
     pub updated_at: Option<DateTime<Utc>>,
 }

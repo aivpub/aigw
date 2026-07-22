@@ -104,6 +104,18 @@ export async function defineMockRoutes(route: Route, request: Request) {
   if (url.pathname === "/global/spend/keys") {
     return route.fulfill({ status: 200, json: [{ api_key: "sk-abc***", spend: 12.5 }, { api_key: "sk-def***", spend: 8.25 }] });
   }
+  if (url.pathname === "/global/spend/keys/rankings") {
+    return route.fulfill({
+      status: 200,
+      json: [
+        { api_key: "sk-abc***", key_alias: "prod-gpt-key", total_spend: 12.50, total_requests: 85, total_tokens: 30000 },
+        { api_key: "sk-def***", key_alias: "dev-claude-key", total_spend: 8.25, total_requests: 42, total_tokens: 18000 },
+        { api_key: "sk-ghi***", key_alias: "test-key", total_spend: 3.10, total_requests: 15, total_tokens: 5000 },
+        { api_key: "sk-jkl***", key_alias: null, total_spend: 1.50, total_requests: 8, total_tokens: 2000 },
+        { api_key: "sk-mno***", key_alias: null, total_spend: 0.80, total_requests: 4, total_tokens: 900 },
+      ],
+    });
+  }
   if (url.pathname === "/spend/keys") {
     return route.fulfill({ status: 200, json: [{ api_key: "sk-abc***", spend: 12.5 }] });
   }
@@ -130,9 +142,9 @@ export async function defineMockRoutes(route: Route, request: Request) {
           completion_tokens: 900000,
         },
         daily: [
-          { date: "2026-07-08", spend: 12.5, tokens: 500000, requests: 100 },
-          { date: "2026-07-09", spend: 18.3, tokens: 800000, requests: 150 },
-          { date: "2026-07-10", spend: 11.7, tokens: 1000000, requests: 173 },
+          { date: "2026-07-08", spend: 12.5, tokens: 500000, requests: 100, prompt_tokens: 300000, completion_tokens: 200000, successful_requests: 95, failed_requests: 5 },
+          { date: "2026-07-09", spend: 18.3, tokens: 800000, requests: 150, prompt_tokens: 500000, completion_tokens: 300000, successful_requests: 142, failed_requests: 8 },
+          { date: "2026-07-10", spend: 11.7, tokens: 1000000, requests: 173, prompt_tokens: 600000, completion_tokens: 400000, successful_requests: 164, failed_requests: 9 },
         ],
       },
     });

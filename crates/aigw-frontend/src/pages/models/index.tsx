@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiGet, apiDelete } from "@/lib/api";
+import { apiGet, apiPut, apiDelete } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -12,6 +12,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
@@ -37,6 +38,9 @@ import { HealthTab } from "./HealthTab";
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 function extractProvider(params: Record<string, unknown>): string {
+  if (typeof params.custom_llm_provider === "string") {
+    return params.custom_llm_provider;
+  }
   if (typeof params.model === "string") {
     const parts = params.model.split("/");
     return parts.length > 1 ? parts[0] : params.model;
@@ -263,7 +267,7 @@ export function ModelsPage() {
                 {isLoading
                   ? Array.from({ length: 3 }).map((_, i) => (
                       <TableRow key={i}>
-                        {Array.from({ length: 8 }).map((_, j) => (
+                        {Array.from({ length: 9 }).map((_, j) => (
                           <TableCell key={j}>
                             <Skeleton className="h-4 w-full" />
                           </TableCell>
@@ -283,6 +287,7 @@ export function ModelsPage() {
                             key={model.model_id}
                             className="cursor-pointer hover:bg-muted/50"
                             onClick={() => toggleExpand(model.model_id)}
+                            data-model-name={model.model_name}
                           >
                             <TableCell>
                               {isExpanded ? (
@@ -291,17 +296,36 @@ export function ModelsPage() {
                                 <ChevronRight className="h-4 w-4" />
                               )}
                             </TableCell>
-                            <TableCell className="font-mono text-sm font-medium">
+                            <TableCell className="font-mono text-sm font-medium max-w-[180px] truncate">
                               {model.model_name}
                             </TableCell>
                             <TableCell className="text-sm">{provider}</TableCell>
-                            <TableCell className="text-sm text-muted-foreground">
+                            <TableCell className="text-sm text-muted-foreground max-w-[160px] truncate" title={upstream}>
                               {upstream}
                             </TableCell>
                             <TableCell>
-                              <Badge variant={active ? "default" : "secondary"}>
-                                {active ? "active" : "inactive"}
-                              </Badge>
+                              <div className="flex items-center gap-2">
+                                <Switch
+                                  checked={active}
+                                  onCheckedChange={async (checked) => {
+                                    try {
+                                      await apiPut("/model/update", {
+                                        model_id: model.model_id,
+                                        model_info: {
+                                          ...model.model_info,
+                                          mode: checked ? undefined : "inactive",
+                                        },
+                                      });
+                                      queryClient.invalidateQueries({ queryKey: ["proxy-models"] });
+                                    } catch (err) {
+                                      setErrorMsg((err as Error).message);
+                                    }
+                                  }}
+                                />
+                                <Badge variant={active ? "default" : "secondary"}>
+                                  {active ? "active" : "inactive"}
+                                </Badge>
+                              </div>
                             </TableCell>
                             <TableCell>
                               {cost.input !== null ? (
@@ -425,7 +449,7 @@ export function ModelsPage() {
                 {!isLoading && filteredModels.length === 0 && (
                   <TableRow>
                     <TableCell
-                      colSpan={8}
+                      colSpan={9}
                       className="text-center text-muted-foreground py-8"
                     >
                       {search ? "No models match your search" : "No models configured"}
