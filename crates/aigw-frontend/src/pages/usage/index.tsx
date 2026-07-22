@@ -163,10 +163,7 @@ export function UsagePage() {
   const [preset, setPreset] = useState<DatePreset>("3d");
   const [startDate, setStartDate] = useState(presetRange("3d").start);
   const [endDate, setEndDate] = useState(presetRange("3d").end);
-  const [dailyChartMode, setDailyChartMode] = useState<ChartMode>("spend");
-  const [modelChartMode, setModelChartMode] = useState<ChartMode>("spend");
-  const [providerChartMode, setProviderChartMode] = useState<ChartMode>("spend");
-  const [rankingChartMode, setRankingChartMode] = useState<ChartMode>("spend");
+  const [globalChartMode, setGlobalChartMode] = useState<ChartMode>("spend");
   const [modelViewMode, setModelViewMode] = useState<ModelViewMode>("chart");
   const [providerViewMode, setProviderViewMode] = useState<ModelViewMode>("chart");
 
@@ -384,7 +381,7 @@ export function UsagePage() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between pb-2 pt-4 px-4">
           <CardTitle className="text-sm font-medium">Daily Trend</CardTitle>
-          <Tabs defaultValue="spend" value={dailyChartMode} onValueChange={(v) => setDailyChartMode(v as ChartMode)}>
+          <Tabs defaultValue="spend" value={globalChartMode} onValueChange={(v) => setGlobalChartMode(v as ChartMode)}>
             <TabsList className="h-7">
               <TabsTrigger value="spend" className="text-xs px-3 h-5">💰 Spend</TabsTrigger>
               <TabsTrigger value="tokens" className="text-xs px-3 h-5">📊 Tokens</TabsTrigger>
@@ -414,32 +411,32 @@ export function UsagePage() {
                       fontSize: "12px",
                     }}
                     formatter={(value, name) => {
-                      if (dailyChartMode === "tokens") return [fmtTokens(value as number), name];
-                      if (dailyChartMode === "requests") return [value, name];
+                      if (globalChartMode === "tokens") return [fmtTokens(value as number), name];
+                      if (globalChartMode === "requests") return [value, name];
                       return [fmtSpend(value as number), name];
                     }}
                     labelFormatter={(label) => {
                       const item = dailyChartData.find((d) => d.date === label);
                       if (!item) return label;
-                      if (dailyChartMode === "tokens") {
+                      if (globalChartMode === "tokens") {
                         return `${label}\n  Prompt: ${fmtTokens(item.prompt_tokens)}  |  Completion: ${fmtTokens(item.completion_tokens)}\n  Total: ${fmtTokens(item.tokens)}`;
                       }
-                      if (dailyChartMode === "requests") {
+                      if (globalChartMode === "requests") {
                         return `${label}\n  Success: ${item.successful_requests}  |  Failed: ${item.failed_requests}\n  Total: ${item.requests}`;
                       }
                       return `${label}  |  ${fmtSpend(item.spend)}`;
                     }}
                   />
-                  {dailyChartMode === "spend" && (
+                  {globalChartMode === "spend" && (
                     <Bar dataKey="spend" name="Spend" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
                   )}
-                  {dailyChartMode === "tokens" && (
+                  {globalChartMode === "tokens" && (
                     <>
                       <Bar dataKey="prompt_tokens" name="Prompt" fill="#94a3b8" stackId="tokens" radius={[0, 0, 0, 0]} />
                       <Bar dataKey="completion_tokens" name="Completion" fill="#3b82f6" stackId="tokens" radius={[4, 4, 0, 0]} />
                     </>
                   )}
-                  {dailyChartMode === "requests" && (
+                  {globalChartMode === "requests" && (
                     <>
                       <Bar dataKey="successful_requests" name="Success" fill="#22c55e" stackId="requests" radius={[0, 0, 0, 0]} />
                       <Bar dataKey="failed_requests" name="Failed" fill="#ef4444" stackId="requests" radius={[4, 4, 0, 0]} />
@@ -457,7 +454,7 @@ export function UsagePage() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between pb-2 pt-4 px-4">
           <CardTitle className="text-sm font-medium">Top Virtual Keys</CardTitle>
-          <Tabs defaultValue="spend" value={rankingChartMode} onValueChange={(v) => setRankingChartMode(v as ChartMode)}>
+          <Tabs defaultValue="spend" value={globalChartMode} onValueChange={(v) => setGlobalChartMode(v as ChartMode)}>
             <TabsList className="h-7">
               <TabsTrigger value="spend" className="text-xs px-3 h-5">💰 Spend</TabsTrigger>
               <TabsTrigger value="tokens" className="text-xs px-3 h-5">📊 Tokens</TabsTrigger>
@@ -480,12 +477,12 @@ export function UsagePage() {
             <div className="space-y-2">
               {rankings.slice(0, 5).map((r, i) => {
                 const metricValue =
-                  rankingChartMode === "tokens" ? r.total_tokens :
-                  rankingChartMode === "requests" ? r.total_requests :
+                  globalChartMode === "tokens" ? r.total_tokens :
+                  globalChartMode === "requests" ? r.total_requests :
                   r.total_spend;
                 const maxValue =
-                  rankingChartMode === "tokens" ? rankingMaxTokens :
-                  rankingChartMode === "requests" ? rankingMaxRequests :
+                  globalChartMode === "tokens" ? rankingMaxTokens :
+                  globalChartMode === "requests" ? rankingMaxRequests :
                   rankingMaxSpend;
                 const pct = maxValue > 0 ? (metricValue / maxValue) * 100 : 0;
 
@@ -505,9 +502,9 @@ export function UsagePage() {
                       />
                     </div>
                     <span className="text-xs font-mono w-[80px] text-right">
-                      {rankingChartMode === "tokens"
+                      {globalChartMode === "tokens"
                         ? fmtTokens(metricValue)
-                        : rankingChartMode === "requests"
+                        : globalChartMode === "requests"
                           ? metricValue.toLocaleString()
                           : fmtSpend(metricValue)}
                     </span>
@@ -533,7 +530,7 @@ export function UsagePage() {
                 </TabsList>
               </Tabs>
               {modelViewMode === "chart" && (
-                <Tabs defaultValue="spend" value={modelChartMode} onValueChange={(v) => setModelChartMode(v as ChartMode)}>
+                <Tabs defaultValue="spend" value={globalChartMode} onValueChange={(v) => setGlobalChartMode(v as ChartMode)}>
                   <TabsList className="h-7">
                     <TabsTrigger value="spend" className="text-xs px-3 h-5">💰</TabsTrigger>
                     <TabsTrigger value="tokens" className="text-xs px-3 h-5">📊</TabsTrigger>
@@ -542,7 +539,7 @@ export function UsagePage() {
                 </Tabs>
               )}
               {modelViewMode === "ranking" && (
-                <Tabs defaultValue="spend" value={modelChartMode} onValueChange={(v) => setModelChartMode(v as ChartMode)}>
+                <Tabs defaultValue="spend" value={globalChartMode} onValueChange={(v) => setGlobalChartMode(v as ChartMode)}>
                   <TabsList className="h-7">
                     <TabsTrigger value="spend" className="text-xs px-3 h-5">💰</TabsTrigger>
                     <TabsTrigger value="tokens" className="text-xs px-3 h-5">📊</TabsTrigger>
@@ -564,8 +561,8 @@ export function UsagePage() {
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={[...modelChartData]
                     .sort((a, b) => {
-                      if (modelChartMode === "tokens") return b.total_tokens - a.total_tokens;
-                      if (modelChartMode === "requests") return b.requests - a.requests;
+                      if (globalChartMode === "tokens") return b.total_tokens - a.total_tokens;
+                      if (globalChartMode === "requests") return b.requests - a.requests;
                       return b.total_spend - a.total_spend;
                     })
                     .slice(0, 5)} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
@@ -580,14 +577,14 @@ export function UsagePage() {
                         fontSize: "12px",
                       }}
                       formatter={(value) => {
-                        if (modelChartMode === "tokens") return [fmtTokens(value as number), "Tokens"];
-                        if (modelChartMode === "requests") return [value, "Requests"];
+                        if (globalChartMode === "tokens") return [fmtTokens(value as number), "Tokens"];
+                        if (globalChartMode === "requests") return [value, "Requests"];
                         return [fmtSpend(value as number), "Spend"];
                       }}
                     />
-                    {modelChartMode === "spend" && <Bar dataKey="total_spend" name="Spend" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />}
-                    {modelChartMode === "tokens" && <Bar dataKey="total_tokens" name="Tokens" fill="#f59e0b" radius={[4, 4, 0, 0]} />}
-                    {modelChartMode === "requests" && <Bar dataKey="requests" name="Requests" fill="#22c55e" radius={[4, 4, 0, 0]} />}
+                    {globalChartMode === "spend" && <Bar dataKey="total_spend" name="Spend" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />}
+                    {globalChartMode === "tokens" && <Bar dataKey="total_tokens" name="Tokens" fill="#f59e0b" radius={[4, 4, 0, 0]} />}
+                    {globalChartMode === "requests" && <Bar dataKey="requests" name="Requests" fill="#22c55e" radius={[4, 4, 0, 0]} />}
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -595,19 +592,19 @@ export function UsagePage() {
               <div className="space-y-2">
                 {[...modelChartData]
                   .sort((a, b) => {
-                    if (modelChartMode === "tokens") return b.total_tokens - a.total_tokens;
-                    if (modelChartMode === "requests") return b.requests - a.requests;
+                    if (globalChartMode === "tokens") return b.total_tokens - a.total_tokens;
+                    if (globalChartMode === "requests") return b.requests - a.requests;
                     return b.total_spend - a.total_spend;
                   })
                   .slice(0, 5)
                   .map((m, i) => {
                     const metricValue =
-                      modelChartMode === "tokens" ? m.total_tokens :
-                      modelChartMode === "requests" ? m.requests :
+                      globalChartMode === "tokens" ? m.total_tokens :
+                      globalChartMode === "requests" ? m.requests :
                       m.total_spend;
                     const maxValue =
-                      modelChartMode === "tokens" ? modelRankingMaxTokens :
-                      modelChartMode === "requests" ? modelRankingMaxRequests :
+                      globalChartMode === "tokens" ? modelRankingMaxTokens :
+                      globalChartMode === "requests" ? modelRankingMaxRequests :
                       modelRankingMaxSpend;
                     const pct = maxValue > 0 ? (metricValue / maxValue) * 100 : 0;
 
@@ -625,9 +622,9 @@ export function UsagePage() {
                           />
                         </div>
                         <span className="text-xs font-mono w-[80px] text-right">
-                          {modelChartMode === "tokens"
+                          {globalChartMode === "tokens"
                             ? fmtTokens(metricValue)
-                            : modelChartMode === "requests"
+                            : globalChartMode === "requests"
                               ? metricValue.toLocaleString()
                               : fmtSpend(metricValue)}
                         </span>
@@ -650,7 +647,7 @@ export function UsagePage() {
                   <TabsTrigger value="ranking" className="text-xs px-3 h-5"><ListOrdered className="h-3 w-3" /></TabsTrigger>
                 </TabsList>
               </Tabs>
-              <Tabs defaultValue="spend" value={providerChartMode} onValueChange={(v) => setProviderChartMode(v as ChartMode)}>
+              <Tabs defaultValue="spend" value={globalChartMode} onValueChange={(v) => setGlobalChartMode(v as ChartMode)}>
                 <TabsList className="h-7">
                   <TabsTrigger value="spend" className="text-xs px-3 h-5">💰</TabsTrigger>
                   <TabsTrigger value="tokens" className="text-xs px-3 h-5">📊</TabsTrigger>
@@ -672,7 +669,7 @@ export function UsagePage() {
                   <PieChart>
                     <Pie
                       data={providerChartData}
-                      dataKey={providerChartMode === "tokens" ? "tokens" : providerChartMode === "requests" ? "requests" : "value"}
+                      dataKey={globalChartMode === "tokens" ? "tokens" : globalChartMode === "requests" ? "requests" : "value"}
                       nameKey="name"
                       cx="50%"
                       cy="50%"
@@ -686,8 +683,8 @@ export function UsagePage() {
                     </Pie>
                     <Tooltip
                       formatter={(value) => {
-                        if (providerChartMode === "tokens") return [fmtTokens(value as number), "Tokens"];
-                        if (providerChartMode === "requests") return [value, "Requests"];
+                        if (globalChartMode === "tokens") return [fmtTokens(value as number), "Tokens"];
+                        if (globalChartMode === "requests") return [value, "Requests"];
                         return [fmtSpend(value as number), "Spend"];
                       }}
                     />
@@ -698,19 +695,19 @@ export function UsagePage() {
               <div className="space-y-2">
                 {[...providerChartData]
                   .sort((a, b) => {
-                    if (providerChartMode === "tokens") return b.tokens - a.tokens;
-                    if (providerChartMode === "requests") return b.requests - a.requests;
+                    if (globalChartMode === "tokens") return b.tokens - a.tokens;
+                    if (globalChartMode === "requests") return b.requests - a.requests;
                     return b.value - a.value;
                   })
                   .slice(0, 5)
                   .map((p, i) => {
                     const metricValue =
-                      providerChartMode === "tokens" ? p.tokens :
-                      providerChartMode === "requests" ? p.requests :
+                      globalChartMode === "tokens" ? p.tokens :
+                      globalChartMode === "requests" ? p.requests :
                       p.value;
                     const provMaxValue = (() => {
-                      if (providerChartMode === "tokens") return Math.max(...providerChartData.map(x => x.tokens));
-                      if (providerChartMode === "requests") return Math.max(...providerChartData.map(x => x.requests));
+                      if (globalChartMode === "tokens") return Math.max(...providerChartData.map(x => x.tokens));
+                      if (globalChartMode === "requests") return Math.max(...providerChartData.map(x => x.requests));
                       return Math.max(...providerChartData.map(x => x.value));
                     })();
                     const pct = provMaxValue > 0 ? (metricValue / provMaxValue) * 100 : 0;
@@ -729,9 +726,9 @@ export function UsagePage() {
                           />
                         </div>
                         <span className="text-xs font-mono w-[80px] text-right">
-                          {providerChartMode === "tokens"
+                          {globalChartMode === "tokens"
                             ? fmtTokens(metricValue)
-                            : providerChartMode === "requests"
+                            : globalChartMode === "requests"
                               ? metricValue.toLocaleString()
                               : fmtSpend(metricValue)}
                         </span>
