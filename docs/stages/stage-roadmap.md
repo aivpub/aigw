@@ -1,15 +1,15 @@
 # aigw — AI Gateway Stage Roadmap
 
 **项目**: aigw (litellm Rust 最小兼容替代)
-**最后更新**: 2026-07-21
+**最后更新**: 2026-07-22
 
 ---
 
 ## 当前状态
 
-- **当前 Phase**: Phase 27 — 全栈质量修复 + Usage 页面图表增强
-- **状态**: 71/71 Stages 已完成 ✅ Phase 27 全部完成
-- **下一里程碑**: LT-Observ 剩余 OTEL Traces (Stage 68)
+- **当前 Phase**: Phase 28 — 安全与质量加固
+- **状态**: 71/72 Stages 已完成 (Phase 27 ✅, Phase 28 ⏳)
+- **下一里程碑**: Stage 72 — 安全与质量加固 (16h)
 
 ### 整体进度
 
@@ -36,6 +36,7 @@ Phase 24:   ████████████████████ 100% (1
 Phase 25:   ████████████████████ 100% (1/1 Stage)  ✅ 健康检查 & UX 优化
 Phase 26:   ██████████████░░░░░░  50% (1/2 Stages) 🔄 可观测性（Prometheus ✅, OTEL ⏳）
 Phase 27:   ████████████████████ 100% (3/3 Stages) ✅ 全栈质量修复 + Usage 图表增强
+Phase 28:   ░░░░░░░░░░░░░░░░░░░░   0% (0/1 Stage)  ⏳ 安全与质量加固
 ```
 
 ---
@@ -262,6 +263,22 @@ Phase 27:   ████████████████████ 100% (3
 
 ---
 
+### Phase 28：安全与质量加固 ⏳
+
+**背景**: 代码审计发现的 4 个安全/质量问题：OptionalClientIp 无 fallback、requester_ip_address 不序列化、/router/settings 无鉴权、前端 401 不跳转。
+
+| Stage | 状态 | 目标 | 类型 | 预估 |
+|-------|------|------|------|------|
+| Stage 72 | ⏳ 待开始 | **安全与质量加固** — Part A: `OptionalClientIp` 三层 fallback (X-Forwarded-For → X-Real-IP → ConnectInfo) + `requester_ip_address` JSON 序列化修复；Part B: `/router/settings` 4 handler 加 `SpendAuth` + `require_admin`；Part C: 前端 `handleResponse` 检测 401 → 全局事件 `auth:unauthenticated` → `RequireAuth` 自动重定向。TDD: 16 UT + 10 BDD。三个子任务可并行 | 全栈+测试 | 16h |
+
+**依赖**: 无。Part A/B/C 修改不同文件，可并行开发。
+
+**Phase 28 合计**: 16h，1 Stage。
+
+**设计文档**: `docs/stages/stage-72.md`
+
+---
+
 ## 已完成 Phase 回顾
 
 ### Phase 0：项目基础设施
@@ -401,3 +418,4 @@ Phase 27:   ████████████████████ 100% (3
 | v20.0 | 2026-07-21 | **Phase 27 规划（第二版）**：合并为 3 Stage（69-71），每个 Stage 8h 闭环。Stage 69 后端质量修复+数据增强（model_group 修正+重试+IP中间件+Daily分解+Top Keys端点）；Stage 70 前端页面修复（Models/Keys/Users/SpendLogs 表格补全）；Stage 71 Usage 图表增强（堆叠 bar+Top Keys/Models 排行榜）。消化 LT-Usage。
 | v21.0 | 2026-07-22 | **Stage 69 完成**：model_group 语义修复、reqwest-retry HTTP 重试、axum-client-ip 提取器、Daily trends 8 字段扩展、Top Keys 聚合端点。总进度 69/71，Phase 27 进度 1/3。|
 | v22.0 | 2026-07-22 | **Phase 27 全部完成**：Stage 70 前端页面修复（Expires 表单字段、virtual_keys_count 子查询）+ Stage 71 Usage 图表增强（堆叠 bar、Top Keys/Models 排行榜）。总进度 71/71。✅ Phase 27 闭环交付。|
+| v23.0 | 2026-07-22 | **Phase 28 规划**：新增 Phase 28（Stage 72，安全与质量加固, 16h）：OptionalClientIp 三层 fallback + requester_ip_address 序列化修复 + /router/settings 鉴权加固 + 前端 401 自动跳转。3 子任务可并行。设计文档：`docs/stages/stage-72.md`。总进度 71/72。|
