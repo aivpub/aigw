@@ -141,10 +141,10 @@ enum Commands {
         /// Comma-separated table.column pairs to skip during import
         #[arg(long = "skip-columns", value_delimiter = ',')]
         skip_columns: Vec<String>,
-        /// Rows per target-side INSERT transaction for spend_logs (default 1000).
+        /// Rows per target-side INSERT transaction for spend_logs (default 10).
         /// Larger = fewer commits but bigger memory / WAL spikes.
         /// Smaller = smoother progress, tighter memory ceiling.
-        #[arg(long = "batch-size", default_value_t = 1000)]
+        #[arg(long = "batch-size", default_value_t = 10)]
         batch_size: usize,
     },
     /// Pre-migration checks: verify source/target connectivity, keys, and data
