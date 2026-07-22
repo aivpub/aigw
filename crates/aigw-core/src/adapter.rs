@@ -807,7 +807,20 @@ fn claude_message_to_openai(msg: &ClaudeMessage) -> Vec<ChatMessage> {
             if !tool_results.is_empty() && msg.role == "user" {
                 let mut out = Vec::new();
 
-                // Non-tool_result content parts (text/image) → user message
+                // Each tool_result → one tool message FIRST (OpenAI protocol:
+                // tool messages must immediately follow the assistant message
+                // that issued the tool_calls; user text must come after).
+                for (tool_use_id, content) in &tool_results {
+                    out.push(ChatMessage {
+                        role: "tool".to_string(),
+                        content: ChatContent::Text(content.clone()),
+                        name: None,
+                        tool_calls: None,
+                        tool_call_id: Some(tool_use_id.clone()),
+                    });
+                }
+
+                // Non-tool_result content parts (text/image) → user message AFTER tool messages
                 let non_tool_parts: Vec<ContentPart> = blocks.iter()
                     .filter(|b| b.content_type != "tool_result")
                     .filter(|b| b.content_type == "text" || b.content_type == "image")
@@ -831,16 +844,6 @@ fn claude_message_to_openai(msg: &ClaudeMessage) -> Vec<ChatMessage> {
                     });
                 }
 
-                // Each tool_result → one tool message
-                for (tool_use_id, content) in &tool_results {
-                    out.push(ChatMessage {
-                        role: "tool".to_string(),
-                        content: ChatContent::Text(content.clone()),
-                        name: None,
-                        tool_calls: None,
-                        tool_call_id: Some(tool_use_id.clone()),
-                    });
-                }
                 out
             } else {
                 // Only emit ContentParts for text/image blocks.
@@ -1637,12 +1640,13 @@ mod tests {
         });
         let adapted = AnthropicToOpenAI.adapt_request(body, &test_deployment()).unwrap();
         let msgs = adapted["messages"].as_array().unwrap();
-        // 1 user message (text) + 1 tool message (tool_result)
+        // tool message MUST come before user text (OpenAI protocol:
+        // tool messages must immediately follow the assistant tool_calls).
         assert_eq!(msgs.len(), 2);
-        assert_eq!(msgs[0]["role"].as_str(), Some("user"));
-        assert_eq!(msgs[0]["content"].as_array().unwrap()[0]["text"].as_str(), Some("here is the result"));
-        assert_eq!(msgs[1]["role"].as_str(), Some("tool"));
-        assert_eq!(msgs[1]["tool_call_id"].as_str(), Some("toolu_01"));
+        assert_eq!(msgs[0]["role"].as_str(), Some("tool"));
+        assert_eq!(msgs[0]["tool_call_id"].as_str(), Some("toolu_01"));
+        assert_eq!(msgs[1]["role"].as_str(), Some("user"));
+        assert_eq!(msgs[1]["content"].as_array().unwrap()[0]["text"].as_str(), Some("here is the result"));
     }
 
     #[test]
