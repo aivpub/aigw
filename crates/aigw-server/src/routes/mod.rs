@@ -6,6 +6,7 @@ pub mod cors_layer;
 pub mod credentials;
 pub mod docs;
 pub mod health;
+pub mod ip_extractor;
 pub mod keys;
 pub mod login;
 pub mod models;

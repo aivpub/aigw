@@ -844,6 +844,10 @@ struct DailyRow {
     spend: f64,
     tokens: i64,
     requests: i64,
+    prompt_tokens: i64,
+    completion_tokens: i64,
+    successful_requests: i64,
+    failed_requests: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -856,7 +860,7 @@ async fn query_activity(
     db: &Database,
     query: &ActivityQuery,
 ) -> Result<Value, DbError> {
-    let (metadata, daily): ((f64, i64, i64, i64, i64, i64, i64), Vec<(String, f64, i64, i64)>) = tokio::try_join!(
+    let (metadata, daily): ((f64, i64, i64, i64, i64, i64, i64), Vec<(String, f64, i64, i64, i64, i64, i64, i64)>) = tokio::try_join!(
         db.query_activity_metadata(
             &query.start_date,
             &query.end_date,
@@ -885,11 +889,15 @@ async fn query_activity(
 
     let daily_vals: Vec<DailyRow> = daily
         .iter()
-        .map(|(date, spend, tokens, requests)| DailyRow {
+        .map(|(date, spend, tokens, requests, prompt_tokens, completion_tokens, successful_requests, failed_requests)| DailyRow {
             date: date.clone(),
             spend: *spend,
             tokens: *tokens,
             requests: *requests,
+            prompt_tokens: *prompt_tokens,
+            completion_tokens: *completion_tokens,
+            successful_requests: *successful_requests,
+            failed_requests: *failed_requests,
         })
         .collect();
 
@@ -898,6 +906,40 @@ async fn query_activity(
         daily: daily_vals,
     })
     .unwrap_or(json!({})))
+}
+
+/// GET /global/spend/keys/rankings?start_date=X&end_date=Y[&limit=N]
+///
+/// Returns top keys ranked by total spend within the given date range.
+#[derive(Debug, Deserialize)]
+pub struct KeyRankingsQuery {
+    pub start_date: String,
+    pub end_date: String,
+    #[serde(default = "default_limit")]
+    pub limit: u32,
+}
+
+fn default_limit() -> u32 { 10 }
+
+pub async fn global_spend_keys_rankings(
+    State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
+    Query(query): Query<KeyRankingsQuery>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    require_admin(&auth)?;
+
+    let rankings = state.db.aggregate_spend_by_keys(
+        &query.start_date,
+        &query.end_date,
+        query.limit,
+    ).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
+        )
+    })?;
+
+    Ok(Json(serde_json::to_value(rankings).unwrap_or(json!([]))))
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

@@ -201,6 +201,16 @@ pub struct SpendProviderAgg {
     pub requests: i64,
 }
 
+/// Spend aggregation by virtual key (for /global/spend/keys/rankings)
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct SpendKeyRanking {
+    pub api_key: String,
+    pub key_alias: Option<String>,
+    pub total_spend: f64,
+    pub total_requests: i64,
+    pub total_tokens: i64,
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Multi-tenant tables (minimum compatible — all columns, FK preserved)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

@@ -12,7 +12,7 @@ use rand::Rng;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
 /// Track per-instance state for routing decisions
@@ -299,6 +299,27 @@ impl Router {
     pub fn report_success(&self, deployment: &mut Deployment) {
         deployment.fail_count = 0;
         deployment.cooldown_until = None;
+    }
+
+    /// Build a retry-capable HTTP client for upstream requests.
+    ///
+    /// Uses `reqwest-middleware` + `reqwest-retry` with exponential backoff.
+    /// Retries on 5xx and network errors; 4xx is not retried.
+    #[cfg(feature = "reqwest")]
+    pub fn build_retry_client(&self) -> reqwest_middleware::ClientWithMiddleware {
+        use reqwest_middleware::ClientBuilder;
+        use reqwest_retry::policies::ExponentialBackoff;
+        use reqwest_retry::RetryTransientMiddleware;
+
+        let retry_policy = ExponentialBackoff::builder()
+            .build_with_max_retries(self.num_retries);
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(600))
+            .build()
+            .expect("failed to build reqwest client");
+        ClientBuilder::new(client)
+            .with(RetryTransientMiddleware::new_with_policy(retry_policy))
+            .build()
     }
 }
 

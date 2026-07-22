@@ -365,6 +365,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/global/spend/models", get(spend::global_spend_models))
         .route("/global/spend/providers", get(spend::global_spend_providers))
         .route("/global/spend/activity", get(spend::global_spend_activity))
+        .route("/global/spend/keys/rankings", get(spend::global_spend_keys_rankings))
         // Login/Logout endpoints (litellm-compatible /v2/login/*)
         .route("/v2/login", axum::routing::post(login::login))
         .route("/v2/logout", axum::routing::post(login::logout_with_cleanup))

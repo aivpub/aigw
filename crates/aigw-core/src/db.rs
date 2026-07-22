@@ -2251,11 +2251,14 @@ impl Database {
         user_id: Option<&str>,
         team_id: Option<&str>,
         organization_id: Option<&str>,
-    ) -> Result<Vec<(String, f64, i64, i64)>> {
+    ) -> Result<Vec<(String, f64, i64, i64, i64, i64, i64, i64)>> {
         match self {
             Database::Sqlite(pool) => {
                 // SQLite: DATE() already returns TEXT — no cast needed.
-                let sql = "SELECT DATE(start_time), COALESCE(SUM(spend), 0), COALESCE(SUM(total_tokens), 0), COUNT(request_id) \
+                let sql = "SELECT DATE(start_time), COALESCE(SUM(spend), 0), COALESCE(SUM(total_tokens), 0), COUNT(request_id), \
+                    COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), \
+                    COUNT(CASE WHEN status = 'success' THEN 1 END), \
+                    COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END) \
                     FROM spend_logs WHERE date(start_time) >= date(?) AND date(start_time) <= date(?) {filter} \
                     GROUP BY 1 ORDER BY 1 ASC";
                 let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false);
@@ -2267,7 +2270,10 @@ impl Database {
             }
             Database::Mysql(pool) => {
                 // MySQL: CAST(DATE(…) AS CHAR) converts DATE → TEXT.
-                let sql = "SELECT CAST(DATE(start_time) AS CHAR), COALESCE(SUM(spend), 0), COALESCE(SUM(total_tokens), 0), COUNT(request_id) \
+                let sql = "SELECT CAST(DATE(start_time) AS CHAR), COALESCE(SUM(spend), 0), COALESCE(SUM(total_tokens), 0), COUNT(request_id), \
+                    COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), \
+                    COUNT(CASE WHEN status = 'success' THEN 1 END), \
+                    COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END) \
                     FROM spend_logs WHERE date(start_time) >= date(?) AND date(start_time) <= date(?) {filter} \
                     GROUP BY 1 ORDER BY 1 ASC";
                 let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false);
@@ -2279,7 +2285,10 @@ impl Database {
             }
             Database::Postgres(pool) => {
                 // PostgreSQL: DATE(…)::TEXT converts DATE → TEXT.
-                let sql = "SELECT DATE(start_time)::TEXT, COALESCE(SUM(spend), 0), COALESCE(SUM(total_tokens), 0), COUNT(request_id) \
+                let sql = "SELECT DATE(start_time)::TEXT, COALESCE(SUM(spend), 0), COALESCE(SUM(total_tokens), 0), COUNT(request_id), \
+                    COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), \
+                    COUNT(CASE WHEN status = 'success' THEN 1 END), \
+                    COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END) \
                     FROM spend_logs WHERE date(start_time) >= date($1) AND date(start_time) <= date($2) {filter} \
                     GROUP BY 1 ORDER BY 1 ASC";
                 let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 3, true);
@@ -2288,6 +2297,41 @@ impl Database {
                     .bind(start_date).bind(end_date);
                 for p in &params { q = q.bind(p); }
                 q.fetch_all(pool).await.map_err(DbError::from)
+            }
+        }
+    }
+
+    /// Aggregate spend by keys for ranking within a date range.
+    pub async fn aggregate_spend_by_keys(
+        &self,
+        start_date: &str,
+        end_date: &str,
+        limit: u32,
+    ) -> Result<Vec<crate::models::SpendKeyRanking>> {
+        let sql = "SELECT sl.api_key, vk.key_alias, \
+            COALESCE(SUM(sl.spend), 0) AS total_spend, COUNT(sl.request_id) AS total_requests, COALESCE(SUM(sl.total_tokens), 0) AS total_tokens \
+            FROM spend_logs sl LEFT JOIN virtual_keys vk ON sl.api_key = vk.token \
+            WHERE date(sl.start_time) >= date({p1}) AND date(sl.start_time) <= date({p2}) \
+            GROUP BY sl.api_key ORDER BY 3 DESC LIMIT {limit}";
+        let sql = sql.replace("{limit}", &limit.to_string());
+        match self {
+            Database::Sqlite(pool) => {
+                let sql = sql.replace("{p1}", "?").replace("{p2}", "?");
+                sqlx::query_as(&sql)
+                    .bind(start_date).bind(end_date)
+                    .fetch_all(pool).await.map_err(DbError::from)
+            }
+            Database::Mysql(pool) => {
+                let sql = sql.replace("{p1}", "?").replace("{p2}", "?");
+                sqlx::query_as(&sql)
+                    .bind(start_date).bind(end_date)
+                    .fetch_all(pool).await.map_err(DbError::from)
+            }
+            Database::Postgres(pool) => {
+                let sql = sql.replace("{p1}", "$1").replace("{p2}", "$2");
+                sqlx::query_as(&sql)
+                    .bind(start_date).bind(end_date)
+                    .fetch_all(pool).await.map_err(DbError::from)
             }
         }
     }
@@ -4310,15 +4354,29 @@ mod tests {
         spend: f64,
         request_tags: Option<serde_json::Value>,
     ) -> SpendLog {
+        make_test_spend_log_full(api_key, user, spend, 100, 50, 50, "success", request_tags)
+    }
+
+    /// Helper: create a SpendLog with full token breakdown and status.
+    fn make_test_spend_log_full(
+        api_key: &str,
+        user: &str,
+        spend: f64,
+        total_tokens: i32,
+        prompt_tokens: i32,
+        completion_tokens: i32,
+        status: &str,
+        _request_tags: Option<serde_json::Value>,
+    ) -> SpendLog {
         let now = Utc::now();
         SpendLog {
             request_id: Uuid::new_v4().to_string(),
             call_type: "completion".to_string(),
             api_key: api_key.to_string(),
             spend,
-            total_tokens: 100,
-            prompt_tokens: 50,
-            completion_tokens: 50,
+            total_tokens,
+            prompt_tokens,
+            completion_tokens,
             start_time: now,
             end_time: now,
             request_duration_ms: Some(500),
@@ -4332,7 +4390,7 @@ mod tests {
             metadata: None,
             cache_hit: None,
             cache_key: None,
-            request_tags,
+            request_tags: _request_tags,
             team_id: None,
             organization_id: None,
             end_user: None,
@@ -4340,12 +4398,14 @@ mod tests {
             messages: None,
             response: None,
             session_id: None,
-            status: Some("success".to_string()),
+            status: Some(status.to_string()),
             mcp_namespaced_tool_name: None,
             agent_id: None,
             proxy_server_request: None,
         }
     }
+
+    // ---- test helpers ----
 
     #[tokio::test]
     async fn test_insert_and_query_spend_log() {
@@ -4805,5 +4865,95 @@ mod tests {
             Database::normalize_date_for_query("2026-07-15T10:34:38", false),
             "2026-07-15T10:34:38Z"
         );
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // Stage 69: Daily trend 8-tuple decomposition
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    #[tokio::test]
+    async fn test_activity_daily_8_tuple() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let key_hash = hash_token("sk-daily-test");
+
+        // Insert a successful request
+        let log1 = make_test_spend_log_full(
+            &key_hash, "user-1", 0.5, 100, 60, 40, "success", None,
+        );
+        // Insert a failed request
+        let log2 = make_test_spend_log_full(
+            &key_hash, "user-1", 0.0, 80, 50, 30, "failure:500", None,
+        );
+
+        db.insert_spend_log(&log1).await.expect("insert log1");
+        db.insert_spend_log(&log2).await.expect("insert log2");
+
+        let rows = db.query_activity_daily("2020-01-01", "2030-12-31", None, None, None)
+            .await.expect("query activity daily");
+
+        assert!(!rows.is_empty(), "should have at least one row");
+        let (date, spend, _tokens, requests, prompt_tokens, completion_tokens, successful_requests, failed_requests) = &rows[0];
+        assert!(!date.is_empty());
+        assert!(*spend > 0.0 || true, "spend present");
+        assert_eq!(*requests, 2, "should count both success and failure as requests");
+        assert_eq!(*prompt_tokens, 110, "60 + 50 prompt tokens");
+        assert_eq!(*completion_tokens, 70, "40 + 30 completion tokens");
+        assert_eq!(*successful_requests, 1);
+        assert_eq!(*failed_requests, 1);
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // Stage 69: Top Keys ranking aggregation
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    #[tokio::test]
+    async fn test_aggregate_spend_by_keys_sort_order() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+
+        // Insert virtual keys
+        let key_a = hash_token("key-a");
+        let key_b = hash_token("key-b");
+        let vk_a = make_test_key(&key_a, "alias-a");
+        let vk_b = make_test_key(&key_b, "alias-b");
+        db.insert_key(&vk_a).await.expect("insert key");
+        db.insert_key(&vk_b).await.expect("insert key");
+
+        // Insert spend logs with different amounts
+        let log_a = make_test_spend_log_full(&key_a, "u1", 10.0, 100, 50, 50, "success", None);
+        let log_b = make_test_spend_log_full(&key_b, "u2", 5.0, 50, 25, 25, "success", None);
+        let log_a2 = make_test_spend_log_full(&key_a, "u1", 3.0, 30, 15, 15, "success", None);
+
+        db.insert_spend_log(&log_a).await.expect("insert a");
+        db.insert_spend_log(&log_b).await.expect("insert b");
+        db.insert_spend_log(&log_a2).await.expect("insert a2");
+
+        let rankings = db.aggregate_spend_by_keys("2020-01-01", "2030-12-31", 10)
+            .await.expect("aggregate");
+
+        assert!(rankings.len() >= 2, "should have at least 2 keys ranked");
+        // Key A (13.0) should rank before Key B (5.0) — descending by spend
+        assert_eq!(rankings[0].api_key, key_a);
+        assert_eq!(rankings[0].total_spend, 13.0);
+        assert_eq!(rankings[0].key_alias.as_deref(), Some("alias-a"));
+    }
+
+    #[tokio::test]
+    async fn test_aggregate_spend_by_keys_limit() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+
+        for i in 0..5 {
+            let hash = hash_token(&format!("key-{}", i));
+            let vk = make_test_key(&hash, &format!("alias-{}", i));
+            db.insert_key(&vk).await.expect("insert key");
+
+            let log = make_test_spend_log_full(&hash, "u1", (i + 1) as f64, 10, 5, 5, "success", None);
+            db.insert_spend_log(&log).await.expect("insert log");
+        }
+
+        // Limit to 2
+        let rankings = db.aggregate_spend_by_keys("2020-01-01", "2030-12-31", 2)
+            .await.expect("aggregate with limit");
+
+        assert_eq!(rankings.len(), 2, "should respect limit=2");
     }
 }

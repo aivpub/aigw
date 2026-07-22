@@ -22,6 +22,7 @@ use std::sync::Arc;
 use tokio_stream::StreamExt;
 
 use super::keys::SharedState;
+use super::ip_extractor::OptionalClientIp;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Anthropic error helper
@@ -87,6 +88,7 @@ async fn try_cookie_jwt_auth(
 /// Proxies to upstream with protocol conversion via the adapter layer.
 pub async fn messages_handler(
     State(state): State<SharedState>,
+    OptionalClientIp(client_ip): OptionalClientIp,
     http::request::Parts {
         headers,
         ..
@@ -283,11 +285,7 @@ pub async fn messages_handler(
             })
     });
 
-    let requester_ip = headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.split(',').next().unwrap_or("").trim().to_string())
-        .filter(|s| !s.is_empty());
+    let requester_ip = client_ip.map(|cip| cip.0.to_string());
 
     // Extract User-Agent from HTTP header (align with litellm)
     let user_agent: Option<String> = headers
@@ -425,17 +423,8 @@ pub async fn messages_handler(
         upstream_path
     );
 
-    // 7. Call upstream
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(600))
-        .build()
-        .map_err(|e| {
-            anthropic_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal_error",
-                &format!("HTTP client error: {}", e),
-            )
-        })?;
+    // 7. Call upstream (with retry support)
+    let client = state.router.build_retry_client();
 
     let mut upstream_req = client.post(&upstream_url).json(&upstream_body);
 
@@ -919,9 +908,9 @@ pub async fn messages_handler(
             ),
             completion_start_time: Some(now), // non-streaming sentinel = end_time
             model: model.to_string(),
-            model_id: None,
-            model_group: None,
-            custom_llm_provider: None,
+            model_id: upstream_model_id.clone(),
+            model_group: upstream_model_group.clone(),
+            custom_llm_provider: upstream_custom_llm_provider.clone(),
             api_base: Some(upstream_base_url),
             user: auth_user_id.clone(),
             metadata: None,

@@ -147,10 +147,7 @@ impl ModelResolver {
 
         // Extract model_group/model_id/custom_llm_provider from proxy_models for SpendLog
         let model_id = Some(m.model_id.clone());
-        let model_group = params_json
-            .get("model")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+        let model_group = Some(m.model_name.clone());
         let custom_llm_provider = params_json
             .get("custom_llm_provider")
             .and_then(|v| v.as_str())

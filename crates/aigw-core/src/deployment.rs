@@ -31,7 +31,7 @@ pub struct Deployment {
     pub raw_params: Value,
     /// proxy_models UUID (model_id column)
     pub model_id: Option<String>,
-    /// litellm_params.model — upstream model name for model_group
+    /// proxy_models.model_name — deployment name for model_group (litellm-compatible)
     pub model_group: Option<String>,
     /// litellm_params.custom_llm_provider value — e.g. "openai", "anthropic"
     pub custom_llm_provider: Option<String>,

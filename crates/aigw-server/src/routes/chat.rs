@@ -23,6 +23,7 @@ use std::sync::Arc;
 use tokio_stream::StreamExt;
 
 use super::keys::SharedState;
+use super::ip_extractor::OptionalClientIp;
 
 /// Resolved upstream routing parameters from proxy_models + credentials lookup.
 #[allow(dead_code)]
@@ -36,7 +37,7 @@ pub(crate) struct ResolvedUpstream {
     pub(crate) output_cost_per_token: Option<f64>,
     /// proxy_models UUID (model_id)
     pub(crate) model_id: Option<String>,
-    /// litellm_params.model — upstream model name for model_group
+    /// proxy_models.model_name — deployment name for model_group (litellm-compatible)
     pub(crate) model_group: Option<String>,
     /// litellm_params.custom_llm_provider — e.g. "openai", "anthropic"
     pub(crate) custom_llm_provider: Option<String>,
@@ -139,10 +140,7 @@ pub(crate) async fn resolve_upstream_params(
 
             // Extract model_group / custom_llm_provider from proxy_models for SpendLog
             let model_id = Some(m.model_id.clone());
-            let model_group = params_json
-                .get("model")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
+            let model_group = Some(m.model_name.clone());
             let custom_llm_provider = params_json
                 .get("custom_llm_provider")
                 .and_then(|v| v.as_str())
@@ -666,6 +664,7 @@ async fn resolve_team_model_list(
 pub async fn chat_completions(
     State(state): State<SharedState>,
     ChatAuth(auth): ChatAuth,
+    OptionalClientIp(client_ip): OptionalClientIp,
     headers: axum::http::HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<axum::response::Response, (StatusCode, Json<Value>)> {
@@ -839,11 +838,7 @@ pub async fn chat_completions(
             })
     });
 
-    let requester_ip: Option<String> = headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.split(',').next().unwrap_or("").trim().to_string())
-        .filter(|s| !s.is_empty());
+    let requester_ip: Option<String> = client_ip.map(|cip| cip.0.to_string());
 
     // Extract User-Agent from HTTP header (align with litellm: store in metadata.user_agent)
     let user_agent: Option<String> = headers
@@ -876,22 +871,8 @@ pub async fn chat_completions(
         None
     };
 
-    // 5. Build and send upstream request
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(600))
-        .build()
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({
-                    "error": {
-                        "message": format!("HTTP client error: {}", e),
-                        "type": "internal_error",
-                        "code": null
-                    }
-                })),
-            )
-        })?;
+    // 5. Build and send upstream request (with retry support)
+    let client = state.router.build_retry_client();
 
     let mut upstream_req = client.post(&upstream_url).json(&upstream_body_val);
 
@@ -1346,8 +1327,8 @@ pub async fn chat_completions(
                     date,
                     api_key: token_hash,
                     model,
-                    model_group: String::new(),
-                    custom_llm_provider: String::new(),
+                    model_group: deployment.model_group.clone().unwrap_or_default(),
+                    custom_llm_provider: deployment.custom_llm_provider.clone().unwrap_or_default(),
                     mcp_namespaced_tool_name: String::new(),
                     endpoint: "/v1/chat/completions".to_string(),
                     prompt_tokens: stream_prompt_tokens as i64,
