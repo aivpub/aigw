@@ -1,11 +1,11 @@
 # aigw -- 下一步行动
 
 **上次更新**: 2026-07-22
-**当前阶段**: Phase 27 全栈质量修复 + Usage 页面图表增强（Stages 69-71），Stage 69 ✅
+**当前阶段**: Phase 27 ✅ 全栈质量修复 + Usage 页面图表增强 全部完成
 
 ---
 
-## 当前状态：69/71 Stages 已完成
+## 当前状态：71/71 Stages 已完成 ✅ 全部交付
 
 ### 项目里程碑
 
@@ -31,7 +31,7 @@ Phase 23:   ████████████████████ 100% (2
 Phase 24:   ████████████████████ 100% (1/1)  ✅
 Phase 25:   ████████████████████ 100% (1/1)  ✅
 Phase 26:   ██████████████░░░░░░  50% (1/2)  🔄 OTEL ⏳
-Phase 27:   ██████████░░░░░░░░░░  33% (1/3)  🔄 全栈质量修复 + Usage 图表增强
+Phase 27:   ████████████████████ 100% (3/3)  ✅ 全栈质量修复 + Usage 图表增强
 ```
 
 ### 测试目标
@@ -55,33 +55,33 @@ Phase 27:   ██████████░░░░░░░░░░  33% (1
 | 优先级 | Phase | 目标 | 状态 |
 |--------|-------|------|------|
 | P0 | Phase 27 | 后端质量修复+数据增强 (Stage 69) | ✅ 完成 |
-| P0 | Phase 27 | 前端页面修复 Models/Keys/Users/SpendLogs (Stage 70) | ⏳ |
-| P1 | Phase 27 | Usage 图表增强 堆叠+排行榜 (Stage 71) | ⏳ |
-| P2 | Phase 26 | OTEL Traces (Stage 68) | ⏳ |
+| P0 | Phase 27 | 前端页面修复 Models/Keys/Users/SpendLogs (Stage 70) | ✅ 完成 |
+| P1 | Phase 27 | Usage 图表增强 堆叠+排行榜 (Stage 71) | ✅ 完成 |
+| P2 | Phase 26 | OTEL Traces (Stage 68) | ⏳ 下一步 |
 
 ---
 
-## Phase 27: 全栈质量修复 + Usage 页面图表增强
+## Phase 27: 全栈质量修复 + Usage 页面图表增强 ✅
 
 | Stage | 目标 | 类型 | 预估 | 状态 |
 |-------|------|------|------|------|
 | Stage 69 | 后端质量修复 + Usage 数据增强（model_group/retry/IP/Daily/Keys） | 后端 | 8h | ✅ 2026-07-22 |
-| Stage 70 | 前端页面修复（Models/Keys/Users/SpendLogs 表格补全） | 全栈 | 8h | ⏳ |
-| Stage 71 | Usage 图表增强（堆叠 bar + Top Keys/Models 排行榜） | 前端 | 8h | ⏳ |
+| Stage 70 | 前端页面修复（Models/Keys/Users/SpendLogs 表格补全） | 全栈 | 8h | ✅ 2026-07-22 |
+| Stage 71 | Usage 图表增强（堆叠 bar + Top Keys/Models 排行榜） | 前端 | 8h | ✅ 2026-07-22 |
 
-**合计**: 24h，3 Stages
+**合计**: 24h，3 Stages ✅ 全部交付
 
 **设计文档**: `docs/stages/stage-69.md` ~ `docs/stages/stage-71.md`
 
 ## 依赖关系
 
-Stage 69（数据层 + 端点）→ Stage 70 / 71 可并行 ✅ Stage 69 已完成
+Stage 69（数据层 + 端点）→ Stage 70 / 71 可并行 ✅ 全部完成
 
 ## 后续路线
 
 | ID | 主题 | 优先级 | 状态 |
 |----|------|--------|------|
-| LT-Observ | Observability (OTEL Traces) | P1 | Stage 68 待开始 |
+| LT-Observ | Observability (OTEL Traces) | P1 | Stage 68 待开始 —— **下一步** |
 | LT-Usage | Usage 多视角聚合 | P2 | 已消化 → Phase 27 |
 | LT-Redis | Redis 缓存 | P2 | QPS > 1000 |
 | LT-PG | PostgreSQL 生产级 | P2 | 多实例 + 高可用 |

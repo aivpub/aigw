@@ -8,8 +8,8 @@
 ## 当前状态
 
 - **当前 Phase**: Phase 27 — 全栈质量修复 + Usage 页面图表增强
-- **状态**: 69/71 Stages 已完成（2 个待开始）
-- **下一里程碑**: Phase 27 完成后消化 LT-Observ 剩余 OTEL Traces
+- **状态**: 71/71 Stages 已完成 ✅ Phase 27 全部完成
+- **下一里程碑**: LT-Observ 剩余 OTEL Traces (Stage 68)
 
 ### 整体进度
 
@@ -35,7 +35,7 @@ Phase 23:   ████████████████████ 100% (2
 Phase 24:   ████████████████████ 100% (1/1 Stage)  ✅ 管理控制台完善
 Phase 25:   ████████████████████ 100% (1/1 Stage)  ✅ 健康检查 & UX 优化
 Phase 26:   ██████████████░░░░░░  50% (1/2 Stages) 🔄 可观测性（Prometheus ✅, OTEL ⏳）
-Phase 27:   ██████████░░░░░░░░░░  33% (1/3 Stages) 🔄 全栈质量修复 + Usage 图表增强
+Phase 27:   ████████████████████ 100% (3/3 Stages) ✅ 全栈质量修复 + Usage 图表增强
 ```
 
 ---
@@ -229,15 +229,15 @@ Phase 27:   ██████████░░░░░░░░░░  33% (1
 
 ---
 
-### Phase 27：全栈质量修复 + Usage 页面图表增强 ⏳
+### Phase 27：全栈质量修复 + Usage 页面图表增强 ✅
 
 **背景**: 用户反馈 6 类问题：(1) model_group 语义错误 — 记录为上游模型名而非部署名称；(2) 无 HTTP 层重试机制；(3) requester_ip 手动解析需标准化；(4) Models/Keys/Users 页面表格有缺陷；(5) Usage 页面缺少 token/request 堆叠分解和 Top Keys/Models 排行榜；(6) Spend Logs 未展示客户端 IP。
 
 | Stage | 状态 | 目标 | 类型 | 预估 |
 |-------|------|------|------|------|
 | Stage 69 | ✅ 完成 | **后端质量修复 + Usage 数据增强** — model_group 语义修正（→ model_name）+ reqwest-retry HTTP 层重试 + axum-client-ip 中间件 + query_activity_daily 8 字段扩展 + aggregate_spend_by_keys + GET /global/spend/keys/rankings。TDD: 9 UT + 2 BDD。闭环：后端 API 就绪，可直接 curl 验证所有端点 | 后端 | 8h | 2026-07-22 |
-| Stage 70 | ⏳ 待开始 | **前端页面修复** — Models: Provider 用 custom_llm_provider + 截断 + Status toggle；Keys: Expires 列 + Status toggle + Expires 写入 create/edit form；Users: User ID 列 + CopyButton + virtual_keys_count（含后端 user.rs 子查询）；Spend Logs: requester_ip 列。TDD: 1 UT + 8 BDD × 3 viewports。闭环：4 页面独立可测，可逐页验收 | 全栈 | 8h |
-| Stage 71 | ⏳ 待开始 | **Usage 页面图表增强** — Daily Trend token (prompt/completion) + request (success/failed) 堆叠 bar；Top Virtual Keys 排行榜卡片（排名 + 迷你进度条 + spend/tokens/requests Tab）；Top Models Chart/Rank 双模式切换；图表 Tab 状态独立化 + 响应式布局调整。TDD: 5 BDD × 3 viewports。闭环：Usage 页面功能完整，可独立验收 | 前端 | 8h |
+| Stage 70 | ✅ 完成 | **前端页面修复** — Models: Provider 用 custom_llm_provider + 截断 + Status toggle；Keys: Expires 列 + Status toggle + Expires 写入 create/edit form；Users: User ID 列 + CopyButton + virtual_keys_count（含后端 user.rs 子查询）；Spend Logs: requester_ip 列。TDD: 1 UT + 8 BDD × 3 viewports。闭环：4 页面独立可测，可逐页验收 | 全栈 | 8h | 2026-07-22 |
+| Stage 71 | ✅ 完成 | **Usage 页面图表增强** — Daily Trend token (prompt/completion) + request (success/failed) 堆叠 bar；Top Virtual Keys 排行榜卡片（排名 + 迷你进度条 + spend/tokens/requests Tab）；Top Models Chart/Rank 双模式切换；图表 Tab 状态独立化 + 响应式布局调整。TDD: 5 BDD × 3 viewports。闭环：Usage 页面功能完整，可独立验收 | 前端 | 8h | 2026-07-22 |
 
 **依赖关系**: Stage 69（数据层 + 端点）→ Stage 70（表格修复，依赖 API）和 Stage 71（图表，依赖新端点）。70 和 71 可并行。
 
@@ -400,3 +400,4 @@ Phase 27:   ██████████░░░░░░░░░░  33% (1
 | v19.0 | 2026-07-16 | **Phase 23 完成 + Phase 24 规划**：Stages 63-64 完成；新增 Phase 24（Stage 65，管理控制台完善, 5h）：SETTINGS 分组 + Router Settings 三 Tab + Models 多 Tab + Credential 管理前端 + Health Tab 集成。总进度 64/65。|
 | v20.0 | 2026-07-21 | **Phase 27 规划（第二版）**：合并为 3 Stage（69-71），每个 Stage 8h 闭环。Stage 69 后端质量修复+数据增强（model_group 修正+重试+IP中间件+Daily分解+Top Keys端点）；Stage 70 前端页面修复（Models/Keys/Users/SpendLogs 表格补全）；Stage 71 Usage 图表增强（堆叠 bar+Top Keys/Models 排行榜）。消化 LT-Usage。
 | v21.0 | 2026-07-22 | **Stage 69 完成**：model_group 语义修复、reqwest-retry HTTP 重试、axum-client-ip 提取器、Daily trends 8 字段扩展、Top Keys 聚合端点。总进度 69/71，Phase 27 进度 1/3。|
+| v22.0 | 2026-07-22 | **Phase 27 全部完成**：Stage 70 前端页面修复（Expires 表单字段、virtual_keys_count 子查询）+ Stage 71 Usage 图表增强（堆叠 bar、Top Keys/Models 排行榜）。总进度 71/71。✅ Phase 27 闭环交付。|
