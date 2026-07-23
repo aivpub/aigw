@@ -131,27 +131,39 @@ async fn delete_key_via_api_inner(
 ///
 /// Trailing `/v1` is stripped — all step URLs already include
 /// their own prefixes (`/v1/...`, `/health`, `/key/generate`, etc.).
-fn base_url() -> String {
+pub(crate) fn base_url() -> String {
     let raw = std::env::var("AIGW_BASE_URL").unwrap_or_else(|_| "http://localhost:4000".to_string());
     let raw = raw.strip_suffix("/v1").unwrap_or(&raw);
     raw.trim_end_matches('/').to_string()
 }
 
 /// Returns true when real API mode is active.
-fn real_api_enabled() -> bool {
+pub(crate) fn real_api_enabled() -> bool {
     std::env::var("AIGW_REAL_API").map(|v| v == "1").unwrap_or(false)
+}
+
+/// Returns the upstream litellm database URL (for needs_upstream_db scenarios).
+#[allow(dead_code)]
+pub(crate) fn upstream_db_url() -> Option<String> {
+    std::env::var("AIGW_UPSTREAM_DB_URL").ok().filter(|s| !s.is_empty())
+}
+
+/// Returns true when real API mode and upstream DB are both configured.
+#[allow(dead_code)]
+pub(crate) fn real_db_seed_enabled() -> bool {
+    real_api_enabled() && upstream_db_url().is_some()
 }
 
 /// Model name to use for real API tests.
 /// Checks `AIGW_REAL_MODEL` first, then `OPENAPI_MODEL`, defaults to `"gpt-4"`.
-fn real_model() -> String {
+pub(crate) fn real_model() -> String {
     std::env::var("AIGW_REAL_MODEL")
         .or_else(|_| std::env::var("OPENAPI_MODEL"))
         .unwrap_or_else(|_| "gpt-4".to_string())
 }
 
 /// Build a reqwest client for real API calls.
-fn client() -> reqwest::Client {
+pub(crate) fn client() -> reqwest::Client {
     reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
         .build()
@@ -201,7 +213,7 @@ async fn bg_real_api_configured(_world: &mut TestWorld) {
 /// Returns the generated key on success, or a placeholder on failure
 /// (e.g. when the target is a litellm instance whose master key is
 /// actually a virtual key without admin access).
-async fn create_key_via_api(world: &mut TestWorld, alias: &str) -> String {
+pub(crate) async fn create_key_via_api(world: &mut TestWorld, alias: &str) -> String {
     let url = format!("{}/key/generate", base_url());
     let test_model = real_model();
     let body = serde_json::json!({
@@ -250,8 +262,56 @@ async fn bg_create_key_via_api(world: &mut TestWorld, alias: String) {
     create_key_via_api(world, &alias).await;
 }
 
+#[given(expr = "通过 API 创建带 user_id 的 key {string}")]
+async fn bg_create_key_with_user(world: &mut TestWorld, alias: String) {
+    if !real_api_enabled() {
+        return;
+    }
+    create_key_with_user_id(world, &alias, "test-user-76").await;
+}
+
+/// Create a virtual key with a user_id via the HTTP API.
+pub(crate) async fn create_key_with_user_id(world: &mut TestWorld, alias: &str, user_id: &str) -> String {
+    let url = format!("{}/key/generate", base_url());
+    let test_model = real_model();
+    let body = serde_json::json!({
+        "key_alias": alias,
+        "user_id": user_id,
+        "models": ["gpt-4", "gpt-3.5-turbo", "claude-3-5-haiku", &test_model],
+        "max_budget": 100.0,
+        "budget_duration": "1d",
+    });
+    let mk = world.master_key.clone();
+    let resp = client()
+        .post(&url)
+        .header("Authorization", format!("Bearer {}", mk))
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .expect("key/generate request failed");
+
+    if !resp.status().is_success() {
+        let status = resp.status().as_u16();
+        let detail = resp.text().await.unwrap_or_default();
+        eprintln!(
+            "key/generate returned {} for alias '{}': {} — falling back to master key",
+            status,
+            alias,
+            &detail[..detail.len().min(200)]
+        );
+        world.created_keys.insert(alias.to_string(), mk.clone());
+        return mk;
+    }
+
+    let resp_body: serde_json::Value = resp.json().await.expect("key/generate body");
+    let raw_key = resp_body["key"].as_str().expect("key field missing").to_string();
+    world.created_keys.insert(alias.to_string(), raw_key.clone());
+    raw_key
+}
+
 /// Helper: extract an existing key from TestWorld, or create one.
-async fn ensure_key(world: &mut TestWorld, alias: &str) -> String {
+pub(crate) async fn ensure_key(world: &mut TestWorld, alias: &str) -> String {
     if let Some(t) = world.created_keys.get(alias) {
         t.clone()
     } else {
@@ -261,7 +321,7 @@ async fn ensure_key(world: &mut TestWorld, alias: &str) -> String {
 
 /// Helper: set placeholder status/body when real API is disabled so
 /// subsequent Then steps (e.g. `then_status_is`) pass vacuously.
-fn set_skip_pass(world: &mut TestWorld, status: u16, body: serde_json::Value) {
+pub(crate) fn set_skip_pass(world: &mut TestWorld, status: u16, body: serde_json::Value) {
     if !real_api_enabled() {
         world.last_status = Some(status);
         world.last_body = Some(body);

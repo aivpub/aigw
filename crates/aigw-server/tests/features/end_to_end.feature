@@ -54,3 +54,11 @@ Feature: 端到端调用链路（mock）
     When 使用 key "e2e-field-user" 发送 POST /chat/completions 请求用 model "field-check-model"
     Then 响应状态码为 200
     And 响应 JSON 包含 "choices" 字段
+
+  Scenario: spend_logs model 字段记录上游模型名而非代理名
+    Given mock 上游已启动
+    And 已配置 model "proxy-name" 且上游 model 为 "upstream-real-model" 指向 mock 上游
+    And 一个普通 key "e2e-upstream-model-user" 已生成
+    When 使用 key "e2e-upstream-model-user" 发送 POST /chat/completions 请求用 model "proxy-name"
+    Then 响应状态码为 200
+    And spend_logs 中 model 字段值为 "upstream-real-model"

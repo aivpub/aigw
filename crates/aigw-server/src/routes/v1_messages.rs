@@ -391,6 +391,7 @@ pub async fn messages_handler(
     let upstream_model_id = resolved_deployment.model_id.clone();
     let upstream_model_group = resolved_deployment.model_group.clone();
     let upstream_custom_llm_provider = resolved_deployment.custom_llm_provider.clone();
+    let upstream_model = resolved_deployment.upstream_model.clone();
     let provider_type = resolved_deployment.provider_type.clone();
 
     // Select adapter based on client protocol + provider type
@@ -478,7 +479,7 @@ pub async fn messages_handler(
         if is_timeout {
             let state2 = Arc::clone(&state);
             let upstream_body_clone = upstream_body.clone();
-            let model_clone = model.clone();
+            let upstream_model2 = upstream_model.clone();
             let auth_token_hash_clone = auth_token_hash.clone();
             let auth_user_id_clone = auth_user_id.clone();
             let end_user_clone = end_user.clone();
@@ -492,9 +493,8 @@ pub async fn messages_handler(
             let call_type2 = call_type.to_string();
             let err_clone = err_msg.clone();
             let url_clone = upstream_base_url.clone();
-            let model_clone2 = model_clone.clone();
             let url_for_resp = url_clone.clone();
-            let model_for_resp = model_clone2.clone();
+            let model_for_resp = upstream_model2.clone();
             tokio::spawn(async move {
                 let end_time = chrono::Utc::now();
                 let sl = SpendLog {
@@ -511,7 +511,7 @@ pub async fn messages_handler(
                         end_time.signed_duration_since(start_time).num_milliseconds() as i32,
                     ),
                     completion_start_time: None,
-                    model: model_clone2,
+                    model: upstream_model2,
                     model_id: mid,
                     model_group: mg,
                     custom_llm_provider: ccp,
@@ -555,7 +555,7 @@ pub async fn messages_handler(
     let write_failure_spend_log = |error_body: String, resp_json: Option<Value>| {
         let state = Arc::clone(&state);
         let upstream_body_clone = upstream_body.clone();
-        let model_clone = model.clone();
+        let upstream_model3 = upstream_model.clone();
         let upstream_base_url_clone = upstream_base_url.clone();
         let auth_token_hash_clone = auth_token_hash.clone();
         let auth_user_id_clone = auth_user_id.clone();
@@ -583,7 +583,7 @@ pub async fn messages_handler(
                     now.signed_duration_since(start_time).num_milliseconds() as i32,
                 ),
                 completion_start_time: None,
-                model: model_clone,
+                model: upstream_model3,
                 model_id: mid,
                 model_group: mg,
                 custom_llm_provider: ccp,
@@ -642,7 +642,7 @@ pub async fn messages_handler(
                 end_time: start_time,
                 request_duration_ms: None,
                 completion_start_time: None,
-                model: model.clone(),
+                model: upstream_model.clone(),
                 model_id: upstream_model_id.clone(),
                 model_group: upstream_model_group.clone(),
                 custom_llm_provider: upstream_custom_llm_provider.clone(),
@@ -670,12 +670,12 @@ pub async fn messages_handler(
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
         let state_clone = Arc::clone(&state);
         let sr_id = streaming_request_id.clone();
-        let model_clone = model.clone();
+        let model_for_response = upstream_model.clone();
         let _upstream_base_url_clone = upstream_base_url.clone();
         let _auth_token_hash_clone = auth_token_hash.clone();
         let _auth_user_id_clone = auth_user_id.clone();
         let stream_metrics = state.metrics.clone();
-        let stream_model = model.clone();
+        let stream_model = upstream_model.clone();
         let stream_user = auth_user_id.clone();
         let stream_api_base = upstream_base_url.clone();
 
@@ -785,7 +785,7 @@ pub async fn messages_handler(
                     "streaming": true,
                     "id": "chatcmpl-streaming",
                     "object": "chat.completion",
-                    "model": model_clone,
+                    "model": model_for_response,
                     "choices": [{"index": 0, "message": message, "finish_reason": finish_reason}],
                     "usage": {"prompt_tokens": last_prompt_tokens, "completion_tokens": last_completion_tokens, "total_tokens": last_prompt_tokens + last_completion_tokens}
                 })
@@ -907,7 +907,7 @@ pub async fn messages_handler(
                 now.signed_duration_since(start_time).num_milliseconds() as i32,
             ),
             completion_start_time: Some(now), // non-streaming sentinel = end_time
-            model: model.to_string(),
+            model: upstream_model.clone(),
             model_id: upstream_model_id.clone(),
             model_group: upstream_model_group.clone(),
             custom_llm_provider: upstream_custom_llm_provider.clone(),
@@ -935,8 +935,8 @@ pub async fn messages_handler(
         // Record Prometheus metrics (non-streaming v1/messages success)
         if let Some(ref m) = state.metrics {
             m.record_request(&RequestSummary {
-                model: model.clone(),
-                user: auth_user_id.clone().unwrap_or_default(),
+                model: upstream_model.clone(),
+                user: String::new(),
                 status_code: "200".to_string(),
                 success: true,
                 latency_secs: now.signed_duration_since(start_time).num_milliseconds() as f64 / 1000.0,

@@ -36,6 +36,28 @@ async fn given_mock_upstream_started(_world: &mut TestWorld) {
     }
 }
 
+#[given(expr = "已配置 model {string} 且上游 model 为 {string} 指向 mock 上游")]
+async fn given_model_with_upstream_model_points_to_mock(world: &mut TestWorld, proxy_name: String, upstream_model: String) {
+    let state = world.ensure_state().await;
+    let mu = mock_upstream().lock().await;
+    let mock_base = mu.as_ref().expect("mock upstream not started").url().to_string();
+
+    let model = aigw_core::models::ProxyModel {
+        model_id: uuid::Uuid::new_v4().to_string(),
+        model_name: proxy_name.clone(),
+        litellm_params: serde_json::json!({
+            "model": upstream_model,
+            "api_base": format!("{mock_base}/v1")
+        }),
+        model_info: serde_json::json!({}),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        created_by: Some("test".to_string()),
+        updated_at: chrono::Utc::now().to_rfc3339(),
+        updated_by: Some("test".to_string()),
+    };
+    state.db.insert_model(&model).await.expect("insert model");
+}
+
 #[given(expr = "已配置 model {string} 指向 mock 上游")]
 async fn given_model_points_to_mock(world: &mut TestWorld, name: String) {
     let state = world.ensure_state().await;
@@ -162,5 +184,21 @@ async fn then_mock_received_path(_world: &mut TestWorld, expected_path: String) 
         "Expected mock upstream to receive request to '{}', but got: {:?}",
         expected_path,
         requests.iter().map(|r| &r.path).collect::<Vec<_>>()
+    );
+}
+
+/// Check spend_logs after a successful API call — verify model field
+/// records the upstream model name, not the proxy name.
+#[then(expr = "spend_logs 中 model 字段值为 {string}")]
+async fn then_spend_logs_model_is(world: &mut TestWorld, expected_model: String) {
+    let state = world.ensure_state().await;
+    let logs = state.db.query_spend_logs(None, Some(1)).await
+        .expect("query spend logs");
+    assert!(!logs.is_empty(), "Expected at least one spend_log record");
+    let log = &logs[0];
+    assert_eq!(
+        log.model, expected_model,
+        "Expected spend_logs.model='{}', got '{}'",
+        expected_model, log.model
     );
 }
