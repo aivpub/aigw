@@ -376,6 +376,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/spend/models", get(spend::spend_models))
         .route("/spend/providers", get(spend::spend_providers))
         .route("/global/spend", get(spend::global_spend))
+        .route("/global/spend/logs/{request_id}", get(spend::global_spend_log_detail))
         .route("/global/spend/logs", get(spend::global_spend_logs))
         .route("/global/spend/keys", get(spend::global_spend_keys))
         .route("/global/spend/models", get(spend::global_spend_models))

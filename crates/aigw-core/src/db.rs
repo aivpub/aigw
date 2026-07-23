@@ -1233,6 +1233,8 @@ pub trait SpendLogStore {
         end_date: Option<&str>,
         request_id: Option<&str>,
     ) -> Result<i64>;
+    /// Get a single spend log by request_id — returns all columns including body blobs.
+    async fn get_spend_log_by_request_id(&self, request_id: &str) -> Result<Option<SpendLog>>;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1541,6 +1543,23 @@ impl SpendLogStore for SqlitePool {
 
         query.fetch_one(self).await.map(|row: (i64,)| row.0).map_err(DbError::from)
     }
+
+    async fn get_spend_log_by_request_id(&self, request_id: &str) -> Result<Option<SpendLog>> {
+        sqlx::query_as::<_, SpendLog>(
+            r#"SELECT request_id, call_type, api_key, spend, total_tokens,
+            prompt_tokens, completion_tokens, start_time, end_time,
+            request_duration_ms, completion_start_time, model, model_id, model_group,
+            custom_llm_provider, api_base, "user", metadata,
+            cache_hit, cache_key, request_tags, team_id, organization_id,
+            end_user, requester_ip_address, messages, response,
+            session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request
+            FROM spend_logs WHERE request_id = ?"#,
+        )
+        .bind(request_id)
+        .fetch_optional(self)
+        .await
+        .map_err(DbError::from)
+    }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1813,6 +1832,23 @@ impl SpendLogStore for MySqlPool {
 
         query.fetch_one(self).await.map(|row: (i64,)| row.0).map_err(DbError::from)
     }
+
+    async fn get_spend_log_by_request_id(&self, request_id: &str) -> Result<Option<SpendLog>> {
+        sqlx::query_as::<_, SpendLog>(
+            r#"SELECT request_id, call_type, api_key, spend, total_tokens,
+            prompt_tokens, completion_tokens, start_time, end_time,
+            request_duration_ms, completion_start_time, model, model_id, model_group,
+            custom_llm_provider, api_base, "user", metadata,
+            cache_hit, cache_key, request_tags, team_id, organization_id,
+            end_user, requester_ip_address, messages, response,
+            session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request
+            FROM spend_logs WHERE request_id = ?"#,
+        )
+        .bind(request_id)
+        .fetch_optional(self)
+        .await
+        .map_err(DbError::from)
+    }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2076,6 +2112,23 @@ impl SpendLogStore for PgPool {
 
         query.fetch_one(self).await.map(|row: (i64,)| row.0).map_err(DbError::from)
     }
+
+    async fn get_spend_log_by_request_id(&self, request_id: &str) -> Result<Option<SpendLog>> {
+        sqlx::query_as::<_, SpendLog>(
+            r#"SELECT request_id, call_type, api_key, spend, total_tokens,
+            prompt_tokens, completion_tokens, start_time, end_time,
+            request_duration_ms, completion_start_time, model, model_id, model_group,
+            custom_llm_provider, api_base, "user", metadata,
+            cache_hit, cache_key, request_tags, team_id, organization_id,
+            end_user, requester_ip_address, messages, response,
+            session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request
+            FROM spend_logs WHERE request_id = $1"#,
+        )
+        .bind(request_id)
+        .fetch_optional(self)
+        .await
+        .map_err(DbError::from)
+    }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2234,6 +2287,15 @@ impl Database {
             Database::Sqlite(pool) => pool.query_spend_logs_count(api_key, model, start_date, end_date, request_id).await,
             Database::Mysql(pool) => pool.query_spend_logs_count(api_key, model, start_date, end_date, request_id).await,
             Database::Postgres(pool) => pool.query_spend_logs_count(api_key, model, start_date, end_date, request_id).await,
+        }
+    }
+
+    /// Get a single spend log by request_id — returns all columns including body blobs.
+    pub async fn get_spend_log_by_request_id(&self, request_id: &str) -> Result<Option<SpendLog>> {
+        match self {
+            Database::Sqlite(pool) => pool.get_spend_log_by_request_id(request_id).await,
+            Database::Mysql(pool) => pool.get_spend_log_by_request_id(request_id).await,
+            Database::Postgres(pool) => pool.get_spend_log_by_request_id(request_id).await,
         }
     }
 

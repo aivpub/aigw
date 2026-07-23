@@ -17,7 +17,7 @@ use aigw_core::auth::decode_jwt;
 use aigw_core::crypto::{decrypt_litellm_value, hash_token};
 use aigw_core::middleware::{AuthError, KeyIdentity};
 use axum::{
-    extract::{FromRequestParts, Query, State},
+    extract::{FromRequestParts, Path, Query, State},
     http::{self, request::Parts, StatusCode},
     Json,
 };
@@ -320,9 +320,6 @@ pub async fn spend_logs(
                 "status": log.status,
                 "mcp_namespaced_tool_name": log.mcp_namespaced_tool_name,
                 "requester_ip_address": &log.requester_ip_address,
-                // Include body blobs when page_size is small
-                "messages": if page_size <= 50 { &log.messages } else { &None },
-                "response": if page_size <= 50 { &log.response } else { &None },
             })
         })
         .collect();
@@ -334,6 +331,87 @@ pub async fn spend_logs(
         "page": page,
         "page_size": page_size,
         "total_pages": total_pages,
+    })))
+}
+
+/// GET /global/spend/logs/{request_id} — Get single spend log detail with full body blobs.
+pub async fn global_spend_log_detail(
+    State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
+    Path(request_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    require_admin(&auth)?;
+
+    let log = state
+        .db
+        .get_spend_log_by_request_id(&request_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
+            )
+        })?;
+
+    let log = match log {
+        Some(l) => l,
+        None => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": {"message": "Spend log not found", "type": "not_found"}})),
+            ));
+        }
+    };
+
+    // Resolve key_alias name for display
+    let key_name: Option<String> = if log.api_key == "master_key" {
+        Some("master".to_string())
+    } else {
+        state
+            .db
+            .get_key_by_token(&log.api_key)
+            .await
+            .ok()
+            .flatten()
+            .map(|k| k.key_alias)
+            .flatten()
+    };
+
+    let ttft_ms = compute_ttft(&log);
+
+    Ok(Json(json!({
+        "request_id": log.request_id,
+        "call_type": log.call_type,
+        "api_key": log.api_key,
+        "key_name": key_name,
+        "spend": log.spend,
+        "total_tokens": log.total_tokens,
+        "prompt_tokens": log.prompt_tokens,
+        "completion_tokens": log.completion_tokens,
+        "start_time": log.start_time.to_rfc3339(),
+        "end_time": log.end_time.to_rfc3339(),
+        "request_duration_ms": log.request_duration_ms,
+        "ttft_ms": ttft_ms,
+        "model": log.model,
+        "model_id": log.model_id,
+        "model_group": log.model_group,
+        "custom_llm_provider": log.custom_llm_provider,
+        "api_base": log.api_base,
+        "user": log.user,
+        "team_id": log.team_id,
+        "organization_id": log.organization_id,
+        "end_user": log.end_user,
+        "session_id": log.session_id,
+        "request_tags": log.request_tags,
+        "metadata": log.metadata,
+        "cache_hit": log.cache_hit,
+        "cache_key": log.cache_key,
+        "status": log.status,
+        "mcp_namespaced_tool_name": log.mcp_namespaced_tool_name,
+        "requester_ip_address": &log.requester_ip_address,
+        "messages": &log.messages,
+        "response": &log.response,
+        "proxy_server_request": &log.proxy_server_request,
     })))
 }
 
@@ -548,9 +626,6 @@ pub async fn global_spend_logs(
                 "status": log.status,
                 "mcp_namespaced_tool_name": log.mcp_namespaced_tool_name,
                 "requester_ip_address": &log.requester_ip_address,
-                // Include body blobs when page_size is small
-                "messages": if page_size <= 50 { &log.messages } else { &None },
-                "response": if page_size <= 50 { &log.response } else { &None },
             })
         })
         .collect();
@@ -1043,6 +1118,7 @@ mod tests {
     use aigw_core::rate_limiter::RateLimiter;
     use aigw_core::router::{Router as AigwRouter, RouterState};
 use aigw_core::resolver::ModelResolver;
+use aigw_core::models::SpendLog;
     use axum::{
         body::Body,
         http::{header, Method, Request},
@@ -1076,6 +1152,7 @@ use aigw_core::resolver::ModelResolver;
             .route("/spend/users", axum::routing::get(spend_users))
             .route("/spend/tags", axum::routing::get(spend_tags))
             .route("/global/spend", axum::routing::get(global_spend))
+            .route("/global/spend/logs/{request_id}", axum::routing::get(global_spend_log_detail))
             .route("/global/spend/logs", axum::routing::get(global_spend_logs))
             .route("/global/spend/keys", axum::routing::get(global_spend_keys))
             .with_state(state)
@@ -1137,5 +1214,196 @@ use aigw_core::resolver::ModelResolver;
             .unwrap();
         let response = app.oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_global_spend_log_detail_requires_admin() {
+        let app = test_app().await;
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("/global/spend/logs/missing-id")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_global_spend_log_detail_not_found() {
+        let app = test_app().await;
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("/global/spend/logs/nonexistent-request-id")
+            .header(header::AUTHORIZATION, "Bearer sk-master-test-123")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_global_spend_log_detail_found() {
+        let db = Database::init("sqlite::memory:")
+            .await
+            .expect("init sqlite");
+        // Insert a spend log first
+        let log = SpendLog {
+            request_id: "test-req-001".to_string(),
+            call_type: "completion".to_string(),
+            api_key: "hashed-key".to_string(),
+            spend: 0.05,
+            total_tokens: 100,
+            prompt_tokens: 60,
+            completion_tokens: 40,
+            start_time: chrono::Utc::now(),
+            end_time: chrono::Utc::now(),
+            request_duration_ms: Some(500),
+            completion_start_time: None,
+            model: "gpt-4".to_string(),
+            model_id: None,
+            model_group: Some("gpt-4-group".to_string()),
+            custom_llm_provider: Some("openai".to_string()),
+            api_base: Some("https://api.openai.com/v1".to_string()),
+            user: Some("test-user".to_string()),
+            metadata: None,
+            cache_hit: None,
+            cache_key: None,
+            request_tags: None,
+            team_id: None,
+            organization_id: None,
+            end_user: None,
+            requester_ip_address: None,
+            messages: Some(json!([{"role": "user", "content": "hello"}])),
+            response: Some(json!({"choices": [{"message": {"content": "hi"}}]})),
+            session_id: None,
+            status: Some("success".to_string()),
+            mcp_namespaced_tool_name: None,
+            agent_id: None,
+            proxy_server_request: None,
+        };
+        db.insert_spend_log(&log).await.expect("insert log");
+
+        let state = Arc::new(AppState {
+            resolver: ModelResolver::new(db.clone(), None, "onprem"),
+            router: AigwRouter::default(),
+            db,
+            master_key: Some("sk-master-test-123".to_string()),
+            aigw_master_key: None,
+            provider_registry: ProviderRegistry::new(),
+            router_state: RouterState::default(),
+            rate_limiter: Arc::new(RateLimiter::new()),
+            deployment_mode: "onprem".to_string(),
+            started_at: std::time::Instant::now(),
+            daily_spend_queue: None,
+            otel_active: false,
+            metrics: None,
+        });
+
+        let app = Router::new()
+            .route("/global/spend/logs/{request_id}", axum::routing::get(global_spend_log_detail))
+            .with_state(state);
+
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("/global/spend/logs/test-req-001")
+            .header(header::AUTHORIZATION, "Bearer sk-master-test-123")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let val: Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(val.get("request_id").and_then(|v| v.as_str()), Some("test-req-001"));
+        assert_eq!(val.get("model").and_then(|v| v.as_str()), Some("gpt-4"));
+        assert_eq!(val.get("spend").and_then(|v| v.as_f64()), Some(0.05));
+        // Body blobs should be present
+        assert!(val.get("messages").is_some());
+        assert!(val.get("response").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_spend_logs_list_excludes_body() {
+        let db = Database::init("sqlite::memory:")
+            .await
+            .expect("init sqlite");
+        // Insert a spend log with body
+        let log = SpendLog {
+            request_id: "test-req-bodyless".to_string(),
+            call_type: "completion".to_string(),
+            api_key: "master_key".to_string(),
+            spend: 0.01,
+            total_tokens: 10,
+            prompt_tokens: 5,
+            completion_tokens: 5,
+            start_time: chrono::Utc::now(),
+            end_time: chrono::Utc::now(),
+            request_duration_ms: Some(100),
+            completion_start_time: None,
+            model: "gpt-4".to_string(),
+            model_id: None,
+            model_group: Some("gpt-4".to_string()),
+            custom_llm_provider: Some("openai".to_string()),
+            api_base: None,
+            user: None,
+            metadata: None,
+            cache_hit: None,
+            cache_key: None,
+            request_tags: None,
+            team_id: None,
+            organization_id: None,
+            end_user: None,
+            requester_ip_address: None,
+            messages: Some(json!([{"role": "user", "content": "hello"}])),
+            response: Some(json!({"choices": [{"message": {"content": "hi"}}]})),
+            session_id: None,
+            status: Some("success".to_string()),
+            mcp_namespaced_tool_name: None,
+            agent_id: None,
+            proxy_server_request: None,
+        };
+        db.insert_spend_log(&log).await.expect("insert log");
+
+        let state = Arc::new(AppState {
+            resolver: ModelResolver::new(db.clone(), None, "onprem"),
+            router: AigwRouter::default(),
+            db,
+            master_key: Some("sk-master-test-123".to_string()),
+            aigw_master_key: None,
+            provider_registry: ProviderRegistry::new(),
+            router_state: RouterState::default(),
+            rate_limiter: Arc::new(RateLimiter::new()),
+            deployment_mode: "onprem".to_string(),
+            started_at: std::time::Instant::now(),
+            daily_spend_queue: None,
+            otel_active: false,
+            metrics: None,
+        });
+
+        let app = Router::new()
+            .route("/global/spend/logs", axum::routing::get(global_spend_logs))
+            .with_state(state);
+
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("/global/spend/logs?page_size=30")
+            .header(header::AUTHORIZATION, "Bearer sk-master-test-123")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let val: Value = serde_json::from_slice(&body_bytes).unwrap();
+        let data = val.get("data").and_then(|v| v.as_array()).unwrap();
+        assert!(!data.is_empty());
+        let first = &data[0];
+        // messages and response should NOT be present in the list response
+        assert!(first.get("messages").is_none(), "List endpoint must not include messages field");
+        assert!(first.get("response").is_none(), "List endpoint must not include response field");
     }
 }

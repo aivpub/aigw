@@ -41,7 +41,19 @@ interface SpendLog {
   end_user?: string | null; session_id?: string | null; requester_ip_address?: string | null;
   request_tags: unknown; metadata?: unknown; cache_hit?: unknown; cache_key?: string | null;
   mcp_namespaced_tool_name?: string | null; status: string | null;
-  messages?: unknown; response?: unknown;
+}
+
+interface SpendLogDetail {
+  request_id: string; call_type: string; api_key: string; key_name?: string | null;
+  spend: number; total_tokens: number; prompt_tokens: number; completion_tokens: number;
+  start_time: string; end_time: string; request_duration_ms: number | null; ttft_ms: number | null;
+  model: string; model_id?: string | null; model_group?: string | null;
+  custom_llm_provider?: string | null; api_base?: string | null;
+  user: string | null; team_id?: string | null; organization_id?: string | null;
+  end_user?: string | null; session_id?: string | null; requester_ip_address?: string | null;
+  request_tags: unknown; metadata?: unknown; cache_hit?: unknown; cache_key?: string | null;
+  mcp_namespaced_tool_name?: string | null; status: string | null;
+  messages?: unknown; response?: unknown; proxy_server_request?: unknown;
 }
 
 interface SpendLogsResponse {
@@ -308,12 +320,16 @@ function ToolItem({ name, description, params }: { name: string; description?: s
 
 /* ─────────────────────────────────── Drawer ── */
 
-function DetailDrawer({ log, open, onClose }: { log: SpendLog | null; open: boolean; onClose: () => void }) {
+function DetailDrawer({ log, open, onClose, isDetailLoading, detailError, onRetry }: {
+  log: SpendLog | null; open: boolean; onClose: () => void;
+  isDetailLoading: boolean; detailError: boolean; onRetry: () => void;
+}) {
   if (!log) return null;
 
   const isFailure = (log.status ?? "").startsWith("failure");
   const hasPrompt = log.messages != null;
   const hasResponse = log.response != null;
+
   const parsed = parseMessages(log.messages);
   const tools = parsed.tools;
 
@@ -379,50 +395,69 @@ function DetailDrawer({ log, open, onClose }: { log: SpendLog | null; open: bool
           </div>
         </div>
 
-        {/* ── Single column: Tools + Input + Output ── */}
+        {/* ── Body area: loading / error / content ── */}
         <div className="space-y-3">
           {tools && tools.length > 0 ? <ToolsCard tools={tools} /> : null}
 
-          {hasPrompt ? (
-            <div>
-              <Tabs defaultValue="visual">
-                <div className="flex items-center justify-between mb-1.5">
-                  <TabsList className="h-7">
-                    <TabsTrigger value="visual" className="text-xs h-6">Visual</TabsTrigger>
-                    <TabsTrigger value="raw" className="text-xs h-6">Raw</TabsTrigger>
-                  </TabsList>
-                </div>
-                <TabsContent value="visual" className="mt-0">
-                  <InputCard messages={log.messages} promptTokens={log.prompt_tokens} spend={log.spend} />
-                </TabsContent>
-                <TabsContent value="raw" className="mt-0">
-                  <RawJsonBlock data={log.messages} />
-                </TabsContent>
-              </Tabs>
+          {isDetailLoading ? (
+            <div className="space-y-3 py-4">
+              <Skeleton className="h-4 w-1/3" />
+              <Skeleton className="h-32 w-full rounded-md" />
+              <Skeleton className="h-4 w-1/4" />
+              <Skeleton className="h-24 w-full rounded-md" />
+            </div>
+          ) : detailError ? (
+            <div className="flex flex-col items-center gap-3 py-8 text-center">
+              <AlertCircle className="h-8 w-8 text-red-500" />
+              <p className="text-sm text-muted-foreground">Failed to load request detail</p>
+              <Button variant="outline" size="sm" onClick={onRetry}>
+                <RefreshCw className="h-3.5 w-3.5 mr-1.5" /> Retry
+              </Button>
             </div>
           ) : (
-            <p className="text-xs text-muted-foreground italic py-2">No prompt data</p>
-          )}
+            <>
+              {hasPrompt ? (
+                <div>
+                  <Tabs defaultValue="visual">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <TabsList className="h-7">
+                        <TabsTrigger value="visual" className="text-xs h-6">Visual</TabsTrigger>
+                        <TabsTrigger value="raw" className="text-xs h-6">Raw</TabsTrigger>
+                      </TabsList>
+                    </div>
+                    <TabsContent value="visual" className="mt-0">
+                      <InputCard messages={log.messages} promptTokens={log.prompt_tokens} spend={log.spend} />
+                    </TabsContent>
+                    <TabsContent value="raw" className="mt-0">
+                      <RawJsonBlock data={log.messages} />
+                    </TabsContent>
+                  </Tabs>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground italic py-2">No prompt data</p>
+              )}
 
-          {hasResponse ? (
-            <div>
-              <Tabs defaultValue="visual">
-                <div className="flex items-center justify-between mb-1.5">
-                  <TabsList className="h-7">
-                    <TabsTrigger value="visual" className="text-xs h-6">Visual</TabsTrigger>
-                    <TabsTrigger value="raw" className="text-xs h-6">Raw</TabsTrigger>
-                  </TabsList>
+              {hasResponse ? (
+                <div>
+                  <Tabs defaultValue="visual">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <TabsList className="h-7">
+                        <TabsTrigger value="visual" className="text-xs h-6">Visual</TabsTrigger>
+                        <TabsTrigger value="raw" className="text-xs h-6">Raw</TabsTrigger>
+                      </TabsList>
+                    </div>
+                    <TabsContent value="visual" className="mt-0">
+                      <OutputCard response={log.response} completionTokens={log.completion_tokens} spend={log.spend} />
+                    </TabsContent>
+                    <TabsContent value="raw" className="mt-0">
+                      <RawJsonBlock data={log.response} />
+                    </TabsContent>
+                  </Tabs>
                 </div>
-                <TabsContent value="visual" className="mt-0">
-                  <OutputCard response={log.response} completionTokens={log.completion_tokens} spend={log.spend} />
-                </TabsContent>
-                <TabsContent value="raw" className="mt-0">
-                  <RawJsonBlock data={log.response} />
-                </TabsContent>
-              </Tabs>
-            </div>
-          ) : (
-            <p className="text-xs text-muted-foreground italic py-2">No response data</p>
+              ) : (
+                <p className="text-xs text-muted-foreground italic py-2">No response data</p>
+              )}
+            </>
           )}
         </div>
       </SheetContent>
@@ -453,6 +488,7 @@ export function SpendLogsPage() {
   const [pageSize, setPageSize] = useState(30);
   const [selectedLog, setSelectedLog] = useState<SpendLog | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [detailRequestId, setDetailRequestId] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [lastRefreshTime, setLastRefreshTime] = useState<number | null>(null);
   const [countdownSec, setCountdownSec] = useState(LIVE_TAIL_INTERVAL / 1000);
@@ -516,6 +552,17 @@ export function SpendLogsPage() {
   const logs = logsData?.data ?? [];
   const totalCount = logsData?.total_count ?? 0;
   const totalPages = logsData?.total_pages ?? 0;
+
+  // Fetch detail for the selected log on-demand
+  const { data: detailData, isLoading: isDetailLoading, isError: isDetailError, refetch: refetchDetail } = useQuery<SpendLogDetail>({
+    queryKey: ["spend-log-detail", detailRequestId],
+    queryFn: () => apiGet(`/global/spend/logs/${encodeURIComponent(detailRequestId!)}`),
+    enabled: detailRequestId !== null,
+    staleTime: Infinity,
+  });
+
+  // Merge detail data into the selected log to enrich it with body blobs
+  const enrichedLog = selectedLog && detailData ? { ...selectedLog, messages: detailData.messages, response: detailData.response } : selectedLog;
 
   return (
     <div className="space-y-4 max-w-full">
@@ -598,7 +645,7 @@ export function SpendLogsPage() {
                   </TableHeader>
                   <TableBody>
                     {logs.map(log => (
-                      <TableRow key={log.request_id} className="cursor-pointer hover:bg-muted/50" onClick={() => { setSelectedLog(log); setDrawerOpen(true); }}>
+                      <TableRow key={log.request_id} className="cursor-pointer hover:bg-muted/50" onClick={() => { setSelectedLog(log); setDrawerOpen(true); setDetailRequestId(log.request_id); }}>
                         <TableCell className="text-xs whitespace-nowrap">{log.start_time ? format(new Date(log.start_time), "MM-dd HH:mm:ss") : "—"}</TableCell>
                         <TableCell><Badge variant="outline" className="text-[10px] px-1 py-0">{log.call_type || "—"}</Badge></TableCell>
                         <TableCell className="text-xs whitespace-nowrap">
@@ -660,7 +707,14 @@ export function SpendLogsPage() {
         </CardContent>
       </Card>
 
-      <DetailDrawer log={selectedLog} open={drawerOpen} onClose={() => { setDrawerOpen(false); setSelectedLog(null); }}/>
+      <DetailDrawer
+        log={enrichedLog}
+        open={drawerOpen}
+        onClose={() => { setDrawerOpen(false); setSelectedLog(null); setDetailRequestId(null); }}
+        isDetailLoading={isDetailLoading}
+        detailError={isDetailError}
+        onRetry={() => refetchDetail()}
+      />
     </div>
   );
 }

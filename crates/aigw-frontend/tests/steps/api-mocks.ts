@@ -24,9 +24,21 @@ const sampleModels = [
 ];
 
 const sampleSpendLogs = [
-  { request_id: "req-001", call_type: "completion", model: "gpt-4", api_key: "sk-abc***", total_tokens: 1234, prompt_tokens: 800, completion_tokens: 434, spend: 0.42, start_time: "2026-07-08T10:00:00Z", end_time: "2026-07-08T10:00:05Z", request_duration_ms: 5123, ttft_ms: 234.5, status: "success" },
-  { request_id: "req-002", call_type: "completion", model: "claude-sonnet-4-6", api_key: "sk-def***", total_tokens: 567, prompt_tokens: 300, completion_tokens: 267, spend: 1.23, start_time: "2026-07-08T10:05:00Z", end_time: "2026-07-08T10:05:03Z", request_duration_ms: 2890, ttft_ms: 456.7, status: "success" },
+  { request_id: "req-001", call_type: "completion", model: "gpt-4", api_key: "sk-abc***", key_name: "prod-gpt-key", total_tokens: 1234, prompt_tokens: 800, completion_tokens: 434, spend: 0.42, start_time: "2026-07-08T10:00:00Z", end_time: "2026-07-08T10:00:05Z", request_duration_ms: 5123, ttft_ms: 234.5, status: "success", custom_llm_provider: "openai", model_group: "gpt-4", user: "test-user", requester_ip_address: "192.168.1.1" },
+  { request_id: "req-002", call_type: "completion", model: "claude-sonnet-4-6", api_key: "sk-def***", key_name: "dev-claude-key", total_tokens: 567, prompt_tokens: 300, completion_tokens: 267, spend: 1.23, start_time: "2026-07-08T10:05:00Z", end_time: "2026-07-08T10:05:03Z", request_duration_ms: 2890, ttft_ms: 456.7, status: "success", custom_llm_provider: "anthropic", model_group: "claude-sonnet-4-6", user: "dev-user" },
 ];
+
+// Detail mocks for the new detail endpoint (GET /global/spend/logs/{request_id})
+const sampleDetailLog1 = {
+  ...sampleSpendLogs[0],
+  messages: [{ role: "user", content: "Hello, how are you?" }],
+  response: { id: "chatcmpl-xxx", choices: [{ message: { role: "assistant", content: "I'm doing well, thank you!" } }], usage: { prompt_tokens: 800, completion_tokens: 434, total_tokens: 1234 } },
+};
+const sampleDetailLog2 = {
+  ...sampleSpendLogs[1],
+  messages: [{ role: "user", content: "Explain quantum computing" }],
+  response: { id: "msg-xxx", content: [{ type: "text", text: "Quantum computing uses qubits..." }], usage: { input_tokens: 300, output_tokens: 267 } },
+};
 
 const sampleSpendModels = [
   { model: "gpt-4", total_spend: 25.00, total_tokens: 50000, requests: 12 },
@@ -94,6 +106,15 @@ export async function defineMockRoutes(route: Route, request: Request) {
   // Spend
   if (url.pathname === "/spend/logs") {
     return route.fulfill({ status: 200, json: { data: sampleSpendLogs } });
+  }
+  if (url.pathname.startsWith("/global/spend/logs/") && url.pathname !== "/global/spend/logs") {
+    // Detail endpoint: extract request_id from path
+    const rid = url.pathname.replace("/global/spend/logs/", "");
+    const detail = rid === "req-001" ? sampleDetailLog1 : rid === "req-002" ? sampleDetailLog2 : null;
+    if (detail) {
+      return route.fulfill({ status: 200, json: detail });
+    }
+    return route.fulfill({ status: 200, json: sampleDetailLog1 });
   }
   if (url.pathname === "/spend/models") {
     return route.fulfill({ status: 200, json: { data: sampleSpendModels } });
