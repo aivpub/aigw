@@ -321,7 +321,7 @@ function ToolItem({ name, description, params }: { name: string; description?: s
 /* ─────────────────────────────────── Drawer ── */
 
 function DetailDrawer({ log, open, onClose, isDetailLoading, detailError, onRetry }: {
-  log: SpendLog | null; open: boolean; onClose: () => void;
+  log: SpendLogDetail | null; open: boolean; onClose: () => void;
   isDetailLoading: boolean; detailError: boolean; onRetry: () => void;
 }) {
   if (!log) return null;
