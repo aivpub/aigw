@@ -56,6 +56,9 @@ pub struct AppState {
     pub started_at: std::time::Instant,
     #[allow(dead_code)]
     pub daily_spend_queue: Option<Arc<DailySpendQueue>>,
+    /// OTEL tracing active flag — true when OTLP exporter is configured and running.
+    /// Handler code gates traceparent extract/inject on this field.
+    pub otel_active: bool,
 }
 
 impl AppState {
@@ -81,6 +84,7 @@ impl AppState {
             deployment_mode,
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
+            otel_active: false,
         }
     }
 }
@@ -705,6 +709,7 @@ mod tests {
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
             metrics: None,
+            otel_active: false,
         });
         Router::new()
             .route("/key/generate", axum::routing::post(generate_key))

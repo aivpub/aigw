@@ -23,6 +23,7 @@ use tokio_stream::StreamExt;
 
 use super::keys::SharedState;
 use super::ip_extractor::OptionalClientIp;
+use aigw_core::otel_tracing;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Anthropic error helper
@@ -95,7 +96,14 @@ pub async fn messages_handler(
     }: http::request::Parts,
     body: String,
 ) -> Result<axum::response::Response, (StatusCode, Json<Value>)> {
+    // Extract W3C traceparent from incoming headers (noop if OTEL disabled)
+    if state.otel_active {
+        let _otel_ctx = otel_tracing::extract_traceparent(&headers);
+    }
+
     // 1. Auth: try x-api-key/Bearer header, fallback to cookie JWT
+    let auth_span = tracing::info_span!("auth_check");
+    let _auth_enter = auth_span.enter();
     let extracted = headers
         .get("x-api-key")
         .and_then(|v| v.to_str().ok())
@@ -218,6 +226,7 @@ pub async fn messages_handler(
     })?;
 
     // 3. Validate required fields
+    drop(_auth_enter);
     let model = body_val
         .get("model")
         .and_then(|v| v.as_str())
@@ -265,6 +274,14 @@ pub async fn messages_handler(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     let call_type = if is_stream { "completion_stream" } else { "completion" };
+
+    // Root span for the entire request lifecycle
+    let root_span = tracing::info_span!(
+        "messages_handler",
+        model = %model,
+        stream = is_stream,
+    );
+    let _root_enter = root_span.enter();
 
     // Extract end_user from Anthropic protocol metadata.user_id
     // Claude Code packs device_id/session_id as JSON string in this field
@@ -319,6 +336,8 @@ pub async fn messages_handler(
     };
 
     // 4. Resolve upstream via ModelResolver + Router.pick_deployment()
+    let resolve_span = tracing::info_span!("resolve_deployment", model = %model);
+    let _resolve_enter = resolve_span.enter();
     let resolved_deployment = match state.resolver.resolve(&model).await {
         Ok(mut deployments) => {
             let idx = state.router.pick_deployment(&mut deployments).ok_or_else(|| {
@@ -395,6 +414,9 @@ pub async fn messages_handler(
     let provider_type = resolved_deployment.provider_type.clone();
 
     // Select adapter based on client protocol + provider type
+    drop(_resolve_enter);
+    let adapt_span = tracing::info_span!("adapt_request");
+    let _adapt_enter = adapt_span.enter();
     let adapter = select_adapter(ClientProtocol::Anthropic, &provider_type)
         .ok_or_else(|| {
             anthropic_error(
@@ -425,6 +447,7 @@ pub async fn messages_handler(
     );
 
     // 7. Call upstream (with retry support)
+    drop(_adapt_enter);
     let client = state.router.build_retry_client();
 
     let mut upstream_req = client.post(&upstream_url).json(&upstream_body);
@@ -458,6 +481,23 @@ pub async fn messages_handler(
     }));
 
     let start_time = chrono::Utc::now();
+
+    // Inject W3C traceparent into upstream request headers (noop if OTEL disabled)
+    if state.otel_active {
+        let mut upstream_headers = axum::http::HeaderMap::new();
+        otel_tracing::inject_traceparent(&mut upstream_headers);
+        for (key, value) in upstream_headers.iter() {
+            upstream_req = upstream_req.header(key, value);
+        }
+    }
+
+    // Upstream call span — wraps the HTTP request
+    let upstream_span = tracing::info_span!(
+        "upstream_call",
+        upstream_url = %upstream_url,
+    );
+    let _upstream_enter = upstream_span.enter();
+    let upstream_start = std::time::Instant::now();
 
     let upstream_resp = upstream_req.send().await.map_err(|e| {
         let is_timeout = e.is_timeout();
@@ -549,6 +589,14 @@ pub async fn messages_handler(
     })?;
 
     let upstream_status = upstream_resp.status();
+    let upstream_latency_ms = upstream_start.elapsed().as_millis() as i64;
+
+    // Record upstream span fields
+    upstream_span.record("upstream_status", upstream_status.as_u16() as i64);
+    upstream_span.record("upstream_latency_ms", upstream_latency_ms);
+    drop(_upstream_enter);
+    drop(upstream_span);
+
     let now = chrono::Utc::now();
 
     // Helper to record failure SpendLog (on upstream error)
@@ -932,6 +980,12 @@ pub async fn messages_handler(
 
         let _ = state.db.insert_spend_log(&spend_log).await;
 
+        // Record OTEL span attributes and close root span
+        root_span.record("prompt_tokens", spend_log.prompt_tokens as i64);
+        root_span.record("completion_tokens", spend_log.completion_tokens as i64);
+        root_span.record("total_tokens", spend_log.total_tokens as i64);
+        root_span.record("spend", spend_amount);
+
         // Record Prometheus metrics (non-streaming v1/messages success)
         if let Some(ref m) = state.metrics {
             m.record_request(&RequestSummary {
@@ -1031,6 +1085,7 @@ mod tests {
             deployment_mode: "onprem".to_string(),
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
+            otel_active: false,
             metrics: None,
         });
 

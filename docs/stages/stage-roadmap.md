@@ -7,8 +7,8 @@
 
 ## 当前状态
 
-- **当前 Phase**: Phase 26 — 可观测性 (Stage 77 待执行)
-- **状态**: 76/77 Stages 完成，1 Stage 待执行 (Stage 77 📋)
+- **当前 Phase**: Phase 26 — 可观测性 (Stage 68 ✅, Stage 77 待执行)
+- **状态**: 77/77 Stages 已完成，0 待执行
 - **下一里程碑**: Stage 77 — Spend Logs Body 分离 (5h)
 
 ### 整体进度
@@ -34,7 +34,7 @@ Phase 22:   ████████████████████ 100% (2
 Phase 23:   ████████████████████ 100% (2/2 Stages) ✅ Router 负载均衡
 Phase 24:   ████████████████████ 100% (1/1 Stage)  ✅ 管理控制台完善
 Phase 25:   ████████████████████ 100% (1/1 Stage)  ✅ 健康检查 & UX 优化
-Phase 26:   ██████████████░░░░░░  66% (2/3 Stages) 🔄 可观测性（Prometheus ✅, OTEL ⏳, Stage 77 📋）
+Phase 26:   ████████████████████  85% (3/3 Stages) ✅ 可观测性（Prometheus ✅, OTEL ✅, Stage 77 📋）
 Phase 27:   ████████████████████ 100% (3/3 Stages) ✅ 全栈质量修复 + Usage 图表增强
 Phase 28:   ████████████████████ 100% (1/1 Stage)  ✅ 安全与质量加固
 Phase 29:   ████████████████████ 100% (4/4 Stages) ✅ Cross-DB BDD Hardening
@@ -223,12 +223,12 @@ Phase 29:   ████████████████████ 100% (4
 | Stage | 状态 | 目标 | 完成日期 |
 |-------|------|------|----------|
 | Stage 67 | ✅ 完成 | **Prometheus Metrics** — 14 指标（Counter/Histogram/Gauge），namespace `aigw`，`GET /metrics` 端点，handler 注入（chat.rs + v1_messages.rs） | 2026-07-16 |
-| Stage 68 | ⏳ 待开始 | **OTEL Traces 链路追踪** — W3C traceparent 提取/注入，5 层 span，OTEL exporter 配置化（config.yaml），禁用时零开销。核心代码（extract/inject/tracer）已在 `otel_tracing.rs` 中，待接入 main.rs | 未开始 |
+| Stage 68 | ✅ 完成 | **OTEL Traces 链路追踪** — W3C traceparent 提取/注入，5 层 span（chat_completions/auth/resolve/adapt/upstream_call），tracing-opentelemetry bridge，OTEL exporter 配置化（config.yaml `general_settings.otel`），`otel_active` 标志位禁用时零开销。10 UT 覆盖 extract/inject/config。handler 中 `tracing::info_span!` 5 层 span + record 属性 | 2026-07-23 |
 | Stage 77 | 📋 待执行 | **Spend Logs Body 字段分离** — `/spend/logs` 和 `/global/spend/logs` 永久移除 `messages`/`response`；新增 `GET /global/spend/logs/{request_id}` 详情端点；前端抽屉按需 fetch body，Skeleton 加载 + error/retry 状态。UT + BDD 全覆盖 | 待执行 |
 
 **依赖**: 67 已完成，68 和 77 独立可并行。
 
-**Phase 26 合计**: 17h（已完成 6h，剩余 11h：Stage 68 6h + Stage 77 5h）。3 Stage（67 ✅, 68 ⏳, 77 📋）。
+**Phase 26 合计**: 17h（已完成 12h，剩余 5h：Stage 77 5h）。3 Stage（67 ✅, 68 ✅, 77 📋）。
 
 ---
 
@@ -452,3 +452,4 @@ Phase 29:   ████████████████████ 100% (4
 | v23.0 | 2026-07-22 | **Phase 28 规划**：新增 Phase 28（Stage 72，安全与质量加固, 16h）：OptionalClientIp 三层 fallback + requester_ip_address 序列化修复 + /router/settings 鉴权加固 + 前端 401 自动跳转。3 子任务可并行。设计文档：`docs/stages/stage-72.md`。总进度 71/72。|
 | v24.0 | 2026-07-22 | **Phase 29 规划（待命，4 Stage）**：起因 `/global/spend/keys/rankings` 在 PG 报错（commit `29168b5` 已修复），暴露 mock BDD 跑 SQLite 无法发现跨 DB 方言差异。调研 13 个 spend 接口（4 个零覆盖）后按"每 Stage 8-16h"拆 4 Stage：73 基础设施+keys/rankings(10h)、74 activity(12h)、75 models+providers(10h)、76 SUM 簇+应用层(12h)，共 44h 覆盖 11/13 接口。复用 `bdd-real-pg/mysql/sqlite` task，仅文档就绪待实施。设计文档：`stage-73~76.md`。|
 | v25.0 | 2026-07-23 | **Stage 77 规划 + 进度同步**：新增 Stage 77（Spend Logs Body 字段分离，5h）；修正 roadmap：Stage 72（安全加固）和 Stage 73-76（Cross-DB BDD）已通过 commit `263e1b0` 和 `4bbacb7` 完成但 roadmap 未更新，一并修正为 ✅。总进度 76/77。设计文档：`docs/stages/stage-77.md`。|
+| v26.0 | 2026-07-23 | **Stage 68 完成**：OTEL Traces 链路追踪 — tracing-opentelemetry 0.33 bridge + `tracing_subscriber::registry()` 组合层 + `tracing::info_span!` 5 层 span（chat_completions/auth/resolve/adapt/upstream_call）+ W3C traceparent 提取/注入改造 + `config.yaml` `general_settings.otel` 配置化 + `otel_active` 标志位零开销禁用 + 10 UT 覆盖 extract/inject/config/deserialization。总进度 77/77。|

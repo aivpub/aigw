@@ -199,6 +199,7 @@ mod tests {
             deployment_mode: "onprem".to_string(),
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
+            otel_active: false,
             metrics: None,
         });
         Router::new()

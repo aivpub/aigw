@@ -5,13 +5,15 @@
 //! - inject_traceparent — inject W3C trace context into outgoing HTTP headers
 //! - OtelTracer — manages the tracer provider lifecycle
 //! - OtelConfig — configuration from config.yaml
+//! - is_enabled — returns true when OTEL tracing is active (for handler gating)
+//! - build_otel_layer — create tracing-opentelemetry bridge layer for subscriber
 //!
 //! When disabled (config.enabled = false), all functions are no-ops with zero overhead.
 //!
 //! Usage in handler (chat.rs / v1_messages.rs):
 //! ```ignore
 //! // Extract upstream traceparent before resolving model
-//! let otel_ctx = otel_tracing::extract_traceparent(req.headers());
+//! let otel_ctx = otel_tracing::extract_traceparent(&headers);
 //!
 //! // Before sending upstream request
 //! otel_tracing::inject_traceparent(&mut upstream_headers);
@@ -19,10 +21,16 @@
 
 use opentelemetry::global;
 use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::trace::SdkTracerProvider;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Global flag tracking whether OTEL has been initialized.
+/// Set by OtelTracer::init(), read by is_enabled().
+static OTEL_ENABLED: AtomicBool = AtomicBool::new(false);
 
 /// OTEL configuration, read from config.yaml or deserialized from DB config.
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct OtelConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -106,6 +114,11 @@ impl OtelTracer {
             .build();
 
         global::set_tracer_provider(provider.clone());
+        // Also register W3C TraceContext propagator for extract/inject
+        global::set_text_map_propagator(TraceContextPropagator::new());
+
+        // Mark OTEL as enabled so handler code can conditionally extract/inject
+        OTEL_ENABLED.store(true, Ordering::Relaxed);
 
         Some(Self {
             provider: Some(provider),
@@ -130,6 +143,25 @@ impl Drop for OtelTracer {
     fn drop(&mut self) {
         self.shutdown();
     }
+}
+
+/// Returns true when OTEL tracing is active (global tracer provider has been set).
+/// Handler code uses this to conditionally extract/inject traceparent.
+pub fn is_enabled() -> bool {
+    OTEL_ENABLED.load(Ordering::Relaxed)
+}
+
+/// Build a tracing-opentelemetry layer that maps tracing::Span to OTEL spans.
+/// Returns the layer — compose with `tracing_subscriber::registry().with(layer)`.
+/// Caller must ensure the layer is only added when OTEL is active;
+/// the global tracer resolver determines whether spans are actually exported.
+pub fn build_otel_layer<S>(
+) -> tracing_opentelemetry::OpenTelemetryLayer<S, opentelemetry::global::BoxedTracer>
+where
+    S: tracing_subscriber::layer::SubscriberExt + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
+{
+    let tracer = global::tracer("aigw");
+    tracing_opentelemetry::layer().with_tracer(tracer)
 }
 
 /// Extract W3C traceparent from HTTP headers, returning the parent context.
@@ -173,5 +205,123 @@ impl<'a> opentelemetry::propagation::Injector for HeaderInjector<'a> {
                 self.0.insert(k, v);
             }
         }
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Tests
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::{HeaderMap, HeaderValue};
+    use opentelemetry::trace::TraceContextExt;
+
+    #[test]
+    fn test_otel_config_default_disabled() {
+        let config = OtelConfig::default();
+        assert!(!config.enabled);
+        assert_eq!(config.service_name, "aigw");
+        assert_eq!(config.sample_rate, 1.0);
+        assert_eq!(config.exporter, "otlp_grpc");
+        assert!(config.endpoint.is_none());
+    }
+
+    #[test]
+    fn test_otel_disabled_init_returns_none() {
+        let config = OtelConfig::default();
+        let tracer = OtelTracer::init(&config);
+        assert!(tracer.is_none());
+    }
+
+    #[test]
+    fn test_otel_enabled_no_endpoint_returns_none() {
+        let config = OtelConfig {
+            enabled: true,
+            endpoint: None,
+            ..Default::default()
+        };
+        let tracer = OtelTracer::init(&config);
+        assert!(tracer.is_none());
+    }
+
+    #[test]
+    fn test_otel_enabled_empty_endpoint_returns_none() {
+        let config = OtelConfig {
+            enabled: true,
+            endpoint: Some("".into()),
+            ..Default::default()
+        };
+        let tracer = OtelTracer::init(&config);
+        assert!(tracer.is_none());
+    }
+
+    #[test]
+    fn test_extract_traceparent_missing_header() {
+        let headers = HeaderMap::new();
+        let ctx = extract_traceparent(&headers);
+        // With no propagator set, extract creates a context — just verify no panic
+        let _ = ctx.span();
+    }
+
+    #[test]
+    fn test_extract_traceparent_empty_value() {
+        let mut headers = HeaderMap::new();
+        headers.insert("traceparent", HeaderValue::from_static(""));
+        let ctx = extract_traceparent(&headers);
+        // Empty value — just verify no panic
+        let _ = ctx.span();
+    }
+
+    #[test]
+    fn test_extract_traceparent_valid_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "traceparent",
+            HeaderValue::from_static(
+                "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+            ),
+        );
+        let ctx = extract_traceparent(&headers);
+        // With a noop propagator (OTEL not initialized), the context won't be valid.
+        // The test merely verifies that extract doesn't panic.
+        let _ = ctx.span().span_context().is_valid();
+    }
+
+    #[test]
+    fn test_inject_traceparent_no_init_no_panic() {
+        // When no tracer provider is set up, inject_traceparent should not panic
+        // The global propagator is a NoopTextMapPropagator by default
+        let mut headers = HeaderMap::new();
+        inject_traceparent(&mut headers);
+        // No headers added by noop propagator — no panic either way
+    }
+
+    #[test]
+    fn test_deserialize_otel_config_from_yaml() {
+        let yaml = r#"
+enabled: true
+endpoint: "http://jaeger:4317"
+service_name: "aigw-test"
+sample_rate: 0.5
+exporter: "otlp_http"
+"#;
+        let config: OtelConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.enabled);
+        assert_eq!(config.endpoint.unwrap(), "http://jaeger:4317");
+        assert_eq!(config.service_name, "aigw-test");
+        assert_eq!(config.sample_rate, 0.5);
+        assert_eq!(config.exporter, "otlp_http");
+    }
+
+    #[test]
+    fn test_deserialize_otel_config_minimal_disabled() {
+        let yaml = r#"
+enabled: false
+"#;
+        let config: OtelConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(!config.enabled);
+        assert_eq!(config.service_name, "aigw");
     }
 }

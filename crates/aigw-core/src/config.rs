@@ -1,6 +1,7 @@
 //! Configuration types compatible with litellm proxy config.yaml format
 
 use serde::{Deserialize, Serialize};
+use crate::otel_tracing::OtelConfig;
 
 /// Top-level config (litellm-compatible)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,6 +60,10 @@ pub struct GeneralSettings {
     /// Compression settings for HTTP response compression (Content-Encoding)
     #[serde(rename = "compression", skip_serializing_if = "Option::is_none")]
     pub compression: Option<CompressionConfig>,
+
+    /// OpenTelemetry tracing configuration
+    #[serde(rename = "otel", skip_serializing_if = "Option::is_none")]
+    pub otel: Option<OtelConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

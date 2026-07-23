@@ -489,6 +489,7 @@ mod tests {
             deployment_mode: "test".to_string(),
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
+            otel_active: false,
             metrics: None,
         })
     }
@@ -535,6 +536,7 @@ mod tests {
             deployment_mode: "test".to_string(),
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
+            otel_active: false,
             metrics: None,
         });
 

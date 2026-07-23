@@ -58,6 +58,8 @@ use tower_http::compression::CompressionLayer;
 use tracing::Level;
 use tracing::Span;
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 use uuid::Uuid;
 
 /// AI Gateway — litellm-compatible LLM proxy in Rust
@@ -135,36 +137,49 @@ async fn main() -> anyhow::Result<()> {
     // MUST run before tracing init so subsequent std::env::var reads see it.
     let _ = dotenvy::dotenv();
 
-    // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .json()
-        .init();
-
+    // Initialize tracing with optional OTEL layer
     let cli = Cli::parse();
 
-    // Read config.yaml for general_settings (CLI/ENV overrides take precedence)
+    // Read config.yaml to know if OTEL is enabled BEFORE initing subscriber
     let config: Option<AigwConfig> = match std::fs::read_to_string(&cli.config) {
         Ok(content) => match serde_yaml::from_str(&content) {
             Ok(cfg) => Some(cfg),
             Err(e) => {
-                tracing::warn!("Failed to parse {}: {}, using defaults", cli.config, e);
+                eprintln!("Failed to parse {}: {} (will use defaults)", cli.config, e);
                 None
             }
         },
-        Err(_) => {
-            tracing::info!("{} not found, using CLI args / env vars only", cli.config);
-            None
-        }
+        Err(_) => None,
     };
 
+    // Extract OTEL config before initing subscriber
+    let otel_config = config
+        .as_ref()
+        .and_then(|c| c.general_settings.as_ref())
+        .and_then(|gs| gs.otel.clone())
+        .unwrap_or_default();
+
+    // Initialize OTEL tracer BEFORE subscriber so global::set_tracer_provider runs first
+    let otel_tracer = aigw_core::otel_tracing::OtelTracer::init(&otel_config);
+    let otel_active = otel_tracer.as_ref().map(|t| t.is_active()).unwrap_or(false);
+
+    // Build subscriber layers
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let fmt_layer = tracing_subscriber::fmt::layer().json();
+    let otel_layer = aigw_core::otel_tracing::build_otel_layer();
+
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(fmt_layer)
+        .with(otel_layer)
+        .init();
+
     tracing::info!(
-        "aigw {} starting (mode: {}, bind: {})",
+        "aigw {} starting (mode: {}, bind: {}, otel: {})",
         VERSION_INFO,
         cli.deployment_mode,
-        cli.bind
+        cli.bind,
+        if otel_active { "enabled" } else { "disabled" }
     );
 
     // Determine master key (CLI/ENV > config.yaml > default)
@@ -268,6 +283,7 @@ async fn main() -> anyhow::Result<()> {
         started_at: std::time::Instant::now(),
         daily_spend_queue: Some(daily_spend_queue),
         resolver,
+        otel_active,
     });
 
     // Build compression config from general_settings

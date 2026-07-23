@@ -51,3 +51,4 @@ pub use models::{
     Project, ProxyModel, SpendLog, Team, TeamMembership, User, VirtualKey,
 };
 pub use password::{hash_password, verify_password};
+pub use otel_tracing::{OtelConfig, extract_traceparent, inject_traceparent};

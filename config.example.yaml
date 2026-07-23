@@ -4,6 +4,13 @@
 general_settings:
   master_key: ${MASTER_KEY:-sk-master-change-me}
   database_url: sqlite:/app/data/aigw.db
+  # OpenTelemetry distributed tracing (optional)
+  # otel:
+  #   enabled: false
+  #   endpoint: "http://localhost:4317"
+  #   service_name: "aigw"
+  #   sample_rate: 1.0
+  #   exporter: "otlp_grpc"
 
 model_list:
   - model_name: gpt-4o

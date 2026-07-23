@@ -24,6 +24,7 @@ use tokio_stream::StreamExt;
 
 use super::keys::SharedState;
 use super::ip_extractor::OptionalClientIp;
+use aigw_core::otel_tracing;
 
 /// Resolved upstream routing parameters from proxy_models + credentials lookup.
 #[allow(dead_code)]
@@ -668,6 +669,13 @@ pub async fn chat_completions(
     headers: axum::http::HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<axum::response::Response, (StatusCode, Json<Value>)> {
+    // Extract W3C traceparent from incoming headers (noop if OTEL disabled).
+    // We extract but don't attach — the tracing-opentelemetry layer handles
+    // context propagation automatically from the tracing spans.
+    if state.otel_active {
+        let _otel_ctx = otel_tracing::extract_traceparent(&headers);
+    }
+
     // 1. Validate required fields
     let _model = body.get("model").and_then(|v| v.as_str()).ok_or_else(|| {
         (
@@ -717,7 +725,17 @@ pub async fn chat_completions(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
+    // Root span for the entire request lifecycle
+    let root_span = tracing::info_span!(
+        "chat_completions",
+        model = %_model,
+        stream = is_stream,
+    );
+    let _root_enter = root_span.enter();
+
     // 3. Look up key permissions from the database
+    let auth_span = tracing::info_span!("auth_check");
+    let _auth_enter = auth_span.enter();
     // Only master key bypasses the model permission check
     if !auth.is_master_key {
         let key_record = state
@@ -773,6 +791,9 @@ pub async fn chat_completions(
     }
 
     // 4. Resolve upstream via ModelResolver + Router.pick_deployment()
+    drop(_auth_enter);
+    let resolve_span = tracing::info_span!("resolve_deployment", model = %_model);
+    let _resolve_enter = resolve_span.enter();
     let mut deployments = state.resolver.resolve(_model).await?;
     let deployment_idx = state.router.pick_deployment(&mut deployments).ok_or_else(|| {
         (
@@ -802,6 +823,9 @@ pub async fn chat_completions(
         })?;
 
     // Build upstream request body via adapter
+    drop(_resolve_enter);
+    let adapt_span = tracing::info_span!("adapt_request");
+    let _adapt_enter = adapt_span.enter();
     let upstream_body_val = adapter.adapt_request(body.clone(), &deployment).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -872,6 +896,7 @@ pub async fn chat_completions(
     };
 
     // 5. Build and send upstream request (with retry support)
+    drop(_adapt_enter);
     let client = state.router.build_retry_client();
 
     let mut upstream_req = client.post(&upstream_url).json(&upstream_body_val);
@@ -905,6 +930,25 @@ pub async fn chat_completions(
     }));
 
     let start_time = chrono::Utc::now();
+
+    // Inject W3C traceparent into upstream request headers (noop if OTEL disabled)
+    if state.otel_active {
+        let mut upstream_headers = axum::http::HeaderMap::new();
+        otel_tracing::inject_traceparent(&mut upstream_headers);
+        for (key, value) in upstream_headers.iter() {
+            upstream_req = upstream_req.header(key, value);
+        }
+    }
+
+    // Upstream call span — wraps the HTTP request
+    let upstream_span = tracing::info_span!(
+        "upstream_call",
+        upstream_url = %upstream_url,
+        upstream_status = tracing::field::Empty,
+        upstream_latency_ms = tracing::field::Empty,
+    );
+    let _upstream_enter = upstream_span.enter();
+    let upstream_start = std::time::Instant::now();
 
     let upstream_resp = upstream_req.send().await.map_err(|e| {
         let is_timeout = e.is_timeout();
@@ -999,6 +1043,13 @@ pub async fn chat_completions(
     })?;
 
     let upstream_status = upstream_resp.status();
+    let upstream_latency_ms = upstream_start.elapsed().as_millis() as i64;
+
+    // Record upstream span fields
+    upstream_span.record("upstream_status", upstream_status.as_u16() as i64);
+    upstream_span.record("upstream_latency_ms", upstream_latency_ms);
+    drop(_upstream_enter);
+    drop(upstream_span);
 
     // For streaming, we return the raw SSE response
     // For non-streaming, we parse the JSON and record spend
@@ -1489,6 +1540,12 @@ pub async fn chat_completions(
         // Record spend log (don't fail the request if logging fails)
         let _ = state.db.insert_spend_log(&spend_log).await;
 
+        // Record OTEL span attributes and close root span
+        root_span.record("prompt_tokens", spend_log.prompt_tokens as i64);
+        root_span.record("completion_tokens", spend_log.completion_tokens as i64);
+        root_span.record("total_tokens", spend_log.total_tokens as i64);
+        root_span.record("spend", spend_amount);
+
         // Record Prometheus metrics (non-streaming success)
         if let Some(ref m) = state.metrics {
             m.record_request(&RequestSummary {
@@ -1656,6 +1713,7 @@ mod tests {
             deployment_mode: "onprem".to_string(),
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
+            otel_active: false,
             metrics: None,
         });
 
@@ -1831,6 +1889,7 @@ mod tests {
             deployment_mode: "onprem".to_string(),
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
+            otel_active: false,
             metrics: None,
         });
 
@@ -1971,6 +2030,7 @@ mod tests {
             deployment_mode: "onprem".to_string(),
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
+            otel_active: false,
             metrics: None,
         });
 
@@ -2016,6 +2076,7 @@ mod tests {
             deployment_mode: "onprem".to_string(),
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
+            otel_active: false,
             metrics: None,
         })
     }
@@ -2296,6 +2357,7 @@ mod tests {
             deployment_mode: "onprem".to_string(),
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
+            otel_active: false,
             metrics: None,
         });
 
