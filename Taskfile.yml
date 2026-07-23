@@ -45,50 +45,45 @@ tasks:
     desc: "run BDD tests with SQLite (auto DB + server)"
     cmds:
       - |
-        set -a
-        [ -f .env ] && . ./.env
-        set +a
-        # ProviderRegistry::default_with_env() needs OPENAI_API_KEY
-        # resolve_upstream_params() needs OPENAI_API_KEY + OPENAI_BASE_URL
+        # Load .env into shell variables only (no auto-export).
+        # Then explicitly export only runtime-needed vars to avoid poisoning
+        # cargo's fingerprint cache.
+        if [ -f .env ]; then set -a; . ./.env; set +a; fi
+        # Runtime vars (needed by the test binary, not by cargo build):
         export OPENAI_API_KEY="${OPENAI_API_KEY:-${OPENAPI_KEY:-}}"
         export OPENAI_BASE_URL="${OPENAI_BASE_URL:-${OPENAPI_BASE_URL:-}}"
-        # Strip /v1 suffix to prevent double  (resolved upstream
-        # already appends /chat/completions).
         export OPENAI_BASE_URL="${OPENAI_BASE_URL%/v1}"
+        export AIGW_UPSTREAM_DB_URL="${AIGW_UPSTREAM_DB_URL:-}"
+        export AIGW_UPSTREAM_ENCRYPT_KEY="${AIGW_UPSTREAM_ENCRYPT_KEY:-}"
+        # Test harness vars (neither affects build fingerprint):
         AIGW_REAL_API=1 AIGW_TEST_DB_DRIVER=sqlite AIGW_TEST_START_SERVER=1 \
           AIGW_REAL_MODEL="${AIGW_REAL_MODEL:-${OPENAPI_MODEL:-}}" \
-          AIGW_UPSTREAM_DB_URL="${AIGW_UPSTREAM_DB_URL:-}" \
-          AIGW_UPSTREAM_ENCRYPT_KEY="${AIGW_UPSTREAM_ENCRYPT_KEY:-}" \
           cargo test --test bdd -p aigw-server
 
   bdd-real-pg:
     desc: "run BDD tests with PostgreSQL (auto DB + server)"
     cmds:
       - |
-        set -a
-        [ -f .env ] && . ./.env
-        set +a
+        if [ -f .env ]; then set -a; . ./.env; set +a; fi
         export OPENAI_API_KEY="${OPENAI_API_KEY:-${OPENAPI_KEY:-}}"
         export OPENAI_BASE_URL="${OPENAI_BASE_URL:-${OPENAPI_BASE_URL:-}}"
         export OPENAI_BASE_URL="${OPENAI_BASE_URL%/v1}"
+        export AIGW_UPSTREAM_DB_URL="${AIGW_UPSTREAM_DB_URL:-}"
+        export AIGW_UPSTREAM_ENCRYPT_KEY="${AIGW_UPSTREAM_ENCRYPT_KEY:-}"
         AIGW_REAL_API=1 AIGW_TEST_DB_DRIVER=postgres AIGW_TEST_START_SERVER=1 \
           AIGW_REAL_MODEL="${AIGW_REAL_MODEL:-${OPENAPI_MODEL:-}}" \
-          AIGW_UPSTREAM_DB_URL="${AIGW_UPSTREAM_DB_URL:-}" \
-          AIGW_UPSTREAM_ENCRYPT_KEY="${AIGW_UPSTREAM_ENCRYPT_KEY:-}" \
           cargo test --test bdd -p aigw-server
 
   bdd-real-mysql:
     desc: "run BDD tests with MySQL (auto DB + server)"
     cmds:
       - |
-        set -a
-        [ -f .env ] && . ./.env
-        set +a
+        if [ -f .env ]; then set -a; . ./.env; set +a; fi
         export OPENAI_API_KEY="${OPENAI_API_KEY:-${OPENAPI_KEY:-}}"
         export OPENAI_BASE_URL="${OPENAI_BASE_URL:-${OPENAPI_BASE_URL:-}}"
+        export AIGW_UPSTREAM_DB_URL="${AIGW_UPSTREAM_DB_URL:-}"
+        export AIGW_UPSTREAM_ENCRYPT_KEY="${AIGW_UPSTREAM_ENCRYPT_KEY:-}"
         AIGW_REAL_API=1 AIGW_TEST_DB_DRIVER=mysql AIGW_TEST_START_SERVER=1 \
-          AIGW_UPSTREAM_DB_URL="${AIGW_UPSTREAM_DB_URL:-}" \
-          AIGW_UPSTREAM_ENCRYPT_KEY="${AIGW_UPSTREAM_ENCRYPT_KEY:-}" \
           cargo test --test bdd -p aigw-server
 
   bdd-all:

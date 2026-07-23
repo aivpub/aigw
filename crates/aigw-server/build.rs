@@ -48,6 +48,9 @@ fn main() {
         .unwrap_or_else(|| "unknown".to_string());
     println!("cargo:rustc-env=BUILD_DATE={}", build_date);
 
-    // Re-run build.rs when git HEAD changes
-    println!("cargo:rerun-if-changed=.git/HEAD");
+    // Re-run build.rs when git HEAD or index changes.
+    // Paths are relative to CARGO_MANIFEST_DIR (crates/aigw-server/),
+    // so we use ../ to reach the workspace-root .git directory.
+    println!("cargo:rerun-if-changed=../../.git/HEAD");
+    println!("cargo:rerun-if-changed=../../.git/index");
 }

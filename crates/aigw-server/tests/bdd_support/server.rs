@@ -28,30 +28,22 @@ impl ServerGuard {
 
         let base_url = format!("http://127.0.0.1:{port}");
 
-        // CARGO_BIN_EXE_aigw is set by cargo when running integration tests
-        // that depend on the aigw binary. It points to the pre-built binary.
+        // CARGO_BIN_EXE_aigw is set by cargo for sandboxed test binaries.
+        // When not set (e.g. plain `cargo test --test bdd`), target/ is still there
+        // from the build step, so use the binary directly instead of `cargo run`
+        // which would trigger another full rebuild.
         let aigw_bin = std::env::var("CARGO_BIN_EXE_aigw").unwrap_or_else(|_| {
-            eprintln!("WARN: CARGO_BIN_EXE_aigw not set, falling back to 'cargo run' (may fail due to lock)");
-            "cargo".to_string()
+            let workspace_root = find_workspace_root();
+            let target_dir = std::env::var("CARGO_TARGET_DIR")
+                .unwrap_or_else(|_| format!("{workspace_root}/target"));
+            let profile = if cfg!(debug_assertions) { "debug" } else { "release" };
+            format!("{target_dir}/{profile}/aigw")
         });
 
-        let (mut cmd, _is_cargo_run): (tokio::process::Command, bool) = if aigw_bin == "cargo" {
-            // Fallback: cargo run --bin aigw (will fail if workspace lock held)
-            let workspace_root = find_workspace_root();
-            let mut c = tokio::process::Command::new("cargo");
-            c.args(["run", "--bin", "aigw", "--"])
-                .current_dir(&workspace_root)
-                .stdout(Stdio::null())
-                .stderr(Stdio::inherit())
-                .kill_on_drop(true);
-            (c, true)
-        } else {
-            let mut c = tokio::process::Command::new(&aigw_bin);
-            c.stdout(Stdio::null())
-                .stderr(Stdio::inherit())
-                .kill_on_drop(true);
-            (c, false)
-        };
+        let mut cmd = tokio::process::Command::new(&aigw_bin);
+        cmd.stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .kill_on_drop(true);
 
         // Forward provider/upstream env vars to the child process
         // so real API scenarios (end_to_end_real, compatibility_real) work.
