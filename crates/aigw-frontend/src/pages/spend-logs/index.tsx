@@ -356,7 +356,7 @@ function DetailDrawer({ log, open, onClose }: { log: SpendLog | null; open: bool
           <div className="flex flex-wrap gap-x-4 gap-y-0.5">
             <span>Start: <span className="font-mono text-foreground">{log.start_time ? format(new Date(log.start_time), "yyyy-MM-dd HH:mm:ss") : "—"}</span></span>
             <span>End: <span className="font-mono text-foreground">{log.end_time ? format(new Date(log.end_time), "yyyy-MM-dd HH:mm:ss") : "—"}</span></span>
-            {log.model_group ? <span>Upstream: <span className="font-mono text-foreground">{log.model_group}</span></span> : null}
+            {log.model_group ? <span>Group: <span className="font-mono text-foreground">{log.model_group}</span></span> : null}
             {log.custom_llm_provider ? <span>Provider: <span className="font-mono text-foreground">{log.custom_llm_provider}</span></span> : null}
             {log.model_id ? <span>ID: <code className="text-[10px] text-foreground">{log.model_id}</code></span> : null}
             {log.api_base ? <span>Base: <code className="text-[10px]">{log.api_base}</code></span> : null}
@@ -601,7 +601,12 @@ export function SpendLogsPage() {
                       <TableRow key={log.request_id} className="cursor-pointer hover:bg-muted/50" onClick={() => { setSelectedLog(log); setDrawerOpen(true); }}>
                         <TableCell className="text-xs whitespace-nowrap">{log.start_time ? format(new Date(log.start_time), "MM-dd HH:mm:ss") : "—"}</TableCell>
                         <TableCell><Badge variant="outline" className="text-[10px] px-1 py-0">{log.call_type || "—"}</Badge></TableCell>
-                        <TableCell className="text-xs whitespace-nowrap font-medium">{log.model}</TableCell>
+                        <TableCell className="text-xs whitespace-nowrap">
+                          <div className="flex items-center gap-1">
+                            {log.model_group ? <Badge variant="secondary" className="text-[10px] px-1 py-0 font-normal">{log.model_group}</Badge> : null}
+                            <span className="font-medium">{log.model}</span>
+                          </div>
+                        </TableCell>
                         <TableCell className="text-xs whitespace-nowrap text-muted-foreground max-w-[100px] truncate">{log.key_name || log.user || "—"}</TableCell>
                         <TableCell className="text-xs whitespace-nowrap text-muted-foreground max-w-[120px]">
                           <code className="text-[10px] truncate block">{truncateEndUser(log.end_user || "")}</code>
@@ -633,7 +638,10 @@ export function SpendLogsPage() {
                       </div>
                       <span className="text-xs font-mono font-medium">{fmtSpend(log.spend)}</span>
                     </div>
-                    <div className="text-sm font-medium truncate mb-1">{log.model}</div>
+                    <div className="text-sm font-medium mb-1 flex items-center gap-1">
+                      {log.model_group ? <Badge variant="secondary" className="text-[10px] px-1 py-0 font-normal">{log.model_group}</Badge> : null}
+                      <span className="truncate">{log.model}</span>
+                    </div>
                     {log.end_user ? <div className="text-xs text-muted-foreground mb-1">End User: <code className="text-[10px]">{truncateEndUser(log.end_user)}</code></div> : null}
                     <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-muted-foreground">
                       <div>TTFT: <span className="font-mono">{fmtTtft(log.ttft_ms)}</span></div>

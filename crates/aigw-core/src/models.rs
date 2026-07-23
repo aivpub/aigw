@@ -192,6 +192,15 @@ pub struct SpendModelAgg {
     pub requests: i64,
 }
 
+/// Spend aggregation by model_group
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct SpendModelGroupAgg {
+    pub model_group: String,
+    pub total_tokens: i64,
+    pub total_spend: f64,
+    pub requests: i64,
+}
+
 /// Spend aggregation by provider (from proxy_models litellm_params JSON)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpendProviderAgg {

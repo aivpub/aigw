@@ -68,6 +68,13 @@ interface ModelAgg {
   requests: number;
 }
 
+interface ModelGroupAgg {
+  model_group: string;
+  total_tokens: number;
+  total_spend: number;
+  requests: number;
+}
+
 interface ProviderAgg {
   provider: string;
   total_tokens: number;
@@ -166,6 +173,7 @@ export function UsagePage() {
   const [globalChartMode, setGlobalChartMode] = useState<ChartMode>("spend");
   const [modelViewMode, setModelViewMode] = useState<ModelViewMode>("chart");
   const [providerViewMode, setProviderViewMode] = useState<ModelViewMode>("chart");
+  const [groupViewMode, setGroupViewMode] = useState<ModelViewMode>("chart");
 
   const handlePreset = (p: DatePreset) => {
     setPreset(p);
@@ -200,6 +208,13 @@ export function UsagePage() {
     refetchInterval: 30_000,
   });
 
+  // Model Group aggregation
+  const { data: groupData, isLoading: groupLoading } = useQuery<AggResponse>({
+    queryKey: ["spend-model-groups", startDate, endDate],
+    queryFn: () => apiGet(`/global/spend/model-groups?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`),
+    refetchInterval: 30_000,
+  });
+
   // Key rankings
   const { data: keyRankings, isLoading: keyRankingsLoading } = useQuery<KeyRankingResponse>({
     queryKey: ["key-rankings", startDate, endDate],
@@ -209,6 +224,7 @@ export function UsagePage() {
   });
 
   const modelChartData = (modelData?.data ?? []) as ModelAgg[];
+  const groupChartData = (groupData?.data ?? []) as unknown as ModelGroupAgg[];
   const providerChartData: ProviderChartData[] = ((providerData?.data ?? []) as ProviderAgg[]).map((a) => ({
     name: a.provider,
     value: Math.round(a.total_spend * 10000) / 10000,
@@ -227,7 +243,7 @@ export function UsagePage() {
     failed_requests: d.failed_requests,
   }));
 
-  const isLoading = activityLoading || modelLoading || providerLoading;
+  const isLoading = activityLoading || modelLoading || providerLoading || groupLoading;
 
   // Compute max values for ranking progress bars
   const rankings = keyRankings ?? [];
@@ -238,6 +254,10 @@ export function UsagePage() {
   const modelRankingMaxSpend = modelChartData.length > 0 ? Math.max(...modelChartData.map(m => m.total_spend)) : 1;
   const modelRankingMaxTokens = modelChartData.length > 0 ? Math.max(...modelChartData.map(m => m.total_tokens)) : 1;
   const modelRankingMaxRequests = modelChartData.length > 0 ? Math.max(...modelChartData.map(m => m.requests)) : 1;
+
+  const groupRankingMaxSpend = groupChartData.length > 0 ? Math.max(...groupChartData.map(m => m.total_spend)) : 1;
+  const groupRankingMaxTokens = groupChartData.length > 0 ? Math.max(...groupChartData.map(m => m.total_tokens)) : 1;
+  const groupRankingMaxRequests = groupChartData.length > 0 ? Math.max(...groupChartData.map(m => m.requests)) : 1;
 
   return (
     <div className="space-y-4">
@@ -450,75 +470,300 @@ export function UsagePage() {
         </CardContent>
       </Card>
 
-      {/* Top Virtual Keys Ranking */}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between pb-2 pt-4 px-4">
-          <CardTitle className="text-sm font-medium">Top Virtual Keys</CardTitle>
-          <Tabs defaultValue="spend" value={globalChartMode} onValueChange={(v) => setGlobalChartMode(v as ChartMode)}>
-            <TabsList className="h-7">
-              <TabsTrigger value="spend" className="text-xs px-3 h-5">💰 Spend</TabsTrigger>
-              <TabsTrigger value="tokens" className="text-xs px-3 h-5">📊 Tokens</TabsTrigger>
-              <TabsTrigger value="requests" className="text-xs px-3 h-5">📋 Requests</TabsTrigger>
-            </TabsList>
-          </Tabs>
-        </CardHeader>
-        <CardContent>
-          {keyRankingsLoading ? (
-            <div className="space-y-3">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <Skeleton key={i} className="h-6 w-full" />
-              ))}
-            </div>
-          ) : rankings.length === 0 ? (
-            <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
-              No data available
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {rankings.slice(0, 5).map((r, i) => {
-                const metricValue =
-                  globalChartMode === "tokens" ? r.total_tokens :
-                  globalChartMode === "requests" ? r.total_requests :
-                  r.total_spend;
-                const maxValue =
-                  globalChartMode === "tokens" ? rankingMaxTokens :
-                  globalChartMode === "requests" ? rankingMaxRequests :
-                  rankingMaxSpend;
-                const pct = maxValue > 0 ? (metricValue / maxValue) * 100 : 0;
-
-                return (
-                  <div key={r.api_key} className="flex items-center gap-3">
-                    <span className="text-xs font-mono w-5 text-muted-foreground">#{i + 1}</span>
-                    <span className="text-sm font-mono truncate w-[140px]">
-                      {r.key_alias ?? truncateApiKey(r.api_key)}
-                    </span>
-                    <div className="flex-1 h-3 bg-muted rounded overflow-hidden">
-                      <div
-                        className="h-full rounded transition-all"
-                        style={{
-                          width: `${pct}%`,
-                          backgroundColor: COLORS[i % COLORS.length],
-                        }}
-                      />
-                    </div>
-                    <span className="text-xs font-mono w-[80px] text-right">
-                      {globalChartMode === "tokens"
-                        ? fmtTokens(metricValue)
-                        : globalChartMode === "requests"
-                          ? metricValue.toLocaleString()
-                          : fmtSpend(metricValue)}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Model / Provider section — 2 columns, independent tab states */}
+      {/* Row 1: Top Virtual Keys + Spend by Provider */}
       <div className="grid gap-4 lg:grid-cols-2">
-        {/* Model card with Chart/Rank toggle + independent metric tabs */}
+        {/* Top Virtual Keys Ranking */}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2 pt-4 px-4">
+            <CardTitle className="text-sm font-medium">Top Virtual Keys</CardTitle>
+            <Tabs defaultValue="spend" value={globalChartMode} onValueChange={(v) => setGlobalChartMode(v as ChartMode)}>
+              <TabsList className="h-7">
+                <TabsTrigger value="spend" className="text-xs px-3 h-5">💰 Spend</TabsTrigger>
+                <TabsTrigger value="tokens" className="text-xs px-3 h-5">📊 Tokens</TabsTrigger>
+                <TabsTrigger value="requests" className="text-xs px-3 h-5">📋 Requests</TabsTrigger>
+              </TabsList>
+            </Tabs>
+          </CardHeader>
+          <CardContent>
+            {keyRankingsLoading ? (
+              <div className="space-y-3">
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <Skeleton key={i} className="h-6 w-full" />
+                ))}
+              </div>
+            ) : rankings.length === 0 ? (
+              <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
+                No data available
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {rankings.slice(0, 5).map((r, i) => {
+                  const metricValue =
+                    globalChartMode === "tokens" ? r.total_tokens :
+                    globalChartMode === "requests" ? r.total_requests :
+                    r.total_spend;
+                  const maxValue =
+                    globalChartMode === "tokens" ? rankingMaxTokens :
+                    globalChartMode === "requests" ? rankingMaxRequests :
+                    rankingMaxSpend;
+                  const pct = maxValue > 0 ? (metricValue / maxValue) * 100 : 0;
+
+                  return (
+                    <div key={r.api_key} className="flex items-center gap-3">
+                      <span className="text-xs font-mono w-5 text-muted-foreground">#{i + 1}</span>
+                      <span className="text-sm font-mono truncate w-[140px]">
+                        {r.key_alias ?? truncateApiKey(r.api_key)}
+                      </span>
+                      <div className="flex-1 h-3 bg-muted rounded overflow-hidden">
+                        <div
+                          className="h-full rounded transition-all"
+                          style={{
+                            width: `${pct}%`,
+                            backgroundColor: COLORS[i % COLORS.length],
+                          }}
+                        />
+                      </div>
+                      <span className="text-xs font-mono w-[80px] text-right">
+                        {globalChartMode === "tokens"
+                          ? fmtTokens(metricValue)
+                          : globalChartMode === "requests"
+                            ? metricValue.toLocaleString()
+                            : fmtSpend(metricValue)}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Provider card — donut chart default, toggle to ranking */}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2 pt-4 px-4">
+            <CardTitle className="text-sm font-medium">Spend by Provider</CardTitle>
+            <div className="flex items-center gap-2">
+              <Tabs defaultValue="chart" value={providerViewMode} onValueChange={(v) => setProviderViewMode(v as ModelViewMode)}>
+                <TabsList className="h-7">
+                  <TabsTrigger value="chart" className="text-xs px-3 h-5">📊 Chart</TabsTrigger>
+                  <TabsTrigger value="ranking" className="text-xs px-3 h-5"><ListOrdered className="h-3 w-3" /></TabsTrigger>
+                </TabsList>
+              </Tabs>
+              <Tabs defaultValue="spend" value={globalChartMode} onValueChange={(v) => setGlobalChartMode(v as ChartMode)}>
+                <TabsList className="h-7">
+                  <TabsTrigger value="spend" className="text-xs px-3 h-5">💰</TabsTrigger>
+                  <TabsTrigger value="tokens" className="text-xs px-3 h-5">📊</TabsTrigger>
+                  <TabsTrigger value="requests" className="text-xs px-3 h-5">📋</TabsTrigger>
+                </TabsList>
+              </Tabs>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {providerLoading ? (
+              <Skeleton className="h-64 w-full" />
+            ) : providerChartData.length === 0 ? (
+              <div className="flex items-center justify-center h-64 text-sm text-muted-foreground">
+                No data available
+              </div>
+            ) : providerViewMode === "chart" ? (
+              <div className="h-[200px] md:h-[260px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={providerChartData}
+                      dataKey={globalChartMode === "tokens" ? "tokens" : globalChartMode === "requests" ? "requests" : "value"}
+                      nameKey="name"
+                      cx="50%"
+                      cy="50%"
+                      outerRadius={80}
+                      label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
+                      labelLine={true}
+                    >
+                      {providerChartData.map((_, i) => (
+                        <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      formatter={(value) => {
+                        if (globalChartMode === "tokens") return [fmtTokens(value as number), "Tokens"];
+                        if (globalChartMode === "requests") return [value, "Requests"];
+                        return [fmtSpend(value as number), "Spend"];
+                      }}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {[...providerChartData]
+                  .sort((a, b) => {
+                    if (globalChartMode === "tokens") return b.tokens - a.tokens;
+                    if (globalChartMode === "requests") return b.requests - a.requests;
+                    return b.value - a.value;
+                  })
+                  .slice(0, 5)
+                  .map((p, i) => {
+                    const metricValue =
+                      globalChartMode === "tokens" ? p.tokens :
+                      globalChartMode === "requests" ? p.requests :
+                      p.value;
+                    const provMaxValue = (() => {
+                      if (globalChartMode === "tokens") return Math.max(...providerChartData.map(x => x.tokens));
+                      if (globalChartMode === "requests") return Math.max(...providerChartData.map(x => x.requests));
+                      return Math.max(...providerChartData.map(x => x.value));
+                    })();
+                    const pct = provMaxValue > 0 ? (metricValue / provMaxValue) * 100 : 0;
+
+                    return (
+                      <div key={p.name} className="flex items-center gap-3">
+                        <span className="text-xs font-mono w-5 text-muted-foreground">#{i + 1}</span>
+                        <span className="text-sm truncate w-[100px]">{p.name}</span>
+                        <div className="flex-1 h-3 bg-muted rounded overflow-hidden">
+                          <div
+                            className="h-full rounded transition-all"
+                            style={{
+                              width: `${pct}%`,
+                              backgroundColor: COLORS[i % COLORS.length],
+                            }}
+                          />
+                        </div>
+                        <span className="text-xs font-mono w-[80px] text-right">
+                          {globalChartMode === "tokens"
+                            ? fmtTokens(metricValue)
+                            : globalChartMode === "requests"
+                              ? metricValue.toLocaleString()
+                              : fmtSpend(metricValue)}
+                        </span>
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Row 2: Spend by Model + Spend by Model Group */}
+      <div className="grid gap-4 lg:grid-cols-2 mt-4">
+        {/* Model Group card — left side */}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2 pt-4 px-4">
+            <CardTitle className="text-sm font-medium">Spend by Model Group</CardTitle>
+            <div className="flex items-center gap-2">
+              <Tabs defaultValue="chart" value={groupViewMode} onValueChange={(v) => setGroupViewMode(v as ModelViewMode)}>
+                <TabsList className="h-7">
+                  <TabsTrigger value="chart" className="text-xs px-3 h-5">📊 Chart</TabsTrigger>
+                  <TabsTrigger value="ranking" className="text-xs px-3 h-5"><ListOrdered className="h-3 w-3" /></TabsTrigger>
+                </TabsList>
+              </Tabs>
+              {groupViewMode === "chart" && (
+                <Tabs defaultValue="spend" value={globalChartMode} onValueChange={(v) => setGlobalChartMode(v as ChartMode)}>
+                  <TabsList className="h-7">
+                    <TabsTrigger value="spend" className="text-xs px-3 h-5">💰</TabsTrigger>
+                    <TabsTrigger value="tokens" className="text-xs px-3 h-5">📊</TabsTrigger>
+                    <TabsTrigger value="requests" className="text-xs px-3 h-5">📋</TabsTrigger>
+                  </TabsList>
+                </Tabs>
+              )}
+              {groupViewMode === "ranking" && (
+                <Tabs defaultValue="spend" value={globalChartMode} onValueChange={(v) => setGlobalChartMode(v as ChartMode)}>
+                  <TabsList className="h-7">
+                    <TabsTrigger value="spend" className="text-xs px-3 h-5">💰</TabsTrigger>
+                    <TabsTrigger value="tokens" className="text-xs px-3 h-5">📊</TabsTrigger>
+                    <TabsTrigger value="requests" className="text-xs px-3 h-5">📋</TabsTrigger>
+                  </TabsList>
+                </Tabs>
+              )}
+            </div>
+          </CardHeader>
+          <CardContent>
+            {groupLoading ? (
+              <Skeleton className="h-64 w-full" />
+            ) : groupChartData.length === 0 ? (
+              <div className="flex items-center justify-center h-64 text-sm text-muted-foreground">
+                No data available
+              </div>
+            ) : groupViewMode === "chart" ? (
+              <div className="h-[200px] md:h-[260px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={[...groupChartData]
+                    .sort((a, b) => {
+                      if (globalChartMode === "tokens") return b.total_tokens - a.total_tokens;
+                      if (globalChartMode === "requests") return b.requests - a.requests;
+                      return b.total_spend - a.total_spend;
+                    })
+                    .slice(0, 5)} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                    <XAxis dataKey="model_group" tick={{ fontSize: 11 }} stroke="hsl(var(--muted-foreground))" />
+                    <YAxis tick={{ fontSize: 11 }} stroke="hsl(var(--muted-foreground))" tickFormatter={yAxisTick} />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: "hsl(var(--card))",
+                        border: "1px solid hsl(var(--border))",
+                        borderRadius: "6px",
+                        fontSize: "12px",
+                      }}
+                      formatter={(value) => {
+                        if (globalChartMode === "tokens") return [fmtTokens(value as number), "Tokens"];
+                        if (globalChartMode === "requests") return [value, "Requests"];
+                        return [fmtSpend(value as number), "Spend"];
+                      }}
+                    />
+                    {globalChartMode === "spend" && <Bar dataKey="total_spend" name="Spend" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />}
+                    {globalChartMode === "tokens" && <Bar dataKey="total_tokens" name="Tokens" fill="#f59e0b" radius={[4, 4, 0, 0]} />}
+                    {globalChartMode === "requests" && <Bar dataKey="requests" name="Requests" fill="#22c55e" radius={[4, 4, 0, 0]} />}
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {[...groupChartData]
+                  .sort((a, b) => {
+                    if (globalChartMode === "tokens") return b.total_tokens - a.total_tokens;
+                    if (globalChartMode === "requests") return b.requests - a.requests;
+                    return b.total_spend - a.total_spend;
+                  })
+                  .slice(0, 5)
+                  .map((g, i) => {
+                    const metricValue =
+                      globalChartMode === "tokens" ? g.total_tokens :
+                      globalChartMode === "requests" ? g.requests :
+                      g.total_spend;
+                    const maxValue =
+                      globalChartMode === "tokens" ? groupRankingMaxTokens :
+                      globalChartMode === "requests" ? groupRankingMaxRequests :
+                      groupRankingMaxSpend;
+                    const pct = maxValue > 0 ? (metricValue / maxValue) * 100 : 0;
+
+                    return (
+                      <div key={g.model_group} className="flex items-center gap-3">
+                        <span className="text-xs font-mono w-5 text-muted-foreground">#{i + 1}</span>
+                        <span className="text-sm truncate w-[120px]">{g.model_group}</span>
+                        <div className="flex-1 h-3 bg-muted rounded overflow-hidden">
+                          <div
+                            className="h-full rounded transition-all"
+                            style={{
+                              width: `${pct}%`,
+                              backgroundColor: COLORS[i % COLORS.length],
+                            }}
+                          />
+                        </div>
+                        <span className="text-xs font-mono w-[80px] text-right">
+                          {globalChartMode === "tokens"
+                            ? fmtTokens(metricValue)
+                            : globalChartMode === "requests"
+                              ? metricValue.toLocaleString()
+                              : fmtSpend(metricValue)}
+                        </span>
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Model card — right side */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2 pt-4 px-4">
             <CardTitle className="text-sm font-medium">Spend by Model</CardTitle>
@@ -612,110 +857,6 @@ export function UsagePage() {
                       <div key={m.model} className="flex items-center gap-3">
                         <span className="text-xs font-mono w-5 text-muted-foreground">#{i + 1}</span>
                         <span className="text-sm truncate w-[120px]">{m.model}</span>
-                        <div className="flex-1 h-3 bg-muted rounded overflow-hidden">
-                          <div
-                            className="h-full rounded transition-all"
-                            style={{
-                              width: `${pct}%`,
-                              backgroundColor: COLORS[i % COLORS.length],
-                            }}
-                          />
-                        </div>
-                        <span className="text-xs font-mono w-[80px] text-right">
-                          {globalChartMode === "tokens"
-                            ? fmtTokens(metricValue)
-                            : globalChartMode === "requests"
-                              ? metricValue.toLocaleString()
-                              : fmtSpend(metricValue)}
-                        </span>
-                      </div>
-                    );
-                  })}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Provider card — donut chart default, toggle to ranking */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2 pt-4 px-4">
-            <CardTitle className="text-sm font-medium">Spend by Provider</CardTitle>
-            <div className="flex items-center gap-2">
-              <Tabs defaultValue="chart" value={providerViewMode} onValueChange={(v) => setProviderViewMode(v as ModelViewMode)}>
-                <TabsList className="h-7">
-                  <TabsTrigger value="chart" className="text-xs px-3 h-5">📊 Chart</TabsTrigger>
-                  <TabsTrigger value="ranking" className="text-xs px-3 h-5"><ListOrdered className="h-3 w-3" /></TabsTrigger>
-                </TabsList>
-              </Tabs>
-              <Tabs defaultValue="spend" value={globalChartMode} onValueChange={(v) => setGlobalChartMode(v as ChartMode)}>
-                <TabsList className="h-7">
-                  <TabsTrigger value="spend" className="text-xs px-3 h-5">💰</TabsTrigger>
-                  <TabsTrigger value="tokens" className="text-xs px-3 h-5">📊</TabsTrigger>
-                  <TabsTrigger value="requests" className="text-xs px-3 h-5">📋</TabsTrigger>
-                </TabsList>
-              </Tabs>
-            </div>
-          </CardHeader>
-          <CardContent>
-            {providerLoading ? (
-              <Skeleton className="h-64 w-full" />
-            ) : providerChartData.length === 0 ? (
-              <div className="flex items-center justify-center h-64 text-sm text-muted-foreground">
-                No data available
-              </div>
-            ) : providerViewMode === "chart" ? (
-              <div className="h-[200px] md:h-[260px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={providerChartData}
-                      dataKey={globalChartMode === "tokens" ? "tokens" : globalChartMode === "requests" ? "requests" : "value"}
-                      nameKey="name"
-                      cx="50%"
-                      cy="50%"
-                      outerRadius={80}
-                      label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
-                      labelLine={true}
-                    >
-                      {providerChartData.map((_, i) => (
-                        <Cell key={i} fill={COLORS[i % COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <Tooltip
-                      formatter={(value) => {
-                        if (globalChartMode === "tokens") return [fmtTokens(value as number), "Tokens"];
-                        if (globalChartMode === "requests") return [value, "Requests"];
-                        return [fmtSpend(value as number), "Spend"];
-                      }}
-                    />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {[...providerChartData]
-                  .sort((a, b) => {
-                    if (globalChartMode === "tokens") return b.tokens - a.tokens;
-                    if (globalChartMode === "requests") return b.requests - a.requests;
-                    return b.value - a.value;
-                  })
-                  .slice(0, 5)
-                  .map((p, i) => {
-                    const metricValue =
-                      globalChartMode === "tokens" ? p.tokens :
-                      globalChartMode === "requests" ? p.requests :
-                      p.value;
-                    const provMaxValue = (() => {
-                      if (globalChartMode === "tokens") return Math.max(...providerChartData.map(x => x.tokens));
-                      if (globalChartMode === "requests") return Math.max(...providerChartData.map(x => x.requests));
-                      return Math.max(...providerChartData.map(x => x.value));
-                    })();
-                    const pct = provMaxValue > 0 ? (metricValue / provMaxValue) * 100 : 0;
-
-                    return (
-                      <div key={p.name} className="flex items-center gap-3">
-                        <span className="text-xs font-mono w-5 text-muted-foreground">#{i + 1}</span>
-                        <span className="text-sm truncate w-[100px]">{p.name}</span>
                         <div className="flex-1 h-3 bg-muted rounded overflow-hidden">
                           <div
                             className="h-full rounded transition-all"

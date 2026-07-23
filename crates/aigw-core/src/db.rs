@@ -1212,6 +1212,7 @@ pub trait SpendLogStore {
     async fn get_spend_by_tag(&self, tag: &str) -> Result<f64>;
     async fn get_global_spend(&self) -> Result<f64>;
     async fn aggregate_spend_by_model(&self, api_key: Option<&str>, start_date: Option<&str>, end_date: Option<&str>) -> Result<Vec<SpendModelAgg>>;
+    async fn aggregate_spend_by_model_group(&self, api_key: Option<&str>, start_date: Option<&str>, end_date: Option<&str>) -> Result<Vec<SpendModelGroupAgg>>;
     async fn aggregate_spend_by_provider(&self, start_date: Option<&str>, end_date: Option<&str>) -> Result<Vec<SpendProviderAgg>>;
     async fn query_spend_logs_filtered(
         &self,
@@ -1424,6 +1425,21 @@ impl SpendLogStore for SqlitePool {
         let sql = match api_key {
             Some(_) => format!("SELECT model, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE api_key = ?{date_filter} GROUP BY model ORDER BY total_tokens DESC"),
             None => format!("SELECT model, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE 1=1{date_filter} GROUP BY model ORDER BY total_tokens DESC"),
+        };
+        let mut q = sqlx::query_as(&sql);
+        if let Some(k) = api_key { q = q.bind(k); }
+        if let Some(s) = start_date { q = q.bind(s); }
+        if let Some(e) = end_date { q = q.bind(e); }
+        q.fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn aggregate_spend_by_model_group(&self, api_key: Option<&str>, start_date: Option<&str>, end_date: Option<&str>) -> Result<Vec<SpendModelGroupAgg>> {
+        let date_filter = if start_date.is_some() && end_date.is_some() {
+            " AND start_time >= ? AND start_time <= ?"
+        } else { "" };
+        let sql = match api_key {
+            Some(_) => format!("SELECT COALESCE(model_group, 'unknown') as model_group, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE api_key = ?{date_filter} GROUP BY COALESCE(model_group, 'unknown') ORDER BY total_tokens DESC"),
+            None => format!("SELECT COALESCE(model_group, 'unknown') as model_group, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE 1=1{date_filter} GROUP BY COALESCE(model_group, 'unknown') ORDER BY total_tokens DESC"),
         };
         let mut q = sqlx::query_as(&sql);
         if let Some(k) = api_key { q = q.bind(k); }
@@ -1695,6 +1711,22 @@ impl SpendLogStore for MySqlPool {
         q.fetch_all(self).await.map_err(DbError::from)
     }
 
+    async fn aggregate_spend_by_model_group(&self, api_key: Option<&str>, start_date: Option<&str>, end_date: Option<&str>) -> Result<Vec<SpendModelGroupAgg>> {
+        let date_filter = if start_date.is_some() && end_date.is_some() {
+            " AND start_time >= ? AND start_time <= ?"
+        } else { "" };
+        let sql = match api_key {
+            Some(_) => format!("SELECT COALESCE(model_group, 'unknown') as model_group, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE api_key = ?{date_filter} GROUP BY COALESCE(model_group, 'unknown') ORDER BY total_tokens DESC"),
+            None => format!("SELECT COALESCE(model_group, 'unknown') as model_group, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE 1=1{date_filter} GROUP BY COALESCE(model_group, 'unknown') ORDER BY total_tokens DESC"),
+        };
+        let mut q = sqlx::query_as(&sql);
+        if let Some(k) = api_key { q = q.bind(k); }
+        if let Some(s) = start_date { q = q.bind(s); }
+        if let Some(e) = end_date { q = q.bind(e); }
+        q.fetch_all(self).await.map_err(DbError::from)
+    }
+
+
     async fn aggregate_spend_by_provider(&self, start_date: Option<&str>, end_date: Option<&str>) -> Result<Vec<SpendProviderAgg>> {
         let date_filter = if start_date.is_some() && end_date.is_some() {
             " AND sl.start_time >= ? AND sl.start_time <= ?"
@@ -1933,6 +1965,24 @@ impl SpendLogStore for PgPool {
         q.fetch_all(self).await.map_err(DbError::from)
     }
 
+    async fn aggregate_spend_by_model_group(&self, api_key: Option<&str>, start_date: Option<&str>, end_date: Option<&str>) -> Result<Vec<SpendModelGroupAgg>> {
+        let date_filter = if start_date.is_some() && end_date.is_some() {
+            format!(
+                " AND start_time >= '{}'::TIMESTAMPTZ AND start_time <= '{}'::TIMESTAMPTZ",
+                start_date.unwrap().replace('\'', "''"),
+                end_date.unwrap().replace('\'', "''")
+            )
+        } else { String::new() };
+        let sql = match api_key {
+            Some(_) => format!("SELECT COALESCE(model_group, 'unknown') as model_group, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE api_key = $1{date_filter} GROUP BY COALESCE(model_group, 'unknown') ORDER BY total_tokens DESC"),
+            None => format!("SELECT COALESCE(model_group, 'unknown') as model_group, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE 1=1{date_filter} GROUP BY COALESCE(model_group, 'unknown') ORDER BY total_tokens DESC"),
+        };
+        let mut q = sqlx::query_as(&sql);
+        if let Some(k) = api_key { q = q.bind(k); }
+        // start_date / end_date already inlined with ::TIMESTAMPTZ cast above — no bind needed
+        q.fetch_all(self).await.map_err(DbError::from)
+    }
+
     async fn aggregate_spend_by_provider(&self, start_date: Option<&str>, end_date: Option<&str>) -> Result<Vec<SpendProviderAgg>> {
         let date_filter = if start_date.is_some() && end_date.is_some() {
             format!(
@@ -2115,6 +2165,19 @@ impl Database {
             Database::Sqlite(pool) => pool.aggregate_spend_by_model(api_key, start_date, end_date).await,
             Database::Mysql(pool) => pool.aggregate_spend_by_model(api_key, start_date, end_date).await,
             Database::Postgres(pool) => pool.aggregate_spend_by_model(api_key, start_date, end_date).await,
+        }
+    }
+
+    pub async fn aggregate_spend_by_model_group(
+        &self,
+        api_key: Option<&str>,
+        start_date: Option<&str>,
+        end_date: Option<&str>,
+    ) -> Result<Vec<SpendModelGroupAgg>> {
+        match self {
+            Database::Sqlite(pool) => pool.aggregate_spend_by_model_group(api_key, start_date, end_date).await,
+            Database::Mysql(pool) => pool.aggregate_spend_by_model_group(api_key, start_date, end_date).await,
+            Database::Postgres(pool) => pool.aggregate_spend_by_model_group(api_key, start_date, end_date).await,
         }
     }
 

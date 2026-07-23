@@ -796,6 +796,92 @@ pub async fn global_spend_models(
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// /spend/model-groups — Spend aggregated by model_group
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[derive(Debug, Deserialize)]
+pub struct SpendModelGroupQuery {
+    pub start_date: Option<String>,
+    pub end_date: Option<String>,
+}
+
+/// GET /spend/model-groups — Spend by model_group (scoped to authenticated key)
+pub async fn spend_model_groups(
+    State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
+    Query(query): Query<SpendModelGroupQuery>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let api_key = &auth.token_hash;
+
+    let aggs = state
+        .db
+        .aggregate_spend_by_model_group(
+            Some(api_key),
+            query.start_date.as_deref(),
+            query.end_date.as_deref(),
+        )
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
+            )
+        })?;
+
+    let data: Vec<Value> = aggs
+        .iter()
+        .map(|a| {
+            json!({
+                "model_group": a.model_group,
+                "total_tokens": a.total_tokens,
+                "total_spend": a.total_spend,
+                "requests": a.requests,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "data": data, "count": data.len() })))
+}
+
+/// GET /global/spend/model-groups — Spend by model_group (admin only, all keys)
+pub async fn global_spend_model_groups(
+    State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
+    Query(query): Query<SpendModelGroupQuery>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    require_admin(&auth)?;
+
+    let aggs = state
+        .db
+        .aggregate_spend_by_model_group(
+            None,
+            query.start_date.as_deref(),
+            query.end_date.as_deref(),
+        )
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
+            )
+        })?;
+
+    let data: Vec<Value> = aggs
+        .iter()
+        .map(|a| {
+            json!({
+                "model_group": a.model_group,
+                "total_tokens": a.total_tokens,
+                "total_spend": a.total_spend,
+                "requests": a.requests,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({ "data": data, "count": data.len() })))
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // /global/spend/activity — aggregated overview (Stage 38)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
