@@ -77,6 +77,10 @@ pub fn build_spend_router(state: SharedState) -> Router {
             axum::routing::get(aigw_server::routes::spend::global_spend),
         )
         .route(
+            "/global/spend/logs/{request_id}",
+            axum::routing::get(aigw_server::routes::spend::global_spend_log_detail),
+        )
+        .route(
             "/global/spend/logs",
             axum::routing::get(aigw_server::routes::spend::global_spend_logs),
         )

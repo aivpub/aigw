@@ -39,3 +39,26 @@ Feature: Spend Logs
     Given API endpoints are slow to respond
     When I visit the Spend Logs page
     Then I should see loading indicators before spend data appears
+
+  Scenario: Click row opens detail drawer with body content
+    Given API endpoints are mocked
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    When I click on the first spend log row
+    Then I should see a detail drawer with request metadata
+    And the detail drawer should show prompt and response content
+
+  Scenario: Detail drawer shows loading skeleton while fetching body
+    Given API detail endpoints are slow to respond
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    When I click on the first spend log row
+    Then I should see skeleton loading inside the detail drawer
+
+  Scenario: Detail drawer shows error and retry when fetch fails
+    Given API detail endpoints return error
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    When I click on the first spend log row
+    Then I should see an error message inside the detail drawer
+    And I should see a retry button inside the detail drawer

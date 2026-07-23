@@ -262,3 +262,144 @@ async fn when_master_get_global_spend_providers(world: &mut TestWorld) {
     world.last_status = Some(s);
     world.last_body = b;
 }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Stage 77: detail endpoint & body-less list
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[when(expr = "发送 GET \\/global\\/spend\\/logs\\/{word} 请求（无认证）")]
+async fn get_spend_log_detail_noauth(world: &mut TestWorld, request_id: String) {
+    let state = world.ensure_state().await;
+    let app = build_spend_router(state);
+    let uri = format!("/global/spend/logs/{}", request_id);
+    let (s, b) = make_request(&app, Method::GET, &uri, None, None).await;
+    world.last_status = Some(s);
+    world.last_body = b;
+}
+
+#[given(expr = "一个支出记录 {string} 已入库")]
+async fn given_spend_log_basic(world: &mut TestWorld, request_id: String) {
+    let state = world.ensure_state().await;
+    let log = aigw_core::models::SpendLog {
+        request_id,
+        call_type: "completion".to_string(),
+        api_key: "master_key".to_string(),
+        spend: 0.01,
+        total_tokens: 10,
+        prompt_tokens: 5,
+        completion_tokens: 5,
+        start_time: chrono::Utc::now(),
+        end_time: chrono::Utc::now(),
+        request_duration_ms: Some(100),
+        completion_start_time: None,
+        model: "gpt-4".to_string(),
+        model_id: None,
+        model_group: Some("gpt-4".to_string()),
+        custom_llm_provider: Some("openai".to_string()),
+        api_base: None,
+        user: None,
+        metadata: None,
+        cache_hit: None,
+        cache_key: None,
+        request_tags: None,
+        team_id: None,
+        organization_id: None,
+        end_user: None,
+        requester_ip_address: None,
+        messages: None,
+        response: None,
+        session_id: None,
+        status: Some("success".to_string()),
+        mcp_namespaced_tool_name: None,
+        agent_id: None,
+        proxy_server_request: None,
+    };
+    state.db.insert_spend_log(&log).await.expect("insert spend log");
+}
+
+#[given(expr = "一个支出记录 {string} 含 body 已入库")]
+async fn given_spend_log_with_body(world: &mut TestWorld, request_id: String) {
+    let state = world.ensure_state().await;
+    let log = aigw_core::models::SpendLog {
+        request_id,
+        call_type: "completion".to_string(),
+        api_key: "master_key".to_string(),
+        spend: 0.05,
+        total_tokens: 100,
+        prompt_tokens: 60,
+        completion_tokens: 40,
+        start_time: chrono::Utc::now(),
+        end_time: chrono::Utc::now(),
+        request_duration_ms: Some(500),
+        completion_start_time: None,
+        model: "gpt-4".to_string(),
+        model_id: None,
+        model_group: Some("gpt-4".to_string()),
+        custom_llm_provider: Some("openai".to_string()),
+        api_base: None,
+        user: None,
+        metadata: None,
+        cache_hit: None,
+        cache_key: None,
+        request_tags: None,
+        team_id: None,
+        organization_id: None,
+        end_user: None,
+        requester_ip_address: None,
+        messages: Some(serde_json::json!([{"role": "user", "content": "hello"}])),
+        response: Some(serde_json::json!({"choices": [{"message": {"content": "hi"}}]})),
+        session_id: None,
+        status: Some("success".to_string()),
+        mcp_namespaced_tool_name: None,
+        agent_id: None,
+        proxy_server_request: None,
+    };
+    state.db.insert_spend_log(&log).await.expect("insert spend log");
+}
+
+#[when(expr = "使用 master-key 发送 GET \\/global\\/spend\\/logs\\/{word} 请求")]
+async fn when_master_get_spend_log_detail(world: &mut TestWorld, request_id: String) {
+    let state = world.ensure_state().await;
+    let app = build_spend_router(state);
+    let mk = world.master_key.clone();
+    let uri = format!("/global/spend/logs/{}", request_id);
+    let (s, b) = make_request(&app, Method::GET, &uri, Some(&mk), None).await;
+    world.last_status = Some(s);
+    world.last_body = b;
+}
+
+#[when(expr = "使用 master-key 发送 GET \\/global\\/spend\\/logs 请求带 page_size=10")]
+async fn when_master_get_global_spend_logs_bodyless(world: &mut TestWorld) {
+    let state = world.ensure_state().await;
+    let app = build_spend_router(state);
+    let mk = world.master_key.clone();
+    let (s, b) = make_request(
+        &app,
+        Method::GET,
+        "/global/spend/logs?page_size=10",
+        Some(&mk),
+        None,
+    )
+    .await;
+    world.last_status = Some(s);
+    world.last_body = b;
+}
+
+use cucumber::then;
+
+#[then(expr = "响应 body 包含 {string} 和 {string} 字段")]
+async fn then_body_has_keys(world: &mut TestWorld, key1: String, key2: String) {
+    let body = world.last_body.as_ref().expect("no response body");
+    assert!(body.get(&key1).is_some(), "body missing key: {}", key1);
+    assert!(body.get(&key2).is_some(), "body missing key: {}", key2);
+}
+
+#[then(expr = "响应 data 不含 {string} 和 {string} 字段")]
+async fn then_data_has_no_keys(world: &mut TestWorld, key1: String, key2: String) {
+    let body = world.last_body.as_ref().expect("no response body");
+    let data = body.get("data").and_then(|v| v.as_array()).expect("data array");
+    assert!(!data.is_empty(), "data array is empty");
+    let first = &data[0];
+    assert!(first.get(&key1).is_none(), "data should not have key: {}", key1);
+    assert!(first.get(&key2).is_none(), "data should not have key: {}", key2);
+}
