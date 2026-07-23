@@ -677,7 +677,7 @@ export function SpendLogsPage() {
               </div>
               <div className="md:hidden space-y-2">
                 {logs.map(log => (
-                  <div key={log.request_id} className="rounded-md border p-3 cursor-pointer hover:bg-muted/50" onClick={() => { setSelectedLog(log); setDrawerOpen(true); }}>
+                  <div key={log.request_id} className="rounded-md border p-3 cursor-pointer hover:bg-muted/50" onClick={() => { setSelectedLog(log); setDrawerOpen(true); setDetailRequestId(log.request_id); }}>
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
                         <Badge variant="outline" className="text-[10px] px-1 py-0">{log.call_type||"—"}</Badge>

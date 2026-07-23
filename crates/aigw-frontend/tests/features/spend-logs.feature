@@ -62,3 +62,12 @@ Feature: Spend Logs
     When I click on the first spend log row
     Then I should see an error message inside the detail drawer
     And I should see a retry button inside the detail drawer
+
+  Scenario: Mobile card click also fetches detail body
+    Given the viewport is mobile size 375x667
+    And API endpoints are mocked
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    When I click on the first spend log row
+    Then I should see a detail drawer with request metadata
+    And the detail drawer should show prompt and response content
