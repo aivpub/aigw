@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -149,6 +149,33 @@ const PRESETS: { key: DatePreset; label: string }[] = [
 type ChartMode = "spend" | "tokens" | "requests";
 type ModelViewMode = "chart" | "ranking";
 
+/** Merge providers whose share is below 1% into a single "others" entry. */
+function mergeSmallProviders(data: ProviderChartData[], mode: ChartMode): ProviderChartData[] {
+  const dataKey = mode === "tokens" ? "tokens" : mode === "requests" ? "requests" : "value";
+  const total = data.reduce((sum, d) => sum + (d as any)[dataKey], 0);
+  if (total === 0) return data;
+
+  const threshold = total * 0.01; // 1%
+  const main: ProviderChartData[] = [];
+  let othersValue = 0, othersTokens = 0, othersRequests = 0;
+
+  for (const d of data) {
+    if ((d as any)[dataKey] >= threshold) {
+      main.push(d);
+    } else {
+      othersValue += d.value;
+      othersTokens += d.tokens;
+      othersRequests += d.requests;
+    }
+  }
+
+  if (othersValue > 0 || othersTokens > 0 || othersRequests > 0) {
+    main.push({ name: "others", value: othersValue, tokens: othersTokens, requests: othersRequests });
+  }
+
+  return main;
+}
+
 function truncateApiKey(apiKey: string): string {
   if (apiKey.length <= 12) return apiKey;
   return `${apiKey.slice(0, 6)}...${apiKey.slice(-4)}`;
@@ -231,6 +258,12 @@ export function UsagePage() {
     tokens: a.total_tokens,
     requests: a.requests,
   }));
+
+  // Merge small providers (<1%) into "others" for the donut chart
+  const providerChartDataMerged = useMemo(
+    () => mergeSmallProviders(providerChartData, globalChartMode),
+    [providerData, globalChartMode],
+  );
 
   const dailyChartData = (activity?.daily ?? []).map((d) => ({
     date: d.date,
@@ -512,7 +545,7 @@ export function UsagePage() {
                     <div key={r.api_key} className="flex items-center gap-3">
                       <span className="text-xs font-mono w-5 text-muted-foreground">#{i + 1}</span>
                       <span className="text-sm font-mono truncate w-[140px]">
-                        {r.key_alias ?? truncateApiKey(r.api_key)}
+                        {r.key_alias || "unknown"}
                       </span>
                       <div className="flex-1 h-3 bg-muted rounded overflow-hidden">
                         <div
@@ -570,16 +603,16 @@ export function UsagePage() {
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie
-                      data={providerChartData}
+                      data={providerChartDataMerged}
                       dataKey={globalChartMode === "tokens" ? "tokens" : globalChartMode === "requests" ? "requests" : "value"}
                       nameKey="name"
                       cx="50%"
                       cy="50%"
                       outerRadius={80}
-                      label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
+                      label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(2)}%`}
                       labelLine={true}
                     >
-                      {providerChartData.map((_, i) => (
+                      {providerChartDataMerged.map((_, i) => (
                         <Cell key={i} fill={COLORS[i % COLORS.length]} />
                       ))}
                     </Pie>
