@@ -56,7 +56,7 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: aigw
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aigw}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
       POSTGRES_DB: aigw
     ports:
       - "${PG_PORT:-5432}:5432"
