@@ -530,7 +530,14 @@ export function UsagePage() {
               </div>
             ) : (
               <div className="space-y-2">
-                {rankings.slice(0, 5).map((r, i) => {
+                {[...rankings]
+                  .sort((a, b) => {
+                    if (globalChartMode === "tokens") return b.total_tokens - a.total_tokens;
+                    if (globalChartMode === "requests") return b.total_requests - a.total_requests;
+                    return b.total_spend - a.total_spend;
+                  })
+                  .slice(0, 5)
+                  .map((r, i) => {
                   const metricValue =
                     globalChartMode === "tokens" ? r.total_tokens :
                     globalChartMode === "requests" ? r.total_requests :
