@@ -1,15 +1,15 @@
 # aigw — AI Gateway Stage Roadmap
 
 **项目**: aigw (litellm Rust 最小兼容替代)
-**最后更新**: 2026-07-22
+**最后更新**: 2026-07-23
 
 ---
 
 ## 当前状态
 
-- **当前 Phase**: Phase 28 — 安全与质量加固 / Phase 29 — Cross-DB BDD Hardening（4 Stage 文档就绪，待命）
-- **状态**: 71/72 Stages 已完成 (Phase 27 ✅, Phase 28 ⏳, Phase 29 ⏳ 4 Stage 已规划待实施)
-- **下一里程碑**: Stage 72 — 安全与质量加固 (16h)；Phase 29 — Stage 73-76 多 DB 真实端到端 BDD (44h，待命)
+- **当前 Phase**: Phase 26 — 可观测性 (Stage 77 待执行)
+- **状态**: 76/77 Stages 完成，1 Stage 待执行 (Stage 77 📋)
+- **下一里程碑**: Stage 77 — Spend Logs Body 分离 (5h)
 
 ### 整体进度
 
@@ -34,10 +34,10 @@ Phase 22:   ████████████████████ 100% (2
 Phase 23:   ████████████████████ 100% (2/2 Stages) ✅ Router 负载均衡
 Phase 24:   ████████████████████ 100% (1/1 Stage)  ✅ 管理控制台完善
 Phase 25:   ████████████████████ 100% (1/1 Stage)  ✅ 健康检查 & UX 优化
-Phase 26:   ██████████████░░░░░░  50% (1/2 Stages) 🔄 可观测性（Prometheus ✅, OTEL ⏳）
+Phase 26:   ██████████████░░░░░░  66% (2/3 Stages) 🔄 可观测性（Prometheus ✅, OTEL ⏳, Stage 77 📋）
 Phase 27:   ████████████████████ 100% (3/3 Stages) ✅ 全栈质量修复 + Usage 图表增强
-Phase 28:   ░░░░░░░░░░░░░░░░░░░░   0% (0/1 Stage)  ⏳ 安全与质量加固
-Phase 29:   ░░░░░░░░░░░░░░░░░░░░   0% (0/4 Stages) ⏳ Cross-DB BDD Hardening（4 Stage 文档就绪待实施）
+Phase 28:   ████████████████████ 100% (1/1 Stage)  ✅ 安全与质量加固
+Phase 29:   ████████████████████ 100% (4/4 Stages) ✅ Cross-DB BDD Hardening
 ```
 
 ---
@@ -218,16 +218,17 @@ Phase 29:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 ### Phase 26：可观测性 (Observability) 🔄
 
-**背景**: 对齐 litellm PrometheusLogger（14 指标）+ OTEL traces（5 层 span）。
+**背景**: 对齐 litellm PrometheusLogger（14 指标）+ OTEL traces（5 层 span）+ Spend Logs Body 字段分离。
 
 | Stage | 状态 | 目标 | 完成日期 |
 |-------|------|------|----------|
 | Stage 67 | ✅ 完成 | **Prometheus Metrics** — 14 指标（Counter/Histogram/Gauge），namespace `aigw`，`GET /metrics` 端点，handler 注入（chat.rs + v1_messages.rs） | 2026-07-16 |
 | Stage 68 | ⏳ 待开始 | **OTEL Traces 链路追踪** — W3C traceparent 提取/注入，5 层 span，OTEL exporter 配置化（config.yaml），禁用时零开销。核心代码（extract/inject/tracer）已在 `otel_tracing.rs` 中，待接入 main.rs | 未开始 |
+| Stage 77 | 📋 待执行 | **Spend Logs Body 字段分离** — `/spend/logs` 和 `/global/spend/logs` 永久移除 `messages`/`response`；新增 `GET /global/spend/logs/{request_id}` 详情端点；前端抽屉按需 fetch body，Skeleton 加载 + error/retry 状态。UT + BDD 全覆盖 | 待执行 |
 
-**依赖**: 67 已完成，68 独立。
+**依赖**: 67 已完成，68 和 77 独立可并行。
 
-**Phase 26 合计**: 12h（已完成 6h，剩余 6h）。
+**Phase 26 合计**: 17h（已完成 6h，剩余 11h：Stage 68 6h + Stage 77 5h）。3 Stage（67 ✅, 68 ⏳, 77 📋）。
 
 ---
 
@@ -270,32 +271,32 @@ Phase 29:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 | Stage | 状态 | 目标 | 类型 | 预估 |
 |-------|------|------|------|------|
-| Stage 72 | ⏳ 待开始 | **安全与质量加固** — Part A: `OptionalClientIp` 三层 fallback (X-Forwarded-For → X-Real-IP → ConnectInfo) + `requester_ip_address` JSON 序列化修复；Part B: `/router/settings` 4 handler 加 `SpendAuth` + `require_admin`；Part C: 前端 `handleResponse` 检测 401 → 全局事件 `auth:unauthenticated` → `RequireAuth` 自动重定向。TDD: 16 UT + 10 BDD。三个子任务可并行 | 全栈+测试 | 16h |
+| Stage 72 | ✅ 完成 | **安全与质量加固** — Part A: `OptionalClientIp` 三层 fallback (X-Forwarded-For → X-Real-IP → ConnectInfo) + `requester_ip_address` JSON 序列化修复；Part B: `/router/settings` 4 handler 加 `SpendAuth` + `require_admin`；Part C: 前端 `handleResponse` 检测 401 → 全局事件 `auth:unauthenticated` → `RequireAuth` 自动重定向。TDD: 16 UT + 10 BDD。三个子任务可并行 | 全栈+测试 | 16h | 2026-07-23 |
 
 **依赖**: 无。Part A/B/C 修改不同文件，可并行开发。
 
-**Phase 28 合计**: 16h，1 Stage。
+**Phase 28 合计**: 16h，1 Stage。✅ 完成
 
 **设计文档**: `docs/stages/stage-72.md`
 
 ---
 
-### Phase 29：Cross-DB BDD Hardening ⏳（待命，4 Stage 已规划）
+### Phase 29：Cross-DB BDD Hardening ✅ 完成
 
 **背景**: `GET /global/spend/keys/rankings` 在 PostgreSQL 部署报错 `column "vk.key_alias" must appear in the GROUP BY clause`（commit `29168b5` 已修复）。根因 SQL 的 `SELECT vk.key_alias` 不在 `GROUP BY` —— SQLite/MySQL 宽松只在 PG 暴露。这暴露一个系统性缺口：mock BDD 默认跑 SQLite（`bdd.rs:46` `sqlite::memory:`），**无法发现跨 DB SQL 方言差异**。已有 DB 层 testcontainers 回归测试，但接口层（路由/鉴权/HTTP 响应）无多 DB 覆盖。
 
-**调研**（见各 stage-7X 附录 A）：13 个 spend 接口中 4 个零 BDD 覆盖（`/spend/users`、`/spend/tags`、`/global/spend/activity`、`/global/spend/keys/rankings`），后两个方言代码最多、风险极高。本 Phase 按"每 Stage 8-16h"拆成 4 个 Stage，复用现成 `bdd-real-pg/mysql/sqlite` task 基础设施，端到端覆盖 11/13 spend 接口。
+**调研**（见各 stage-7X 附录 A）：13 个 spend 接口中 4 个零 BDD 覆盖（`/spend/users`、`/spend/tags`、`/global/spend/activity`、`/global/spend/keys/rankings`），后两个方言代码最多、风险极高。按"每 Stage 8-16h"拆成 4 个 Stage，复用现成 `bdd-real-pg/mysql/sqlite` task 基础设施，端到端覆盖 11/13 spend 接口。
 
-| Stage | 状态 | 目标 | 类型 | 预估 |
-|-------|------|------|------|------|
-| Stage 73 | ⏳ 待开始（文档就绪，待命） | **基础设施 + keys/rankings** — 提取 `pub(crate)` helper + 封装可复用 `real_db_seed` 灌数据工具（供 74-76 复用）；新增 `@real_api @needs_upstream_db` 场景覆盖 `/global/spend/keys/rankings`（唯一 LEFT JOIN，极高，已修）；红→绿复现 42803。SQLite/PG/MySQL 三 DB 一致 | 后端+测试 | 10h |
-| Stage 74 | ⏳ 待开始（文档就绪，待命） | **activity 覆盖** — `/global/spend/activity`（方言代码量全模块第一，三 DB 占位符 `$N`/`?` + 日期转换 `CAST AS CHAR`/`::TEXT`/`DATE()` + `build_activity_filter` 动态过滤，零覆盖，极高）；metadata 7 字段 + daily 分组 + user_id/team_id 过滤三 DB 一致 | 后端+测试 | 12h |
-| Stage 75 | ⏳ 待开始（文档就绪，待命） | **models + providers 覆盖** — `/spend/{models,providers}` + `/global/spend/{models,providers}`（GROUP BY，PG 版日期 `::TIMESTAMPTZ` 内联 vs SQLite/MySQL bind，高）；重点验证日期过滤三 DB 一致 + 空 provider 兜底 unknown | 后端+测试 | 10h |
-| Stage 76 | ⏳ 待开始（文档就绪，待命） | **SUM 聚合簇 + 应用层 keys** — `/spend/{keys,users,tags}` + `/global/spend` + `/global/spend/keys`；重点 `/spend/users` 的 `"user"` 引号列名 + `/spend/tags` 的 LIKE 转义（三 DB 差异，零覆盖，高）；红→绿验证引号/cast | 后端+测试 | 12h |
+| Stage | 状态 | 目标 | 类型 | 预估 | 完成日期 |
+|-------|------|------|------|------|----------|
+| Stage 73 | ✅ 完成 | **基础设施 + keys/rankings** — 提取 `pub(crate)` helper + 封装可复用 `real_db_seed` 灌数据工具（供 74-76 复用）；新增 `@real_api @needs_upstream_db` 场景覆盖 `/global/spend/keys/rankings`（唯一 LEFT JOIN，极高，已修）；红→绿复现 42803。SQLite/PG/MySQL 三 DB 一致 | 后端+测试 | 10h | 2026-07-23 |
+| Stage 74 | ✅ 完成 | **activity 覆盖** — `/global/spend/activity`（方言代码量全模块第一，三 DB 占位符 `$N`/`?` + 日期转换 `CAST AS CHAR`/`::TEXT`/`DATE()` + `build_activity_filter` 动态过滤，零覆盖，极高）；metadata 7 字段 + daily 分组 + user_id/team_id 过滤三 DB 一致 | 后端+测试 | 12h | 2026-07-23 |
+| Stage 75 | ✅ 完成 | **models + providers 覆盖** — `/spend/{models,providers}` + `/global/spend/{models,providers}`（GROUP BY，PG 版日期 `::TIMESTAMPTZ` 内联 vs SQLite/MySQL bind，高）；重点验证日期过滤三 DB 一致 + 空 provider 兜底 unknown | 后端+测试 | 10h | 2026-07-23 |
+| Stage 76 | ✅ 完成 | **SUM 聚合簇 + 应用层 keys** — `/spend/{keys,users,tags}` + `/global/spend` + `/global/spend/keys`；重点 `/spend/users` 的 `"user"` 引号列名 + `/spend/tags` 的 LIKE 转义（三 DB 差异，零覆盖，高）；红→绿验证引号/cast | 后端+测试 | 12h | 2026-07-23 |
 
-**依赖**: Stage 73（基础设施）→ 74/75/76（可并行，均复用 73 的 `real_db_seed`）。与 Stage 72 无硬依赖可并行。
+**依赖**: Stage 73（基础设施）→ 74/75/76（可并行，均复用 73 的 `real_db_seed`）。
 
-**Phase 29 合计**: 44h，4 Stage。覆盖 11/13 spend 接口（全部 5 聚合高风险 + 2 极高）；明细 logs 低风险不纳入。
+**Phase 29 合计**: 44h，4 Stage。✅ 完成。覆盖 11/13 spend 接口（全部 5 聚合高风险 + 2 极高）；明细 logs 低风险不纳入。
 
 **设计文档**: `docs/stages/stage-73.md` ~ `stage-76.md`
 
@@ -450,3 +451,4 @@ Phase 29:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 | v22.0 | 2026-07-22 | **Phase 27 全部完成**：Stage 70 前端页面修复（Expires 表单字段、virtual_keys_count 子查询）+ Stage 71 Usage 图表增强（堆叠 bar、Top Keys/Models 排行榜）。总进度 71/71。✅ Phase 27 闭环交付。|
 | v23.0 | 2026-07-22 | **Phase 28 规划**：新增 Phase 28（Stage 72，安全与质量加固, 16h）：OptionalClientIp 三层 fallback + requester_ip_address 序列化修复 + /router/settings 鉴权加固 + 前端 401 自动跳转。3 子任务可并行。设计文档：`docs/stages/stage-72.md`。总进度 71/72。|
 | v24.0 | 2026-07-22 | **Phase 29 规划（待命，4 Stage）**：起因 `/global/spend/keys/rankings` 在 PG 报错（commit `29168b5` 已修复），暴露 mock BDD 跑 SQLite 无法发现跨 DB 方言差异。调研 13 个 spend 接口（4 个零覆盖）后按"每 Stage 8-16h"拆 4 Stage：73 基础设施+keys/rankings(10h)、74 activity(12h)、75 models+providers(10h)、76 SUM 簇+应用层(12h)，共 44h 覆盖 11/13 接口。复用 `bdd-real-pg/mysql/sqlite` task，仅文档就绪待实施。设计文档：`stage-73~76.md`。|
+| v25.0 | 2026-07-23 | **Stage 77 规划 + 进度同步**：新增 Stage 77（Spend Logs Body 字段分离，5h）；修正 roadmap：Stage 72（安全加固）和 Stage 73-76（Cross-DB BDD）已通过 commit `263e1b0` 和 `4bbacb7` 完成但 roadmap 未更新，一并修正为 ✅。总进度 76/77。设计文档：`docs/stages/stage-77.md`。|
