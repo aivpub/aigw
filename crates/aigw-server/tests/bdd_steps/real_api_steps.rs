@@ -602,7 +602,7 @@ async fn when_post_messages_default(world: &mut TestWorld, alias: String) {
     let body = serde_json::json!({
         "model": model,
         "messages": [{"role": "user", "content": "Say hello in one word."}],
-        "max_tokens": 100
+        "max_tokens": 1024
     });
     let resp = client()
         .post(&url)
@@ -643,7 +643,7 @@ async fn when_post_messages_stream_default(world: &mut TestWorld, alias: String)
     let body = serde_json::json!({
         "model": model,
         "messages": [{"role": "user", "content": "Count from 1 to 3."}],
-        "max_tokens": 100,
+        "max_tokens": 1024,
         "stream": true
     });
     let resp = client()
