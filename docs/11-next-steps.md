@@ -1,11 +1,11 @@
 # aigw -- 下一步行动
 
-**上次更新**: 2026-07-22
-**当前阶段**: Phase 28 ✅ 安全与质量加固 / Phase 29 ✅ Cross-DB BDD Hardening / Phase 26 ✅ 可观测性全完成
+**上次更新**: 2026-07-24
+**当前阶段**: Phase 30 ⏳ Body Archive 冷存储
 
 ---
 
-## 当前状态：71/72 Stages 已完成（Phase 28/29 待实施）
+## 当前状态：77/81 Stages 已完成（Phase 30 待实施）
 
 ### 项目里程碑
 
@@ -30,8 +30,11 @@ Phase 22:   ████████████████████ 100% (2
 Phase 23:   ████████████████████ 100% (2/2)  ✅
 Phase 24:   ████████████████████ 100% (1/1)  ✅
 Phase 25:   ████████████████████ 100% (1/1)  ✅
-Phase 26:   ██████████████░░░░░░  50% (1/2)  🔄 OTEL ⏳
+Phase 26:   ████████████████████ 100% (3/3)  ✅
 Phase 27:   ████████████████████ 100% (3/3)  ✅ 全栈质量修复 + Usage 图表增强
+Phase 28:   ████████████████████ 100% (1/1)  ✅ 安全与质量加固
+Phase 29:   ████████████████████ 100% (4/4)  ✅ Cross-DB BDD Hardening
+Phase 30:   ░░░░░░░░░░░░░░░░░░░░   0% (0/4)  ⏳ Body Archive 冷存储
 ```
 
 ### 测试目标
@@ -42,59 +45,56 @@ Phase 27:   ████████████████████ 100% (3
 | 后端 BDD | cucumber-rust | 101 scenarios |
 | 前端 BDD | Playwright + playwright-bdd | 108 tests |
 
-| 目标 | 当前 | +Stage 70/71 | 最终 |
-|------|------|-----------|------|
-| 后端 UT | ~322 | +1 → ~323 | ~323 |
-| 后端 BDD | 101 | +0 → 101 | 101 |
-| 前端 BDD | 108 | +36 → 144 | 144 |
-
 ---
 
 ## 优先级排序
 
 | 优先级 | Phase | 目标 | 状态 |
 |--------|-------|------|------|
-| P0 | Phase 27 | 后端质量修复+数据增强 (Stage 69) | ✅ 完成 |
-| P0 | Phase 27 | 前端页面修复 Models/Keys/Users/SpendLogs (Stage 70) | ✅ 完成 |
-| P1 | Phase 27 | Usage 图表增强 堆叠+排行榜 (Stage 71) | ✅ 完成 |
-| P2 | Phase 26 | OTEL Traces (Stage 68) | ⏳ |
-| P1 | Phase 28 | 安全与质量加固 (Stage 72) | ⏳ |
-| P2 | Phase 29 | Cross-DB BDD — 基础设施+keys/rankings (Stage 73) | ⏳ 文档就绪，待命 |
-| P2 | Phase 29 | Cross-DB BDD — activity (Stage 74) | ⏳ 文档就绪，待命 |
-| P2 | Phase 29 | Cross-DB BDD — models+providers (Stage 75) | ⏳ 文档就绪，待命 |
-| P2 | Phase 29 | Cross-DB BDD — SUM 簇+应用层 (Stage 76) | ⏳ 文档就绪，待命 |
+| P0 | Phase 30 | DB Schema + Core Archiver 写链路 (Stage 78) | ⏳ |
+| P0 | Phase 30 | Query Router + Footer Cache 读链路 (Stage 79) | ⏳ |
+| P0 | Phase 30 | Admin API + Col Chunk Cache + 存量归档 (Stage 80) | ⏳ |
+| P0 | Phase 30 | 前端管理页面 (Stage 81) | ⏳ |
 
 ---
 
-## Phase 27: 全栈质量修复 + Usage 页面图表增强 ✅
+## Phase 30: Body Archive 冷存储 ⏳
 
 | Stage | 目标 | 类型 | 预估 | 状态 |
 |-------|------|------|------|------|
-| Stage 69 | 后端质量修复 + Usage 数据增强（model_group/retry/IP/Daily/Keys） | 后端 | 8h | ✅ 2026-07-22 |
-| Stage 70 | 前端页面修复（Models/Keys/Users/SpendLogs 表格补全） | 全栈 | 8h | ✅ 2026-07-22 |
-| Stage 71 | Usage 图表增强（堆叠 bar + Top Keys/Models 排行榜） | 前端 | 8h | ✅ 2026-07-22 |
+| Stage 78 | DB Schema + Core Archiver（Migration 020/021 + BodyArchiver + Parquet 写入 + S3 上传 + 清理器） | 后端 | 12h | ⏳ |
+| Stage 79 | Query Router + Footer Cache（get_message_body 热/冷路由 + query_s3_with_cache + moka 内存 LRU） | 后端 | 10h | ⏳ |
+| Stage 80 | Admin API + Col Chunk Cache + 存量归档（5 端点 + FS LFU 缓存 + bulk archive） | 后端 | 14h | ⏳ |
+| Stage 81 | 前端管理页面（Status/Trigger/Job History/Detail 面板，4 BDD × 3 viewports） | 前端 | 10h | ⏳ |
 
-**合计**: 24h，3 Stages ✅ 全部交付
+**合计**: 46h，4 Stages
 
-**设计文档**: `docs/stages/stage-69.md` ~ `docs/stages/stage-71.md`
+**依赖**: Stage 78 → 79 → 80 → 81（严格串行）
 
-## 依赖关系
+**设计文档**: `docs/stages/stage-78.md` ~ `docs/stages/stage-81.md` + `docs/plans/2026-07-22-body-archive-s3-parquet.md`
 
-Stage 69（数据层 + 端点）→ Stage 70 / 71 可并行 ✅ 全部完成
+## 需求对齐总结
+
+| 问题 | 决策 |
+|------|------|
+| 是否需要独立 CLI 批量归档存量数据？ | **不需要**，`POST /admin/archive/trigger` API 已支持任意日期范围批量归档（Stage 80） |
+| 日 compaction 要纳入首批吗？ | **推迟到后续优化**，小时文件 2-40MB 可接受 |
+| 监控指标要纳入首批吗？ | **推迟**，执行进度和错误记录在 `archive_job_logs` 表，可通过 API/前端查看 |
+| 交付顺序？ | **写链路 → 读链路 → API → 前端**（严格串行，每 Stage 独立可测） |
 
 ## 后续路线
 
 | ID | 主题 | 优先级 | 状态 |
 |----|------|--------|------|
-| LT-Observ | Observability (OTEL Traces) | P1 | Stage 68 待开始 |
-| LT-CrossDB | Cross-DB 真实端到端 BDD 全量覆盖 | P2 | Phase 29 Stage 73-76（spend 接口，4 Stage 文档就绪待命，共 44h） |
-| LT-Usage | Usage 多视角聚合 | P2 | 已消化 → Phase 27 |
+| LT-BodyCompact | Body Archive 日 compaction | P2 | 小时文件碎片过多时 |
+| LT-BodyLifecycle | S3 生命周期自动删除 | P2 | 冷数据积累 > 100GB |
+| LT-BodyMetrics | Body Archive 监控指标 | P2 | 生产运维需要 |
 | LT-Redis | Redis 缓存 | P2 | QPS > 1000 |
 | LT-PG | PostgreSQL 生产级 | P2 | 多实例 + 高可用 |
 | LT-SSO | SSO/OAuth | P3 | 企业客户需求 |
 | LT-K8s | Kubernetes Operator | P3 | 云原生客户需求 |
 
-> **已消化**: LT-Native → Phase 22, LT-Router → Phase 23, LT-Settings → Phase 24, LT-Usage → Phase 27, LT-CrossDB（首接口）→ Phase 29
+> **已消化**: LT-Native → Phase 22, LT-Router → Phase 23, LT-Settings → Phase 24, LT-Usage → Phase 27, LT-CrossDB → Phase 29, LT-BodyArchive → Phase 30
 
 ## ADR 记录
 

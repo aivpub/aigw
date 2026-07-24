@@ -1,15 +1,15 @@
 # aigw — AI Gateway Stage Roadmap
 
 **项目**: aigw (litellm Rust 最小兼容替代)
-**最后更新**: 2026-07-23
+**最后更新**: 2026-07-24
 
 ---
 
 ## 当前状态
 
-- **当前 Phase**: 全部完成 ✅ (77/77 Stages)
-- **状态**: 77/77 Stages 已完成，0 待执行
-- **下一里程碑**: 无（所有 Phase 已完成）
+- **当前 Phase**: Phase 30 — Body Archive 冷存储 ⏳ (0/4 Stages)
+- **状态**: 77/81 Stages 已完成，4 待执行
+- **下一里程碑**: Phase 30 全部交付，预期 ~46h
 
 ### 整体进度
 
@@ -38,11 +38,42 @@ Phase 26:   ████████████████████ 100% (3
 Phase 27:   ████████████████████ 100% (3/3 Stages) ✅ 全栈质量修复 + Usage 图表增强
 Phase 28:   ████████████████████ 100% (1/1 Stage)  ✅ 安全与质量加固
 Phase 29:   ████████████████████ 100% (4/4 Stages) ✅ Cross-DB BDD Hardening
+Phase 30:   ░░░░░░░░░░░░░░░░░░░░   0% (0/4 Stages) ⏳ Body Archive 冷存储
 ```
 
 ---
 
 ## 当前 Phase 详情
+
+### Phase 30：Body Archive 冷存储 ⏳
+
+**背景**: spend_logs 表 messages/response/proxy_server_request 三个 JSON body 字段占 95%+ 存储体积（日均增长 4-5 GB）。Stage 77 已将 body 从列表接口分离，本 Phase 实现 body 的 S3 Parquet 冷存储归档——主库只保留最近 7 天热数据，历史 body 迁移到对象存储并压缩为 Parquet 列式格式（ZSTD 压缩 8-11x），查询时自动路由热/冷数据。
+
+详见设计文档: `docs/plans/2026-07-22-body-archive-s3-parquet.md`
+
+| Stage | 状态 | 目标 | 类型 | 预估 |
+|-------|------|------|------|------|
+| Stage 78 | ⏳ 待开始 | **AsyncTask + Engine 框架 + Body Archiver 写链路** — Migration 020/021（async_jobs 三张通用表 + spend_logs 加列）；AsyncTask trait（tick + execute + finalize）+ Engine（宿主运行时，spawn tick/exec/cleanup loop）；StorageBackend 多类型适配（S3/COS/R2/MinIO/FS）；BodyArchiver impl AsyncTask（Parquet ZSTD + Bloom filter → 目标存储 + 清理器）。TDD: UT 覆盖 claim_next_step SKIP LOCKED、loop 并发、storage config 解析、parquet 写入 | 后端+测试 | 14h |
+| Stage 79 | ⏳ 待开始 | **Query Router + Footer Cache（读链路）** — query_parquet_with_cache(): footer 缓存（moka LRU）→ row group 定位（column statistics + Bloom filter）→ col chunk 读取 → 解码；get_message_body() 热/冷自动路由；详情端点集成存储 fallback。TDD: UT 覆盖路由逻辑、缓存命中/未命中、Parquet 读路径 | 后端+测试 | 10h |
+| Stage 80 | ⏳ 待开始 | **Admin API + Col Chunk Cache + 存量归档** — 5 个 admin 端点（trigger/jobs/stats/job_detail/logs）；引擎统计查询（loops/pending/running/stale）；Col chunk 文件系统 LFU 缓存（可选）；通过 API 触发存量归档。TDD: UT 覆盖 admin API 鉴权、Job 生命周期、col chunk 缓存 | 后端+测试 | 12h |
+| Stage 81 | ⏳ 待开始 | **前端 Jobs 管理页面** — Settings → Jobs Tab，按 step_type 分 Sub-Tab；统计卡片 + 手动触发 + 通用 JobList/JobDetail（Steps 表格 + logs 过滤 + 自动刷新）。TDD: 4 BDD × 3 viewports | 前端+测试 | 10h |
+
+**依赖关系**: Stage 78 → Stage 79 → Stage 80 → Stage 81（严格串行）
+- 78（写链路 + Schema）→ 79 需要已归档的测试数据做读链路验证
+- 79（读链路）→ 80 的 admin API 详情端点需要冷查询能力
+- 80（Admin API）→ 81 前端页面依赖所有 API 就绪
+
+**Phase 30 合计**: 46h，4 Stages。
+
+**关键决策**:
+- **不需要独立 CLI**：存量归档通过 `POST /admin/archive/trigger` API 触发，支持任意日期范围，进度可查询
+- **日 compaction 推迟**：小时文件 2-40MB 可接受，日合并作为后续优化
+- **监控指标推迟**：所有执行进度和错误信息记录在 `archive_job_logs` 表，可通过 API/前端回溯
+- **纯 Rust 栈**：parquet + arrow + object_store + moka，无 DuckDB C++ FFI 依赖
+- **默认关闭**：`body_archive.enabled=false`，生产环境显式开启
+- **DB 先写后归档**：body 仍然先入 DB，归档是纯后台异步操作，不影响核心写入链路
+
+**设计文档**: `docs/stages/stage-78.md` ~ `docs/stages/stage-81.md`
 
 ### Phase 14：`/v1/messages` 接口修复 ✅ 已完成
 
@@ -417,15 +448,15 @@ Phase 29:   ████████████████████ 100% (4
 
 | ID | 主题 | 优先级 | 触发条件 |
 |----|------|--------|---------|
-| LT-Usage | Usage 多视角聚合（Global/Team/Org/Key 切换） | P2 | 已消化 → Phase 27 |
-| LT-Observ | Observability (Prometheus + OTEL) | P1 | 生产环境部署（推荐下一项） |
 | LT-Redis | Redis 缓存 + 性能优化 | P2 | QPS > 1000 |
 | LT-SSO | SSO/OAuth 鉴权 | P3 | 企业客户需求 |
 | LT-PG | PostgreSQL 生产级支持 + 迁移工具 | P2 | 多实例 + 高可用 |
 | LT-K8s | Kubernetes Operator + Helm Chart | P3 | 云原生客户需求 |
-| LT-CrossDB | Cross-DB 真实端到端 BDD 全量覆盖（spend 聚合/models/providers/logs） | P2 | PG/MySQL 生产部署后 |
+| LT-BodyCompact | Body Archive 日 compaction（合并 24 小时文件为日文件） | P2 | 小时文件碎片过多 |
+| LT-BodyLifecycle | S3 生命周期自动删除（90 天自动过期） | P2 | 冷数据积累 > 100GB |
+| LT-BodyMetrics | Body Archive 监控指标（Prometheus） | P2 | 生产运维需要 |
 
-> **已消化**: LT-Router → Phase 23, LT-Native → Phase 22, LT-Usage → Phase 27, LT-CrossDB（首接口 keys/rankings）→ Phase 29 Stage 73
+> **已消化**: LT-Router → Phase 23, LT-Native → Phase 22, LT-Usage → Phase 27, LT-CrossDB → Phase 29, LT-BodyArchive → Phase 30
 
 ### 状态图标说明
 
@@ -454,3 +485,4 @@ Phase 29:   ████████████████████ 100% (4
 | v25.0 | 2026-07-23 | **Stage 77 规划 + 进度同步**：新增 Stage 77（Spend Logs Body 字段分离，5h）；修正 roadmap：Stage 72（安全加固）和 Stage 73-76（Cross-DB BDD）已通过 commit `263e1b0` 和 `4bbacb7` 完成但 roadmap 未更新，一并修正为 ✅。总进度 76/77。设计文档：`docs/stages/stage-77.md`。|
 | v26.0 | 2026-07-23 | **Stage 68 完成**：OTEL Traces 链路追踪 — tracing-opentelemetry 0.33 bridge + `tracing_subscriber::registry()` 组合层 + `tracing::info_span!` 5 层 span（chat_completions/auth/resolve/adapt/upstream_call）+ W3C traceparent 提取/注入改造 + `config.yaml` `general_settings.otel` 配置化 + `otel_active` 标志位零开销禁用 + 10 UT 覆盖 extract/inject/config/deserialization。总进度 77/77。|
 | v27.0 | 2026-07-23 | **Stage 77 完成**：Spend Logs Body 字段分离 — DB 层 `get_spend_log_by_request_id` (trait + 3 后端 impl + Database dispatch)；`GET /global/spend/logs/{request_id}` 详情端点；列表接口移除 `messages`/`response`；前端 `SpendLogDetail` 接口 + on-demand fetch + Skeleton + error/retry。4 UT + 7 BDD (4 后端 + 3 前端)。Phase 26 全部完成，全部 77/77 Stages ✅。|
+| v28.0 | 2026-07-24 | **Phase 30 规划**：新增 Phase 30（Stages 78-81，Body Archive 冷存储，共 46h）：78=DB Schema+Core Archiver(12h)、79=Query Router+Footer Cache(10h)、80=Admin API+Col Chunk Cache+存量归档(14h)、81=前端管理页面(10h)。按需求对齐：不需要独立 CLI（admin API 覆盖存量归档）；日 compaction/监控指标推迟；写→读→API→前端串行交付。设计文档：`stage-78~81.md` + `docs/plans/2026-07-22-body-archive-s3-parquet.md`。总进度 77/81。|
