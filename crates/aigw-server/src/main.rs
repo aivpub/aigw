@@ -392,12 +392,8 @@ async fn main() -> anyhow::Result<()> {
         // Claude-compatible endpoint
         .route("/v1/messages", axum::routing::post(v1_messages::messages_handler))
         .with_state(state)
-        // UUID v7 request ID layer — propagates request_id into tracing span
-        .layer(SetRequestIdLayer::new(
-            HeaderName::from_static("x-request-id"),
-            UuidV7RequestId,
-        ))
-        // HTTP request tracing — JSON logs with request_id, method, path, latency
+        // HTTP request tracing — JSON logs with request_id, method, path, latency.
+        // Must be INSIDE SetRequestIdLayer so RequestIdMakeSpan can read RequestId from extensions.
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(RequestIdMakeSpan::default())
@@ -408,6 +404,12 @@ async fn main() -> anyhow::Result<()> {
                         .latency_unit(tower_http::LatencyUnit::Millis),
                 ),
         )
+        // UUID v7 request ID layer — generates RequestId and injects into extensions.
+        // Must be OUTSIDE TraceLayer so it runs BEFORE make_span_with reads the extension.
+        .layer(SetRequestIdLayer::new(
+            HeaderName::from_static("x-request-id"),
+            UuidV7RequestId,
+        ))
         // CORS middleware — allows browser-based frontend to call API
         .layer(middleware::from_fn(cors_layer::add_cors_headers))
         // Response compression — gzip, deflate, brotli (configurable via general_settings.compression)
