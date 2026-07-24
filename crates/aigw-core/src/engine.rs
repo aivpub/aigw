@@ -689,6 +689,320 @@ async fn mark_job_completed(db: &Database, job_id: &str, now: &str) {
     }
 }
 
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Admin query methods
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// List jobs, optionally filtered by step_type and/or status.
+pub async fn list_jobs(
+    db: &Database,
+    step_type: Option<&str>,
+    status: Option<&str>,
+    limit: i32,
+    offset: i32,
+) -> Result<Vec<JobRecord>> {
+    match db {
+        Database::Sqlite(pool) => {
+            let mut sql = String::from("SELECT * FROM async_jobs WHERE 1=1");
+            if step_type.is_some() {
+                sql.push_str(" AND step_type = ?");
+            }
+            if status.is_some() {
+                sql.push_str(" AND status = ?");
+            }
+            sql.push_str(" ORDER BY created_at DESC LIMIT ? OFFSET ?");
+            let mut q = sqlx::query_as::<_, JobRecord>(&sql);
+            if let Some(st) = step_type {
+                q = q.bind(st);
+            }
+            if let Some(s) = status {
+                q = q.bind(s);
+            }
+            q.bind(limit).bind(offset).fetch_all(pool).await.map_err(DbError::from)
+        }
+        Database::Mysql(pool) => {
+            let mut sql = String::from("SELECT * FROM async_jobs WHERE 1=1");
+            if step_type.is_some() {
+                sql.push_str(" AND step_type = ?");
+            }
+            if status.is_some() {
+                sql.push_str(" AND status = ?");
+            }
+            sql.push_str(" ORDER BY created_at DESC LIMIT ? OFFSET ?");
+            let mut q = sqlx::query_as::<_, JobRecord>(&sql);
+            if let Some(st) = step_type {
+                q = q.bind(st);
+            }
+            if let Some(s) = status {
+                q = q.bind(s);
+            }
+            q.bind(limit).bind(offset).fetch_all(pool).await.map_err(DbError::from)
+        }
+        Database::Postgres(pool) => {
+            let mut idx = 1;
+            let mut pg_sql = String::from("SELECT * FROM async_jobs WHERE 1=1");
+            if step_type.is_some() {
+                pg_sql.push_str(&format!(" AND step_type = ${}", idx));
+                idx += 1;
+            }
+            if status.is_some() {
+                pg_sql.push_str(&format!(" AND status = ${}", idx));
+                idx += 1;
+            }
+            pg_sql.push_str(&format!(
+                " ORDER BY created_at DESC LIMIT ${} OFFSET ${}",
+                idx,
+                idx + 1
+            ));
+            let mut q = sqlx::query_as::<_, JobRecord>(&pg_sql);
+            if let Some(st) = step_type {
+                q = q.bind(st);
+            }
+            if let Some(s) = status {
+                q = q.bind(s);
+            }
+            q.bind(limit).bind(offset).fetch_all(pool).await.map_err(DbError::from)
+        }
+    }
+}
+
+/// Get a single job with its steps.
+pub async fn get_job_detail(
+    db: &Database,
+    job_id: &str,
+) -> Result<Option<(JobRecord, Vec<StepRecord>)>> {
+    let job = match db {
+        Database::Sqlite(pool) => {
+            sqlx::query_as::<_, JobRecord>("SELECT * FROM async_jobs WHERE id = ?")
+                .bind(job_id)
+                .fetch_optional(pool)
+                .await?
+        }
+        Database::Mysql(pool) => {
+            sqlx::query_as::<_, JobRecord>("SELECT * FROM async_jobs WHERE id = ?")
+                .bind(job_id)
+                .fetch_optional(pool)
+                .await?
+        }
+        Database::Postgres(pool) => {
+            sqlx::query_as::<_, JobRecord>("SELECT * FROM async_jobs WHERE id = $1")
+                .bind(job_id)
+                .fetch_optional(pool)
+                .await?
+        }
+    };
+
+    match job {
+        Some(j) => {
+            let steps = match db {
+                Database::Sqlite(pool) => {
+                    sqlx::query_as::<_, StepRecord>(
+                        "SELECT * FROM async_job_steps WHERE job_id = ? ORDER BY step_key",
+                    )
+                    .bind(job_id)
+                    .fetch_all(pool)
+                    .await?
+                }
+                Database::Mysql(pool) => {
+                    sqlx::query_as::<_, StepRecord>(
+                        "SELECT * FROM async_job_steps WHERE job_id = ? ORDER BY step_key",
+                    )
+                    .bind(job_id)
+                    .fetch_all(pool)
+                    .await?
+                }
+                Database::Postgres(pool) => {
+                    sqlx::query_as::<_, StepRecord>(
+                        "SELECT * FROM async_job_steps WHERE job_id = $1 ORDER BY step_key",
+                    )
+                    .bind(job_id)
+                    .fetch_all(pool)
+                    .await?
+                }
+            };
+            Ok(Some((j, steps)))
+        }
+        None => Ok(None),
+    }
+}
+
+/// Get logs for a job, with optional level filter and pagination.
+pub async fn get_job_logs(
+    db: &Database,
+    job_id: &str,
+    level: Option<&str>,
+    limit: i32,
+    offset: i32,
+) -> Result<Vec<crate::async_task::JobLogEntry>> {
+    match db {
+        Database::Sqlite(pool) => {
+            let mut conditions = vec!["job_id = ?".to_string()];
+            if level.is_some() {
+                conditions.push("level = ?".to_string());
+            }
+            let where_clause = conditions.join(" AND ");
+            let sql = format!(
+                "SELECT id, job_id, step_key, level, message, created_at FROM async_job_logs WHERE {} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                where_clause
+            );
+            let mut q =
+                sqlx::query_as::<_, crate::async_task::JobLogEntry>(&sql);
+            q = q.bind(job_id);
+            if let Some(l) = level {
+                q = q.bind(l);
+            }
+            q.bind(limit)
+                .bind(offset)
+                .fetch_all(pool)
+                .await
+                .map_err(DbError::from)
+        }
+        Database::Mysql(pool) => {
+            let mut conditions = vec!["job_id = ?".to_string()];
+            if level.is_some() {
+                conditions.push("level = ?".to_string());
+            }
+            let where_clause = conditions.join(" AND ");
+            let sql = format!(
+                "SELECT id, job_id, step_key, level, message, created_at FROM async_job_logs WHERE {} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                where_clause
+            );
+            let mut q =
+                sqlx::query_as::<_, crate::async_task::JobLogEntry>(&sql);
+            q = q.bind(job_id);
+            if let Some(l) = level {
+                q = q.bind(l);
+            }
+            q.bind(limit)
+                .bind(offset)
+                .fetch_all(pool)
+                .await
+                .map_err(DbError::from)
+        }
+        Database::Postgres(pool) => {
+            let mut idx = 1;
+            let mut conditions = vec![format!("job_id = ${}", idx)];
+            idx += 1;
+            if level.is_some() {
+                conditions.push(format!("level = ${}", idx));
+                idx += 1;
+            }
+            let where_clause = conditions.join(" AND ");
+            let pg_sql = format!(
+                "SELECT id, job_id, step_key, level, message, created_at FROM async_job_logs WHERE {} ORDER BY created_at DESC LIMIT ${} OFFSET ${}",
+                where_clause,
+                idx,
+                idx + 1
+            );
+            let mut q =
+                sqlx::query_as::<_, crate::async_task::JobLogEntry>(&pg_sql);
+            q = q.bind(job_id);
+            if let Some(l) = level {
+                q = q.bind(l);
+            }
+            q.bind(limit)
+                .bind(offset)
+                .fetch_all(pool)
+                .await
+                .map_err(DbError::from)
+        }
+    }
+}
+
+/// Get job statistics per step_type.
+pub async fn get_job_stats(db: &Database) -> Result<serde_json::Value> {
+    let mut stats = serde_json::Map::new();
+
+    // Query unique step_types
+    let step_types: Vec<String> = match db {
+        Database::Sqlite(pool) => {
+            sqlx::query_scalar::<_, String>(
+                "SELECT DISTINCT step_type FROM async_job_steps",
+            )
+            .fetch_all(pool)
+            .await?
+        }
+        Database::Mysql(pool) => {
+            sqlx::query_scalar::<_, String>(
+                "SELECT DISTINCT step_type FROM async_job_steps",
+            )
+            .fetch_all(pool)
+            .await?
+        }
+        Database::Postgres(pool) => {
+            sqlx::query_scalar::<_, String>(
+                "SELECT DISTINCT step_type FROM async_job_steps",
+            )
+            .fetch_all(pool)
+            .await?
+        }
+    };
+
+    for st in step_types {
+        let pending: i64 = count_steps_by_status(db, &st, "pending")
+            .await
+            .unwrap_or(0);
+        let running: i64 = count_steps_by_status(db, &st, "running")
+            .await
+            .unwrap_or(0);
+        let completed: i64 = count_steps_by_status(db, &st, "completed")
+            .await
+            .unwrap_or(0);
+        let failed: i64 = count_steps_by_status(db, &st, "failed")
+            .await
+            .unwrap_or(0);
+
+        stats.insert(
+            st.clone(),
+            serde_json::json!({
+                "queue": {
+                    "pending": pending,
+                    "running": running,
+                    "completed": completed,
+                    "failed": failed
+                }
+            }),
+        );
+    }
+
+    Ok(serde_json::Value::Object(stats))
+}
+
+async fn count_steps_by_status(db: &Database, step_type: &str, status: &str) -> Result<i64> {
+    match db {
+        Database::Sqlite(pool) => {
+            let row: (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM async_job_steps WHERE step_type = ? AND status = ?",
+            )
+            .bind(step_type)
+            .bind(status)
+            .fetch_one(pool)
+            .await?;
+            Ok(row.0)
+        }
+        Database::Mysql(pool) => {
+            let row: (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM async_job_steps WHERE step_type = ? AND status = ?",
+            )
+            .bind(step_type)
+            .bind(status)
+            .fetch_one(pool)
+            .await?;
+            Ok(row.0)
+        }
+        Database::Postgres(pool) => {
+            let row: (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM async_job_steps WHERE step_type = $1 AND status = $2",
+            )
+            .bind(step_type)
+            .bind(status)
+            .fetch_one(pool)
+            .await?;
+            Ok(row.0)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

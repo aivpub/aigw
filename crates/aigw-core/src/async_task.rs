@@ -44,6 +44,17 @@ pub struct JobRecord {
     pub updated_at: String,
 }
 
+/// A log entry from the `async_job_logs` table.
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+pub struct JobLogEntry {
+    pub id: String,
+    pub job_id: String,
+    pub step_key: Option<String>,
+    pub level: String,
+    pub message: String,
+    pub created_at: String,
+}
+
 /// A record from the `async_job_steps` table.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct StepRecord {

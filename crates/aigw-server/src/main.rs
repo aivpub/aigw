@@ -48,7 +48,7 @@ use axum::http::HeaderName;
 use axum::{middleware, routing::get, Router};
 use clap::Parser;
 use routes::keys::{self, AppState, SharedState};
-use routes::{chat, cors_layer, credentials, docs, health, login, models, org, router_settings, spend, team, user, v1_messages};
+use routes::{chat, cors_layer, credentials, docs, health, jobs, login, models, org, router_settings, spend, team, user, v1_messages};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -385,6 +385,13 @@ async fn main() -> anyhow::Result<()> {
         .route("/global/spend/model-groups", get(spend::global_spend_model_groups))
         .route("/global/spend/activity", get(spend::global_spend_activity))
         .route("/global/spend/keys/rankings", get(spend::global_spend_keys_rankings))
+        // Admin job management endpoints (Phase 30)
+        .route("/admin/jobs/trigger", axum::routing::post(jobs::trigger_job))
+        .route("/admin/jobs/stats", get(jobs::job_stats_handler))
+        .route("/admin/jobs/{job_id}/logs", get(jobs::job_logs_handler))
+        .route("/admin/jobs/{job_id}", get(jobs::job_detail_handler))
+        .route("/admin/jobs", get(jobs::list_jobs_handler))
+        .route("/admin/archive/stats", get(jobs::archive_stats_handler))
         // Login/Logout endpoints (litellm-compatible /v2/login/*)
         .route("/v2/login", axum::routing::post(login::login))
         .route("/v2/logout", axum::routing::post(login::logout_with_cleanup))

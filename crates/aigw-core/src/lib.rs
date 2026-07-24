@@ -39,7 +39,7 @@ pub mod router;
 pub mod tenant;
 
 // Re-export commonly used types
-pub use async_task::{AsyncTask, NewStep, StepOutput};
+pub use async_task::{AsyncTask, JobLogEntry, NewStep, StepOutput};
 pub use engine::{Engine, EngineConfig};
 pub use auth::{decode_jwt, encode_jwt, JwtClaims};
 pub use config::{AigwConfig, GeneralSettings, ModelInfo, RouterSettings};
