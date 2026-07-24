@@ -24,6 +24,7 @@ use tokio_stream::StreamExt;
 use super::keys::SharedState;
 use super::ip_extractor::OptionalClientIp;
 use aigw_core::otel_tracing;
+use tower_http::request_id::RequestId;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Anthropic error helper
@@ -33,8 +34,9 @@ fn anthropic_error(
     status: StatusCode,
     error_type: &str,
     message: &str,
+    request_id: &str,
 ) -> (StatusCode, Json<Value>) {
-    let request_id = format!("req_{}", uuid::Uuid::new_v4());
+    let request_id = format!("req_{}", request_id);
     (
         status,
         Json(json!({
@@ -92,10 +94,20 @@ pub async fn messages_handler(
     OptionalClientIp(client_ip): OptionalClientIp,
     http::request::Parts {
         headers,
+        extensions,
         ..
     }: http::request::Parts,
     body: String,
 ) -> Result<axum::response::Response, (StatusCode, Json<Value>)> {
+    // Extract the unified request ID from the SetRequestIdLayer (UUID v7).
+    // This ID is used consistently for: tracing span, SpendLog DB record,
+    // upstream x-request-id header, and Anthropic error response bodies.
+    let request_id = extensions
+        .get::<RequestId>()
+        .and_then(|id| id.header_value().to_str().ok())
+        .unwrap_or("unknown")
+        .to_string();
+
     // Extract W3C traceparent from incoming headers (noop if OTEL disabled)
     if state.otel_active {
         let _otel_ctx = otel_tracing::extract_traceparent(&headers);
@@ -117,7 +129,7 @@ pub async fn messages_handler(
     // 1b. Validate token and extract identity (saved for SpendLog)
     let (auth_token_hash, auth_user_id) = if let Some(token) = extracted {
         if token.is_empty() {
-            let request_id = format!("req_{}", uuid::Uuid::new_v4());
+            let request_id = format!("req_{}", &request_id);
             return Err((
                 StatusCode::UNAUTHORIZED,
                 Json(json!({
@@ -141,7 +153,7 @@ pub async fn messages_handler(
         } else {
             let token_hash = hash_token(token);
             let key = state.db.get_key_by_token(&token_hash).await.map_err(|_| {
-                let request_id = format!("req_{}", uuid::Uuid::new_v4());
+                let request_id = format!("req_{}", &request_id);
                 (
                     StatusCode::UNAUTHORIZED,
                     Json(json!({
@@ -155,7 +167,7 @@ pub async fn messages_handler(
                 )
             })?;
             let key = key.ok_or_else(|| {
-                let request_id = format!("req_{}", uuid::Uuid::new_v4());
+                let request_id = format!("req_{}", &request_id);
                 (
                     StatusCode::UNAUTHORIZED,
                     Json(json!({
@@ -176,6 +188,7 @@ pub async fn messages_handler(
                         StatusCode::TOO_MANY_REQUESTS,
                         "budget_exceeded",
                         "Budget exceeded for this API key",
+                        &request_id,
                     ));
                 }
             }
@@ -188,7 +201,7 @@ pub async fn messages_handler(
         match try_cookie_jwt_auth(&state, &headers).await {
             Some((token_hash, user_id)) => (token_hash, user_id),
             None => {
-                let request_id = format!("req_{}", uuid::Uuid::new_v4());
+                let request_id = format!("req_{}", &request_id);
                 return Err((
                     StatusCode::UNAUTHORIZED,
                     Json(json!({
@@ -213,6 +226,7 @@ pub async fn messages_handler(
                 StatusCode::BAD_REQUEST,
                 "invalid_request_error",
                 "Missing required header: anthropic-version",
+            &request_id,
             )
         })?;
 
@@ -222,6 +236,7 @@ pub async fn messages_handler(
             StatusCode::BAD_REQUEST,
             "invalid_request_error",
             &format!("Failed to parse request body: {}", e),
+        &request_id,
         )
     })?;
 
@@ -236,6 +251,7 @@ pub async fn messages_handler(
                 StatusCode::BAD_REQUEST,
                 "invalid_request_error",
                 "Missing required field: model",
+            &request_id,
             )
         })?;
 
@@ -247,6 +263,7 @@ pub async fn messages_handler(
                 StatusCode::BAD_REQUEST,
                 "invalid_request_error",
                 "Missing required field: messages",
+            &request_id,
             )
         })?;
 
@@ -255,6 +272,7 @@ pub async fn messages_handler(
             StatusCode::BAD_REQUEST,
             "invalid_request_error",
             "messages must not be empty",
+        &request_id,
         ));
     }
 
@@ -266,6 +284,7 @@ pub async fn messages_handler(
                 StatusCode::BAD_REQUEST,
                 "invalid_request_error",
                 "Missing required field: max_tokens",
+            &request_id,
             )
         })?;
 
@@ -345,6 +364,7 @@ pub async fn messages_handler(
                     StatusCode::BAD_REQUEST,
                     "invalid_request_error",
                     &format!("Model '{}' not found", model),
+                &request_id,
                 )
             })?;
             deployments.remove(idx)
@@ -360,9 +380,10 @@ pub async fn messages_handler(
             let log_session_id = session_id.clone();
             let log_requester_ip = requester_ip.clone();
             let log_metadata = metadata.clone();
+            let rid = request_id.clone();
             tokio::spawn(async move {
                 let sl = SpendLog {
-                    request_id: uuid::Uuid::new_v4().to_string(),
+                    request_id: rid,
                     call_type: call_type.to_string(),
                     api_key: log_token_hash,
                     spend: 0.0,
@@ -399,7 +420,7 @@ pub async fn messages_handler(
             });
             let msg = body["error"]["message"].as_str().unwrap_or("Unknown error");
             let err_type = body["error"]["type"].as_str().unwrap_or("invalid_request_error");
-            return Err(anthropic_error(status, err_type, msg));
+            return Err(anthropic_error(status, err_type, msg, &request_id));
         }
     };
     let input_cost = resolved_deployment.input_cost_per_token;
@@ -423,6 +444,7 @@ pub async fn messages_handler(
                 StatusCode::BAD_REQUEST,
                 "invalid_request_error",
                 "Unsupported provider type for this endpoint",
+            &request_id,
             )
         })?;
 
@@ -432,6 +454,7 @@ pub async fn messages_handler(
             StatusCode::INTERNAL_SERVER_ERROR,
             "internal_error",
             &format!("Adapter error: {}", e),
+        &request_id,
         )
     })?;
 
@@ -535,10 +558,11 @@ pub async fn messages_handler(
             let url_clone = upstream_base_url.clone();
             let url_for_resp = url_clone.clone();
             let model_for_resp = upstream_model2.clone();
+            let rid = request_id.clone();
             tokio::spawn(async move {
                 let end_time = chrono::Utc::now();
                 let sl = SpendLog {
-                    request_id: uuid::Uuid::new_v4().to_string(),
+                    request_id: rid,
                     call_type: call_type2,
                     api_key: auth_token_hash_clone,
                     spend: 0.0,
@@ -585,6 +609,7 @@ pub async fn messages_handler(
             StatusCode::BAD_GATEWAY,
             err_type,
             &err_msg,
+        &request_id,
         )
     })?;
 
@@ -616,9 +641,10 @@ pub async fn messages_handler(
         let mg = upstream_model_group.clone();
         let ccp = upstream_custom_llm_provider.clone();
         let mdata = metadata.clone();
+        let rid = request_id.clone();
         tokio::spawn(async move {
             let sl = SpendLog {
-                request_id: uuid::Uuid::new_v4().to_string(),
+                request_id: rid,
                 call_type: call_type.to_string(),
                 api_key: auth_token_hash_clone,
                 spend: 0.0,
@@ -668,13 +694,14 @@ pub async fn messages_handler(
                     .unwrap_or(StatusCode::BAD_GATEWAY),
                 "upstream_error",
                 &format!("Upstream returned {}: {}", upstream_status.as_u16(), error_body),
+            &request_id,
             ));
         }
 
         // SSE streaming: two-phase spend-log pattern.
         // Phase 1: INSERT placeholder SpendLog BEFORE streaming begins.
         // Phase 2: UPDATE the same row with tokens + response AFTER stream ends.
-        let streaming_request_id = uuid::Uuid::new_v4().to_string();
+        let streaming_request_id = request_id.clone();
 
         // Phase 1: pre-insert placeholder
         {
@@ -901,6 +928,7 @@ pub async fn messages_handler(
                     .unwrap_or(StatusCode::BAD_GATEWAY),
                 "upstream_error",
                 &format!("Upstream returned {}: {}", upstream_status.as_u16(), error_body),
+            &request_id,
             ));
         }
 
@@ -909,6 +937,7 @@ pub async fn messages_handler(
                 StatusCode::BAD_GATEWAY,
                 "upstream_error",
                 &format!("Failed to parse upstream response: {}", e),
+            &request_id,
             )
         })?;
 
@@ -919,6 +948,7 @@ pub async fn messages_handler(
                 StatusCode::BAD_GATEWAY,
                 "upstream_error",
                 &format!("Failed to convert response: {}", e),
+            &request_id,
             )
         })?;
 
@@ -942,7 +972,7 @@ pub async fn messages_handler(
         let spend_amount =
             super::chat::calc_spend(prompt_tokens, completion_tokens, input_cost, output_cost);
         let spend_log = aigw_core::models::SpendLog {
-            request_id: uuid::Uuid::new_v4().to_string(),
+            request_id: request_id.clone(),
             call_type: "completion".to_string(),
             api_key: auth_token_hash.clone(),
             spend: spend_amount,
@@ -1046,6 +1076,7 @@ pub async fn messages_handler(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "internal_error",
                     "Failed to serialize response",
+                &request_id,
                 )
             },
         )?).into_response())
