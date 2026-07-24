@@ -2426,6 +2426,65 @@ impl Database {
         }
     }
 
+    /// Query hourly spend aggregation for a time range with optional filters.
+    /// Used when the query range is ≤72 hours for finer-grained trend charts.
+    pub async fn query_activity_hourly(
+        &self,
+        start_date: &str,
+        end_date: &str,
+        user_id: Option<&str>,
+        team_id: Option<&str>,
+        organization_id: Option<&str>,
+    ) -> Result<Vec<(String, f64, i64, i64, i64, i64, i64, i64)>> {
+        // Use full datetime bounds for hourly queries (start of start_date, end of end_date)
+        let start_ts = format!("{}T00:00:00", start_date);
+        let end_ts = format!("{}T23:59:59", end_date);
+        match self {
+            Database::Sqlite(pool) => {
+                let sql = "SELECT strftime('%Y-%m-%dT%H:00:00', start_time), COALESCE(SUM(spend), 0), COALESCE(SUM(total_tokens), 0), COUNT(request_id), \
+                    COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), \
+                    COUNT(CASE WHEN status = 'success' THEN 1 END), \
+                    COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END) \
+                    FROM spend_logs WHERE start_time >= ? AND start_time <= ? {filter} \
+                    GROUP BY 1 ORDER BY 1 ASC";
+                let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false);
+                let sql = sql.replace("{filter}", &filter_clause);
+                let mut q = sqlx::query_as(&sql)
+                    .bind(&start_ts).bind(&end_ts);
+                for p in &params { q = q.bind(p); }
+                q.fetch_all(pool).await.map_err(DbError::from)
+            }
+            Database::Mysql(pool) => {
+                let sql = "SELECT DATE_FORMAT(start_time, '%Y-%m-%dT%H:00:00'), COALESCE(SUM(spend), 0), COALESCE(SUM(total_tokens), 0), COUNT(request_id), \
+                    COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), \
+                    COUNT(CASE WHEN status = 'success' THEN 1 END), \
+                    COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END) \
+                    FROM spend_logs WHERE start_time >= ? AND start_time <= ? {filter} \
+                    GROUP BY 1 ORDER BY 1 ASC";
+                let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false);
+                let sql = sql.replace("{filter}", &filter_clause);
+                let mut q = sqlx::query_as(&sql)
+                    .bind(&start_ts).bind(&end_ts);
+                for p in &params { q = q.bind(p); }
+                q.fetch_all(pool).await.map_err(DbError::from)
+            }
+            Database::Postgres(pool) => {
+                let sql = "SELECT to_char(start_time, 'YYYY-MM-DD\"T\"HH24:00:00'), COALESCE(SUM(spend), 0), COALESCE(SUM(total_tokens), 0), COUNT(request_id), \
+                    COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), \
+                    COUNT(CASE WHEN status = 'success' THEN 1 END), \
+                    COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END) \
+                    FROM spend_logs WHERE start_time >= $1 AND start_time <= $2 {filter} \
+                    GROUP BY 1 ORDER BY 1 ASC";
+                let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 3, true);
+                let sql = sql.replace("{filter}", &filter_clause);
+                let mut q = sqlx::query_as(&sql)
+                    .bind(&start_ts).bind(&end_ts);
+                for p in &params { q = q.bind(p); }
+                q.fetch_all(pool).await.map_err(DbError::from)
+            }
+        }
+    }
+
     /// Aggregate spend by keys for ranking within a date range.
     pub async fn aggregate_spend_by_keys(
         &self,
@@ -5048,6 +5107,55 @@ mod tests {
         assert_eq!(*completion_tokens, 70, "40 + 30 completion tokens");
         assert_eq!(*successful_requests, 1);
         assert_eq!(*failed_requests, 1);
+    }
+
+    #[tokio::test]
+    async fn test_activity_hourly_8_tuple() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let key_hash = hash_token("sk-hourly-test");
+
+        // Insert requests within a few hours
+        let log1 = make_test_spend_log_full(
+            &key_hash, "user-1", 0.5, 100, 60, 40, "success", None,
+        );
+        let log2 = make_test_spend_log_full(
+            &key_hash, "user-1", 0.0, 80, 50, 30, "failure:500", None,
+        );
+
+        db.insert_spend_log(&log1).await.expect("insert log1");
+        db.insert_spend_log(&log2).await.expect("insert log2");
+
+        let rows = db.query_activity_hourly("2020-01-01", "2030-12-31", None, None, None)
+            .await.expect("query activity hourly");
+
+        assert!(!rows.is_empty(), "should have at least one row");
+        let (date, _spend, _tokens, requests, prompt_tokens, completion_tokens, successful_requests, failed_requests) = &rows[0];
+        // Hourly format: "YYYY-MM-DDTHH:00:00"
+        assert!(date.contains('T'), "hourly date should contain T separator, got {}", date);
+        assert!(date.ends_with(":00:00"), "hourly date should end with :00:00, got {}", date);
+        assert_eq!(*requests, 2, "should count both success and failure as requests");
+        assert_eq!(*prompt_tokens, 110, "60 + 50 prompt tokens");
+        assert_eq!(*completion_tokens, 70, "40 + 30 completion tokens");
+        assert_eq!(*successful_requests, 1);
+        assert_eq!(*failed_requests, 1);
+    }
+
+    #[tokio::test]
+    async fn test_activity_hourly_filters_by_date_range() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let key_hash = hash_token("sk-hourly-test-2");
+
+        // Insert a request in 2020
+        let log = make_test_spend_log_full(
+            &key_hash, "user-1", 1.0, 100, 60, 40, "success", None,
+        );
+        db.insert_spend_log(&log).await.expect("insert log");
+
+        // Query for a range that should NOT include our log
+        let rows = db.query_activity_hourly("2030-01-01", "2030-01-02", None, None, None)
+            .await.expect("query activity hourly");
+
+        assert!(rows.is_empty(), "should return nothing for out-of-range query");
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

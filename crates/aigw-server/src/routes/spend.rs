@@ -24,6 +24,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use aigw_core::db::{Database, DbError};
+use chrono::NaiveDate;
 use std::collections::HashMap;
 
 use super::keys::SharedState;
@@ -1017,28 +1018,66 @@ struct DailyRow {
 struct ActivityResult {
     metadata: ActivityMetadata,
     daily: Vec<DailyRow>,
+    /// "hourly" when query range ≤ 3 days, "daily" otherwise
+    granularity: String,
+}
+
+/// Check whether start_date → end_date is 3 days or less (≤72h).
+/// Returns true for hourly aggregation, false for daily.
+fn is_hourly_range(start_date: &str, end_date: &str) -> bool {
+    if let (Ok(s), Ok(e)) = (NaiveDate::parse_from_str(start_date, "%Y-%m-%d"), NaiveDate::parse_from_str(end_date, "%Y-%m-%d")) {
+        let days = (e - s).num_days();
+        // 3 days or fewer → hourly
+        days <= 3
+    } else {
+        // If parsing fails (e.g. ISO datetime string from API), fall back to daily.
+        // We log a warning but recover gracefully.
+        tracing::warn!("Could not parse dates as YYYY-MM-DD: start={}, end={}; falling back to daily", start_date, end_date);
+        false
+    }
 }
 
 async fn query_activity(
     db: &Database,
     query: &ActivityQuery,
 ) -> Result<Value, DbError> {
-    let (metadata, daily): ((f64, i64, i64, i64, i64, i64, i64), Vec<(String, f64, i64, i64, i64, i64, i64, i64)>) = tokio::try_join!(
-        db.query_activity_metadata(
-            &query.start_date,
-            &query.end_date,
-            query.user_id.as_deref(),
-            query.team_id.as_deref(),
-            query.organization_id.as_deref(),
-        ),
-        db.query_activity_daily(
-            &query.start_date,
-            &query.end_date,
-            query.user_id.as_deref(),
-            query.team_id.as_deref(),
-            query.organization_id.as_deref(),
-        ),
-    )?;
+    let use_hourly = is_hourly_range(&query.start_date, &query.end_date);
+
+    let (metadata, rows): ((f64, i64, i64, i64, i64, i64, i64), Vec<(String, f64, i64, i64, i64, i64, i64, i64)>) = if use_hourly {
+        tokio::try_join!(
+            db.query_activity_metadata(
+                &query.start_date,
+                &query.end_date,
+                query.user_id.as_deref(),
+                query.team_id.as_deref(),
+                query.organization_id.as_deref(),
+            ),
+            db.query_activity_hourly(
+                &query.start_date,
+                &query.end_date,
+                query.user_id.as_deref(),
+                query.team_id.as_deref(),
+                query.organization_id.as_deref(),
+            ),
+        )?
+    } else {
+        tokio::try_join!(
+            db.query_activity_metadata(
+                &query.start_date,
+                &query.end_date,
+                query.user_id.as_deref(),
+                query.team_id.as_deref(),
+                query.organization_id.as_deref(),
+            ),
+            db.query_activity_daily(
+                &query.start_date,
+                &query.end_date,
+                query.user_id.as_deref(),
+                query.team_id.as_deref(),
+                query.organization_id.as_deref(),
+            ),
+        )?
+    };
 
     let metadata_val = ActivityMetadata {
         total_spend: metadata.0,
@@ -1050,7 +1089,7 @@ async fn query_activity(
         completion_tokens: metadata.6,
     };
 
-    let daily_vals: Vec<DailyRow> = daily
+    let daily_vals: Vec<DailyRow> = rows
         .iter()
         .map(|(date, spend, tokens, requests, prompt_tokens, completion_tokens, successful_requests, failed_requests)| DailyRow {
             date: date.clone(),
@@ -1067,6 +1106,7 @@ async fn query_activity(
     Ok(serde_json::to_value(ActivityResult {
         metadata: metadata_val,
         daily: daily_vals,
+        granularity: if use_hourly { "hourly".to_string() } else { "daily".to_string() },
     })
     .unwrap_or(json!({})))
 }
@@ -1155,6 +1195,7 @@ use aigw_core::models::SpendLog;
             .route("/global/spend/logs/{request_id}", axum::routing::get(global_spend_log_detail))
             .route("/global/spend/logs", axum::routing::get(global_spend_logs))
             .route("/global/spend/keys", axum::routing::get(global_spend_keys))
+            .route("/global/spend/activity", axum::routing::get(global_spend_activity))
             .with_state(state)
     }
 

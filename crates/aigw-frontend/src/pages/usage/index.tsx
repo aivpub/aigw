@@ -59,6 +59,7 @@ interface DailyRow {
 interface ActivityResponse {
   metadata: ActivityMetadata;
   daily: DailyRow[];
+  granularity: "hourly" | "daily";
 }
 
 interface ModelAgg {
@@ -430,10 +431,10 @@ export function UsagePage() {
         </Card>
       </div>
 
-      {/* Daily Trend — independent tab state */}
+      {/* Trend — independent tab state */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between pb-2 pt-4 px-4">
-          <CardTitle className="text-sm font-medium">Daily Trend</CardTitle>
+          <CardTitle className="text-sm font-medium">Trend</CardTitle>
           <Tabs defaultValue="spend" value={globalChartMode} onValueChange={(v) => setGlobalChartMode(v as ChartMode)}>
             <TabsList className="h-7">
               <TabsTrigger value="spend" className="text-xs px-3 h-5">💰 Spend</TabsTrigger>
@@ -454,7 +455,16 @@ export function UsagePage() {
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={dailyChartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
                   <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
-                  <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="hsl(var(--muted-foreground))" />
+                  <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="hsl(var(--muted-foreground))" tickFormatter={(val) => {
+                    if (activity?.granularity === "hourly") {
+                      const d = new Date(val + "Z"); // parse as UTC
+                      const mm = String(d.getMonth() + 1).padStart(2, "0");
+                      const dd = String(d.getDate()).padStart(2, "0");
+                      const hh = String(d.getHours()).padStart(2, "0");
+                      return `${mm}/${dd} ${hh}:00`;
+                    }
+                    return val;
+                  }} />
                   <YAxis tick={{ fontSize: 11 }} stroke="hsl(var(--muted-foreground))" tickFormatter={yAxisTick} />
                   <Tooltip
                     contentStyle={{
