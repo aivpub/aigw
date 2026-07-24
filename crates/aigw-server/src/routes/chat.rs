@@ -21,6 +21,7 @@ use serde_json::{json, Value};
 use std::convert::Infallible;
 use std::sync::Arc;
 use tokio_stream::StreamExt;
+use tower_http::request_id::RequestId;
 
 use super::keys::SharedState;
 use super::ip_extractor::OptionalClientIp;
@@ -667,8 +668,18 @@ pub async fn chat_completions(
     ChatAuth(auth): ChatAuth,
     OptionalClientIp(client_ip): OptionalClientIp,
     headers: axum::http::HeaderMap,
+    http::request::Parts { extensions, .. }: http::request::Parts,
     Json(body): Json<Value>,
 ) -> Result<axum::response::Response, (StatusCode, Json<Value>)> {
+    // Extract the unified request ID from the SetRequestIdLayer (UUID v7).
+    // This ID is used consistently for: tracing span, SpendLog DB record,
+    // upstream x-request-id header, and error response bodies.
+    let request_id = extensions
+        .get::<RequestId>()
+        .and_then(|id| id.header_value().to_str().ok())
+        .unwrap_or("unknown")
+        .to_string();
+
     // Extract W3C traceparent from incoming headers (noop if OTEL disabled).
     // We extract but don't attach — the tracing-opentelemetry layer handles
     // context propagation automatically from the tracing spans.
@@ -913,6 +924,9 @@ pub async fn chat_completions(
         }
     }
 
+    // Forward aigw's request-id to upstream for log correlation
+    upstream_req = upstream_req.header("x-request-id", &request_id);
+
     // Build proxy_server_request (align with litellm: url/method/headers/arrival_time)
     use std::time::{SystemTime, UNIX_EPOCH};
     let arrival_time = SystemTime::now()
@@ -985,9 +999,10 @@ pub async fn chat_completions(
             let fail_url = upstream_url.clone();
             let fail_model_name = _model.to_string();
             let err_msg_for_log = err_msg.clone();
+            let fail_request_id = request_id.clone();
             tokio::spawn(async move {
                 let sl = SpendLog {
-                    request_id: uuid::Uuid::new_v4().to_string(),
+                    request_id: fail_request_id,
                     call_type: "completion".to_string(),
                     api_key: fail_token_hash,
                     spend: 0.0,
@@ -1070,9 +1085,10 @@ pub async fn chat_completions(
             let fail_end_user = end_user.clone();
             let fail_session_id = session_id.clone();
             let fail_requester_ip = requester_ip.clone();
+            let fail_request_id = request_id.clone();
             tokio::spawn(async move {
                 let sl = SpendLog {
-                    request_id: uuid::Uuid::new_v4().to_string(),
+                    request_id: fail_request_id,
                     call_type: "completion".to_string(),
                     api_key: fail_token_hash,
                     spend: 0.0,
@@ -1136,7 +1152,6 @@ pub async fn chat_completions(
         let user_id = auth.user_id.clone();
         let team_id = auth.team_id.clone();
         let organization_id = auth.organization_id.clone();
-        let request_id = uuid::Uuid::new_v4().to_string();
         let request_body = body.clone();
         let stream_metrics = state.metrics.clone();
         let stream_auth_user = auth.user_id.clone();
@@ -1436,9 +1451,10 @@ pub async fn chat_completions(
             let fail_end_user2 = end_user.clone();
             let fail_session_id2 = session_id.clone();
             let fail_requester_ip2 = requester_ip.clone();
+            let fail_request_id = request_id.clone();
             tokio::spawn(async move {
                 let sl = SpendLog {
-                    request_id: uuid::Uuid::new_v4().to_string(),
+                    request_id: fail_request_id,
                     call_type: "completion".to_string(),
                     api_key: fail_token_hash,
                     spend: 0.0,
@@ -1492,7 +1508,7 @@ pub async fn chat_completions(
         );
 
         let spend_log = aigw_core::models::SpendLog {
-            request_id: uuid::Uuid::new_v4().to_string(),
+            request_id: request_id.clone(),
             call_type: "completion".to_string(),
             api_key: auth.token_hash.clone(),
             spend: spend_amount,
