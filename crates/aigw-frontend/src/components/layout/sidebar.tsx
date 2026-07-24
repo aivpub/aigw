@@ -1,5 +1,5 @@
 import { NavLink } from "react-router-dom";
-import { Key, Box, Gamepad2, BarChart3, ScrollText, Users, Users2, Building2, Settings } from "lucide-react";
+import { Key, Box, Gamepad2, BarChart3, ScrollText, Users, Users2, Building2, Settings, Activity } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface NavGroup {
@@ -35,6 +35,7 @@ const navGroups: NavGroup[] = [
     title: "SETTINGS",
     items: [
       { to: "/dash/router-settings", label: "Router Settings", icon: Settings },
+      { to: "/dash/jobs", label: "Jobs", icon: Activity },
     ],
   },
 ];
