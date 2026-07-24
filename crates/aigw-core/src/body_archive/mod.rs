@@ -7,7 +7,9 @@
 //! - execute(): reads unarchived rows for a given hour → writes Parquet → uploads → marks archived
 //! - finalize(): nulls body columns for rows past retention period
 
+pub mod cache;
 pub mod config;
+pub mod query;
 pub mod storage;
 pub mod writer;
 
@@ -16,7 +18,9 @@ use chrono::{DateTime, Duration, Utc};
 use tracing::info;
 
 use crate::async_task::{AsyncTask, NewStep, StepOutput};
+use crate::body_archive::cache::FooterCache;
 use crate::body_archive::config::BodyArchiveConfig;
+use crate::body_archive::query::{decode_body_from_parquet, BodyPayload};
 use crate::body_archive::storage::build_object_store;
 use crate::body_archive::writer::write_parquet_to_store;
 use crate::db::{Database, DbError, Result};
@@ -24,11 +28,15 @@ use crate::db::{Database, DbError, Result};
 /// BodyArchiver: archives spend_logs body fields to Parquet on object storage.
 pub struct BodyArchiver {
     config: BodyArchiveConfig,
+    footer_cache: FooterCache,
 }
 
 impl BodyArchiver {
     pub fn new(config: BodyArchiveConfig) -> Self {
-        Self { config }
+        Self {
+            footer_cache: FooterCache::default(),
+            config,
+        }
     }
 
     pub fn config(&self) -> &BodyArchiveConfig {
@@ -226,6 +234,72 @@ impl AsyncTask for BodyArchiver {
         }
 
         Ok(steps)
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Query router — get_message_body()
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+impl BodyArchiver {
+    /// Get message body for a spend_log record.
+    ///
+    /// Hot path: body exists in DB → return directly.
+    /// Cold path: body is NULL + body_archived=true → read from Parquet.
+    pub async fn get_message_body(
+        &self,
+        db: &Database,
+        request_id: &str,
+    ) -> Result<Option<BodyPayload>> {
+        // Use the existing GetSpendLog trait method to fetch the row
+        let log = db.get_spend_log_by_request_id(request_id).await?;
+
+        match log {
+            Some(ref entry) if entry.messages.is_some() => {
+                // Hot path: body exists in DB
+                Ok(Some(BodyPayload {
+                    messages: entry.messages.clone(),
+                    response: entry.response.clone(),
+                    proxy_server_request: entry.proxy_server_request.clone(),
+                }))
+            }
+            Some(ref entry) if entry.body_archived && entry.parquet_path.is_some() => {
+                // Cold path: body archived to Parquet
+                let path = entry.parquet_path.as_ref().unwrap();
+                self.read_body_from_storage(path, request_id).await
+            }
+            Some(_) => Ok(None), // DB row exists but body is null and not archived
+            None => Ok(None),    // Record not found
+        }
+    }
+
+    /// Read body from Parquet file at the given storage path.
+    pub async fn read_body_from_storage(
+        &self,
+        parquet_path: &str,
+        request_id: &str,
+    ) -> Result<Option<BodyPayload>> {
+        // Build object store and read the Parquet file
+        let store = build_object_store(&self.config.s3)
+            .map_err(|e| DbError::Other(format!("storage init: {}", e)))?;
+
+        // Try to fetch the Parquet file
+        let path = object_store::path::Path::from(parquet_path);
+        let result = store.get(&path).await;
+
+        match result {
+            Ok(response) => {
+                let data = response.bytes().await
+                    .map_err(|e| DbError::Other(format!("read bytes: {}", e)))?;
+                let body = decode_body_from_parquet(&data, request_id)
+                    .map_err(|e| DbError::Other(format!("decode: {}", e)))?;
+                Ok(body)
+            }
+            Err(_) => {
+                // Storage unreachable or file not found
+                Ok(None)
+            }
+        }
     }
 }
 
