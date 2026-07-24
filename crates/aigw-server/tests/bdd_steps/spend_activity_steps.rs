@@ -46,6 +46,10 @@ async fn when_seed_cross_day_and_query_activity(world: &mut TestWorld) {
     let base = real_api_steps::base_url();
     let mk = world.master_key.clone();
 
+    // Use a distinct user_id to isolate test data from other scenarios
+    // that may contaminate the date range (e.g., e2e requests logged with today's date).
+    let test_user = "bdd-activity-meta-user";
+
     // Create a key for the spend_logs
     let token = "sk-activity-test-74";
     real_db_seed::ensure_virtual_key(&db_url, token, "activity-test", None).await
@@ -55,30 +59,35 @@ async fn when_seed_cross_day_and_query_activity(world: &mut TestWorld) {
     // Cleanup + seed 4 rows across 2 days: 3 success + 1 failure
     real_db_seed::cleanup_by_prefix(&db_url, "bdd-act-").await.expect("cleanup");
 
-    // Clean up ALL test rows from previous scenarios (sequential run)
-    real_db_seed::cleanup_by_prefix(&db_url, "bdd-").await.expect("cleanup");
-
     let mut r1 = real_db_seed::SeedRow::new("bdd-act-d1a", &hash, 5.0, 100, "gpt-4", "2026-07-20T10:00:00");
     r1.prompt_tokens = 50;
     r1.completion_tokens = 50;
+    r1.user = Some(test_user.to_string());
 
     let mut r2 = real_db_seed::SeedRow::new("bdd-act-d1b", &hash, 6.0, 100, "gpt-4", "2026-07-20T14:00:00");
     r2.prompt_tokens = 50;
     r2.completion_tokens = 50;
+    r2.user = Some(test_user.to_string());
 
     let mut r3 = real_db_seed::SeedRow::new("bdd-act-d2a", &hash, 4.0, 100, "gpt-4", "2026-07-21T09:00:00");
     r3.prompt_tokens = 50;
     r3.completion_tokens = 50;
+    r3.user = Some(test_user.to_string());
 
     let mut r4 = real_db_seed::SeedRow::new("bdd-act-d2b", &hash, 7.0, 100, "gpt-3.5", "2026-07-21T16:00:00");
     r4.prompt_tokens = 50;
     r4.completion_tokens = 50;
     r4.status = "failure".to_string();
+    r4.user = Some(test_user.to_string());
 
     real_db_seed::seed_spend_logs(&db_url, &[r1, r2, r3, r4]).await.expect("seed");
 
-    // HTTP query
-    let url = format!("{}/global/spend/activity?start_date=2026-07-20&end_date=2026-07-21", base);
+    // HTTP query — use user_id to isolate seeded rows from other scenario noise.
+    // Date range is 4 days to force daily (not hourly) granularity.
+    let url = format!(
+        "{}/global/spend/activity?start_date=2026-07-20&end_date=2026-07-24&user_id={}",
+        base, test_user
+    );
     let client = real_api_steps::client();
     let resp = client.get(&url)
         .header("Authorization", format!("Bearer {}", mk))
@@ -186,7 +195,7 @@ async fn then_activity_metadata_correct(world: &mut TestWorld) {
     let completion_tokens = meta.get("completion_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
 
     assert!((total_spend - 22.0).abs() < 0.01, "Expected total_spend=22.0, got {}", total_spend);
-    assert_eq!(total_requests, 4, "Expected total_requests=4");
+    assert_eq!(total_requests, 4, "Expected total_requests=4, got {} (body: {:?})", total_requests, body);
     assert_eq!(successful_requests, 3, "Expected successful_requests=3");
     assert_eq!(failed_requests, 1, "Expected failed_requests=1");
     assert_eq!(total_tokens, 400, "Expected total_tokens=400");
@@ -203,6 +212,11 @@ async fn then_activity_daily_correct(world: &mut TestWorld) {
     let daily = body.get("daily").and_then(|v| v.as_array())
         .expect("no daily array");
 
+    // With a >3-day range (2026-07-20 to 2026-07-24), granularity should be "daily".
+    let granularity = body.get("granularity").and_then(|v| v.as_str()).unwrap_or("");
+    assert_eq!(granularity, "daily", "Expected granularity=daily for >3-day range, got {}", granularity);
+
+    // Only 2 days have data (07-20 and 07-21)
     assert_eq!(daily.len(), 2, "Expected 2 days in daily, got {}", daily.len());
 
     // Day 1: 2026-07-20 — spend=5+6=11, 2 success, 0 failure, tokens=200

@@ -2473,7 +2473,7 @@ impl Database {
                     COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), \
                     COUNT(CASE WHEN status = 'success' THEN 1 END), \
                     COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END) \
-                    FROM spend_logs WHERE start_time >= $1 AND start_time <= $2 {filter} \
+                    FROM spend_logs WHERE start_time >= $1::TIMESTAMPTZ AND start_time <= $2::TIMESTAMPTZ {filter} \
                     GROUP BY 1 ORDER BY 1 ASC";
                 let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 3, true);
                 let sql = sql.replace("{filter}", &filter_clause);
