@@ -1259,8 +1259,9 @@ INSERT INTO spend_logs (
     custom_llm_provider, api_base, "user", metadata,
     cache_hit, cache_key, request_tags, team_id, organization_id,
     end_user, requester_ip_address, messages, response,
-    session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request
-) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request,
+    body_archived, parquet_path
+) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 "#;
 
 const QUERY_SPEND_LOGS_ALL_SQLITE: &str = r#"
@@ -1271,7 +1272,8 @@ SELECT
     custom_llm_provider, api_base, "user", metadata,
     cache_hit, cache_key, request_tags, team_id, organization_id,
     end_user, requester_ip_address, messages, response,
-    session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request
+    session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request,
+    body_archived, parquet_path
 FROM spend_logs
 ORDER BY start_time DESC
 LIMIT ?
@@ -1285,7 +1287,8 @@ SELECT
     custom_llm_provider, api_base, "user", metadata,
     cache_hit, cache_key, request_tags, team_id, organization_id,
     end_user, requester_ip_address, messages, response,
-    session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request
+    session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request,
+    body_archived, parquet_path
 FROM spend_logs
 WHERE api_key = ?
 ORDER BY start_time DESC
@@ -1328,6 +1331,8 @@ impl SpendLogStore for SqlitePool {
             .bind(&log.mcp_namespaced_tool_name)
             .bind(&log.agent_id)
             .bind(&log.proxy_server_request)
+            .bind(log.body_archived)
+            .bind(&log.parquet_path)
             .execute(self)
             .await?;
         Ok(())
@@ -1495,7 +1500,8 @@ impl SpendLogStore for SqlitePool {
                 custom_llm_provider, api_base, "user", metadata,
                 cache_hit, cache_key, request_tags, team_id, organization_id,
                 end_user, requester_ip_address, messages, response,
-                session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request
+                session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request,
+                body_archived, parquet_path
             FROM spend_logs WHERE 1=1"#
         );
 
@@ -1552,7 +1558,8 @@ impl SpendLogStore for SqlitePool {
             custom_llm_provider, api_base, "user", metadata,
             cache_hit, cache_key, request_tags, team_id, organization_id,
             end_user, requester_ip_address, messages, response,
-            session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request
+            session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request,
+            body_archived, parquet_path
             FROM spend_logs WHERE request_id = ?"#,
         )
         .bind(request_id)
@@ -1576,8 +1583,9 @@ impl SpendLogStore for MySqlPool {
              custom_llm_provider, api_base, user, metadata, \
              cache_hit, cache_key, request_tags, team_id, organization_id, \
              end_user, requester_ip_address, messages, response, \
-             session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request) \
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+             session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request, \
+             body_archived, parquet_path) \
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         )
         .bind(&log.request_id)
         .bind(&log.call_type)
@@ -1611,6 +1619,8 @@ impl SpendLogStore for MySqlPool {
         .bind(&log.mcp_namespaced_tool_name)
         .bind(&log.agent_id)
         .bind(&log.proxy_server_request)
+        .bind(log.body_archived)
+        .bind(&log.parquet_path)
         .execute(self)
         .await?;
         Ok(())
@@ -1659,7 +1669,8 @@ impl SpendLogStore for MySqlPool {
                    custom_llm_provider, api_base, user, metadata, \
                    cache_hit, cache_key, request_tags, team_id, organization_id, \
                    end_user, requester_ip_address, messages, response, \
-                   session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request \
+                   session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request, \
+                   body_archived, parquet_path \
                    FROM spend_logs";
         match api_key {
             Some(key) => sqlx::query_as(&format!(
@@ -1841,7 +1852,8 @@ impl SpendLogStore for MySqlPool {
             custom_llm_provider, api_base, "user", metadata,
             cache_hit, cache_key, request_tags, team_id, organization_id,
             end_user, requester_ip_address, messages, response,
-            session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request
+            session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request,
+            body_archived, parquet_path
             FROM spend_logs WHERE request_id = ?"#,
         )
         .bind(request_id)
@@ -1865,8 +1877,9 @@ impl SpendLogStore for PgPool {
             custom_llm_provider, api_base, "user", metadata,
             cache_hit, cache_key, request_tags, team_id, organization_id,
             end_user, requester_ip_address, messages, response,
-            session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32)"#
+            session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request,
+            body_archived, parquet_path)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34)"#
         )
             .bind(&log.request_id).bind(&log.call_type).bind(&log.api_key)
             .bind(log.spend).bind(log.total_tokens).bind(log.prompt_tokens)
@@ -1879,7 +1892,7 @@ impl SpendLogStore for PgPool {
             .bind(&log.end_user).bind(&log.requester_ip_address)
             .bind(&log.messages).bind(&log.response).bind(&log.session_id)
             .bind(&log.status).bind(&log.mcp_namespaced_tool_name).bind(&log.agent_id)
-            .bind(&log.proxy_server_request)
+            .bind(&log.proxy_server_request).bind(log.body_archived).bind(&log.parquet_path)
             .execute(self).await?;
         Ok(())
     }
@@ -1927,7 +1940,8 @@ impl SpendLogStore for PgPool {
             custom_llm_provider, api_base, "user", metadata,
             cache_hit, cache_key, request_tags, team_id, organization_id,
             end_user, requester_ip_address, messages, response,
-            session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request
+            session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request,
+            body_archived, parquet_path
             FROM spend_logs"#;
         match api_key {
             Some(key) => sqlx::query_as(&format!(
@@ -2121,7 +2135,8 @@ impl SpendLogStore for PgPool {
             custom_llm_provider, api_base, "user", metadata,
             cache_hit, cache_key, request_tags, team_id, organization_id,
             end_user, requester_ip_address, messages, response,
-            session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request
+            session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request,
+            body_archived, parquet_path
             FROM spend_logs WHERE request_id = $1"#,
         )
         .bind(request_id)
@@ -4609,6 +4624,8 @@ mod tests {
             mcp_namespaced_tool_name: None,
             agent_id: None,
             proxy_server_request: None,
+            body_archived: false,
+            parquet_path: None,
         }
     }
 

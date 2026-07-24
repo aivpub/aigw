@@ -313,6 +313,8 @@ async fn given_spend_log_basic(world: &mut TestWorld, request_id: String) {
         mcp_namespaced_tool_name: None,
         agent_id: None,
         proxy_server_request: None,
+    body_archived: false,
+    parquet_path: None,
     };
     state.db.insert_spend_log(&log).await.expect("insert spend log");
 }
@@ -353,6 +355,8 @@ async fn given_spend_log_with_body(world: &mut TestWorld, request_id: String) {
         mcp_namespaced_tool_name: None,
         agent_id: None,
         proxy_server_request: None,
+    body_archived: false,
+    parquet_path: None,
     };
     state.db.insert_spend_log(&log).await.expect("insert spend log");
 }

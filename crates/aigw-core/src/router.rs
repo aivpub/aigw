@@ -12,7 +12,9 @@ use rand::Rng;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
+#[cfg(feature = "reqwest")]
+use std::time::Duration;
 use tokio::sync::Mutex;
 
 /// Track per-instance state for routing decisions

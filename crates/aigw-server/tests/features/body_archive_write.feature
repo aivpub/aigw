@@ -35,14 +35,14 @@ Feature: Body Archive 写链路
     And 路径为 "year=2026/month=07/day=24/hour=14/data.parquet"
     And spend_logs 中该 2 条 body_archived 更新为 TRUE
     And step.status 更新为 completed
-    And result 包含 {rows_exported: 2, size_bytes: >0, storage_path, duration_ms}
+    And result 包含 {rows_archived: 2, size_bytes: >0, storage_path, duration_ms}
 
   Scenario: Exec loop 执行 step — 该小时无待归档数据
     Given async_job_steps 中有一个 pending step，payload = {"hour": "2026-07-24T15:00:00+08:00"}
     And spend_logs 中该小时所有记录 body_archived 均为 TRUE
     When Engine exec loop 调用 BodyArchiver.execute(step)
     Then step.status 更新为 completed
-    And result.rows_exported = 0
+    And result.rows_archived = 0
     And 不上传任何文件
 
   Scenario: 存储后端不可达 → step 失败，retry_count 递增
@@ -68,7 +68,7 @@ Feature: Body Archive 写链路
     Given spend_logs 中某小时 2 条记录 body_archived 已为 TRUE
     When exec loop 再次执行相同小时 step
     Then WHERE body_archived=FALSE 返回 0 行
-    And step 完成，rows_exported = 0
+    And step 完成，rows_archived = 0
 
   Scenario: Parquet 写入参数正确
     Given spend_logs 中有 50 条待归档记录

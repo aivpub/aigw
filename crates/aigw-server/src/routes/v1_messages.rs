@@ -415,6 +415,8 @@ pub async fn messages_handler(
                     mcp_namespaced_tool_name: None,
                     agent_id: None,
                     proxy_server_request: None,
+                body_archived: false,
+                parquet_path: None,
                 };
                 let _ = log_state.db.insert_spend_log(&sl).await;
             });
@@ -601,6 +603,8 @@ pub async fn messages_handler(
                     mcp_namespaced_tool_name: None,
                     agent_id: None,
                     proxy_server_request: psr,
+                body_archived: false,
+                parquet_path: None,
                 };
                 let _ = state2.db.insert_spend_log(&sl).await;
             });
@@ -695,6 +699,8 @@ pub async fn messages_handler(
                 mcp_namespaced_tool_name: None,
                 agent_id: None,
                 proxy_server_request: psr,
+            body_archived: false,
+            parquet_path: None,
             };
             let _ = state.db.insert_spend_log(&sl).await;
         });
@@ -755,6 +761,8 @@ pub async fn messages_handler(
                 mcp_namespaced_tool_name: None,
                 agent_id: None,
                 proxy_server_request: proxy_server_request.clone(),
+            body_archived: false,
+            parquet_path: None,
             };
             let _ = state.db.insert_spend_log(&sl).await;
         }
@@ -1023,6 +1031,8 @@ pub async fn messages_handler(
             mcp_namespaced_tool_name: None,
             agent_id: None,
             proxy_server_request: proxy_server_request.clone(),
+        body_archived: false,
+        parquet_path: None,
         };
 
         let _ = state.db.insert_spend_log(&spend_log).await;

@@ -60,6 +60,8 @@ async fn given_spend_log_with_end_user(world: &mut TestWorld, step: &Step) {
         session_id,
         status: Some("success".to_string()),
         mcp_namespaced_tool_name: None, agent_id: None, proxy_server_request: None,
+    body_archived: false,
+    parquet_path: None,
     };
     state.db.insert_spend_log(&log).await.expect("insert spend log");
 }
@@ -92,6 +94,8 @@ async fn given_spend_log_without_end_user(world: &mut TestWorld) {
         session_id: None,
         status: Some("success".to_string()),
         mcp_namespaced_tool_name: None, agent_id: None, proxy_server_request: None,
+    body_archived: false,
+    parquet_path: None,
     };
     state.db.insert_spend_log(&log).await.expect("insert spend log");
 }

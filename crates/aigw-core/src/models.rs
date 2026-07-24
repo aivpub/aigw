@@ -147,6 +147,8 @@ pub struct SpendLog {
     pub mcp_namespaced_tool_name: Option<String>,
     pub agent_id: Option<String>,
     pub proxy_server_request: Option<serde_json::Value>,
+    pub body_archived: bool,
+    pub parquet_path: Option<String>,
 }
 
 /// Daily spend pre-aggregation record — maps to one of 6 daily_*_spend tables.

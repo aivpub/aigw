@@ -16,13 +16,16 @@
 //! ```
 
 pub mod adapter;
+pub mod async_task;
 pub mod auth;
+pub mod body_archive;
 pub mod budget;
 pub mod config;
 pub mod crypto;
 pub mod daily_spend_queue;
 pub mod db;
 pub mod deployment;
+pub mod engine;
 pub mod instance;
 pub mod metrics;
 pub mod middleware;
@@ -36,6 +39,8 @@ pub mod router;
 pub mod tenant;
 
 // Re-export commonly used types
+pub use async_task::{AsyncTask, NewStep, StepOutput};
+pub use engine::{Engine, EngineConfig};
 pub use auth::{decode_jwt, encode_jwt, JwtClaims};
 pub use config::{AigwConfig, GeneralSettings, ModelInfo, RouterSettings};
 pub use crypto::{
