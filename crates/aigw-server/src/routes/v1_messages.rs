@@ -616,6 +616,23 @@ pub async fn messages_handler(
     let upstream_status = upstream_resp.status();
     let upstream_latency_ms = upstream_start.elapsed().as_millis() as i64;
 
+    // Check if upstream returned a different x-request-id than what we sent.
+    let upstream_req_id = upstream_resp
+        .headers()
+        .get("x-request-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    if let Some(ref upstream_rid) = upstream_req_id {
+        if upstream_rid != &request_id {
+            tracing::warn!(
+                "mismatch request_id: ours={} theirs={} upstream_url={}",
+                request_id,
+                upstream_rid,
+                upstream_url,
+            );
+        }
+    }
+
     // Record upstream span fields
     upstream_span.record("upstream_status", upstream_status.as_u16() as i64);
     upstream_span.record("upstream_latency_ms", upstream_latency_ms);
