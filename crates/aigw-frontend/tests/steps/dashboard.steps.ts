@@ -37,7 +37,7 @@ When("I visit the Usage page", async ({ page }) => {
 
 When("I click the {string} tab in the Daily Trend card", async ({ page }, tabLabel: string) => {
   // Find the Daily Trend card header region and click the tab
-  const dailyTrendHeading = page.getByText("Daily Trend", { exact: true });
+  const dailyTrendHeading = page.getByText("Trend", { exact: true });
   // Navigate up to the CardHeader then find the TabsList (CardHeader contains title + tabs as siblings)
   const cardHeader = dailyTrendHeading.locator("..");
   const tab = cardHeader.getByRole("tab", { name: tabLabel });
