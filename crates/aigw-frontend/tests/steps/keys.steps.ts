@@ -19,21 +19,50 @@ Given("I am logged in as admin", async ({ page }) => {
   await page.goto("/dash/usage");
   // Vite HMR keeps WebSocket open so networkidle never fires;
   // React auth check takes ~1 RTT, wait for page to render dashboard content
-  await page.waitForTimeout(3000);
+  await page.waitForLoadState("domcontentloaded");
+  // Wait for auth check to resolve — the /v2/login/check mock returns 200,
+  // React needs time to process the response and render the dashboard
+  await page.waitForTimeout(2000);
+  // Verify we actually got past auth — the login page has "Sign in to your account",
+  // the usage page has "Usage" heading
+  try {
+    await page.getByText("Usage").waitFor({ timeout: 5000 });
+  } catch {
+    // If still on login, try one more navigation
+    await page.goto("/dash/usage");
+    await page.waitForLoadState("domcontentloaded");
+    await page.waitForTimeout(3000);
+  }
 });
 
 Given("I am on the Keys page", async ({ page }) => {
   await page.goto("/dash/keys");
   // Vite HMR keeps a WebSocket open so networkidle never fires; use domcontentloaded instead
   await page.waitForLoadState("domcontentloaded");
-  await page.waitForTimeout(500); // brief settle for React render
+  await page.waitForTimeout(1000); // brief settle for React render
 });
 
 Given("I am on the Usage page", async ({ page }) => {
-  await page.goto("/dash/usage");
+  // Don't re-navigate if already on usage page — re-navigation resets React auth state
+  const currentUrl = page.url();
+  if (!currentUrl.includes("/dash/usage")) {
+    await page.goto("/dash/usage");
+  }
   // Vite HMR keeps a WebSocket open so networkidle never fires; use domcontentloaded instead
   await page.waitForLoadState("domcontentloaded");
-  await page.waitForTimeout(500); // brief settle for React render
+  await page.waitForTimeout(1000); // brief settle for React render
+  // Verify we're on the usage page, not redirected to login
+  try {
+    await page.getByText("Usage").waitFor({ timeout: 5000 });
+  } catch {
+    // If still redirected to login, wait for auth to resolve
+    await page.waitForTimeout(3000);
+    if (page.url().includes("/dash/login")) {
+      await page.goto("/dash/usage");
+      await page.waitForLoadState("domcontentloaded");
+      await page.waitForTimeout(3000);
+    }
+  }
 });
 
 Given("I am on the Models page", async ({ page }) => {

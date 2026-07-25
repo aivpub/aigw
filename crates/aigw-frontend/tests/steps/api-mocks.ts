@@ -176,6 +176,9 @@ export async function defineMockRoutes(route: Route, request: Request) {
   if (url.pathname === "/global/spend/providers") {
     return route.fulfill({ status: 200, json: { data: [{ provider: "openai", total_spend: 25.0, total_tokens: 50000, requests: 12 }, { provider: "anthropic", total_spend: 17.5, total_tokens: 30000, requests: 8 }], count: 2 } });
   }
+  if (url.pathname === "/spend/model-groups" || url.pathname === "/global/spend/model-groups") {
+    return route.fulfill({ status: 200, json: { data: [{ model_group: "gpt-4-group", total_spend: 25.0, total_tokens: 50000, requests: 12 }, { model_group: "claude-group", total_spend: 17.5, total_tokens: 30000, requests: 8 }], count: 2 } });
+  }
 
   // User management (for Stage 29)
   if (url.pathname === "/user/list") {
