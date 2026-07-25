@@ -61,6 +61,52 @@ const sampleTeams = [
 export async function defineMockRoutes(route: Route, request: Request) {
   const url = new URL(request.url());
 
+  // ── Admin Jobs API mocks ──
+  const sampleJobs = [
+    { id: "job-abc123-4567", step_type: "body_archive", trigger_type: "manual", triggered_by: "admin", status: "running", total_steps: 24, completed_steps: 8, failed_steps: 0, created_at: "2026-07-25T14:00:00Z", updated_at: "2026-07-25T14:05:00Z" },
+    { id: "job-def456-7890", step_type: "body_archive", trigger_type: "cron", triggered_by: null, status: "completed", total_steps: 1, completed_steps: 1, failed_steps: 0, created_at: "2026-07-25T13:00:00Z", updated_at: "2026-07-25T13:02:00Z" },
+  ];
+  const sampleJobDetail = {
+    job: sampleJobs[0],
+    steps: [
+      { id: "step-1", step_key: "hour=2026-07-25T14", step_type: "body_archive", status: "completed", payload: { hour: "2026-07-25T14" }, result: { rows_archived: 200, bytes_written: 35000000, storage_path: "s3://bucket/logs/year=2026/..." }, error_message: null, retry_count: 0, started_at: "2026-07-25T14:00:01Z", completed_at: "2026-07-25T14:00:04Z" },
+      { id: "step-2", step_key: "hour=2026-07-25T15", step_type: "body_archive", status: "running", payload: { hour: "2026-07-25T15" }, result: {}, error_message: null, retry_count: 0, started_at: "2026-07-25T14:00:05Z", completed_at: null },
+    ],
+    summary: { total_steps: 24, completed: 8, failed: 0, pending: 15, running: 1 },
+  };
+  const sampleJobLogs = [
+    { step_key: "hour=2026-07-25T14", level: "info", message: "step started", created_at: "2026-07-25T14:00:01Z" },
+    { step_key: "hour=2026-07-25T14", level: "info", message: "queried 200 rows", created_at: "2026-07-25T14:00:02Z" },
+    { step_key: "hour=2026-07-25T14", level: "info", message: "parquet written 35MB", created_at: "2026-07-25T14:00:03Z" },
+    { step_key: null, level: "info", message: "all steps completed, finalizing", created_at: "2026-07-25T14:05:00Z" },
+  ];
+  const sampleArchiveStats = {
+    total_archived_rows: 450000,
+    pending_rows: 800,
+    archive_enabled: true,
+  };
+
+  if (url.pathname === "/admin/jobs/stats") {
+    return route.fulfill({ status: 200, json: { body_archive: { queue: { pending: 3, running: 2, completed: 148, failed: 1 } }, budget_reset: { queue: { pending: 0, running: 0, completed: 0, failed: 0 } } } });
+  }
+  if (url.pathname === "/admin/jobs") {
+    const st = url.searchParams.get("step_type") || "";
+    const filtered = st ? sampleJobs.filter(j => j.step_type === st) : sampleJobs;
+    return route.fulfill({ status: 200, json: { jobs: filtered, page: 1, limit: 50, total: filtered.length } });
+  }
+  if (url.pathname === "/admin/jobs/trigger" && route.request().method() === "POST") {
+    return route.fulfill({ status: 200, json: { job_id: "job-new123-4567", status: "pending", total_steps: 3 } });
+  }
+  if (url.pathname.match(/^\/admin\/jobs\/[^/]+\/logs$/)) {
+    return route.fulfill({ status: 200, json: { logs: sampleJobLogs, page: 1, limit: 50 } });
+  }
+  if (url.pathname.match(/^\/admin\/jobs\/[^/]+$/)) {
+    return route.fulfill({ status: 200, json: sampleJobDetail });
+  }
+  if (url.pathname === "/admin/archive/stats") {
+    return route.fulfill({ status: 200, json: sampleArchiveStats });
+  }
+
   // Key management — frontend expects { keys: [...] } not { data: [...] }
   if (url.pathname === "/key/list") {
     return route.fulfill({ status: 200, json: { keys: sampleKeys, total_count: sampleKeys.length } });
