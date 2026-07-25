@@ -298,13 +298,16 @@ async fn given_50_pending_for_parquet(world: &mut TestWorld) {
 #[when(expr = "Engine exec loop 调用 BodyArchiver.execute\\(step\\)")]
 async fn when_execute_step(world: &mut TestWorld) {
     let state = world.ensure_state().await;
+    let test_hour = get_flag(world, "test_hour")
+        .and_then(|v| v.as_str().map(String::from))
+        .unwrap_or_else(|| "test".to_string());
     let step = aigw_core::async_task::StepRecord {
         id: "step-test-1".to_string(),
         job_id: "job-test-1".to_string(),
-        step_key: "hour=test".to_string(),
+        step_key: format!("hour={}", test_hour),
         step_type: "body_archive".to_string(),
         status: "pending".to_string(),
-        payload: serde_json::json!({"hour": "test", "batch_size": 5000}),
+        payload: serde_json::json!({"hour": test_hour, "batch_size": 5000}),
         result: serde_json::json!({}),
         error_message: None,
         retry_count: 0,

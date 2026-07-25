@@ -17,8 +17,8 @@ use crate::body_archive::BodyRow;
 /// Write body rows to a Parquet buffer and upload to object store.
 /// Returns the number of bytes written.
 pub fn write_parquet_to_store(
-    _store: &dyn object_store::ObjectStore,
-    _path: &str,
+    store: &dyn object_store::ObjectStore,
+    path: &str,
     rows: &[BodyRow],
     row_group_size: usize,
 ) -> Result<usize, String> {
@@ -29,8 +29,15 @@ pub fn write_parquet_to_store(
     let data = write_parquet_to_buffer(rows, row_group_size)?;
     let bytes = data.len();
 
-    // TODO: actual async upload to object_store
-    // object_store.put(&path.into(), data.into()).await?;
+    // Synchronously upload to object_store to validate connectivity.
+    // Uses block_on within a spawn_blocking to work inside a tokio runtime.
+    let path_obj = object_store::path::Path::from(path);
+    tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current().block_on(async {
+            store.put(&path_obj, data.into()).await
+        })
+    })
+    .map_err(|e| format!("object_store put: {}", e))?;
 
     Ok(bytes)
 }
