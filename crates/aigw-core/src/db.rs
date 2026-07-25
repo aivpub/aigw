@@ -4209,7 +4209,8 @@ impl Database {
             custom_llm_provider, api_base, "user", metadata,
             cache_hit, cache_key, request_tags, team_id, organization_id,
             end_user, requester_ip_address, messages, response,
-            session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request
+            session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request,
+            body_archived, parquet_path
             FROM spend_logs {} ORDER BY start_time DESC LIMIT {} OFFSET {}"#,
             where_clause, l, o
         );
@@ -4231,7 +4232,7 @@ mod tests {
     use super::*;
     use crate::crypto::hash_token;
 
-    /// All 20 tables defined in the migrations (aigw names)
+    /// All 23 tables defined in the migrations (aigw names)
     const ALL_TABLES: &[&str] = &[
         "virtual_keys",
         "spend_logs",
@@ -4253,6 +4254,9 @@ mod tests {
         "daily_end_user_spend",
         "daily_agent_spend",
         "daily_tag_spend",
+        "async_jobs",
+        "async_job_steps",
+        "async_job_logs",
     ];
 
     fn make_test_key(token_hash: &str, key_alias: &str) -> VirtualKey {
@@ -4321,7 +4325,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_all_14_tables_exist_after_migration() {
+    async fn test_all_23_tables_exist_after_migration() {
         let db = Database::init("sqlite::memory:").await.expect("init");
         match db {
             Database::Sqlite(pool) => {
