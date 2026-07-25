@@ -1,11 +1,13 @@
 # aigw -- 下一步行动
 
-**上次更新**: 2026-07-24
-**当前阶段**: Phase 30 ⏳ Body Archive 冷存储
+**上次更新**: 2026-07-25
+**当前阶段**: Phase 31 ⏳ Body Archive 生产化（Phase 30 审计修复）
 
 ---
 
-## 当前状态：77/81 Stages 已完成（Phase 30 待实施）
+## 当前状态：77/84 Stages（Phase 30 ⚠️ 待修复，Phase 31 待实施）
+
+Phase 30（Stage 78-81）代码已编码落地（feat/body-archive 分支），但 2026-07-25 三路 subagent 并行审计确认未达生产预期（6 P0 + 10 P1 + 12 P2）。Phase 30 标记为 ⚠️ 待修复，修复转入 Phase 31（Stage 82-84，3 Stage / 24h）。每个 Stage 强制 TDD 红绿循环 + BDD + real BDD 三后端实际执行验证。
 
 ### 项目里程碑
 
@@ -34,7 +36,8 @@ Phase 26:   ████████████████████ 100% (3
 Phase 27:   ████████████████████ 100% (3/3)  ✅ 全栈质量修复 + Usage 图表增强
 Phase 28:   ████████████████████ 100% (1/1)  ✅ 安全与质量加固
 Phase 29:   ████████████████████ 100% (4/4)  ✅ Cross-DB BDD Hardening
-Phase 30:   ░░░░░░░░░░░░░░░░░░░░   0% (0/4)  ⏳ Body Archive 冷存储
+Phase 30:   ░░░░░░░░░░░░░░░░░░░░   0% (0/4)  ⚠️ 代码已落地，未通过生产审计
+Phase 31:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3)  ⏳ Body Archive 生产化（TDD 红绿+BDD+real BDD）
 ```
 
 ### 测试目标
@@ -51,27 +54,31 @@ Phase 30:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 | 优先级 | Phase | 目标 | 状态 |
 |--------|-------|------|------|
-| P0 | Phase 30 | DB Schema + Core Archiver 写链路 (Stage 78) | ⏳ |
-| P0 | Phase 30 | Query Router + Footer Cache 读链路 (Stage 79) | ⏳ |
-| P0 | Phase 30 | Admin API + Col Chunk Cache + 存量归档 (Stage 80) | ⏳ |
-| P0 | Phase 30 | 前端管理页面 (Stage 81) | ⏳ |
+| P0 | Phase 31 | 后端正确性全栈（Stage 82）| ⏳ |
+| P1 | Phase 31 | 读路径 + 缓存激活 + 凭证 + FS（Stage 83）| ⏳ |
+| P0 | Phase 31 | 前端 Jobs 页面生产化重构（Stage 84）| ⏳ |
 
 ---
 
-## Phase 30: Body Archive 冷存储 ⏳
+## Phase 31: Body Archive 生产化 ⏳
+
+**起因**: Phase 30 代码落地后用户实测 8 问题（job 卡 pending / logs 空 / steps 假阳性 completed / tab 下划线 / Disabled 仍执行 / Manual Trigger 独占行 / 列表无分页 / 详情页冗余 + 子页面不可直达）。**工作量下调**：原 4 Stage/50h 偏高 2-5 倍，按 subagent 并发实测 + 同触文件合并，收敛为 3 Stage/24h。**每个 Stage 强制 TDD 红绿循环 + BDD + real BDD 三后端实际执行验证，发现错误及时修复**。
 
 | Stage | 目标 | 类型 | 预估 | 状态 |
 |-------|------|------|------|------|
-| Stage 78 | DB Schema + Core Archiver（Migration 020/021 + BodyArchiver + Parquet 写入 + S3 上传 + 清理器） | 后端 | 12h | ⏳ |
-| Stage 79 | Query Router + Footer Cache（get_message_body 热/冷路由 + query_s3_with_cache + moka 内存 LRU） | 后端 | 10h | ⏳ |
-| Stage 80 | Admin API + Col Chunk Cache + 存量归档（5 端点 + FS LFU 缓存 + bulk archive） | 后端 | 14h | ⏳ |
-| Stage 81 | 前端管理页面（Status/Trigger/Job History/Detail 面板，4 BDD × 3 viewports） | 前端 | 10h | ⏳ |
+| Stage 82 | 后端正确性全栈（状态机 running/failed/partially_failed + 配置单例化 + execute storage_configured 门禁 + 冷数据回源接通 + create_job/claim 事务化 + increment 原子化 + finalize 错误传播 + retry 退避 + start_time TimestampMillisecond）。TDD：14 测试红绿；real BDD：三后端验证状态机迁移 SQL | 后端 | 10h | ⏳ |
+| Stage 83 | 读路径 + 缓存激活（query_parquet_with_cache footer cache→row group→col chunk range read）+ read_body 错误区分 + S3 env 凭证 + FileSystem 后端。TDD：8 测试红绿；real BDD：本地 FS 全链路 + 三后端回源 | 后端 | 6h | ⏳ |
+| Stage 84 | 前端生产化重构（路由化 /dash/jobs/:jobId + Tab 美化 + 列表分页 + 详情去冗余 + Steps 分页 + Logs 按 step + 矛盾检测 + a11y）。TDD：11 BDD 红绿（Playwright mock，3 viewports）；real BDD：分页/trigger 409/冷回源 body | 前端 | 8h | ⏳ |
 
-**合计**: 46h，4 Stages
+**合计**: 24h，3 Stages
 
-**依赖**: Stage 78 → 79 → 80 → 81（严格串行）
+**依赖**: Stage 82 → 83（后端串行）；Stage 82 → 84（前端可与 83 部分并行）
 
-**设计文档**: `docs/stages/stage-78.md` ~ `docs/stages/stage-81.md` + `docs/plans/2026-07-22-body-archive-s3-parquet.md`
+**设计文档**: `docs/stages/stage-82.md` ~ `docs/stages/stage-84.md`
+
+## Phase 30: Body Archive 冷存储 ⚠️ 待修复
+
+> Stage 78-81 已编码落地但未通过生产审计，详见 Phase 31。原设计文档 `stage-78~81.md` 保留作为实现参考。
 
 ## 需求对齐总结
 

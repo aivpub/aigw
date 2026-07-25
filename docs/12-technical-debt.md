@@ -29,6 +29,16 @@
 - **Resolution**: Implement a simple script/tool that maps scenarios to endpoints and
   generates a coverage report.
 
+### TD-005: Async Engine 无 panic 容错 + 无 shutdown 信号
+
+- **Date**: 2026-07-25
+- **Priority**: P2
+- **Source**: `docs/research/2026-07-25-body-archive-production-audit.md`（P2-2 / P2-3）
+- **Description**: `crates/aigw-core/src/engine.rs` 的 `tokio::spawn`（L75, L96, L107）内无 `catch_unwind`，tick/exec/cleanup loop 任何 panic 会让该 loop 永久死掉，其他 loop 不受影响但该 task 能力静默下降。`Engine::run`（L62-117）无 shutdown channel，`for h in handles { h.await }` 永远等待，SIGTERM 时正在执行的 step 被 cancel 卡 running，需等 cleanup_loop 下次回收（默认 30s 检查 + 10min 超时）。
+- **Impact**: (1) 长期运行后 exec loop 数静默减少，归档吞吐下降不可观测；(2) 滚动部署时 step 卡 running 最长 10min。
+- **Resolution**: 每个 loop 体用 `std::panic::AssertUnwindSafe + catch_unwind` 包裹，panic 时 log + sleep 30s + 继续；`Engine::run` 接收 `CancellationToken`，loop 内 `select!` 监听 shutdown，优雅退出前等待 in-flight step。
+- **Target Phase**: Phase 32 候选（Phase 31 修复 P0/P1 后处理）。
+
 ## Resolved Items
 
 ### TD-002: @real_api step bindings implemented (Resolved 2026-07-05)

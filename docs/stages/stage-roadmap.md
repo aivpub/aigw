@@ -1,15 +1,15 @@
 # aigw — AI Gateway Stage Roadmap
 
 **项目**: aigw (litellm Rust 最小兼容替代)
-**最后更新**: 2026-07-24
+**最后更新**: 2026-07-25
 
 ---
 
 ## 当前状态
 
-- **当前 Phase**: Phase 30 — Body Archive 冷存储 ⏳ (0/4 Stages)
-- **状态**: 77/81 Stages 已完成，4 待执行
-- **下一里程碑**: Phase 30 全部交付，预期 ~46h
+- **当前 Phase**: Phase 31 — Body Archive 生产化 ⏳ (0/3 Stages)
+- **状态**: 77/84 Stages 已完成（其中 Stage 78-81 已编码落地但未通过生产验收，Phase 30 标记为 ⚠️ 待修复），6 待执行
+- **下一里程碑**: Phase 31 全部交付（修复 Phase 30 生产化缺陷），预期 ~24h
 
 ### 整体进度
 
@@ -38,7 +38,8 @@ Phase 26:   ████████████████████ 100% (3
 Phase 27:   ████████████████████ 100% (3/3 Stages) ✅ 全栈质量修复 + Usage 图表增强
 Phase 28:   ████████████████████ 100% (1/1 Stage)  ✅ 安全与质量加固
 Phase 29:   ████████████████████ 100% (4/4 Stages) ✅ Cross-DB BDD Hardening
-Phase 30:   ░░░░░░░░░░░░░░░░░░░░   0% (0/4 Stages) ⏳ Body Archive 冷存储
+Phase 30:   ░░░░░░░░░░░░░░░░░░░░   0% (0/4 Stages) ⚠️ 代码已落地但未通过生产审计，转入 Phase 31 修复
+Phase 31:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3 Stages) ⏳ Body Archive 生产化（审计修复，TDD 红绿+BDD+real BDD）
 ```
 
 ---
@@ -74,6 +75,38 @@ Phase 30:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 - **DB 先写后归档**：body 仍然先入 DB，归档是纯后台异步操作，不影响核心写入链路
 
 **设计文档**: `docs/stages/stage-78.md` ~ `docs/stages/stage-81.md`
+
+> ⚠️ **生产审计结论**（2026-07-25）：Phase 30 代码已落地但未通过生产审计，三路 subagent 并行审计确认 6 个 P0 + 10 个 P1 + 12 个 P2 缺陷。Phase 30 状态标记为 ⚠️ 待修复，修复工作转入 Phase 31（Stage 82-84）。
+
+### Phase 31：Body Archive 生产化 ⏳
+
+**背景**: Phase 30（Stage 78-81）编码落地后用户实测发现 8 个问题，居中调度三路 subagent 并行审计确认三大类生产缺陷：(1) 状态正确性——job 卡 pending（状态机缺 running/failed）、steps 假阳性 completed（execute 未检查 storage_configured）、配置失联（三处用 `default()` 导致 Disabled 仍可执行）；(2) 数据可观测性——logs 独立空区块、列表无分页、Steps 无分页；(3) UX/可分享性——tab 含下划线、Manual Trigger 独占行、详情页冗余、子页面不可 URI 直达。本 Phase 严格按审计报告修复，**每个 Stage 强制 TDD 红绿循环（先写失败测试跑红→重构至绿）+ BDD + real BDD 三后端实际执行验证，发现错误及时修复**。
+
+
+**工作量下调说明**：原规划 4 Stage / 50h，用户反馈偏高 2-5 倍。按"subagent 并发实测 + 同触文件合并避免反复改"原则合并为 3 Stage / 24h：原 Stage 82+83（同触 engine.rs/body_archive/mod.rs）合并为新 82；原 84 重编号为 83；原 85 重编号为 84。
+
+| Stage | 状态 | 目标 | 类型 | 预估 |
+|-------|------|------|------|------|
+| Stage 82 | ⏳ 待开始 | **后端正确性全栈（合并 P0+P1）** — 补全 job 状态机（pending→running→completed/failed/partially_failed）；配置单例化（AppState 注入 body_archiver，main.rs 从 config.yaml 解析，AigwConfig 加 body_archive 字段）；execute() 加 storage_configured() 门禁消除假阳性 completed；trigger enabled 检查返回 409；冷数据回源接通（spend detail 集成 get_message_body）；create_job/claim 事务化；increment_job_completed 原子化消竞态；finalize 失败标 failed；fail_step 加 next_retry_at 退避；start_time→TimestampMillisecond。**TDD 红绿**：14 测试先红后绿；**BDD+real BDD**：三后端验证状态机迁移 SQL。对应 Q1/Q3/Q4 | 后端+测试 | 10h |
+| Stage 83 | ⏳ 待开始 | **读路径 + 缓存激活 + 凭证安全 + FileSystem 后端** — 实现 query_parquet_with_cache（footer cache → row group 定位 → col chunk range read 三段流水线），激活 FooterCache 死代码消除全文件下载（P99 19MB → 仅 footer + 列块）；read_body_from_storage 区分 NotFound vs 不可达（Err 不吞 None）；S3 凭证支持 ${ENV_VAR} 占位符；StorageBackend::FileSystem 接入 LocalFileSystem（CI 无需 S3）。**TDD 红绿**：8 测试先红后绿；**BDD+real BDD**：本地 FS 全链路 + 三后端回源 | 后端+测试 | 6h |
+| Stage 84 | ⏳ 待开始 | **前端 Jobs 页面生产化重构** — 路由化（/dash/jobs/:jobId 子路由，useSearchParams，URI 直达/刷新/分享）；Tab 美化（body_archive→"Body Archive"）+ Trigger 同行布局；列表表格化 + 分页（后端 list response 加 total）；详情页去冗余 tab + 标题人类可读 + Steps 分页 + Payload/Result 列；Logs 加 Step Key 列按 step 分组；假阳性 completed 矛盾检测（rows_archived=0 灰色 no-op）；Archive Disabled 真禁用 Trigger；错误 toast 替换 silent fail；a11y 键盘导航。**TDD 红绿**：11 BDD 场景先红后绿（Playwright mock API，3 viewports）；**real BDD**：分页/trigger 409/冷回源 body。对应 Q2/Q4-Q8 | 前端+测试 | 8h |
+
+**依赖关系**: Stage 82 → 83（后端串行，读路径优化依赖冷回源端点）；Stage 82 → 84（前端兜底 + 矛盾检测依赖后端 summary.running + result 字段，可与 83 部分并行）
+- 82（冷回源接通 + 状态机 + 配置）→ 83 的读路径有端点可改
+- 82（状态机 + 配置）→ 84 的前端 displayStatus 兜底 + 矛盾检测依赖后端字段
+
+**Phase 31 合计**: 24h，3 Stages。
+
+**关键决策**:
+- **TDD 红绿强制**：每个 Stage 先写失败测试（Red）跑红，再重构实现至绿（Green），不直接写实现。
+- **BDD + real BDD 实际执行**：mock BDD（`task bdd` / `task fe-bdd` Playwright）+ real BDD（`task bdd-real-sqlite` / `task bdd-real-pg` / `task bdd-real-mysql` 三后端）必须全绿，发现的错误及时修复重跑，不积压。
+- **先正确性后性能**：82 修 P0/P1 正确性，83 修读路径性能，84 修前端。不混入新功能。
+- **同触文件合并**：原 82+83 同触 engine.rs/body_archive，合并避免反复改同一文件，降低工作量。
+- **Phase 30 标记为 ⚠️ 待修复**：不回写 Stage 78-81 为 ✅，保持审计可追溯；Phase 31 完成后一并标记。
+- **P2 技术债登记**：panic 容错（P2-2）、shutdown 信号（P2-3）登记到 `docs/12-technical-debt.md`（TD-005），作为 Phase 32 候选。
+- **长期路线维持**：LT-BodyMetrics / LT-BodyCompact / LT-BodyLifecycle 优先级不变，Phase 31 后视数据量触发。
+
+**设计文档**: `docs/stages/stage-82.md` ~ `docs/stages/stage-84.md`
 
 ### Phase 14：`/v1/messages` 接口修复 ✅ 已完成
 
@@ -486,3 +519,4 @@ Phase 30:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 | v26.0 | 2026-07-23 | **Stage 68 完成**：OTEL Traces 链路追踪 — tracing-opentelemetry 0.33 bridge + `tracing_subscriber::registry()` 组合层 + `tracing::info_span!` 5 层 span（chat_completions/auth/resolve/adapt/upstream_call）+ W3C traceparent 提取/注入改造 + `config.yaml` `general_settings.otel` 配置化 + `otel_active` 标志位零开销禁用 + 10 UT 覆盖 extract/inject/config/deserialization。总进度 77/77。|
 | v27.0 | 2026-07-23 | **Stage 77 完成**：Spend Logs Body 字段分离 — DB 层 `get_spend_log_by_request_id` (trait + 3 后端 impl + Database dispatch)；`GET /global/spend/logs/{request_id}` 详情端点；列表接口移除 `messages`/`response`；前端 `SpendLogDetail` 接口 + on-demand fetch + Skeleton + error/retry。4 UT + 7 BDD (4 后端 + 3 前端)。Phase 26 全部完成，全部 77/77 Stages ✅。|
 | v28.0 | 2026-07-24 | **Phase 30 规划**：新增 Phase 30（Stages 78-81，Body Archive 冷存储，共 46h）：78=DB Schema+Core Archiver(12h)、79=Query Router+Footer Cache(10h)、80=Admin API+Col Chunk Cache+存量归档(14h)、81=前端管理页面(10h)。按需求对齐：不需要独立 CLI（admin API 覆盖存量归档）；日 compaction/监控指标推迟；写→读→API→前端串行交付。设计文档：`stage-78~81.md` + `docs/plans/2026-07-22-body-archive-s3-parquet.md`。总进度 77/81。|
+| v29.0 | 2026-07-25 | **Phase 31 规划 + Phase 30 生产审计**：用户实测发现 8 问题，三路 subagent 并行审计（后端 AsyncTask+Engine / 后端 BodyArchive / 前端 Jobs UI）确认 Phase 30 代码已落地但未达生产预期——6 P0 + 10 P1 + 12 P2 缺陷。Phase 30 标记为 ⚠️ 待修复，修复转入 Phase 31。**工作量下调**：用户反馈原 4 Stage/50h 偏高 2-5 倍，按 subagent 并发实测 + 同触文件合并，收敛为 3 Stage/24h：82=后端正确性全栈(状态机+配置失联+假阳性completed+冷回源+并发安全+retry+schema，10h)、83=读路径+缓存激活+凭证+FS后端(6h)、84=前端生产化重构(8h)。**每个 Stage 强制 TDD 红绿循环（先写失败测试跑红→重构至绿）+ BDD + real BDD 三后端实际执行验证，发现错误及时修复**。设计文档：`stage-82~84.md`。总进度 77/84（Stage 78-81 编码完成但待修复验收）。|
