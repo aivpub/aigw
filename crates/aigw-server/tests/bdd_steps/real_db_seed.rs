@@ -104,10 +104,12 @@ pub(crate) async fn seed_spend_logs(
         // Plain text values are JSON-string-encoded.
         let tags_val = encode_tags_literal(&row.request_tags);
 
+        let user_ident = pool.quote_ident("user");
+
         let sql = format!(
             r#"INSERT INTO spend_logs
             (request_id, call_type, api_key, spend, total_tokens, prompt_tokens, completion_tokens,
-             start_time, end_time, model, status, "user", team_id, organization_id,
+             start_time, end_time, model, status, {user_ident}, team_id, organization_id,
              request_tags, custom_llm_provider, end_user)
             VALUES ('{}', 'completion', '{}', {}, {}, {}, {},
                     {}, {}, '{}', '{}',
