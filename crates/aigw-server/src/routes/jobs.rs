@@ -4,7 +4,6 @@
 //! Requires admin authentication.
 
 use aigw_core::async_task::{AsyncTask, JobRecord};
-use aigw_core::body_archive::config::BodyArchiveConfig;
 use aigw_core::engine::{create_job, get_job_detail, get_job_logs as engine_get_job_logs, get_job_stats, list_jobs};
 use axum::{
     extract::{Path, Query, State},
@@ -121,8 +120,17 @@ pub async fn trigger_job(
     // Only body_archive is supported for now
     let steps = match step_type {
         "body_archive" => {
-            let config = BodyArchiveConfig::default();
-            let archiver = aigw_core::body_archive::BodyArchiver::new(config);
+            let archiver = state.body_archiver.as_ref()
+                .ok_or((
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(serde_json::json!({"error": "body archiver not configured"})),
+                ))?;
+            if !archiver.config().enabled {
+                return Err((
+                    StatusCode::CONFLICT,
+                    Json(serde_json::json!({"error": "body archive is disabled"})),
+                ));
+            }
             archiver.steps_from_payload(&req.payload).await.map_err(|e| {
                 (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": e.to_string()})))
             })?
@@ -161,7 +169,7 @@ pub async fn list_jobs_handler(
     let page = params.page.unwrap_or(1).max(1);
     let offset = (page - 1) * limit;
 
-    let jobs = list_jobs(&state.db, params.step_type.as_deref(), params.status.as_deref(), limit, offset).await
+    let (jobs, total) = list_jobs(&state.db, params.step_type.as_deref(), params.status.as_deref(), limit, offset).await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
 
     let job_items: Vec<JobListItem> = jobs.into_iter().map(JobListItem::from).collect();
@@ -170,6 +178,7 @@ pub async fn list_jobs_handler(
         "jobs": job_items,
         "page": page,
         "limit": limit,
+        "total": total,
     })))
 }
 
@@ -287,8 +296,11 @@ pub async fn archive_stats_handler(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&auth)?;
 
-    let config = BodyArchiveConfig::default();
-    let archiver = aigw_core::body_archive::BodyArchiver::new(config);
+    let archiver = state.body_archiver.as_ref()
+        .ok_or((
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "body archiver not configured"})),
+        ))?;
     let stats = archiver.get_archive_stats(&state.db).await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
 

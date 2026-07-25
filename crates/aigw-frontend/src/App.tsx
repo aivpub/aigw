@@ -12,6 +12,7 @@ import { SpendLogsPage } from "@/pages/spend-logs";
 import { PlaygroundPage } from "@/pages/playground";
 import { RouterSettingsPage } from "@/pages/router-settings";
 import { JobsPage } from "@/pages/jobs";
+import { JobDetailPage } from "@/pages/jobs/job-detail";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth();
@@ -60,6 +61,7 @@ export default function App() {
             <Route path="playground" element={<PlaygroundPage />} />
             <Route path="router-settings" element={<RouterSettingsPage />} />
             <Route path="jobs" element={<JobsPage />} />
+            <Route path="jobs/:jobId" element={<JobDetailPage />} />
           </Route>
 
           {/* Catch-all: authenticated pages redirect to /dash; unauthenticated to login */}

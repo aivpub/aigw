@@ -133,3 +133,96 @@ Feature: Jobs 管理页面
     Given viewport is mobile (375x812)
     And the Job Detail panel is open
     Then the Steps table is horizontally scrollable
+
+  # ━━━━ Stage 84: 前端 Jobs 页面生产化重构 ━━━━
+  # TDD Red 阶段 — 11 个新场景，当前实现失败（验证 Red）
+
+  # ── Q8: 路由直达 ──
+
+  Scenario: 路由直达 — 访问 /dash/jobs/{id} 直达详情页
+    Given API mock returns job "job-test-001" with status "running"
+    When I navigate to "/dash/jobs/job-test-001"
+    Then I should see the Job Detail panel for "job-test-001"
+    And I should NOT see the outer Sub-Tab bar
+
+  # ── Q8: 详情页刷新 ──
+
+  Scenario: 详情页刷新后仍显示同一 job
+    Given I am viewing Job Detail for "job-test-002"
+    When I refresh the page
+    Then I should still see the Job Detail panel for "job-test-002"
+    And the URL is still "/dash/jobs/job-test-002"
+
+  # ── Q8: 浏览器后退 ──
+
+  Scenario: 浏览器后退从详情回到列表
+    Given I am viewing Job Detail for "job-test-003"
+    When I press the browser back button
+    Then I should see the job list
+    And the URL is "/dash/jobs"
+
+  # ── Q6: 列表分页 ──
+
+  Scenario: 列表超过一页显示分页控件并翻页
+    Given there are 120 jobs in total
+    When I am on the Jobs page with default page=1
+    Then I should see pagination controls with Page 1 of 3
+    When I click page 2
+    Then GET /admin/jobs is called with page=2
+    And job list shows the next 50 jobs
+
+  # ── Q4: Tab 标签不含下划线 ──
+
+  Scenario: Tab 标签显示人类可读文本不含下划线
+    When I am on the Jobs page
+    Then I should see a tab labeled "Body Archive"
+    And I should NOT see a tab labeled "body_archive"
+
+  # ── Q4: Archive Disabled 时 Trigger 按钮禁用 ──
+
+  Scenario: Archive Disabled 时 Trigger 按钮被禁用
+    Given archive stats return archive_enabled=false
+    When I click the "Body Archive" Sub-Tab
+    Then the Trigger button is disabled
+    And hovering over the button shows a tooltip "Archive is disabled"
+
+  # ── Q3: 矛盾检测 — completed + rows_archived=0 → no-op ──
+
+  Scenario: completed step 但 rows_archived=0 显示为灰色 no-op
+    Given Job Detail has a step with status="completed" and result.rows_archived=0
+    When I view the Steps table
+    Then that step status shows as "completed (no-op)" in gray
+    And it does NOT show the green checkmark
+
+  # ── Q2: Logs 按 step_key 分组 ──
+
+  Scenario: Logs 表显示 Step Key 列并按 step 折叠
+    Given Job Detail has logs with step_keys "hour=..T14" and "hour=..T15"
+    When I view the Logs section
+    Then Logs table has a "Step Key" column
+    And I can expand logs for a specific step_key
+
+  # ── Q5: Manual Trigger 与 Sub-Tab 同行 ──
+
+  Scenario: Manual Trigger 按钮在 Sub-Tab 同一行
+    When I am on the Body Archive Sub-Tab
+    Then the Trigger button is in the same row as the Sub-Tab bar
+    And there is no separate Manual Trigger card
+
+  # ── Q7: 详情页去冗余 ──
+
+  Scenario: 详情页不显示外层 Sub-Tab 栏
+    Given I am viewing Job Detail for "job-test-007"
+    Then I do NOT see the "Body Archive" and "Budget Reset" Sub-Tab bar
+    And the title shows "body_archive · manual · 2026-07-25 14:00"
+    And Steps table shows Payload, Result, and Duration columns
+    And Steps table is paginated with pageSize=20
+
+  # ── a11y: 键盘导航 ──
+
+  Scenario: Job 行支持键盘 Enter/Space 触发详情
+    Given I am on the job list
+    When I focus on a job row and press Enter
+    Then the Job Detail panel opens for that job
+    When I go back and focus on another job row and press Space
+    Then the Job Detail panel opens for that job

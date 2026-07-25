@@ -272,6 +272,14 @@ async fn main() -> anyhow::Result<()> {
         cli.deployment_mode.clone(),
     );
 
+    // Build body_archiver from parsed config (or default if not configured)
+    let body_archive_config = config
+        .as_ref()
+        .and_then(|c| c.body_archive.clone())
+        .unwrap_or_default();
+    let body_archiver = Arc::new(BodyArchiver::new(body_archive_config));
+    let body_archiver_arc: Option<Arc<BodyArchiver>> = Some(body_archiver.clone());
+
     let state: SharedState = Arc::new(AppState {
         db: (*db_arc).clone(),
         master_key: Some(master_key.clone()),
@@ -286,12 +294,13 @@ async fn main() -> anyhow::Result<()> {
         daily_spend_queue: Some(daily_spend_queue),
         resolver,
         otel_active,
+        body_archiver: body_archiver_arc.clone(),
     });
 
     // Start async job engine with body_archive worker
     {
         let mut engine = Engine::new(Arc::clone(&db_arc), EngineConfig::default());
-        engine.register(Arc::new(BodyArchiver::new(Default::default())));
+        engine.register(body_archiver);
         tokio::spawn(async move { engine.run().await });
         tracing::info!("Async job engine started");
     }

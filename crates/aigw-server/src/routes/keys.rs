@@ -11,6 +11,7 @@
 use aigw_core::crypto::hash_token;
 use aigw_core::daily_spend_queue::DailySpendQueue;
 use aigw_core::db::Database;
+use aigw_core::body_archive::BodyArchiver;
 use aigw_core::metrics::MetricsRecorder;
 use aigw_core::models::{GenerateKeyRequest, VirtualKey};
 use aigw_core::provider::ProviderRegistry;
@@ -59,6 +60,8 @@ pub struct AppState {
     /// OTEL tracing active flag — true when OTLP exporter is configured and running.
     /// Handler code gates traceparent extract/inject on this field.
     pub otel_active: bool,
+    /// Body archiver — archive spend_logs body fields to Parquet cold storage.
+    pub body_archiver: Option<Arc<BodyArchiver>>,
 }
 
 impl AppState {
@@ -85,6 +88,7 @@ impl AppState {
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
             otel_active: false,
+            body_archiver: None,
         }
     }
 }
@@ -710,6 +714,7 @@ mod tests {
             daily_spend_queue: None,
             metrics: None,
             otel_active: false,
+            body_archiver: None,
         });
         Router::new()
             .route("/key/generate", axum::routing::post(generate_key))

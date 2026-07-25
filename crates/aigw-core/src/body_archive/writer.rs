@@ -3,8 +3,8 @@
 //! Converts BodyRow records into an Arrow RecordBatch, writes as Parquet
 //! with ZSTD compression and Bloom filters on request_id, and uploads to storage.
 
-use arrow::array::{RecordBatch, StringBuilder};
-use arrow::datatypes::{DataType, Field, Schema};
+use arrow::array::{BooleanBuilder, RecordBatch, StringBuilder, TimestampMillisecondBuilder};
+use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 use parquet::arrow::ArrowWriter;
 use parquet::basic::{Compression, ZstdLevel};
 use parquet::file::properties::WriterProperties;
@@ -67,10 +67,10 @@ pub fn write_parquet_to_buffer(rows: &[BodyRow], row_group_size: usize) -> Resul
 
     let schema = Arc::new(Schema::new(vec![
         Field::new("request_id", DataType::Utf8, false),
-        Field::new("start_time", DataType::Utf8, false),
+        Field::new("start_time", DataType::Timestamp(TimeUnit::Millisecond, None), false),
         Field::new("model", DataType::Utf8, false),
         Field::new("status", DataType::Utf8, true),
-        Field::new("cache_hit", DataType::Utf8, true),
+        Field::new("cache_hit", DataType::Boolean, true),
         Field::new("session_id", DataType::Utf8, true),
         Field::new("messages", DataType::Utf8, true),
         Field::new("response", DataType::Utf8, true),
@@ -79,10 +79,10 @@ pub fn write_parquet_to_buffer(rows: &[BodyRow], row_group_size: usize) -> Resul
 
     let num_rows = rows.len();
     let mut request_ids = StringBuilder::with_capacity(num_rows, 64);
-    let mut start_times = StringBuilder::with_capacity(num_rows, 32);
+    let mut start_times = TimestampMillisecondBuilder::with_capacity(num_rows);
     let mut models = StringBuilder::with_capacity(num_rows, 32);
     let mut statuses = StringBuilder::with_capacity(num_rows, 16);
-    let mut cache_hits = StringBuilder::with_capacity(num_rows, 8);
+    let mut cache_hits = BooleanBuilder::with_capacity(num_rows);
     let mut session_ids = StringBuilder::with_capacity(num_rows, 64);
     let mut messages_arr = StringBuilder::with_capacity(num_rows, 1024);
     let mut responses = StringBuilder::with_capacity(num_rows, 1024);
@@ -90,10 +90,10 @@ pub fn write_parquet_to_buffer(rows: &[BodyRow], row_group_size: usize) -> Resul
 
     for row in rows {
         request_ids.append_value(&row.request_id);
-        start_times.append_value(&row.start_time);
+        start_times.append_value(parse_start_time_to_millis(&row.start_time));
         models.append_value(&row.model);
         append_option_string(&mut statuses, &row.status);
-        append_option_string(&mut cache_hits, &row.cache_hit);
+        append_option_bool(&mut cache_hits, &row.cache_hit);
         append_option_string(&mut session_ids, &row.session_id);
         append_option_string(&mut messages_arr, &row.messages);
         append_option_string(&mut responses, &row.response);
@@ -142,6 +142,23 @@ fn append_option_string(builder: &mut StringBuilder, value: &Option<String>) {
         Some(v) => builder.append_value(v),
         None => builder.append_null(),
     }
+}
+
+fn append_option_bool(builder: &mut BooleanBuilder, value: &Option<String>) {
+    match value {
+        Some(v) => {
+            let b = v.eq_ignore_ascii_case("true");
+            builder.append_value(b);
+        }
+        None => builder.append_null(),
+    }
+}
+
+/// Parse an ISO 8601 start_time string to milliseconds since Unix epoch.
+fn parse_start_time_to_millis(s: &str) -> i64 {
+    chrono::DateTime::parse_from_rfc3339(s)
+        .map(|dt| dt.timestamp_millis())
+        .unwrap_or(0)
 }
 
 #[cfg(test)]

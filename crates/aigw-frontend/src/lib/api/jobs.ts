@@ -1,0 +1,174 @@
+import { apiGet, apiPost } from "@/lib/api";
+
+// ── Types ──
+
+export interface JobStats {
+  [stepType: string]: {
+    queue: { pending: number; running: number; completed: number; failed: number };
+  };
+}
+
+export interface JobItem {
+  id: string;
+  step_type: string;
+  trigger_type: string;
+  triggered_by: string | null;
+  status: string;
+  total_steps: number;
+  completed_steps: number;
+  failed_steps: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StepItem {
+  id: string;
+  step_key: string;
+  status: string;
+  payload: Record<string, unknown>;
+  result: Record<string, unknown> | null;
+  error_message: string | null;
+  retry_count: number;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface LogEntry {
+  step_key: string | null;
+  level: string;
+  message: string;
+  created_at: string;
+}
+
+export interface ArchiveStats {
+  total_archived_rows: number;
+  pending_rows: number;
+  archive_enabled: boolean;
+}
+
+export interface JobListResponse {
+  jobs: JobItem[];
+  page: number;
+  limit: number;
+  total: number;
+}
+
+export interface JobDetailResponse {
+  job: JobItem;
+  steps: StepItem[];
+  summary: {
+    total_steps: number;
+    completed: number;
+    failed: number;
+    pending: number;
+    running: number;
+  };
+}
+
+export interface JobLogsResponse {
+  logs: LogEntry[];
+  page: number;
+  limit: number;
+}
+
+export interface TriggerJobResponse {
+  job_id: string;
+  status: string;
+  total_steps: number;
+}
+
+// ── API functions ──
+
+export function fetchJobStats(): Promise<JobStats> {
+  return apiGet<JobStats>("/admin/jobs/stats");
+}
+
+export function fetchJobs(params: {
+  step_type?: string;
+  status?: string;
+  page?: number;
+  limit?: number;
+}): Promise<JobListResponse> {
+  const searchParams = new URLSearchParams();
+  if (params.step_type) searchParams.set("step_type", params.step_type);
+  if (params.status) searchParams.set("status", params.status);
+  if (params.page) searchParams.set("page", String(params.page));
+  if (params.limit) searchParams.set("limit", String(params.limit));
+  const qs = searchParams.toString();
+  return apiGet<JobListResponse>(`/admin/jobs${qs ? `?${qs}` : ""}`);
+}
+
+export function fetchJobDetail(jobId: string): Promise<JobDetailResponse> {
+  return apiGet<JobDetailResponse>(`/admin/jobs/${jobId}`);
+}
+
+export function fetchJobLogs(
+  jobId: string,
+  params: { page?: number; limit?: number; level?: string }
+): Promise<JobLogsResponse> {
+  const searchParams = new URLSearchParams();
+  if (params.page) searchParams.set("page", String(params.page));
+  if (params.limit) searchParams.set("limit", String(params.limit));
+  if (params.level && params.level !== "all") searchParams.set("level", params.level);
+  const qs = searchParams.toString();
+  return apiGet<JobLogsResponse>(`/admin/jobs/${jobId}/logs${qs ? `?${qs}` : ""}`);
+}
+
+export function fetchArchiveStats(): Promise<ArchiveStats> {
+  return apiGet<ArchiveStats>("/admin/archive/stats");
+}
+
+export function triggerJob(payload: {
+  step_type: string;
+  payload: Record<string, unknown>;
+}): Promise<TriggerJobResponse> {
+  return apiPost<TriggerJobResponse>("/admin/jobs/trigger", payload);
+}
+
+// ── Helpers ──
+
+/** Map step_type to human-readable label. */
+const STEP_LABELS: Record<string, string> = {
+  body_archive: "Body Archive",
+  budget_reset: "Budget Reset",
+};
+
+export function stepTypeLabel(st: string): string {
+  return STEP_LABELS[st] || st.replace(/_/g, " ");
+}
+
+/** Format a number with K/M suffixes. */
+export function formatCount(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+}
+
+/** Format bytes to human-readable size. */
+export function formatBytes(bytes: number): string {
+  if (!bytes || bytes <= 0) return "0 B";
+  if (bytes >= 1_073_741_824) return `${(bytes / 1_073_741_824).toFixed(1)} GB`;
+  if (bytes >= 1_048_576) return `${(bytes / 1_048_576).toFixed(1)} MB`;
+  if (bytes >= 1_024) return `${(bytes / 1_024).toFixed(1)} KB`;
+  return `${bytes} B`;
+}
+
+/** Format duration in ms to human-readable. */
+export function formatDuration(ms: number): string {
+  if (!ms || ms <= 0) return "-";
+  if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${ms}ms`;
+}
+
+/**
+ * Compute display status for a job, considering running/pending step counts.
+ * If summary says there are running steps, show "running" even if job.status says "pending".
+ * This handles the Q1 pending bug: the job may be pending at DB level but has running steps.
+ */
+export function displayJobStatus(
+  jobStatus: string,
+  summary?: { running: number; pending: number }
+): string {
+  if (summary?.running && summary.running > 0) return "running";
+  return jobStatus;
+}

@@ -1183,8 +1183,8 @@ use aigw_core::models::SpendLog;
             deployment_mode: "onprem".to_string(),
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
-            otel_active: false,
-            metrics: None,
+  otel_active: false,
+            body_archiver: None,            metrics: None,
         });
         Router::new()
             .route("/spend/logs", axum::routing::get(spend_logs))
@@ -1338,8 +1338,8 @@ use aigw_core::models::SpendLog;
             deployment_mode: "onprem".to_string(),
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
-            otel_active: false,
-            metrics: None,
+  otel_active: false,
+            body_archiver: None,            metrics: None,
         });
 
         let app = Router::new()
@@ -1423,8 +1423,8 @@ use aigw_core::models::SpendLog;
             deployment_mode: "onprem".to_string(),
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
-            otel_active: false,
-            metrics: None,
+  otel_active: false,
+            body_archiver: None,            metrics: None,
         });
 
         let app = Router::new()

@@ -773,76 +773,127 @@ async fn mark_job_completed(db: &Database, job_id: &str, now: &str) {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /// List jobs, optionally filtered by step_type and/or status.
+/// Returns (jobs, total_count).
 pub async fn list_jobs(
     db: &Database,
     step_type: Option<&str>,
     status: Option<&str>,
     limit: i32,
     offset: i32,
-) -> Result<Vec<JobRecord>> {
+) -> Result<(Vec<JobRecord>, i64)> {
     match db {
-        Database::Sqlite(pool) => {
-            let mut sql = String::from("SELECT * FROM async_jobs WHERE 1=1");
-            if step_type.is_some() {
-                sql.push_str(" AND step_type = ?");
-            }
-            if status.is_some() {
-                sql.push_str(" AND status = ?");
-            }
-            sql.push_str(" ORDER BY created_at DESC LIMIT ? OFFSET ?");
-            let mut q = sqlx::query_as::<_, JobRecord>(&sql);
-            if let Some(st) = step_type {
-                q = q.bind(st);
-            }
-            if let Some(s) = status {
-                q = q.bind(s);
-            }
-            q.bind(limit).bind(offset).fetch_all(pool).await.map_err(DbError::from)
-        }
-        Database::Mysql(pool) => {
-            let mut sql = String::from("SELECT * FROM async_jobs WHERE 1=1");
-            if step_type.is_some() {
-                sql.push_str(" AND step_type = ?");
-            }
-            if status.is_some() {
-                sql.push_str(" AND status = ?");
-            }
-            sql.push_str(" ORDER BY created_at DESC LIMIT ? OFFSET ?");
-            let mut q = sqlx::query_as::<_, JobRecord>(&sql);
-            if let Some(st) = step_type {
-                q = q.bind(st);
-            }
-            if let Some(s) = status {
-                q = q.bind(s);
-            }
-            q.bind(limit).bind(offset).fetch_all(pool).await.map_err(DbError::from)
-        }
-        Database::Postgres(pool) => {
-            let mut idx = 1;
-            let mut pg_sql = String::from("SELECT * FROM async_jobs WHERE 1=1");
-            if step_type.is_some() {
-                pg_sql.push_str(&format!(" AND step_type = ${}", idx));
-                idx += 1;
-            }
-            if status.is_some() {
-                pg_sql.push_str(&format!(" AND status = ${}", idx));
-                idx += 1;
-            }
-            pg_sql.push_str(&format!(
-                " ORDER BY created_at DESC LIMIT ${} OFFSET ${}",
-                idx,
-                idx + 1
-            ));
-            let mut q = sqlx::query_as::<_, JobRecord>(&pg_sql);
-            if let Some(st) = step_type {
-                q = q.bind(st);
-            }
-            if let Some(s) = status {
-                q = q.bind(s);
-            }
-            q.bind(limit).bind(offset).fetch_all(pool).await.map_err(DbError::from)
-        }
+        Database::Sqlite(pool) => list_jobs_with_count_sqlite(pool, step_type, status, limit, offset).await,
+        Database::Mysql(pool) => list_jobs_with_count_mysql(pool, step_type, status, limit, offset).await,
+        Database::Postgres(pool) => list_jobs_with_count_pg(pool, step_type, status, limit, offset).await,
     }
+}
+
+async fn list_jobs_with_count_sqlite(
+    pool: &sqlx::SqlitePool,
+    step_type: Option<&str>,
+    status: Option<&str>,
+    limit: i32,
+    offset: i32,
+) -> Result<(Vec<JobRecord>, i64)> {
+    let (where_clause, st, s) = build_where_params(step_type, status);
+
+    let count_sql = format!("SELECT COUNT(*) FROM async_jobs WHERE {}", where_clause);
+    let mut cq = sqlx::query_as::<sqlx::Sqlite, (i64,)>(&count_sql);
+    if let Some(ref v) = st { cq = cq.bind(v.as_str()); }
+    if let Some(ref v) = s { cq = cq.bind(v.as_str()); }
+    let (count,) = cq.fetch_one(pool).await?;
+
+    let list_sql = format!("SELECT * FROM async_jobs WHERE {} ORDER BY created_at DESC LIMIT ? OFFSET ?", where_clause);
+    let mut lq = sqlx::query_as::<sqlx::Sqlite, JobRecord>(&list_sql);
+    if let Some(ref v) = st { lq = lq.bind(v.as_str()); }
+    if let Some(ref v) = s { lq = lq.bind(v.as_str()); }
+    let jobs = lq.bind(limit).bind(offset).fetch_all(pool).await.map_err(DbError::from)?;
+
+    Ok((jobs, count))
+}
+
+async fn list_jobs_with_count_mysql(
+    pool: &sqlx::MySqlPool,
+    step_type: Option<&str>,
+    status: Option<&str>,
+    limit: i32,
+    offset: i32,
+) -> Result<(Vec<JobRecord>, i64)> {
+    let (where_clause, st, s) = build_where_params(step_type, status);
+
+    let count_sql = format!("SELECT COUNT(*) FROM async_jobs WHERE {}", where_clause);
+    let mut cq = sqlx::query_as::<sqlx::MySql, (i64,)>(&count_sql);
+    if let Some(ref v) = st { cq = cq.bind(v.as_str()); }
+    if let Some(ref v) = s { cq = cq.bind(v.as_str()); }
+    let (count,) = cq.fetch_one(pool).await?;
+
+    let list_sql = format!("SELECT * FROM async_jobs WHERE {} ORDER BY created_at DESC LIMIT ? OFFSET ?", where_clause);
+    let mut lq = sqlx::query_as::<sqlx::MySql, JobRecord>(&list_sql);
+    if let Some(ref v) = st { lq = lq.bind(v.as_str()); }
+    if let Some(ref v) = s { lq = lq.bind(v.as_str()); }
+    let jobs = lq.bind(limit).bind(offset).fetch_all(pool).await.map_err(DbError::from)?;
+
+    Ok((jobs, count))
+}
+
+async fn list_jobs_with_count_pg(
+    pool: &sqlx::PgPool,
+    step_type: Option<&str>,
+    status: Option<&str>,
+    limit: i32,
+    offset: i32,
+) -> Result<(Vec<JobRecord>, i64)> {
+    let mut conditions = Vec::new();
+    let mut params = Vec::new();
+    let mut idx = 1;
+
+    if let Some(st) = step_type {
+        conditions.push(format!("step_type = ${}", idx));
+        params.push(st.to_string());
+        idx += 1;
+    }
+    if let Some(s) = status {
+        conditions.push(format!("status = ${}", idx));
+        params.push(s.to_string());
+        idx += 1;
+    }
+    let where_clause = if conditions.is_empty() {
+        String::from("1=1")
+    } else {
+        conditions.join(" AND ")
+    };
+
+    let count_sql = format!("SELECT COUNT(*) FROM async_jobs WHERE {}", where_clause);
+    let mut cq = sqlx::query_as::<sqlx::Postgres, (i64,)>(&count_sql);
+    for p in &params { cq = cq.bind(p.as_str()); }
+    let (count,) = cq.fetch_one(pool).await?;
+
+    let list_sql = format!(
+        "SELECT * FROM async_jobs WHERE {} ORDER BY created_at DESC LIMIT ${} OFFSET ${}",
+        where_clause, idx, idx + 1
+    );
+    let mut lq = sqlx::query_as::<sqlx::Postgres, JobRecord>(&list_sql);
+    for p in &params { lq = lq.bind(p.as_str()); }
+    let jobs = lq.bind(limit).bind(offset).fetch_all(pool).await.map_err(DbError::from)?;
+
+    Ok((jobs, count))
+}
+
+fn build_where_params(
+    step_type: Option<&str>,
+    status: Option<&str>,
+) -> (String, Option<String>, Option<String>) {
+    let mut conditions = Vec::new();
+    let st = step_type.map(|s| s.to_string());
+    let s = status.map(|s| s.to_string());
+    if st.is_some() { conditions.push("step_type = ?"); }
+    if s.is_some() { conditions.push("status = ?"); }
+    let where_clause = if conditions.is_empty() {
+        String::from("1=1")
+    } else {
+        conditions.join(" AND ")
+    };
+    (where_clause, st, s)
 }
 
 /// Get a single job with its steps.

@@ -45,3 +45,18 @@ litellm_settings:
   drop_params: true
   request_timeout: 600
   set_verbose: false
+
+# Body Archive — cold storage for spend_logs body fields (messages/response/proxy_server_request)
+# body_archive:
+#   enabled: false  # set to true to enable
+#   storage:
+#     type: s3  # or fs for local filesystem
+#     bucket: ""
+#     region: ""
+#     endpoint: ""
+#     access_key_id: "${AWS_ACCESS_KEY_ID}"
+#     secret_access_key: "${AWS_SECRET_ACCESS_KEY}"
+#   archive:
+#     archive_after_hours: 1
+#     null_body_after_days: 7
+#     batch_size: 5000

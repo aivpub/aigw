@@ -3,16 +3,19 @@
 //! Defines BodyArchiveConfig, S3Config, ArchivePolicy, FooterCacheConfig,
 //! ColChunkCacheConfig, and StorageBackend used by the BodyArchiver.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// Top-level configuration for the body archive system.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BodyArchiveConfig {
     /// Whether the archive worker is enabled. Default: false.
     #[serde(default)]
     pub enabled: bool,
-    /// S3-compatible storage configuration.
+    /// Storage backend — S3 or local filesystem.
+    #[serde(default)]
+    pub storage: StorageBackend,
+    /// S3-compatible storage configuration (deprecated: use `storage` with type: s3 instead).
     #[serde(default)]
     pub s3: S3Config,
     /// Archive policy parameters.
@@ -30,6 +33,17 @@ impl Default for BodyArchiveConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            storage: StorageBackend::S3 {
+                bucket: String::new(),
+                region: String::new(),
+                endpoint: None,
+                access_key_id: String::new(),
+                secret_access_key: String::new(),
+                prefix: String::new(),
+                use_ssl: true,
+                compatibility_mode: false,
+                url_style: default_url_style(),
+            },
             s3: S3Config::default(),
             archive: ArchivePolicy::default(),
             footer_cache: FooterCacheConfig::default(),
@@ -39,7 +53,7 @@ impl Default for BodyArchiveConfig {
 }
 
 /// S3-compatible storage configuration.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct S3Config {
     /// S3 endpoint URL. Empty = AWS default.
     #[serde(default)]
@@ -99,7 +113,7 @@ impl Default for S3Config {
 }
 
 /// Archive policy parameters.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArchivePolicy {
     /// Don't archive data newer than this many hours. Default: 1.
     #[serde(default = "default_archive_after_hours")]
@@ -155,7 +169,7 @@ impl Default for ArchivePolicy {
 }
 
 /// Footer cache configuration.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "lowercase")]
 pub enum FooterCacheConfig {
     /// No caching — always re-fetch from S3.
@@ -196,7 +210,7 @@ impl Default for FooterCacheConfig {
 }
 
 /// Column chunk cache configuration.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "lowercase")]
 pub enum ColChunkCacheConfig {
     /// No caching.
@@ -228,7 +242,7 @@ impl Default for ColChunkCacheConfig {
 }
 
 /// Storage backend — S3-compatible or local filesystem.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum StorageBackend {
     /// S3-compatible object storage.
@@ -254,6 +268,22 @@ pub enum StorageBackend {
     FileSystem {
         path: PathBuf,
     },
+}
+
+impl Default for StorageBackend {
+    fn default() -> Self {
+        Self::S3 {
+            bucket: String::new(),
+            region: String::new(),
+            endpoint: None,
+            access_key_id: String::new(),
+            secret_access_key: String::new(),
+            prefix: String::new(),
+            use_ssl: true,
+            compatibility_mode: false,
+            url_style: default_url_style(),
+        }
+    }
 }
 
 #[cfg(test)]

@@ -26,6 +26,7 @@ use crate::body_archive::writer::write_parquet_to_store;
 use crate::db::{Database, DbError, Result};
 
 /// BodyArchiver: archives spend_logs body fields to Parquet on object storage.
+#[derive(Debug)]
 pub struct BodyArchiver {
     config: BodyArchiveConfig,
     footer_cache: FooterCache,
@@ -41,6 +42,20 @@ impl BodyArchiver {
 
     pub fn config(&self) -> &BodyArchiveConfig {
         &self.config
+    }
+
+    /// Check whether storage is properly configured for archiving.
+    /// For S3: requires non-empty bucket. For FileSystem: requires non-empty path.
+    pub fn storage_configured(&self) -> bool {
+        use crate::body_archive::config::StorageBackend;
+        match &self.config.storage {
+            StorageBackend::S3 { bucket, access_key_id, .. } => {
+                !bucket.is_empty() && !access_key_id.is_empty()
+            }
+            StorageBackend::FileSystem { path } => {
+                !path.as_os_str().is_empty()
+            }
+        }
     }
 }
 
@@ -136,12 +151,9 @@ impl AsyncTask for BodyArchiver {
 
         info!(%hour, batch_size, "body_archive: executing archive for hour");
 
-        // 0. Validate storage connectivity before any DB work.
-        // build_object_store only validates config, not live HTTP — actual reachability
-        // is tested by write_parquet_to_store's block_on put() call later.
-        if !self.config.s3.bucket.is_empty() {
-            build_object_store(&self.config.s3)
-                .map_err(|e| DbError::Other(format!("storage init: {}", e)))?;
+        // 0. Validate storage is properly configured.
+        if !self.storage_configured() {
+            return Err(DbError::Other("body archive storage not configured".into()));
         }
 
         // 1. Query unarchived rows for this hour
@@ -155,10 +167,35 @@ impl AsyncTask for BodyArchiver {
         }
 
         // 2. Build storage path
-        let storage_path = build_storage_path(&self.config.s3.prefix, hour);
+        let prefix = match &self.config.storage {
+            crate::body_archive::config::StorageBackend::S3 { prefix, .. } => prefix.as_str(),
+            crate::body_archive::config::StorageBackend::FileSystem { .. } => "",
+        };
+        let storage_path = build_storage_path(prefix, hour);
 
         // 3. Write Parquet + upload to storage
-        let object_store = build_object_store(&self.config.s3)
+        let s3_config = match &self.config.storage {
+            crate::body_archive::config::StorageBackend::S3 {
+                bucket, region, endpoint,
+                access_key_id, secret_access_key,
+                prefix, use_ssl, compatibility_mode, url_style,
+            } => crate::body_archive::config::S3Config {
+                bucket: bucket.clone(),
+                region: region.clone(),
+                endpoint: endpoint.clone().unwrap_or_default(),
+                access_key_id: access_key_id.clone(),
+                secret_access_key: secret_access_key.clone(),
+                prefix: prefix.clone(),
+                use_ssl: *use_ssl,
+                compatibility_mode: *compatibility_mode,
+                url_style: url_style.clone(),
+                ..Default::default()
+            },
+            crate::body_archive::config::StorageBackend::FileSystem { path: _ } => {
+                return Err(DbError::Other("filesystem storage not yet supported in execute".into()));
+            }
+        };
+        let object_store = build_object_store(&s3_config)
             .map_err(|e| DbError::Other(format!("storage init: {}", e)))?;
 
         let bytes_written = write_parquet_to_store(
@@ -215,6 +252,10 @@ impl AsyncTask for BodyArchiver {
 
     /// Manual trigger: convert date range to hour steps.
     async fn steps_from_payload(&self, payload: &serde_json::Value) -> Result<Vec<NewStep>> {
+        if !self.storage_configured() {
+            return Err(DbError::Other("body archive storage not configured".into()));
+        }
+
         let start = payload["start_date"]
             .as_str()
             .ok_or_else(|| DbError::Other("start_date required".into()))?;
@@ -287,8 +328,29 @@ impl BodyArchiver {
         parquet_path: &str,
         request_id: &str,
     ) -> Result<Option<BodyPayload>> {
-        // Build object store and read the Parquet file
-        let store = build_object_store(&self.config.s3)
+        // Build object store from storage config
+        let s3_config = match &self.config.storage {
+            crate::body_archive::config::StorageBackend::S3 {
+                bucket, region, endpoint,
+                access_key_id, secret_access_key,
+                prefix, use_ssl, compatibility_mode, url_style,
+            } => crate::body_archive::config::S3Config {
+                bucket: bucket.clone(),
+                region: region.clone(),
+                endpoint: endpoint.clone().unwrap_or_default(),
+                access_key_id: access_key_id.clone(),
+                secret_access_key: secret_access_key.clone(),
+                prefix: prefix.clone(),
+                use_ssl: *use_ssl,
+                compatibility_mode: *compatibility_mode,
+                url_style: url_style.clone(),
+                ..Default::default()
+            },
+            crate::body_archive::config::StorageBackend::FileSystem { .. } => {
+                return Err(DbError::Other("filesystem storage not supported for cold reads".into()));
+            }
+        };
+        let store = build_object_store(&s3_config)
             .map_err(|e| DbError::Other(format!("storage init: {}", e)))?;
 
         // Try to fetch the Parquet file

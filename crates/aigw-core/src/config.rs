@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use crate::otel_tracing::OtelConfig;
+use crate::body_archive::config::BodyArchiveConfig;
 
 /// Top-level config (litellm-compatible)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,6 +24,9 @@ pub struct AigwConfig {
         skip_serializing_if = "Option::is_none"
     )]
     pub environment_variables: Option<serde_json::Value>,
+
+    #[serde(rename = "body_archive", skip_serializing_if = "Option::is_none")]
+    pub body_archive: Option<BodyArchiveConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
