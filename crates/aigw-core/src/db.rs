@@ -1652,7 +1652,10 @@ impl SpendLogStore for MySqlPool {
         api_key: Option<&str>,
         limit: Option<i32>,
     ) -> Result<Vec<SpendLog>> {
-        let limit_val = limit.unwrap_or(100);
+        let limit_val = limit.unwrap_or(20000);
+        // MySQL zero-date guard: upstream litellm may sync rows with
+        // start_time='0000-00-00 00:00:00', which sqlx rejects when
+        // decoding into chrono::DateTime<Utc>. Filter them at the SQL level.
         let sql = "SELECT request_id, call_type, api_key, spend, total_tokens, \
                    prompt_tokens, completion_tokens, start_time, end_time, \
                    request_duration_ms, completion_start_time, model, model_id, model_group, \
@@ -1660,10 +1663,10 @@ impl SpendLogStore for MySqlPool {
                    cache_hit, cache_key, request_tags, team_id, organization_id, \
                    end_user, requester_ip_address, messages, response, \
                    session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request \
-                   FROM spend_logs";
+                   FROM spend_logs WHERE start_time > '1000-01-01'";
         match api_key {
             Some(key) => sqlx::query_as(&format!(
-                "{} WHERE api_key = ? ORDER BY start_time DESC LIMIT {}",
+                "{} AND api_key = ? ORDER BY start_time DESC LIMIT {}",
                 sql, limit_val
             ))
             .bind(key)
@@ -1719,9 +1722,10 @@ impl SpendLogStore for MySqlPool {
         let date_filter = if start_date.is_some() && end_date.is_some() {
             " AND start_time >= ? AND start_time <= ?"
         } else { "" };
+        // MySQL CAST: SUM(total_tokens) returns DECIMAL, must CAST AS SIGNED
         let sql = match api_key {
-            Some(_) => format!("SELECT model, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE api_key = ?{date_filter} GROUP BY model ORDER BY total_tokens DESC"),
-            None => format!("SELECT model, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE 1=1{date_filter} GROUP BY model ORDER BY total_tokens DESC"),
+            Some(_) => format!("SELECT model, CAST(SUM(total_tokens) AS SIGNED) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE api_key = ?{date_filter} GROUP BY model ORDER BY total_tokens DESC"),
+            None => format!("SELECT model, CAST(SUM(total_tokens) AS SIGNED) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE 1=1{date_filter} GROUP BY model ORDER BY total_tokens DESC"),
         };
         let mut q = sqlx::query_as(&sql);
         if let Some(k) = api_key { q = q.bind(k); }
@@ -1735,8 +1739,8 @@ impl SpendLogStore for MySqlPool {
             " AND start_time >= ? AND start_time <= ?"
         } else { "" };
         let sql = match api_key {
-            Some(_) => format!("SELECT COALESCE(model_group, 'unknown') as model_group, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE api_key = ?{date_filter} GROUP BY COALESCE(model_group, 'unknown') ORDER BY total_tokens DESC"),
-            None => format!("SELECT COALESCE(model_group, 'unknown') as model_group, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE 1=1{date_filter} GROUP BY COALESCE(model_group, 'unknown') ORDER BY total_tokens DESC"),
+            Some(_) => format!("SELECT COALESCE(model_group, 'unknown') as model_group, CAST(SUM(total_tokens) AS SIGNED) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE api_key = ?{date_filter} GROUP BY COALESCE(model_group, 'unknown') ORDER BY total_tokens DESC"),
+            None => format!("SELECT COALESCE(model_group, 'unknown') as model_group, CAST(SUM(total_tokens) AS SIGNED) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE 1=1{date_filter} GROUP BY COALESCE(model_group, 'unknown') ORDER BY total_tokens DESC"),
         };
         let mut q = sqlx::query_as(&sql);
         if let Some(k) = api_key { q = q.bind(k); }
@@ -1752,7 +1756,7 @@ impl SpendLogStore for MySqlPool {
         } else { "" };
         let sql = format!(
             r#"SELECT COALESCE(NULLIF(sl.custom_llm_provider, ''), 'unknown') as provider,
-               COALESCE(SUM(sl.total_tokens), 0) as total_tokens,
+               CAST(COALESCE(SUM(sl.total_tokens), 0) AS SIGNED) as total_tokens,
                COALESCE(SUM(sl.spend), 0) as total_spend,
                COUNT(sl.request_id) as requests
                FROM spend_logs sl
