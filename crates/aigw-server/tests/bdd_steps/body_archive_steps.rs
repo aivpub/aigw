@@ -9,7 +9,11 @@ use crate::TestWorld;
 // ── flags: Given steps store state in last_body so When steps can read it ──
 
 fn set_flag(world: &mut TestWorld, key: &str, val: &serde_json::Value) {
-    let mut map = serde_json::Map::new();
+    let mut map = if let Some(serde_json::Value::Object(existing)) = world.last_body.take() {
+        existing
+    } else {
+        serde_json::Map::new()
+    };
     map.insert(key.to_string(), val.clone());
     world.last_body = Some(serde_json::Value::Object(map));
 }
@@ -228,7 +232,9 @@ async fn given_all_archived_for_hour(world: &mut TestWorld) {
 }
 
 #[given(expr = "存储后端不可达")]
-async fn given_storage_unreachable(_world: &mut TestWorld) {}
+async fn given_storage_unreachable(world: &mut TestWorld) {
+    set_flag(world, "storage_unreachable", &serde_json::json!(true));
+}
 
 #[given(expr = "spend_logs 中有 50 条待归档记录")]
 async fn given_50_pending_for_parquet(world: &mut TestWorld) {
@@ -278,7 +284,21 @@ async fn when_execute_step(world: &mut TestWorld) {
         completed_at: None,
     };
 
-    let config = aigw_core::body_archive::config::BodyArchiveConfig::default();
+    let config = if get_flag(world, "storage_unreachable")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        // Point at a nonexistent endpoint to force failure
+        let mut c = aigw_core::body_archive::config::BodyArchiveConfig::default();
+        c.s3.endpoint = "http://localhost:1".to_string();
+        c.s3.bucket = "test".to_string();
+        c.s3.region = "us-east-1".to_string();
+        c.s3.access_key_id = "test".to_string();
+        c.s3.secret_access_key = "test".to_string();
+        c
+    } else {
+        aigw_core::body_archive::config::BodyArchiveConfig::default()
+    };
     let archiver = Arc::new(aigw_core::body_archive::BodyArchiver::new(config));
     let result = archiver.execute(&state.db, &step).await;
 
