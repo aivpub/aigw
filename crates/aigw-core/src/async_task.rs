@@ -69,6 +69,7 @@ pub struct StepRecord {
     pub retry_count: i32,
     pub started_at: Option<String>,
     pub completed_at: Option<String>,
+    pub next_retry_at: Option<String>,
 }
 
 /// The AsyncTask trait — implement this for each background job type.

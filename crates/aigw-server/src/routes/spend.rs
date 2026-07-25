@@ -380,6 +380,48 @@ pub async fn global_spend_log_detail(
 
     let ttft_ms = compute_ttft(&log);
 
+    let body_payload = if log.messages.is_none() && log.body_archived {
+        // Cold data — body archived to Parquet. Try to retrieve from storage.
+        match &state.body_archiver {
+            Some(archiver) => {
+                match archiver.get_message_body(&state.db, &request_id).await {
+                    Ok(Some(body)) => body,
+                    Ok(None) => {
+                        tracing::warn!(%request_id, "body_archived=true but cold retrieval returned None — storage or file missing");
+                        aigw_core::body_archive::query::BodyPayload {
+                            messages: None,
+                            response: None,
+                            proxy_server_request: None,
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(%request_id, %e, "cold retrieval error");
+                        aigw_core::body_archive::query::BodyPayload {
+                            messages: None,
+                            response: None,
+                            proxy_server_request: None,
+                        }
+                    }
+                }
+            }
+            None => {
+                tracing::warn!(%request_id, "body_archived=true but body_archiver not configured");
+                aigw_core::body_archive::query::BodyPayload {
+                    messages: None,
+                    response: None,
+                    proxy_server_request: None,
+                }
+            }
+        }
+    } else {
+        // Hot data — body still in DB
+        aigw_core::body_archive::query::BodyPayload {
+            messages: log.messages.clone(),
+            response: log.response.clone(),
+            proxy_server_request: log.proxy_server_request.clone(),
+        }
+    };
+
     Ok(Json(json!({
         "request_id": log.request_id,
         "call_type": log.call_type,
@@ -410,9 +452,9 @@ pub async fn global_spend_log_detail(
         "status": log.status,
         "mcp_namespaced_tool_name": log.mcp_namespaced_tool_name,
         "requester_ip_address": &log.requester_ip_address,
-        "messages": &log.messages,
-        "response": &log.response,
-        "proxy_server_request": &log.proxy_server_request,
+        "messages": &body_payload.messages,
+        "response": &body_payload.response,
+        "proxy_server_request": &body_payload.proxy_server_request,
     })))
 }
 

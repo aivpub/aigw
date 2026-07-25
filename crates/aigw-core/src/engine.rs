@@ -387,6 +387,10 @@ async fn exec_loop(db: Arc<Database>, task: Arc<dyn AsyncTask>, poll_interval: D
             Ok(Some(step)) => {
                 let job_id = step.job_id.clone();
                 let step_key = step.step_key.clone();
+
+                // Transition job from 'pending' to 'running' (optimistic lock)
+                mark_job_running(&db, &job_id).await;
+
                 append_log(&db, &job_id, Some(&step_key), "info", "step started").await;
 
                 match task.execute(&db, &step).await {
@@ -424,26 +428,29 @@ async fn cleanup_loop(db: Arc<Database>, interval: Duration, timeout: Duration) 
 
 /// Atomically claim the next pending step for a given step_type.
 /// Uses SELECT ... FOR UPDATE SKIP LOCKED for multi-replica safety.
+/// Filters out steps whose next_retry_at is in the future.
 pub async fn claim_next_step(db: &Database, step_type: &str) -> Result<Option<StepRecord>> {
     let now = chrono::Utc::now().to_rfc3339();
     match db {
         Database::Sqlite(pool) => {
             // SQLite doesn't support SKIP LOCKED; use a transaction with IMMEDIATE
             let step = sqlx::query_as::<_, StepRecord>(
-                "SELECT id, job_id, step_key, step_type, status, payload, result, error_message, retry_count, started_at, completed_at
+                "SELECT id, job_id, step_key, step_type, status, payload, result, error_message, retry_count, started_at, completed_at, next_retry_at
                  FROM async_job_steps
                  WHERE step_type = ? AND status = 'pending'
+                   AND (next_retry_at IS NULL OR next_retry_at <= ?)
                  ORDER BY step_key
                  LIMIT 1"
             )
             .bind(step_type)
+            .bind(&now)
             .fetch_optional(pool)
             .await?;
 
             if let Some(ref step) = step {
                 // Update to 'running' in the same connection
                 sqlx::query(
-                    "UPDATE async_job_steps SET status = 'running', started_at = ?, retry_count = retry_count + 1 WHERE id = ?"
+                    "UPDATE async_job_steps SET status = 'running', started_at = ?, retry_count = retry_count + 1, next_retry_at = NULL WHERE id = ?"
                 )
                 .bind(&now).bind(&step.id)
                 .execute(pool).await?;
@@ -454,20 +461,22 @@ pub async fn claim_next_step(db: &Database, step_type: &str) -> Result<Option<St
             // MySQL: use SELECT ... FOR UPDATE SKIP LOCKED in a transaction
             let mut tx = pool.begin().await?;
             let step = sqlx::query_as::<_, StepRecord>(
-                "SELECT id, job_id, step_key, step_type, status, payload, result, error_message, retry_count, started_at, completed_at
+                "SELECT id, job_id, step_key, step_type, status, payload, result, error_message, retry_count, started_at, completed_at, next_retry_at
                  FROM async_job_steps
                  WHERE step_type = ? AND status = 'pending'
+                   AND (next_retry_at IS NULL OR next_retry_at <= ?)
                  ORDER BY step_key
                  LIMIT 1
                  FOR UPDATE SKIP LOCKED"
             )
             .bind(step_type)
+            .bind(&now)
             .fetch_optional(&mut *tx)
             .await?;
 
             if let Some(ref step) = step {
                 sqlx::query(
-                    "UPDATE async_job_steps SET status = 'running', started_at = ?, retry_count = retry_count + 1 WHERE id = ?"
+                    "UPDATE async_job_steps SET status = 'running', started_at = ?, retry_count = retry_count + 1, next_retry_at = NULL WHERE id = ?"
                 )
                 .bind(&now).bind(&step.id)
                 .execute(&mut *tx).await?;
@@ -478,20 +487,22 @@ pub async fn claim_next_step(db: &Database, step_type: &str) -> Result<Option<St
         Database::Postgres(pool) => {
             let mut tx = pool.begin().await?;
             let step = sqlx::query_as::<_, StepRecord>(
-                "SELECT id, job_id, step_key, step_type, status, payload, result, error_message, retry_count, started_at, completed_at
+                "SELECT id, job_id, step_key, step_type, status, payload, result, error_message, retry_count, started_at, completed_at, next_retry_at
                  FROM async_job_steps
                  WHERE step_type = $1 AND status = 'pending'
+                   AND (next_retry_at IS NULL OR next_retry_at <= $2)
                  ORDER BY step_key
                  LIMIT 1
                  FOR UPDATE SKIP LOCKED"
             )
             .bind(step_type)
+            .bind(&now)
             .fetch_optional(&mut *tx)
             .await?;
 
             if let Some(ref step) = step {
                 sqlx::query(
-                    "UPDATE async_job_steps SET status = 'running', started_at = $1, retry_count = retry_count + 1 WHERE id = $2"
+                    "UPDATE async_job_steps SET status = 'running', started_at = $1, retry_count = retry_count + 1, next_retry_at = NULL WHERE id = $2"
                 )
                 .bind(&now).bind(&step.id)
                 .execute(&mut *tx).await?;
@@ -538,21 +549,34 @@ pub async fn complete_step(
     match result {
         Ok(_) => {
             append_log(db, job_id, Some(&step.step_key), "info", "step completed").await;
-            // Check if all job steps are done
-            let update_result = increment_job_completed(db, job_id).await;
-            match update_result {
-                Ok(true) => {
-                    // All steps done — finalize
+            // Atomically increment completed_steps and determine terminal state
+            match increment_job_completed(db, job_id).await {
+                Ok(Some(ref status)) if status == "completed" => {
                     append_log(db, job_id, None, "info", "all steps completed, finalizing").await;
                     if let Ok(Some(job)) = get_job_by_id(db, job_id).await {
                         if let Err(e) = task.finalize(db, &job).await {
-                            error!(%job_id, %e, "finalize error");
+                            error!(%job_id, %e, "finalize error on completed job");
+                            mark_job_failed(db, job_id, &now).await;
+                            return;
                         }
-                        // Mark job as completed
                         mark_job_completed(db, job_id, &now).await;
                     }
                 }
-                Ok(false) => {} // More steps pending
+                Ok(Some(ref status)) if status == "partially_failed" => {
+                    append_log(db, job_id, None, "warn", "all steps completed with some failures, finalizing").await;
+                    if let Ok(Some(job)) = get_job_by_id(db, job_id).await {
+                        if let Err(e) = task.finalize(db, &job).await {
+                            error!(%job_id, %e, "finalize error on partially_failed job");
+                            mark_job_failed(db, job_id, &now).await;
+                            return;
+                        }
+                        mark_job_partially_failed(db, job_id, &now).await;
+                    }
+                }
+                Ok(Some(other)) => {
+                    append_log(db, job_id, None, "warn", &format!("unexpected terminal state: {}", other)).await;
+                }
+                Ok(None) => {} // More steps pending
                 Err(e) => error!(%job_id, %e, "increment_job_completed error"),
             }
         }
@@ -563,6 +587,8 @@ pub async fn complete_step(
 }
 
 /// Mark a step as failed. If retries remain, reset to pending; otherwise mark as failed.
+/// When the step goes to pending (retry), set next_retry_at = now + 2^retry_count seconds.
+/// When the step goes to failed, atomically increment failed_steps and check job terminal state.
 pub async fn fail_step(
     db: &Database,
     step: &StepRecord,
@@ -570,38 +596,46 @@ pub async fn fail_step(
     task: &Arc<dyn AsyncTask>,
     job_id: &str,
 ) {
-    let now = chrono::Utc::now().to_rfc3339();
-    let _step_type = task.step_type();
+    let now = chrono::Utc::now();
+    let now_str = now.to_rfc3339();
 
     // Get max_retries from the parent job (default to 3 if we can't read it)
     let max_retries = get_job_max_retries(db, job_id).await.unwrap_or(3);
 
-    let new_status = if step.retry_count + 1 >= max_retries {
-        "failed"
+    let new_status;
+    let next_retry_at: Option<String>;
+
+    if step.retry_count + 1 >= max_retries {
+        new_status = "failed";
+        next_retry_at = None;
     } else {
-        "pending"
-    };
+        new_status = "pending";
+        // Exponential backoff: 2^retry_count seconds (the retry_count here is BEFORE increment,
+        // so step.retry_count + 1 is the next retry count)
+        let delay_secs = 2_u32.pow((step.retry_count + 1).max(0) as u32);
+        next_retry_at = Some((now + chrono::Duration::seconds(delay_secs as i64)).to_rfc3339());
+    }
 
     let result: std::result::Result<(), DbError> = match db {
         Database::Sqlite(pool) => {
             sqlx::query(
-                "UPDATE async_job_steps SET status = ?, error_message = ?, completed_at = ? WHERE id = ?"
+                "UPDATE async_job_steps SET status = ?, error_message = ?, completed_at = ?, next_retry_at = ? WHERE id = ?"
             )
-            .bind(new_status).bind(error_msg).bind(&now).bind(&step.id)
+            .bind(new_status).bind(error_msg).bind(&now_str).bind(&next_retry_at).bind(&step.id)
             .execute(pool).await.map(|_| ()).map_err(DbError::from)
         }
         Database::Mysql(pool) => {
             sqlx::query(
-                "UPDATE async_job_steps SET status = ?, error_message = ?, completed_at = ? WHERE id = ?"
+                "UPDATE async_job_steps SET status = ?, error_message = ?, completed_at = ?, next_retry_at = ? WHERE id = ?"
             )
-            .bind(new_status).bind(error_msg).bind(&now).bind(&step.id)
+            .bind(new_status).bind(error_msg).bind(&now_str).bind(&next_retry_at).bind(&step.id)
             .execute(pool).await.map(|_| ()).map_err(DbError::from)
         }
         Database::Postgres(pool) => {
             sqlx::query(
-                "UPDATE async_job_steps SET status = $1, error_message = $2, completed_at = $3 WHERE id = $4"
+                "UPDATE async_job_steps SET status = $1, error_message = $2, completed_at = $3, next_retry_at = $4 WHERE id = $5"
             )
-            .bind(new_status).bind(error_msg).bind(&now).bind(&step.id)
+            .bind(new_status).bind(error_msg).bind(&now_str).bind(&next_retry_at).bind(&step.id)
             .execute(pool).await.map(|_| ()).map_err(DbError::from)
         }
     };
@@ -613,8 +647,34 @@ pub async fn fail_step(
                 &format!("step {}: {}", new_status, error_msg)).await;
 
             if new_status == "failed" {
-                // Increment failed count
-                let _ = increment_job_failed(db, job_id).await;
+                // Atomically increment failed_steps and determine terminal state
+                match increment_job_failed(db, job_id).await {
+                    Ok(Some(ref status)) if status == "failed" => {
+                        append_log(db, job_id, None, "error", "all steps failed").await;
+                        if let Ok(Some(job)) = get_job_by_id(db, job_id).await {
+                            if let Err(e) = task.finalize(db, &job).await {
+                                error!(%job_id, %e, "finalize error on failed job");
+                            }
+                            mark_job_failed(db, job_id, &now_str).await;
+                        }
+                    }
+                    Ok(Some(ref status)) if status == "partially_failed" => {
+                        append_log(db, job_id, None, "warn", "all steps done with mixed results").await;
+                        if let Ok(Some(job)) = get_job_by_id(db, job_id).await {
+                            if let Err(e) = task.finalize(db, &job).await {
+                                error!(%job_id, %e, "finalize error on partially_failed job");
+                                mark_job_failed(db, job_id, &now_str).await;
+                                return;
+                            }
+                            mark_job_partially_failed(db, job_id, &now_str).await;
+                        }
+                    }
+                    Ok(Some(other)) => {
+                        append_log(db, job_id, None, "warn", &format!("unexpected terminal state: {}", other)).await;
+                    }
+                    Ok(None) => {} // More steps pending
+                    Err(e) => error!(%job_id, %e, "increment_job_failed error"),
+                }
             }
         }
         Err(e) => {
@@ -658,60 +718,151 @@ pub async fn cleanup_stale_steps(db: &Database, timeout: Duration) -> Result<()>
 // Internal helpers
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/// Increment the completed_steps counter and check if all steps are done.
-/// Returns true if the job is fully complete.
-async fn increment_job_completed(db: &Database, job_id: &str) -> Result<bool> {
+/// Atomically increment completed_steps and determine job terminal state.
+/// Returns Some("completed") if all steps done with no failures,
+/// Some("partially_failed") if all steps done with some failures,
+/// None if still running.
+async fn increment_job_completed(db: &Database, job_id: &str) -> Result<Option<String>> {
     match db {
         Database::Sqlite(pool) => {
+            // SQLite: use BEGIN IMMEDIATE transaction for atomicity
+            let mut tx = pool.begin().await?;
             sqlx::query(
                 "UPDATE async_jobs SET completed_steps = completed_steps + 1 WHERE id = ?"
             )
-            .bind(job_id).execute(pool).await?;
+            .bind(job_id).execute(&mut *tx).await?;
 
-            let job = sqlx::query_as::<_, JobRecord>(
-                "SELECT * FROM async_jobs WHERE id = ?"
+            let row: (i32, i32, i32) = sqlx::query_as(
+                "SELECT completed_steps, failed_steps, total_steps FROM async_jobs WHERE id = ?"
             )
-            .bind(job_id).fetch_optional(pool).await?;
+            .bind(job_id).fetch_one(&mut *tx).await?;
 
-            Ok(job.map(|j| j.completed_steps >= j.total_steps).unwrap_or(false))
+            tx.commit().await?;
+
+            let (completed, failed, total) = row;
+            if completed + failed >= total {
+                if failed == 0 {
+                    Ok(Some("completed".to_string()))
+                } else {
+                    Ok(Some("partially_failed".to_string()))
+                }
+            } else {
+                Ok(None)
+            }
         }
         Database::Mysql(pool) => {
+            // MySQL: use transaction with SELECT FOR UPDATE
+            let mut tx = pool.begin().await?;
             sqlx::query("UPDATE async_jobs SET completed_steps = completed_steps + 1 WHERE id = ?")
-            .bind(job_id).execute(pool).await?;
+            .bind(job_id).execute(&mut *tx).await?;
 
-            let job = sqlx::query_as::<_, JobRecord>("SELECT * FROM async_jobs WHERE id = ?")
-            .bind(job_id).fetch_optional(pool).await?;
+            let row: (i32, i32, i32) = sqlx::query_as(
+                "SELECT completed_steps, failed_steps, total_steps FROM async_jobs WHERE id = ? FOR UPDATE"
+            )
+            .bind(job_id).fetch_one(&mut *tx).await?;
 
-            Ok(job.map(|j| j.completed_steps >= j.total_steps).unwrap_or(false))
+            tx.commit().await?;
+
+            let (completed, failed, total) = row;
+            if completed + failed >= total {
+                if failed == 0 {
+                    Ok(Some("completed".to_string()))
+                } else {
+                    Ok(Some("partially_failed".to_string()))
+                }
+            } else {
+                Ok(None)
+            }
         }
         Database::Postgres(pool) => {
-            sqlx::query("UPDATE async_jobs SET completed_steps = completed_steps + 1 WHERE id = $1")
-            .bind(job_id).execute(pool).await?;
+            // PG: use UPDATE ... RETURNING for atomicity
+            let row: Option<(Option<String>,)> = sqlx::query_as(
+                r#"UPDATE async_jobs
+                   SET completed_steps = completed_steps + 1
+                   WHERE id = $1
+                   RETURNING
+                     CASE WHEN completed_steps + failed_steps >= total_steps THEN
+                       CASE WHEN failed_steps = 0 THEN 'completed' ELSE 'partially_failed' END
+                     ELSE NULL END"#
+            )
+            .bind(job_id)
+            .fetch_optional(pool)
+            .await?;
 
-            let job = sqlx::query_as::<_, JobRecord>("SELECT * FROM async_jobs WHERE id = $1")
-            .bind(job_id).fetch_optional(pool).await?;
-
-            Ok(job.map(|j| j.completed_steps >= j.total_steps).unwrap_or(false))
+            Ok(row.and_then(|r| r.0))
         }
     }
 }
 
-async fn increment_job_failed(db: &Database, job_id: &str) -> Result<()> {
+/// Atomically increment failed_steps and determine job terminal state.
+/// Returns Some("failed") if all steps are done and none completed,
+/// Some("partially_failed") if all steps are done and some completed,
+/// None if still running.
+async fn increment_job_failed(db: &Database, job_id: &str) -> Result<Option<String>> {
     match db {
         Database::Sqlite(pool) => {
+            let mut tx = pool.begin().await?;
             sqlx::query("UPDATE async_jobs SET failed_steps = failed_steps + 1 WHERE id = ?")
-            .bind(job_id).execute(pool).await?;
+            .bind(job_id).execute(&mut *tx).await?;
+
+            let row: (i32, i32, i32) = sqlx::query_as(
+                "SELECT completed_steps, failed_steps, total_steps FROM async_jobs WHERE id = ?"
+            )
+            .bind(job_id).fetch_one(&mut *tx).await?;
+
+            tx.commit().await?;
+
+            let (completed, failed, total) = row;
+            if completed + failed >= total {
+                if completed == 0 {
+                    Ok(Some("failed".to_string()))
+                } else {
+                    Ok(Some("partially_failed".to_string()))
+                }
+            } else {
+                Ok(None)
+            }
         }
         Database::Mysql(pool) => {
+            let mut tx = pool.begin().await?;
             sqlx::query("UPDATE async_jobs SET failed_steps = failed_steps + 1 WHERE id = ?")
-            .bind(job_id).execute(pool).await?;
+            .bind(job_id).execute(&mut *tx).await?;
+
+            let row: (i32, i32, i32) = sqlx::query_as(
+                "SELECT completed_steps, failed_steps, total_steps FROM async_jobs WHERE id = ? FOR UPDATE"
+            )
+            .bind(job_id).fetch_one(&mut *tx).await?;
+
+            tx.commit().await?;
+
+            let (completed, failed, total) = row;
+            if completed + failed >= total {
+                if completed == 0 {
+                    Ok(Some("failed".to_string()))
+                } else {
+                    Ok(Some("partially_failed".to_string()))
+                }
+            } else {
+                Ok(None)
+            }
         }
         Database::Postgres(pool) => {
-            sqlx::query("UPDATE async_jobs SET failed_steps = failed_steps + 1 WHERE id = $1")
-            .bind(job_id).execute(pool).await?;
+            let row: Option<(Option<String>,)> = sqlx::query_as(
+                r#"UPDATE async_jobs
+                   SET failed_steps = failed_steps + 1
+                   WHERE id = $1
+                   RETURNING
+                     CASE WHEN completed_steps + failed_steps >= total_steps THEN
+                       CASE WHEN completed_steps = 0 THEN 'failed' ELSE 'partially_failed' END
+                     ELSE NULL END"#
+            )
+            .bind(job_id)
+            .fetch_optional(pool)
+            .await?;
+
+            Ok(row.and_then(|r| r.0))
         }
     }
-    Ok(())
 }
 
 async fn get_job_by_id(db: &Database, job_id: &str) -> Result<Option<JobRecord>> {
@@ -764,6 +915,67 @@ async fn mark_job_completed(db: &Database, job_id: &str, now: &str) {
         Database::Postgres(pool) => {
             sqlx::query("UPDATE async_jobs SET status = 'completed', completed_at = $1, updated_at = $2 WHERE id = $3")
             .bind(now).bind(now).bind(job_id).execute(pool).await.ok();
+        }
+    }
+}
+
+/// Transition job from pending to running (optimistic lock: only from 'pending').
+async fn mark_job_running(db: &Database, job_id: &str) {
+    let now = chrono::Utc::now().to_rfc3339();
+    match db {
+        Database::Sqlite(pool) => {
+            sqlx::query(
+                "UPDATE async_jobs SET status = 'running', started_at = ? WHERE id = ? AND status = 'pending'"
+            )
+            .bind(&now).bind(job_id).execute(pool).await.ok();
+        }
+        Database::Mysql(pool) => {
+            sqlx::query(
+                "UPDATE async_jobs SET status = 'running', started_at = ? WHERE id = ? AND status = 'pending'"
+            )
+            .bind(&now).bind(job_id).execute(pool).await.ok();
+        }
+        Database::Postgres(pool) => {
+            sqlx::query(
+                "UPDATE async_jobs SET status = 'running', started_at = $1 WHERE id = $2 AND status = 'pending'"
+            )
+            .bind(&now).bind(job_id).execute(pool).await.ok();
+        }
+    }
+}
+
+/// Mark job as failed with completed_at.
+async fn mark_job_failed(db: &Database, job_id: &str, now: &str) {
+    match db {
+        Database::Sqlite(pool) => {
+            sqlx::query("UPDATE async_jobs SET status = 'failed', completed_at = ? WHERE id = ?")
+            .bind(now).bind(job_id).execute(pool).await.ok();
+        }
+        Database::Mysql(pool) => {
+            sqlx::query("UPDATE async_jobs SET status = 'failed', completed_at = ? WHERE id = ?")
+            .bind(now).bind(job_id).execute(pool).await.ok();
+        }
+        Database::Postgres(pool) => {
+            sqlx::query("UPDATE async_jobs SET status = 'failed', completed_at = $1 WHERE id = $2")
+            .bind(now).bind(job_id).execute(pool).await.ok();
+        }
+    }
+}
+
+/// Mark job as partially_failed with completed_at.
+async fn mark_job_partially_failed(db: &Database, job_id: &str, now: &str) {
+    match db {
+        Database::Sqlite(pool) => {
+            sqlx::query("UPDATE async_jobs SET status = 'partially_failed', completed_at = ? WHERE id = ?")
+            .bind(now).bind(job_id).execute(pool).await.ok();
+        }
+        Database::Mysql(pool) => {
+            sqlx::query("UPDATE async_jobs SET status = 'partially_failed', completed_at = ? WHERE id = ?")
+            .bind(now).bind(job_id).execute(pool).await.ok();
+        }
+        Database::Postgres(pool) => {
+            sqlx::query("UPDATE async_jobs SET status = 'partially_failed', completed_at = $1 WHERE id = $2")
+            .bind(now).bind(job_id).execute(pool).await.ok();
         }
     }
 }
