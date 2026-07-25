@@ -26,83 +26,11 @@ pub fn write_parquet_to_store(
         return Ok(0);
     }
 
-    // Build Arrow schema
-    let schema = Arc::new(Schema::new(vec![
-        Field::new("request_id", DataType::Utf8, false),
-        Field::new("start_time", DataType::Utf8, false),
-        Field::new("model", DataType::Utf8, false),
-        Field::new("status", DataType::Utf8, true),
-        Field::new("cache_hit", DataType::Utf8, true),
-        Field::new("session_id", DataType::Utf8, true),
-        Field::new("messages", DataType::Utf8, true),
-        Field::new("response", DataType::Utf8, true),
-        Field::new("proxy_server_request", DataType::Utf8, true),
-    ]));
-
-    let num_rows = rows.len();
-    let mut request_ids = StringBuilder::with_capacity(num_rows, 64);
-    let mut start_times = StringBuilder::with_capacity(num_rows, 32);
-    let mut models = StringBuilder::with_capacity(num_rows, 32);
-    let mut statuses = StringBuilder::with_capacity(num_rows, 16);
-    let mut cache_hits = StringBuilder::with_capacity(num_rows, 8);
-    let mut session_ids = StringBuilder::with_capacity(num_rows, 64);
-    let mut messages_arr = StringBuilder::with_capacity(num_rows, 1024);
-    let mut responses = StringBuilder::with_capacity(num_rows, 1024);
-    let mut proxy_requests = StringBuilder::with_capacity(num_rows, 512);
-
-    for row in rows {
-        request_ids.append_value(&row.request_id);
-        start_times.append_value(&row.start_time);
-        models.append_value(&row.model);
-        append_option_string(&mut statuses, &row.status);
-        append_option_string(&mut cache_hits, &row.cache_hit);
-        append_option_string(&mut session_ids, &row.session_id);
-        append_option_string(&mut messages_arr, &row.messages);
-        append_option_string(&mut responses, &row.response);
-        append_option_string(&mut proxy_requests, &row.proxy_server_request);
-    }
-
-    let batch = RecordBatch::try_new(
-        schema.clone(),
-        vec![
-            Arc::new(request_ids.finish()),
-            Arc::new(start_times.finish()),
-            Arc::new(models.finish()),
-            Arc::new(statuses.finish()),
-            Arc::new(cache_hits.finish()),
-            Arc::new(session_ids.finish()),
-            Arc::new(messages_arr.finish()),
-            Arc::new(responses.finish()),
-            Arc::new(proxy_requests.finish()),
-        ],
-    )
-    .map_err(|e| format!("RecordBatch: {}", e))?;
-
-    // Writer properties: ZSTD level 3, Bloom filter on request_id and session_id
-    let props = WriterProperties::builder()
-        .set_compression(Compression::ZSTD(
-            ZstdLevel::try_new(3).map_err(|e| format!("ZstdLevel: {}", e))?
-        ))
-        .set_max_row_group_size(row_group_size)
-        .set_column_bloom_filter_enabled(ColumnPath::from("request_id"), true)
-        .set_column_bloom_filter_enabled(ColumnPath::from("session_id"), true)
-        .set_dictionary_enabled(true)
-        .build();
-
-    let mut buffer = Cursor::new(Vec::new());
-    {
-        let mut writer = ArrowWriter::try_new(&mut buffer, schema, Some(props))
-            .map_err(|e| format!("ArrowWriter: {}", e))?;
-        writer.write(&batch).map_err(|e| format!("write batch: {}", e))?;
-        writer.close().map_err(|e| format!("close writer: {}", e))?;
-    }
-
-    let data = buffer.into_inner();
+    let data = write_parquet_to_buffer(rows, row_group_size)?;
     let bytes = data.len();
 
-    // In production, we would upload to object_store here:
-    // object_store.put(&object_store_path.into(), data.into()).await;
-    // For testing, we just return the buffer size and let the caller handle upload.
+    // TODO: actual async upload to object_store
+    // object_store.put(&path.into(), data.into()).await?;
 
     Ok(bytes)
 }

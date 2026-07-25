@@ -234,6 +234,34 @@ async fn given_all_archived_for_hour(world: &mut TestWorld) {
 #[given(expr = "存储后端不可达")]
 async fn given_storage_unreachable(world: &mut TestWorld) {
     set_flag(world, "storage_unreachable", &serde_json::json!(true));
+    // Insert test data matching a real hour so execute() hits the storage layer.
+    let state = world.ensure_state().await;
+    let anchor = chrono::Utc::now() - chrono::Duration::hours(2);
+    let hour_label = anchor.format("%Y-%m-%dT%H").to_string();
+    set_flag(world, "test_hour", &serde_json::json!(hour_label));
+    let log = aigw_core::models::SpendLog {
+        request_id: "unreachable-test-001".to_string(),
+        call_type: "completion".to_string(),
+        api_key: "hash-unreachable".to_string(),
+        spend: 0.01, total_tokens: 100, prompt_tokens: 50, completion_tokens: 50,
+        start_time: anchor,
+        end_time: anchor,
+        request_duration_ms: Some(500), completion_start_time: None,
+        model: "gpt-4".to_string(), model_id: None, model_group: None,
+        custom_llm_provider: Some("openai".to_string()), api_base: None,
+        user: Some("testuser".to_string()), metadata: None,
+        cache_hit: None, cache_key: None, request_tags: None,
+        team_id: None, organization_id: None, end_user: None,
+        requester_ip_address: None,
+        messages: Some(serde_json::json!([{"role":"user","content":"storage-test"}])),
+        response: Some(serde_json::json!({"choices":[{}]})),
+        session_id: None, status: Some("success".to_string()),
+        mcp_namespaced_tool_name: None, agent_id: None,
+        proxy_server_request: None,
+        body_archived: false,
+        parquet_path: None,
+    };
+    state.db.insert_spend_log(&log).await.expect("insert unreachable test data");
 }
 
 #[given(expr = "spend_logs 中有 50 条待归档记录")]

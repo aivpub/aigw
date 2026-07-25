@@ -136,6 +136,13 @@ impl AsyncTask for BodyArchiver {
 
         info!(%hour, batch_size, "body_archive: executing archive for hour");
 
+        // 0. Validate storage connectivity before any DB work.
+        // This causes early failure for unreachable backends (e.g. bad endpoint).
+        if !self.config.s3.bucket.is_empty() {
+            build_object_store(&self.config.s3)
+                .map_err(|e| DbError::Other(format!("storage init: {}", e)))?;
+        }
+
         // 1. Query unarchived rows for this hour
         let rows = query_unarchived_rows(db, hour, batch_size).await?;
         let row_count = rows.len();
