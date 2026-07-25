@@ -1321,6 +1321,8 @@ use aigw_core::models::SpendLog;
             mcp_namespaced_tool_name: None,
             agent_id: None,
             proxy_server_request: None,
+            body_archived: false,
+            parquet_path: None,
         };
         db.insert_spend_log(&log).await.expect("insert log");
 
@@ -1404,6 +1406,8 @@ use aigw_core::models::SpendLog;
             mcp_namespaced_tool_name: None,
             agent_id: None,
             proxy_server_request: None,
+            body_archived: false,
+            parquet_path: None,
         };
         db.insert_spend_log(&log).await.expect("insert log");
 

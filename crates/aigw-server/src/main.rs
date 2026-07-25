@@ -37,9 +37,11 @@ pub const LONG_VERSION: &str = concat!(
     env!("GIT_DESCRIBE"),
 );
 
+use aigw_core::body_archive::BodyArchiver;
 use aigw_core::config::{AigwConfig, CompressionConfig};
 use aigw_core::daily_spend_queue::DailySpendQueue;
 use aigw_core::db::Database;
+use aigw_core::engine::{Engine, EngineConfig};
 use aigw_core::provider::ProviderRegistry;
 use aigw_core::rate_limiter::RateLimiter;
 use aigw_core::resolver::ModelResolver;
@@ -285,6 +287,14 @@ async fn main() -> anyhow::Result<()> {
         resolver,
         otel_active,
     });
+
+    // Start async job engine with body_archive worker
+    {
+        let mut engine = Engine::new(Arc::clone(&db_arc), EngineConfig::default());
+        engine.register(Arc::new(BodyArchiver::new(Default::default())));
+        tokio::spawn(async move { engine.run().await });
+        tracing::info!("Async job engine started");
+    }
 
     // Build compression config from general_settings
     let compression_cfg = config

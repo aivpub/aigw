@@ -122,6 +122,10 @@ impl Engine {
 
 /// Create a new Job + Steps in the database.
 /// Used by both cron (tick) and manual trigger paths.
+///
+/// Deduplicates steps: if a step_key already exists in any active (pending/running)
+/// job of the same step_type, it is skipped. If all steps are duplicates,
+/// an error is returned.
 pub async fn create_job(
     db: &Database,
     step_type: &str,
@@ -133,10 +137,85 @@ pub async fn create_job(
     let job_id = format!("job-{}", Uuid::new_v4().to_string().split('-').next().unwrap_or("0000"));
     let now = chrono::Utc::now().to_rfc3339();
 
+    // Deduplicate: filter out steps whose keys already exist in active jobs
+    let active_keys = find_active_step_keys(db, step_type, steps).await?;
+    let steps: Vec<&NewStep> = if active_keys.is_empty() {
+        steps.iter().collect()
+    } else {
+        let skipped = active_keys.len();
+        warn!(step_type, %trigger_type, skipped, "create_job: skipping duplicate steps already in active jobs");
+        steps.iter().filter(|s| !active_keys.contains(&s.key)).collect()
+    };
+
+    if steps.is_empty() {
+        return Err(DbError::Other("all steps are already queued in active jobs".into()));
+    }
+
+    // Recompute total from deduplicated steps
     match db {
-        Database::Sqlite(pool) => create_job_sqlite(pool, &job_id, step_type, trigger_type, triggered_by, steps, max_retries, &now).await,
-        Database::Mysql(pool) => create_job_mysql(pool, &job_id, step_type, trigger_type, triggered_by, steps, max_retries, &now).await,
-        Database::Postgres(pool) => create_job_pg(pool, &job_id, step_type, trigger_type, triggered_by, steps, max_retries, &now).await,
+        Database::Sqlite(pool) => {
+            create_job_sqlite(pool, &job_id, step_type, trigger_type, triggered_by, &steps, max_retries, &now).await
+        }
+        Database::Mysql(pool) => {
+            create_job_mysql(pool, &job_id, step_type, trigger_type, triggered_by, &steps, max_retries, &now).await
+        }
+        Database::Postgres(pool) => {
+            create_job_pg(pool, &job_id, step_type, trigger_type, triggered_by, &steps, max_retries, &now).await
+        }
+    }
+}
+
+/// Find which step keys from `steps` are already present in any active (pending/running)
+/// job of the given step_type. Used for cross-job deduplication.
+async fn find_active_step_keys(
+    db: &Database,
+    step_type: &str,
+    steps: &[NewStep],
+) -> Result<std::collections::HashSet<String>> {
+    if steps.is_empty() {
+        return Ok(std::collections::HashSet::new());
+    }
+    let step_keys: Vec<&str> = steps.iter().map(|s| s.key.as_str()).collect();
+    match db {
+        Database::Sqlite(pool) => {
+            let placeholders = step_keys.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            let sql = format!(
+                "SELECT DISTINCT s.step_key FROM async_job_steps s
+                 JOIN async_jobs j ON s.job_id = j.id
+                 WHERE s.step_type = ? AND s.step_key IN ({}) AND j.status IN ('pending', 'running')",
+                placeholders
+            );
+            let mut q = sqlx::query_scalar::<_, String>(&sql).bind(step_type);
+            for k in &step_keys { q = q.bind(k); }
+            let keys: Vec<String> = q.fetch_all(pool).await?;
+            Ok(keys.into_iter().collect())
+        }
+        Database::Mysql(pool) => {
+            let placeholders = step_keys.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            let sql = format!(
+                "SELECT DISTINCT s.step_key FROM async_job_steps s
+                 JOIN async_jobs j ON s.job_id = j.id
+                 WHERE s.step_type = ? AND s.step_key IN ({}) AND j.status IN ('pending', 'running')",
+                placeholders
+            );
+            let mut q = sqlx::query_scalar::<_, String>(&sql).bind(step_type);
+            for k in &step_keys { q = q.bind(k); }
+            let keys: Vec<String> = q.fetch_all(pool).await?;
+            Ok(keys.into_iter().collect())
+        }
+        Database::Postgres(pool) => {
+            let pg_placeholders: Vec<String> = step_keys.iter().enumerate().map(|(i, _)| format!("${}", i + 2)).collect();
+            let sql = format!(
+                "SELECT DISTINCT s.step_key FROM async_job_steps s
+                 JOIN async_jobs j ON s.job_id = j.id
+                 WHERE s.step_type = $1 AND s.step_key IN ({}) AND j.status IN ('pending', 'running')",
+                pg_placeholders.join(",")
+            );
+            let mut q = sqlx::query_scalar::<_, String>(&sql).bind(step_type);
+            for k in &step_keys { q = q.bind(k); }
+            let keys: Vec<String> = q.fetch_all(pool).await?;
+            Ok(keys.into_iter().collect())
+        }
     }
 }
 
@@ -146,7 +225,7 @@ async fn create_job_sqlite(
     step_type: &str,
     trigger_type: &str,
     triggered_by: Option<&str>,
-    steps: &[NewStep],
+    steps: &[&NewStep],
     max_retries: i32,
     now: &str,
 ) -> Result<String> {
@@ -177,7 +256,7 @@ async fn create_job_mysql(
     step_type: &str,
     trigger_type: &str,
     triggered_by: Option<&str>,
-    steps: &[NewStep],
+    steps: &[&NewStep],
     max_retries: i32,
     now: &str,
 ) -> Result<String> {
@@ -208,7 +287,7 @@ async fn create_job_pg(
     step_type: &str,
     trigger_type: &str,
     triggered_by: Option<&str>,
-    steps: &[NewStep],
+    steps: &[&NewStep],
     max_retries: i32,
     now: &str,
 ) -> Result<String> {
