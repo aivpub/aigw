@@ -5,7 +5,6 @@
 
 use arrow::array::{Array, StringArray};
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
-use parquet::arrow::ProjectionMask;
 
 /// Body payload returned from Parquet cold storage.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

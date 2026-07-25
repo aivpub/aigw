@@ -3,10 +3,9 @@
 //! Provides trigger, list, detail, stats, and log endpoints for the async job engine.
 //! Requires admin authentication.
 
-use aigw_core::async_task::{AsyncTask, JobRecord, JobLogEntry, NewStep, StepRecord};
+use aigw_core::async_task::{AsyncTask, JobRecord};
 use aigw_core::body_archive::config::BodyArchiveConfig;
 use aigw_core::engine::{create_job, get_job_detail, get_job_logs as engine_get_job_logs, get_job_stats, list_jobs};
-use aigw_core::db::Database;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -14,7 +13,6 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::sync::Arc;
 
 use super::keys::SharedState;
 use super::spend::{require_admin, SpendAuth};

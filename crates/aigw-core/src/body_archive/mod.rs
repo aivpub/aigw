@@ -304,6 +304,63 @@ impl BodyArchiver {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Admin stats
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+impl BodyArchiver {
+    /// Get archive statistics — count of archived and pending rows.
+    pub async fn get_archive_stats(&self, db: &Database) -> Result<serde_json::Value> {
+        let (total_archived_rows, pending_rows) = match db {
+            Database::Sqlite(pool) => {
+                let archived: (i64,) = sqlx::query_as(
+                    "SELECT COUNT(*) FROM spend_logs WHERE body_archived = TRUE",
+                )
+                .fetch_one(pool)
+                .await?;
+                let pending: (i64,) = sqlx::query_as(
+                    "SELECT COUNT(*) FROM spend_logs WHERE body_archived = FALSE AND messages IS NOT NULL",
+                )
+                .fetch_one(pool)
+                .await?;
+                (archived.0, pending.0)
+            }
+            Database::Mysql(pool) => {
+                let archived: (i64,) = sqlx::query_as(
+                    "SELECT COUNT(*) FROM spend_logs WHERE body_archived = TRUE",
+                )
+                .fetch_one(pool)
+                .await?;
+                let pending: (i64,) = sqlx::query_as(
+                    "SELECT COUNT(*) FROM spend_logs WHERE body_archived = FALSE AND messages IS NOT NULL",
+                )
+                .fetch_one(pool)
+                .await?;
+                (archived.0, pending.0)
+            }
+            Database::Postgres(pool) => {
+                let archived: (i64,) = sqlx::query_as(
+                    "SELECT COUNT(*) FROM spend_logs WHERE body_archived = TRUE",
+                )
+                .fetch_one(pool)
+                .await?;
+                let pending: (i64,) = sqlx::query_as(
+                    "SELECT COUNT(*) FROM spend_logs WHERE body_archived = FALSE AND messages IS NOT NULL",
+                )
+                .fetch_one(pool)
+                .await?;
+                (archived.0, pending.0)
+            }
+        };
+
+        Ok(serde_json::json!({
+            "total_archived_rows": total_archived_rows,
+            "pending_rows": pending_rows,
+            "archive_enabled": self.config.enabled,
+        }))
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Internal helpers
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

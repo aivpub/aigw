@@ -149,7 +149,7 @@ export function JobsPage() {
     <div className="space-y-6 p-6">
       <h1 className="text-2xl font-bold">Jobs</h1>
 
-      <Tabs value={tab} onValueChange={setTab}>
+      <Tabs defaultValue="overview" value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
           {stepTypes.map(st => (
