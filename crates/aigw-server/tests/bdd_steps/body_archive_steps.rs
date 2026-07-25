@@ -326,6 +326,38 @@ async fn when_execute_step(world: &mut TestWorld) {
         c.s3.region = "us-east-1".to_string();
         c.s3.access_key_id = "test".to_string();
         c.s3.secret_access_key = "test".to_string();
+        // Also set the new `storage` field so storage_configured() gate passes
+        c.storage = aigw_core::body_archive::config::StorageBackend::S3 {
+            bucket: "test".into(),
+            region: "us-east-1".into(),
+            endpoint: Some("http://localhost:1".into()),
+            access_key_id: "test".into(),
+            secret_access_key: "test".into(),
+            prefix: String::new(),
+            use_ssl: false,
+            compatibility_mode: false,
+            url_style: "vhost".into(),
+        };
+        c
+    } else if get_flag(world, "storage_unreachable").is_none() {
+        // Normal execute test: configure minimal storage so storage_configured() passes.
+        // When rows are empty, execute returns early without touching storage.
+        let mut c = aigw_core::body_archive::config::BodyArchiveConfig::default();
+        c.s3.bucket = "test-bucket".to_string();
+        c.s3.region = "us-east-1".to_string();
+        c.s3.access_key_id = "test".to_string();
+        c.s3.secret_access_key = "test".to_string();
+        c.storage = aigw_core::body_archive::config::StorageBackend::S3 {
+            bucket: "test-bucket".into(),
+            region: "us-east-1".into(),
+            endpoint: None,
+            access_key_id: "test".into(),
+            secret_access_key: "test".into(),
+            prefix: String::new(),
+            use_ssl: true,
+            compatibility_mode: false,
+            url_style: "vhost".into(),
+        };
         c
     } else {
         aigw_core::body_archive::config::BodyArchiveConfig::default()
