@@ -19,7 +19,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - pg_test_data:/var/lib/postgresql/data
+      - ${PWD}/data/postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
@@ -33,8 +33,4 @@ services:
     ports:
       - "3306:3306"
     volumes:
-      - mysql_test_data:/var/lib/mysql
-
-volumes:
-  pg_test_data:
-  mysql_test_data:
+      - ${PWD}/data/mysql:/var/lib/mysql
