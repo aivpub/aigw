@@ -2349,7 +2349,7 @@ impl Database {
             WHERE date(start_time) >= date({p1}) AND date(start_time) <= date({p2}) {filter}"#;
         match self {
             Database::Sqlite(pool) => {
-                let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false);
+                let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false, false);
                 let sql = sql_base.replace("{p1}", "?").replace("{p2}", "?").replace("{filter}", &filter_clause);
                 let mut q = sqlx::query_as(&sql)
                     .bind(start_date).bind(end_date);
@@ -2369,7 +2369,7 @@ impl Database {
                     CAST(COALESCE(SUM(completion_tokens), 0) AS SIGNED)
                 FROM spend_logs
                 WHERE date(start_time) >= date(?) AND date(start_time) <= date(?) {filter}"#;
-                let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false);
+                let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false, true);
                 let sql = sql_mysql.replace("{filter}", &filter_clause);
                 let mut q = sqlx::query_as(&sql)
                     .bind(start_date).bind(end_date);
@@ -2377,7 +2377,7 @@ impl Database {
                 q.fetch_one(pool).await.map_err(DbError::from)
             }
             Database::Postgres(pool) => {
-                let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 3, true);
+                let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 3, true, false);
                 let sql = sql_base.replace("{p1}", "$1").replace("{p2}", "$2").replace("{filter}", &filter_clause);
                 let mut q = sqlx::query_as(&sql)
                     .bind(start_date).bind(end_date);
@@ -2405,7 +2405,7 @@ impl Database {
                     COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END) \
                     FROM spend_logs WHERE date(start_time) >= date(?) AND date(start_time) <= date(?) {filter} \
                     GROUP BY 1 ORDER BY 1 ASC";
-                let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false);
+                let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false, false);
                 let sql = sql.replace("{filter}", &filter_clause);
                 let mut q = sqlx::query_as(&sql)
                     .bind(start_date).bind(end_date);
@@ -2420,7 +2420,7 @@ impl Database {
                     CAST(COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END) AS SIGNED) \
                     FROM spend_logs WHERE date(start_time) >= date(?) AND date(start_time) <= date(?) {filter} \
                     GROUP BY 1 ORDER BY 1 ASC";
-                let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false);
+                let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false, true);
                 let sql = sql.replace("{filter}", &filter_clause);
                 let mut q = sqlx::query_as(&sql)
                     .bind(start_date).bind(end_date);
@@ -2435,7 +2435,7 @@ impl Database {
                     COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END) \
                     FROM spend_logs WHERE date(start_time) >= date($1) AND date(start_time) <= date($2) {filter} \
                     GROUP BY 1 ORDER BY 1 ASC";
-                let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 3, true);
+                let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 3, true, false);
                 let sql = sql.replace("{filter}", &filter_clause);
                 let mut q = sqlx::query_as(&sql)
                     .bind(start_date).bind(end_date);
@@ -2466,7 +2466,7 @@ impl Database {
                     COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END) \
                     FROM spend_logs WHERE start_time >= ? AND start_time <= ? {filter} \
                     GROUP BY 1 ORDER BY 1 ASC";
-                let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false);
+                let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false, false);
                 let sql = sql.replace("{filter}", &filter_clause);
                 let mut q = sqlx::query_as(&sql)
                     .bind(&start_ts).bind(&end_ts);
@@ -2480,7 +2480,7 @@ impl Database {
                     CAST(COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END) AS SIGNED) \
                     FROM spend_logs WHERE start_time >= ? AND start_time <= ? {filter} \
                     GROUP BY 1 ORDER BY 1 ASC";
-                let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false);
+                let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false, true);
                 let sql = sql.replace("{filter}", &filter_clause);
                 let mut q = sqlx::query_as(&sql)
                     .bind(&start_ts).bind(&end_ts);
@@ -2494,7 +2494,7 @@ impl Database {
                     COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END) \
                     FROM spend_logs WHERE start_time >= $1::TIMESTAMPTZ AND start_time <= $2::TIMESTAMPTZ {filter} \
                     GROUP BY 1 ORDER BY 1 ASC";
-                let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 3, true);
+                let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 3, true, false);
                 let sql = sql.replace("{filter}", &filter_clause);
                 let mut q = sqlx::query_as(&sql)
                     .bind(&start_ts).bind(&end_ts);
@@ -2560,6 +2560,7 @@ fn build_activity_filter<'a>(
     organization_id: Option<&'a str>,
     start_index: usize,
     use_dollar: bool,
+    is_mysql: bool,
 ) -> (String, Vec<&'a str>) {
     let mut clauses = Vec::new();
     let mut params = Vec::new();
@@ -2567,6 +2568,8 @@ fn build_activity_filter<'a>(
     if let Some(uid) = user_id {
         if use_dollar {
             clauses.push(format!(r#""user" = ${}"#, idx));
+        } else if is_mysql {
+            clauses.push("`user` = ?".to_string());
         } else {
             clauses.push(r#""user" = ?"#.to_string());
         }
