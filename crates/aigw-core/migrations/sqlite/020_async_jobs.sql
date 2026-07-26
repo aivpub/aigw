@@ -1,7 +1,7 @@
 -- 020_async_jobs.sql (SQLite)
--- General-purpose async job framework tables for aigw.
--- Used by body_archive, and eventually budget_reset and other periodic tasks.
-
+--
+-- Async job framework: async_jobs / async_job_steps / async_job_logs.
+-- Drives cold-storage body archiving and other background tasks.
 CREATE TABLE IF NOT EXISTS async_jobs (
     id TEXT PRIMARY KEY,
     step_type TEXT NOT NULL,
@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS async_jobs (
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE INDEX IF NOT EXISTS idx_async_jobs_status ON async_jobs(status);
+CREATE INDEX IF NOT EXISTS idx_async_jobs_type ON async_jobs(step_type, status);
 
 CREATE TABLE IF NOT EXISTS async_job_steps (
     id TEXT PRIMARY KEY,
@@ -31,8 +33,10 @@ CREATE TABLE IF NOT EXISTS async_job_steps (
     retry_count INTEGER NOT NULL DEFAULT 0,
     started_at TEXT,
     completed_at TEXT,
+    next_retry_at TEXT,
     UNIQUE(job_id, step_key)
 );
+CREATE INDEX IF NOT EXISTS idx_async_job_steps_claim ON async_job_steps(step_type, status, step_key);
 
 CREATE TABLE IF NOT EXISTS async_job_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -42,8 +46,4 @@ CREATE TABLE IF NOT EXISTS async_job_logs (
     message TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
-
-CREATE INDEX IF NOT EXISTS idx_async_jobs_status ON async_jobs(status);
-CREATE INDEX IF NOT EXISTS idx_async_jobs_type ON async_jobs(step_type, status);
-CREATE INDEX IF NOT EXISTS idx_async_job_steps_claim ON async_job_steps(step_type, status, step_key);
 CREATE INDEX IF NOT EXISTS idx_async_job_logs_job ON async_job_logs(job_id, created_at);

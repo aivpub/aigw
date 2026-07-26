@@ -1,5 +1,6 @@
 -- 022_next_retry_at.sql (SQLite)
--- Add next_retry_at column to async_job_steps for exponential backoff retry scheduling.
--- claim_next_step filters out steps where next_retry_at is in the future.
-
-ALTER TABLE async_job_steps ADD COLUMN next_retry_at TEXT;
+--
+-- No-op: the `next_retry_at` column on async_job_steps was already added
+-- in migration 020 (async_job_steps.next_retry_at).  This migration number
+-- is kept in sync across drivers for the body-archive / async-job phase.
+SELECT 1;
