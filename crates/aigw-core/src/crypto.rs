@@ -258,6 +258,27 @@ fn rotate_fields_inner(
 // Helpers
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+/// Decode a `base64:type15:<encoded>` envelope produced by litellm on MySQL
+/// deployments.
+///
+/// Unlike `v2:gcm:` / NaCl envelopes (which carry *encrypted* bytes), the
+/// `base64:type15:` envelope wraps a **JSON plaintext** object — litellm
+/// base64-encodes the whole `litellm_params` JSON so MySQL's JSON validator
+/// never sees the raw text. The inner fields (e.g. `custom_llm_provider`) may
+/// still be individually NaCl-encrypted; those are handled separately by
+/// `rotate_json_fields` / `decrypt_json_fields`.
+///
+/// Returns the decoded UTF-8 plaintext on success, so callers can route the
+/// value through the same JSON-object rotation path used for SQLite/PG.
+pub fn decode_base64_type15(envelope: &str) -> Result<String, String> {
+    let rest = envelope
+        .strip_prefix("base64:type15:")
+        .ok_or_else(|| "not a base64:type15: envelope".to_string())?;
+    let cleaned: String = rest.replace('\n', "").replace('\r', "");
+    let data = decode_base64_safe(&cleaned)?;
+    String::from_utf8(data).map_err(|e| format!("UTF-8 decode failed: {}", e))
+}
+
 /// Base64-decode a string, trying multiple variants.
 ///
 /// First tries standard base64, then falls back to URL-safe base64
@@ -670,5 +691,36 @@ mod tests {
             plain_cred_name,
         );
         assert!(decrypt_litellm_value(name_enc, SOURCE_KEY).is_err());
+    }
+
+    #[test]
+    fn test_decode_base64_type15_returns_json_plaintext() {
+        // litellm MySQL wraps the whole litellm_params JSON in base64:type15:.
+        // The payload is JSON plaintext, not a NaCl-encrypted blob.
+        let plain = r#"{"custom_llm_provider":"abc","model":"gpt-4"}"#;
+        let encoded = BASE64_STD.encode(plain.as_bytes());
+        let envelope = format!("base64:type15:{}", encoded);
+
+        let decoded = decode_base64_type15(&envelope).unwrap();
+        assert_eq!(decoded, plain);
+    }
+
+    #[test]
+    fn test_decode_base64_type15_strips_embedded_newlines() {
+        // MySQL JSON columns can inject literal newlines into the base64 body.
+        let plain = r#"{"model":"gpt-4"}"#;
+        let encoded = BASE64_STD.encode(plain.as_bytes());
+        // Insert newlines mid-string the way a JSON column might.
+        let with_newlines = format!("{}\n{}", &encoded[..encoded.len() / 2], &encoded[encoded.len() / 2..]);
+        let envelope = format!("base64:type15:{}", with_newlines);
+
+        let decoded = decode_base64_type15(&envelope).unwrap();
+        assert_eq!(decoded, plain);
+    }
+
+    #[test]
+    fn test_decode_base64_type15_rejects_non_envelope() {
+        assert!(decode_base64_type15("v2:gcm:abc").is_err());
+        assert!(decode_base64_type15("{\"model\":\"gpt-4\"}").is_err());
     }
 }
