@@ -1079,12 +1079,15 @@ async fn query_activity(
         )?
     };
 
+    // SQL column order (see query_activity_metadata / sql_base):
+    //   spend, total_tokens, requests, successful_requests, failed_requests,
+    //   prompt_tokens, completion_tokens
     let metadata_val = ActivityMetadata {
         total_spend: metadata.0,
-        total_requests: metadata.1,
-        successful_requests: metadata.2,
-        failed_requests: metadata.3,
-        total_tokens: metadata.4,
+        total_tokens: metadata.1,
+        total_requests: metadata.2,
+        successful_requests: metadata.3,
+        failed_requests: metadata.4,
         prompt_tokens: metadata.5,
         completion_tokens: metadata.6,
     };

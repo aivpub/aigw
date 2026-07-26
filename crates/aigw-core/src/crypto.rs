@@ -265,23 +265,28 @@ fn rotate_fields_inner(
 /// characters (`-` → `+`, `_` → `/`) inside a standard-base64 string.
 /// Also strips any "v2:gcm:" prefix before decoding.
 fn decode_base64_safe(input: &str) -> Result<Vec<u8>, String> {
-    // Strip v2:gcm: prefix if present
+    // Strip v2:gcm: prefix if present (AES-256-GCM encrypted values)
     let encoded = input.strip_prefix("v2:gcm:").unwrap_or(input);
+    // Strip base64:type15: prefix — used by litellm postgres deployments
+    // (stores encrypted JSON as "base64:type15:<encoded>")
+    let encoded = encoded.strip_prefix("base64:type15:").unwrap_or(encoded);
+    // Strip embedded newlines — MySQL JSON columns store literal \n in strings
+    let encoded: String = encoded.replace('\n', "").replace('\r', "");
 
     // 1. Try standard base64 first
-    if let Ok(data) = BASE64_STD.decode(encoded) {
+    if let Ok(data) = BASE64_STD.decode(&encoded) {
         return Ok(data);
     }
 
     // 2. Try URL-safe base64 (with padding)
     use base64::engine::general_purpose::URL_SAFE;
-    if let Ok(data) = URL_SAFE.decode(encoded) {
+    if let Ok(data) = URL_SAFE.decode(&encoded) {
         return Ok(data);
     }
 
     // 3. Try URL-safe base64 (no padding)
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-    if let Ok(data) = URL_SAFE_NO_PAD.decode(encoded) {
+    if let Ok(data) = URL_SAFE_NO_PAD.decode(&encoded) {
         return Ok(data);
     }
 
