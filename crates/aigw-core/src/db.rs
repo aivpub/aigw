@@ -2349,12 +2349,15 @@ impl Database {
         team_id: Option<&str>,
         organization_id: Option<&str>,
     ) -> Result<(f64, i64, i64, i64, i64, i64, i64)> {
+        // Column order (must be identical across all three backends):
+        //   spend, total_tokens, requests, successful_requests, failed_requests,
+        //   prompt_tokens, completion_tokens
         let sql_base = r#"SELECT
                 COALESCE(SUM(spend), 0),
+                COALESCE(SUM(total_tokens), 0),
                 COUNT(request_id),
                 COUNT(CASE WHEN status = 'success' THEN 1 END),
                 COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END),
-                COALESCE(SUM(total_tokens), 0),
                 COALESCE(SUM(prompt_tokens), 0),
                 COALESCE(SUM(completion_tokens), 0)
             FROM spend_logs
@@ -2369,8 +2372,20 @@ impl Database {
                 q.fetch_one(pool).await.map_err(DbError::from)
             }
             Database::Mysql(pool) => {
+                // MySQL: CAST SUM/COUNT AS SIGNED because MySQL returns DECIMAL.
+                // spend column is f64 (DOUBLE) — do NOT CAST, it stays as-is.
+                let sql_mysql = r#"SELECT
+                    COALESCE(SUM(spend), 0),
+                    CAST(COALESCE(SUM(total_tokens), 0) AS SIGNED),
+                    CAST(COUNT(request_id) AS SIGNED),
+                    CAST(COUNT(CASE WHEN status = 'success' THEN 1 END) AS SIGNED),
+                    CAST(COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END) AS SIGNED),
+                    CAST(COALESCE(SUM(prompt_tokens), 0) AS SIGNED),
+                    CAST(COALESCE(SUM(completion_tokens), 0) AS SIGNED)
+                FROM spend_logs
+                WHERE date(start_time) >= date(?) AND date(start_time) <= date(?) {filter}"#;
                 let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false);
-                let sql = sql_base.replace("{p1}", "?").replace("{p2}", "?").replace("{filter}", &filter_clause);
+                let sql = sql_mysql.replace("{filter}", &filter_clause);
                 let mut q = sqlx::query_as(&sql)
                     .bind(start_date).bind(end_date);
                 for p in &params { q = q.bind(p); }
@@ -2413,11 +2428,11 @@ impl Database {
                 q.fetch_all(pool).await.map_err(DbError::from)
             }
             Database::Mysql(pool) => {
-                // MySQL: CAST(DATE(…) AS CHAR) converts DATE → TEXT.
-                let sql = "SELECT CAST(DATE(start_time) AS CHAR), COALESCE(SUM(spend), 0), COALESCE(SUM(total_tokens), 0), COUNT(request_id), \
-                    COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), \
-                    COUNT(CASE WHEN status = 'success' THEN 1 END), \
-                    COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END) \
+                // MySQL: CAST DATE and SUM/COUNT AS SIGNED for i64 compatibility.
+                let sql = "SELECT CAST(DATE(start_time) AS CHAR), COALESCE(SUM(spend), 0), CAST(COALESCE(SUM(total_tokens), 0) AS SIGNED), CAST(COUNT(request_id) AS SIGNED), \
+                    CAST(COALESCE(SUM(prompt_tokens), 0) AS SIGNED), CAST(COALESCE(SUM(completion_tokens), 0) AS SIGNED), \
+                    CAST(COUNT(CASE WHEN status = 'success' THEN 1 END) AS SIGNED), \
+                    CAST(COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END) AS SIGNED) \
                     FROM spend_logs WHERE date(start_time) >= date(?) AND date(start_time) <= date(?) {filter} \
                     GROUP BY 1 ORDER BY 1 ASC";
                 let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false);
@@ -2474,10 +2489,10 @@ impl Database {
                 q.fetch_all(pool).await.map_err(DbError::from)
             }
             Database::Mysql(pool) => {
-                let sql = "SELECT DATE_FORMAT(start_time, '%Y-%m-%dT%H:00:00'), COALESCE(SUM(spend), 0), COALESCE(SUM(total_tokens), 0), COUNT(request_id), \
-                    COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), \
-                    COUNT(CASE WHEN status = 'success' THEN 1 END), \
-                    COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END) \
+                let sql = "SELECT DATE_FORMAT(start_time, '%Y-%m-%dT%H:00:00'), COALESCE(SUM(spend), 0), CAST(COALESCE(SUM(total_tokens), 0) AS SIGNED), CAST(COUNT(request_id) AS SIGNED), \
+                    CAST(COALESCE(SUM(prompt_tokens), 0) AS SIGNED), CAST(COALESCE(SUM(completion_tokens), 0) AS SIGNED), \
+                    CAST(COUNT(CASE WHEN status = 'success' THEN 1 END) AS SIGNED), \
+                    CAST(COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END) AS SIGNED) \
                     FROM spend_logs WHERE start_time >= ? AND start_time <= ? {filter} \
                     GROUP BY 1 ORDER BY 1 ASC";
                 let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false);
@@ -2520,6 +2535,13 @@ impl Database {
             WHERE date(sl.start_time) >= date({p1}) AND date(sl.start_time) <= date({p2}) \
             GROUP BY sl.api_key, vk.key_alias ORDER BY 3 DESC LIMIT {limit}";
         let sql = sql.replace("{limit}", &limit.to_string());
+        // MySQL needs CAST on aggregates because SUM returns DECIMAL type.
+        let sql_mysql = "SELECT sl.api_key, vk.key_alias, \
+            COALESCE(SUM(sl.spend), 0) AS total_spend, CAST(COUNT(sl.request_id) AS SIGNED) AS total_requests, CAST(COALESCE(SUM(sl.total_tokens), 0) AS SIGNED) AS total_tokens \
+            FROM spend_logs sl LEFT JOIN virtual_keys vk ON sl.api_key = vk.token \
+            WHERE date(sl.start_time) >= date({p1}) AND date(sl.start_time) <= date({p2}) \
+            GROUP BY sl.api_key, vk.key_alias ORDER BY 3 DESC LIMIT {limit}";
+        let sql_mysql = sql_mysql.replace("{limit}", &limit.to_string());
         match self {
             Database::Sqlite(pool) => {
                 let sql = sql.replace("{p1}", "?").replace("{p2}", "?");
@@ -2528,7 +2550,7 @@ impl Database {
                     .fetch_all(pool).await.map_err(DbError::from)
             }
             Database::Mysql(pool) => {
-                let sql = sql.replace("{p1}", "?").replace("{p2}", "?");
+                let sql = sql_mysql.replace("{p1}", "?").replace("{p2}", "?");
                 sqlx::query_as(&sql)
                     .bind(start_date).bind(end_date)
                     .fetch_all(pool).await.map_err(DbError::from)
