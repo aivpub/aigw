@@ -804,14 +804,33 @@ fn normalize_mysql_type(raw: &str) -> String {
 // MySQL JSON helper — hex-encoded literal to avoid escaping issues
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/// Encode a string as a MySQL hex-encoded JSON literal.
-/// Bypasses all SQL-string-escaping problems — PG JSONB can contain
-/// arbitrary characters that MySQL's JSON validator rejects when
-/// passed via '…'-quoting.  `X'<hex>'` is a raw binary → `CAST(… AS JSON)`
-/// feeds it directly to MySQL's JSON parser without shell-quoting.
+/// Encode a JSON document string as a MySQL JSON literal.
+///
+/// A plain `CAST(X'..' AS JSON)` would store a document-shaped payload as a
+/// base64-encoded JSON *string scalar* (read-back yields `base64:type15:..`),
+/// breaking runtime `serde_json::Value` decoding.  And a `CAST('…' AS JSON)`
+/// string literal would let MySQL's SQL parser eat JSON escape backslashes
+/// (`\"` collapses to `"`), corrupting documents whose string values contain
+/// escaped quotes (e.g. `spend_logs.response`).
+///
+/// The form used here threads the needle: `CAST(X'hex' AS CHAR)` decodes the
+/// hex to a CHAR **without** SQL-string backslash un-escaping, so `\"`
+/// sequences survive intact; the outer `CAST(… AS JSON)` then parses the
+/// CHAR as a JSON document.  The stored value round-trips as
+/// `Value::Object` / `Value::Array` on read.
 fn mysql_json_hex_literal(s: &str) -> String {
-    let hex: String = s.as_bytes().iter().map(|b| format!("{:02X}", b)).collect();
-    format!("CAST(X'{}' AS JSON)", hex)
+    // Validate + normalise via serde_json round-trip first — PG-jsonb quirks
+    // that MySQL's JSON validator rejects are cleaned up here.
+    let normalized = match serde_json::from_str::<Value>(s) {
+        Ok(v) => v.to_string(),
+        Err(_) => return "'{}'".to_string(),
+    };
+    let hex: String = normalized.as_bytes().iter().map(|b| format!("{:02X}", b)).collect();
+    // CAST(X'hex' AS CHAR) yields the raw JSON text (no backslash un-escaping
+    // that a '…' string literal would apply), and CAST(… AS JSON) then parses
+    // it as a JSON document — so `\"` escapes survive for MySQL's JSON parser
+    // and the value is stored as a JSON OBJECT/ARRAY, not a base64 string.
+    format!("CAST(CAST(X'{}' AS CHAR) AS JSON)", hex)
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

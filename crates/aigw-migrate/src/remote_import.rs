@@ -284,6 +284,26 @@ async fn migrate_credentials(
 }
 
 fn rotate_field(encrypted: &str, source_key: &str, target_key: &str, skipped: &mut usize) -> Option<String> {
+    // litellm MySQL deployments wrap the whole `litellm_params` JSON in a
+    // `base64:type15:<encoded>` envelope. The payload inside is JSON
+    // *plaintext* (not a NaCl-encrypted blob) — only the individual leaf
+    // fields (e.g. `custom_llm_provider`) are NaCl-encrypted. Unwrap the
+    // envelope and route through the same JSON-object rotation path used
+    // for SQLite/PG so the value lands in aigw as plaintext JSON.
+    if encrypted.starts_with("base64:type15:") {
+        match aigw_core::decode_base64_type15(encrypted) {
+            Ok(plaintext) => {
+                eprintln!("  [ROTATE] base64:type15 envelope, {} bytes → {} bytes",
+                    encrypted.len(), plaintext.len());
+                return rotate_field(&plaintext, source_key, target_key, skipped);
+            }
+            Err(e) => {
+                eprintln!("  [ROTATE] base64:type15 decode failed: {}", e);
+                *skipped += 1;
+                return None;
+            }
+        }
+    }
     if encrypted.starts_with('{') {
         // JSON object — rotate individual encrypted fields.
         // `rotate_json_fields` already re-encrypts each field with target_key,
