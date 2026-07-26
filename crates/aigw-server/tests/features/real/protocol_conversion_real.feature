@@ -6,6 +6,7 @@ Feature: 协议转换端到端验证
 
   Background:
     Given AIGW_REAL_API=1 且 API keys 已配置
+    Given 上游 litellm 数据库连接已配置
 
   Scenario: Anthropic 客户端 /v1/messages 返回 Anthropic Messages 格式响应
     Given 通过 API 创建普通 key "real-an2oa-user"
