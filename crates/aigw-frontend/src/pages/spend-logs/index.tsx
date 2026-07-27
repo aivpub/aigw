@@ -645,7 +645,7 @@ export function SpendLogsPage() {
                   </TableHeader>
                   <TableBody>
                     {logs.map(log => (
-                      <TableRow key={log.request_id} className="cursor-pointer hover:bg-muted/50" onClick={() => { setSelectedLog(log); setDrawerOpen(true); setDetailRequestId(log.request_id); }}>
+                      <TableRow key={log.request_id} data-testid="spend-log-row" className="cursor-pointer hover:bg-muted/50" onClick={() => { setSelectedLog(log); setDrawerOpen(true); setDetailRequestId(log.request_id); }}>
                         <TableCell className="text-xs whitespace-nowrap">{log.start_time ? format(new Date(log.start_time), "MM-dd HH:mm:ss") : "—"}</TableCell>
                         <TableCell><Badge variant="outline" className="text-[10px] px-1 py-0">{log.call_type || "—"}</Badge></TableCell>
                         <TableCell className="text-xs whitespace-nowrap">
@@ -677,7 +677,7 @@ export function SpendLogsPage() {
               </div>
               <div className="md:hidden space-y-2">
                 {logs.map(log => (
-                  <div key={log.request_id} className="rounded-md border p-3 cursor-pointer hover:bg-muted/50" onClick={() => { setSelectedLog(log); setDrawerOpen(true); setDetailRequestId(log.request_id); }}>
+                  <div key={log.request_id} data-testid="spend-log-row" className="rounded-md border p-3 cursor-pointer hover:bg-muted/50" onClick={() => { setSelectedLog(log); setDrawerOpen(true); setDetailRequestId(log.request_id); }}>
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
                         <Badge variant="outline" className="text-[10px] px-1 py-0">{log.call_type||"—"}</Badge>

@@ -92,17 +92,12 @@ When("I type {string} into the request ID search", async ({ page }, requestId: s
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 When("I click on the first spend log row", async ({ page }) => {
-  // On desktop, table rows are visible; on mobile, cards are visible.
-  const tableRow = page.locator("table tbody tr").first();
-  const isTableVisible = await tableRow.isVisible();
-  if (isTableVisible) {
-    await tableRow.click();
-  } else {
-    // Mobile: click the first clickable card in the main content area
-    const card = page.locator("main .rounded-md.border").first();
-    await card.scrollIntoViewIfNeeded();
-    await card.click();
-  }
+  // Both the desktop table row and the mobile card expose data-testid="spend-log-row".
+  // On a given viewport only one of them is visible (the other is hidden via `hidden md:block` /
+  // `md:hidden`), so filter to visible to avoid clicking a hidden element.
+  const row = page.getByTestId("spend-log-row").filter({ visible: true }).first();
+  await row.scrollIntoViewIfNeeded();
+  await row.click();
   await page.waitForTimeout(500);
 });
 

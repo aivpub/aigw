@@ -316,7 +316,17 @@ export async function defineMockRoutes(route: Route, request: Request) {
   return route.continue();
 }
 
+// Idempotent guard: `mockAllApis` is called multiple times per test (Background's
+// "API endpoints are mocked" + "I am logged in as admin", and scenarios often re-declare both).
+// Playwright runs the LAST-registered `**/*` handler first, so re-registering the broad mock
+// AFTER a per-scenario override (e.g. "API detail endpoints return error" → 500) silently
+// defeats the override. Guarding with a WeakSet ensures the broad `**/*` handler is registered
+// exactly once per page, so any override registered later is guaranteed to win.
+const mockedPages = new WeakSet<Page>();
+
 export async function mockAllApis(page: Page, _opts?: MockOptions) {
+  if (mockedPages.has(page)) return;
+  mockedPages.add(page);
   await page.route("**/*", defineMockRoutes);
 }
 

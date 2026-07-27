@@ -5,6 +5,7 @@ import {
   stepTypeLabel,
   formatCount,
   displayJobStatus,
+  KNOWN_STEP_TYPES,
 } from "@/lib/api/jobs";
 import type { JobItem, JobStats, ArchiveStats } from "@/lib/api/jobs";
 import { useState, useEffect, useCallback } from "react";
@@ -245,10 +246,12 @@ function OverviewCards({
       </p>
     );
   }
+  // stepTypes may include known types seeded before stats load (or when the DB has no jobs yet),
+  // so stats[st] can be undefined. Fall back to a zero-valued queue so the cards still render.
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
       {stepTypes.map((st) => {
-        const s = stats![st];
+        const s = stats?.[st]?.queue ?? { pending: 0, running: 0, completed: 0, failed: 0 };
         return (
           <Card
             key={st}
@@ -269,10 +272,10 @@ function OverviewCards({
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-2 gap-2 text-sm">
-                <div className="flex justify-between"><span>Pending</span><Badge variant="secondary">{s.queue.pending}</Badge></div>
-                <div className="flex justify-between"><span>Running</span><Badge variant="secondary">{s.queue.running}</Badge></div>
-                <div className="flex justify-between"><span>Completed</span><Badge variant="secondary">{s.queue.completed}</Badge></div>
-                <div className="flex justify-between"><span>Failed</span><Badge variant="secondary">{s.queue.failed}</Badge></div>
+                <div className="flex justify-between"><span>Pending</span><Badge variant="secondary">{s.pending}</Badge></div>
+                <div className="flex justify-between"><span>Running</span><Badge variant="secondary">{s.running}</Badge></div>
+                <div className="flex justify-between"><span>Completed</span><Badge variant="secondary">{s.completed}</Badge></div>
+                <div className="flex justify-between"><span>Failed</span><Badge variant="secondary">{s.failed}</Badge></div>
               </div>
             </CardContent>
           </Card>
@@ -300,7 +303,12 @@ export function JobsPage() {
   const [loading, setLoading] = useState(false);
   const [triggerOpen, setTriggerOpen] = useState(false);
 
-  const stepTypes = stats ? Object.keys(stats) : [];
+  // Tabs represent *registered* async-task types, not just types that have run. The backend
+  // `GET /admin/jobs/stats` only reports step_types that already have rows in async_job_steps,
+  // so on a fresh DB it returns `{}` and the implemented AsyncTask UI would be invisible. Seed
+  // the known types first, then append any extra keys the backend reports (deduped, order-stable).
+  const reportedTypes = stats ? Object.keys(stats) : [];
+  const stepTypes = Array.from(new Set<string>([...KNOWN_STEP_TYPES, ...reportedTypes]));
   const limit = 50;
 
   // URL helpers

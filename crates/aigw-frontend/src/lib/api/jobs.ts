@@ -133,6 +133,17 @@ const STEP_LABELS: Record<string, string> = {
   budget_reset: "Budget Reset",
 };
 
+/**
+ * Step types the frontend always advertises as tabs, independent of job history.
+ *
+ * The backend `GET /admin/jobs/stats` derives step_types from `SELECT DISTINCT step_type FROM
+ * async_job_steps`, so on a fresh DB it returns `{}` and no task tab renders — hiding the
+ * implemented AsyncTask UI. These are the registered async-task types the UI knows about; seeding
+ * them here ensures the tabs (and the Body Archive page) are reachable even before any job runs.
+ * Any additional step_type the backend reports is still appended (see JobsPage stepTypes merge).
+ */
+export const KNOWN_STEP_TYPES: string[] = ["body_archive", "budget_reset"];
+
 export function stepTypeLabel(st: string): string {
   return STEP_LABELS[st] || st.replace(/_/g, " ");
 }
