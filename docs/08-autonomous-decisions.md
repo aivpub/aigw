@@ -325,3 +325,23 @@
   - 前端 BDD 从 108 增至 252 tests（含 jobs 81 = 27 scenarios × 3 viewports），`task fe-bdd` 全绿。
   - real BDD（AIGW_REAL_API=1，分页/trigger 409/冷数据回源）推迟到生产环境验证（mock BDD 已覆盖前端逻辑）。
   - Phase 31（Stage 82-84）全部完成，Phase 30 待一并标记 ✅。
+
+## ADR-020: Phase 32 完成 — request_id → call_id 改名 + 上游对账链路打通（Stage 85）
+
+- **Date**: 2026-07-28
+- **Status**: Accepted
+- **Decision**: 将 `spend_logs.request_id`（PK，aigw 网关 UUID v7）改名为 `call_id`，并新增可空 `request_id` 列存储上游 provider 返回的请求 ID（Anthropic `msg_xxx` / OpenAI `chatcmpl-xxx`），加索引 `idx_spend_logs_request_id`。任意 SpendLog 都能用上游 `request_id` 与 provider 对账，无论成功还是 4xx/5xx 失败。`daily_tag_spend.request_id` 同步改名 `call_id`。
+- **Background**: aigw 把自身 UUID v7 存为 `spend_logs.request_id`，与行业惯例（含 litellm）冲突——行业里 `request_id` 指上游 provider 返回的 ID。导致语义混淆 + 售后对账断链。设计文档 v6.1 经 Gate-2 多模型评审（lead 独立 + 3 路 subagent）定稿。
+- **Key learning (Gate-2 评审最重要的发现)**: v5 设计的"扩展 `update_spend_log` + `COALESCE($new, request_id)` UPDATE"方案**对失败路径无效**——所有失败路径（超时 / 4xx-5xx / resolver 失败）和非流式成功路径都是 INSERT-only，没有 Phase 2 UPDATE 可扩展，`COALESCE` 根本不覆盖这些行 → 失败 `request_id` 仍 NULL → v5 核心预期"失败请求也能对账"静默失败。v6.1 改为：失败路径在 `SpendLog` 构造时直接赋 `request_id: fail_upstream_id` 写入 INSERT。`update_spend_log` 的 `upstream_request_id` 参数 + `COALESCE` 仅用于流式 Phase 2 UPDATE。这是 lead 独立核验漏掉、由 Lens C subagent 发现的关键缺陷——评审的价值所在。
+- **三处不改边界**（务必区分，否则破坏功能/契约）:
+  1. HTTP 中间件层 `tower_http::request_id::*`（main.rs:57, chat.rs:24, v1_messages.rs:27）—— `let request_id = extensions.get(...)` 局部变量名保留，值透传给 `call_id` 字段。
+  2. 对外 LLM API 响应体 `request_id` 字段（v1_messages.rs:48/141/165/179/213 的 `anthropic_error`）—— 字段名保留（Anthropic/OpenAI 协议契约），值 = call_id。
+  3. aigw-migrate 的 litellm 源/目标表 SQL（native.rs keyset/SELECT/fixture）—— litellm 表 schema 不改。
+- **migrate override 方向**（v6 修正 v5 写反）: `column_override` 由 `native.rs::build_row_values` 以 **key=目标列、value=源列** 消费。故 import 注入 `overrides["call_id"]="request_id"`（litellm 源 request_id → aigw PK call_id）；export 因 `insert_rows` direct-match 优先，需**从源行剥离 request_id** 让 reverse override `["request_id"]="call_id"` 生效（v6.1 §11.1）。
+- **Consequences**:
+  - 对账链路打通：任意 SpendLog 可用上游 `request_id` 点查（走 `idx_spend_logs_request_id`）与 provider 对账，覆盖成功 + 4xx/5xx 失败（连接/超时无 body 留 NULL，不可避免）。
+  - 语义清晰：网关调用 ID = `call_id`（PK），上游返回 ID = `request_id`（可空）。
+  - 查询参数 `?request_id=` 保留（§6.2 妥协），同时匹配两列（gateway call_id OR upstream request_id）。
+  - body_archive 归档过滤加 `request_id IS NOT NULL`（用户决策）：失败请求（无上游 id）跳过 body 归档，省存储。
+  - TD-006（客户端无法从响应头拿 call_id 对账）登记为后续跟进。
+  - Gate-2 多模型评审显著降低了设计缺陷流入实现的风险（3 Critical + 3 High + 4 Medium 全部在编码前修正）。

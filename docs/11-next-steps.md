@@ -1,13 +1,13 @@
 # aigw -- 下一步行动
 
-**上次更新**: 2026-07-27
-**当前阶段**: Phase 31 ✅ Body Archive 生产化完成（Stage 82 ✅，Stage 83 ✅，Stage 84 ✅）
+**上次更新**: 2026-07-28
+**当前阶段**: Phase 32 ✅ request_id → call_id 改名 + 上游对账链路打通完成（Stage 85 ✅）
 
 ---
 
-## 当前状态：80/84 Stages（Stage 82-84 ✅，Phase 31 进度 3/3）
+## 当前状态：81/85 Stages（Stage 85 ✅，Phase 32 进度 1/1）
 
-Phase 30（Stage 78-81）代码已编码落地（feat/body-archive 分支），2026-07-25 审计确认未达生产预期（6 P0 + 10 P1 + 12 P2）。修复转入 Phase 31（Stage 82-84，3 Stage / 24h）。**Stage 82 已于 2026-07-27 完成**：恢复 dangling commit 链 f6089fd + cherry-pick HEAD 修复，实现 P0 全栈。**Stage 83 已于 2026-07-27 完成**：读路径 + 缓存激活 + FileSystem 后端，`query_parquet_with_cache`（footer cache → row group → col chunk range read），激活 FooterCache 死代码，`read_body_from_storage` 区分 NotFound vs 不可达，S3 `${ENV_VAR}` 占位符，`StorageBackend::FileSystem` 接 `LocalFileSystem`。**Stage 84 已于 2026-07-27 完成**：前端 Jobs 页面生产化重构 — 删除 602 行单文件巨石 `jobs.tsx`，启用 `pages/jobs/` 目录（index + job-detail + components/trigger-dialog + lib/api/jobs）；路由化 `/dash/jobs/:jobId` 子路由 + `useSearchParams` 驱动 tab/page/status；`STEP_LABELS` 美化（body_archive → "Body Archive"）+ fallback `replace(/_/g," ")`；Manual Trigger 按钮挪到 `TabsList` 右侧同行；Archive Disabled 联动 `disabled` + tooltip；列表表格化 + 分页（`ListPagination`，后端 `jobs.rs` list response 含 `total`）；详情页独立路由去冗余 + Steps 分页 pageSize=20 + Payload/Result/Duration 列；Logs 按 `step_key` 分组折叠；矛盾检测 `displayJobStatus`（summary.running>0 → running）+ completed+rows_archived=0 → 灰色 "completed (no-op)" badge + 错误 toast + a11y（tabIndex/onKeyDown/aria-label）。TDD 红绿：先修 playwright-bdd bddgen 崩溃（cucumber 表达式 `/` alternation + `{job_id}` 未注册参数类型 + 重复 step 定义 + 参数个数不匹配），再 11 个 Stage 84 新场景 × 3 viewports = 81/81 全绿（mock API）。验证：aigw-core lib 247/247、Stage 82 单测 18/18、Stage 83 单测 10/10、mock BDD 全绿（含 jobs 81）、三后端 real BDD 36/36 全绿、fe-build dist 嵌入 rust-embed、fe-lint 无 error（仅 warning）。Phase 30 待 Stage 84 收尾后一并标记 ✅。
+Stage 85（request_id → call_id 改名 + 上游对账链路打通）于 2026-07-28 完成。Gate-2 多模型评审（lead 独立 + 3 路 subagent）发现 v5 设计 3 Critical + 3 High + 4 Medium 缺陷，全部修正至 v6.1。**关键修正**：迁移号 022→023（Stage 82 占用）；migrate import override 方向写反；**失败路径 upstream_id 走 INSERT 非 UPDATE**（v5 COALESCE-UPDATE 不覆盖失败行，核心预期静默失败——这是评审最重要的发现）；export override 被 direct-match 抢占→源行剥离 request_id；Anthropic 流式提取位置（choices 分支前 borrow）；响应头预提取 request-id；MySQL 索引前缀长度 128；body_archive 归档过滤 `request_id IS NOT NULL`（失败请求跳过归档，用户决策）。验证：aigw-core lib 247/247 + aigw-server lib 100/100 + mock BDD 163/163（15 @skip，含新增核心预期 2 场景）+ aigw-migrate 27/27（含 override 方向断言）+ frontend build green；PG/MySQL 023 迁移应用通过。Phase 30（Stage 78-81）仍待一并标记 ✅。
 
 ### 项目里程碑
 
@@ -38,7 +38,7 @@ Phase 28:   ████████████████████ 100% (1
 Phase 29:   ████████████████████ 100% (4/4)  ✅ Cross-DB BDD Hardening
 Phase 30:   ░░░░░░░░░░░░░░░░░░░░   0% (0/4)  ⚠️ 代码已落地，Phase 31 修复完成待一并标记 ✅
 Phase 31:   ████████████████████ 100% (3/3)  ✅ Stage 82-84 全部完成
-Phase 32:   ░░░░░░░░░░░░░░░░░░░░   0% (0/1)  ⏳ request_id → call_id 改名 + 上游对账链路（Stage 85）
+Phase 32:   ████████████████████ 100% (1/1)  ✅ request_id → call_id 改名 + 上游对账链路（Stage 85）
 ```
 
 ### 测试目标
@@ -46,8 +46,8 @@ Phase 32:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 | 层 | 框架 | 当前 |
 |---|------|------|
 | 后端单元 | libtest | ~275 tests（aigw-core 247 + Stage 82 单测 18 + Stage 83 单测 10）|
-| 后端 BDD | cucumber-rust | 176 scenarios（mock 161 pass / 15 skip，含 async_task 15 + admin_jobs 12 + body_archive_read 7 @skip）|
-| 后端 real BDD | cucumber-rust + testcontainers | 36 scenarios × 3 后端（sqlite/pg/mysql 全绿）|
+| 后端 BDD | cucumber-rust | 178 scenarios（mock 163 pass / 15 skip，含 Stage 85 核心预期 2：双列返回 + 双列搜索）|
+| 后端 real BDD | cucumber-rust + testcontainers | 36 scenarios × 3 后端（sqlite/pg/mysql 全绿；real 上游 key 失败为环境问题非 Stage 85）|
 | 前端 BDD | Playwright + playwright-bdd | 252 tests（含 jobs 81 = 27 scenarios × 3 viewports）|
 
 ---
@@ -59,17 +59,17 @@ Phase 32:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 | ✅ | Phase 31 | 后端正确性全栈（Stage 82）| ✅ 完成（2026-07-27）|
 | ✅ | Phase 31 | 读路径 + 缓存激活 + 凭证 + FS（Stage 83）| ✅ 完成（2026-07-27）|
 | ✅ | Phase 31 | 前端 Jobs 页面生产化重构（Stage 84）| ✅ 完成（2026-07-27）|
-| ⏳ | Phase 32 | request_id → call_id 改名 + 上游对账链路打通（Stage 85）| ⏳ 待开始（2026-07-27）|
+| ✅ | Phase 32 | request_id → call_id 改名 + 上游对账链路打通（Stage 85）| ✅ 完成（2026-07-28）|
 
 ---
 
-## Phase 32: request_id → call_id 改名 + 上游对账链路打通 ⏳
+## Phase 32: request_id → call_id 改名 + 上游对账链路打通 ✅
 
 **起因**: 当前 aigw 把自身 UUID v7 存在 `spend_logs.request_id`（PK，语义=网关调用标识），但行业惯例（含 litellm）中 `request_id` 指上游 provider 返回的请求 ID。导致语义混淆 + 售后对账断链（SpendLog 未存上游 ID，退款/排查无法与 provider 对账）。**核心预期**：任意 SpendLog 都能用上游 `request_id` 与 provider 对账，无论成功还是 4xx/5xx 失败。
 
-**单 Stage 说明**: 设计文档 `docs/plans/2026-07-25-request-id-to-gw-call-id-rename.md`（v5，5 轮评审定稿）总耗时 ~6h，强耦合串行无并行收益，收敛为 1 Stage / 8h。v5 增量：失败路径 4xx/5xx 也提取并存储上游 id（覆盖对账盲区）。**三处不改边界**：HTTP 层 `tower_http::request_id` + 对外协议响应体 `request_id`（Anthropic/OpenAI 契约）+ litellm 源端 SQL。
+**完成情况**: 设计文档经 Gate-2 多模型评审定稿（v6.1，lead 独立 + 3 路 subagent）。评审关键发现：v5 的 COALESCE-UPDATE 方案对失败路径无效（失败行 INSERT-only，核心预期会静默失败）→ 改为 INSERT 时写入 upstream_id。migrate override 方向写反 → 更正。MySQL 索引需前缀长度 128。三处不改边界（HTTP 层 / 对外协议响应体 / litellm 源端 SQL）严格遵守。
 
-**设计文档**: docs/stages/stage-85.md + docs/plans/2026-07-25-request-id-to-gw-call-id-rename.md
+**设计文档**: docs/stages/stage-85.md + docs/plans/2026-07-25-request-id-to-gw-call-id-rename.md（v6.1）+ docs/research/2026-07-27-stage-85-design-review-consolidated.md
 
 ---
 
@@ -127,3 +127,4 @@ Phase 32:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 | ADR-017 | model_group 语义对齐 litellm: model_name 而非 litellm_params.model | 2026-07-21 |
 | ADR-018 | HTTP 层重试选用 reqwest-middleware + reqwest-retry, 单条 spend_logs 记录重试次数 | 2026-07-21 |
 | ADR-019 | Phase 31 完成 — Body Archive 生产化（Stage 82-84，前端 Jobs 页面路由化 + 分页 + 矛盾检测 + a11y）| 2026-07-27 |
+| ADR-020 | Phase 32 完成 — request_id→call_id 改名 + 上游对账链路。网关调用 ID 改名 call_id（PK），上游 provider 返回 ID 存为 request_id（可空+索引）。核心预期：任意 SpendLog 都能用上游 request_id 与 provider 对账（成功+4xx/5xx）。Gate-2 评审关键决策：失败路径 upstream_id 走 INSERT 非 UPDATE（COALESCE-UPDATE 不覆盖失败行）；migrate override key=target/value=source；三处不改（HTTP 层 / 对外协议响应体 / litellm 源端 SQL）。TD-006（客户端 call_id 响应头回写）留作后续 | 2026-07-28 |
