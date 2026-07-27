@@ -1495,8 +1495,12 @@ pub async fn chat_completions(
             let fail_session_id2 = session_id.clone();
             let fail_requester_ip2 = requester_ip.clone();
             let fail_request_id = request_id.clone();
-            // v6.1 §11.2: non-streaming success — upstream id from resp_body at INSERT.
-            let fail_upstream_id = fail_resp.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
+            // v6.1 §11.2: non-streaming 4xx/5xx failure — upstream id at INSERT.
+            // OpenAI error bodies usually carry no `id` field; fall back to the
+            // pre-extracted upstream response header (x-request-id / request-id)
+            // captured at chat.rs:1067-1073 before upstream_resp was consumed.
+            let fail_upstream_id = fail_resp.get("id").and_then(|v| v.as_str()).map(|s| s.to_string())
+                .or_else(|| upstream_req_id.clone());
             tokio::spawn(async move {
                 let sl = SpendLog {
                     call_id: fail_request_id,
