@@ -1,15 +1,15 @@
 # aigw — AI Gateway Stage Roadmap
 
 **项目**: aigw (litellm Rust 最小兼容替代)
-**最后更新**: 2026-07-25
+**最后更新**: 2026-07-27
 
 ---
 
 ## 当前状态
 
-- **当前 Phase**: Phase 31 — Body Archive 生产化 🔄 (1/3 Stages，Stage 82 ✅)
-- **状态**: 78/84 Stages 已完成（Stage 82 ✅；Stage 78-81 已编码落地，Phase 30 待 Stage 83/84 完成后一并标记 ✅），2 待执行
-- **下一里程碑**: Stage 83（读路径 + 缓存激活 + FileSystem 后端），预期 ~6h
+- **当前 Phase**: Phase 31 — Body Archive 生产化 🔄 (2/3 Stages，Stage 82 ✅，Stage 83 ✅)
+- **状态**: 79/84 Stages 已完成（Stage 82-83 ✅；Stage 78-81 已编码落地，Phase 30 待 Stage 84 完成后一并标记 ✅），1 待执行
+- **下一里程碑**: Stage 84（前端 Jobs 页面生产化重构），预期 ~8h
 
 ### 整体进度
 
@@ -38,8 +38,8 @@ Phase 26:   ████████████████████ 100% (3
 Phase 27:   ████████████████████ 100% (3/3 Stages) ✅ 全栈质量修复 + Usage 图表增强
 Phase 28:   ████████████████████ 100% (1/1 Stage)  ✅ 安全与质量加固
 Phase 29:   ████████████████████ 100% (4/4 Stages) ✅ Cross-DB BDD Hardening
-Phase 30:   ░░░░░░░░░░░░░░░░░░░░   0% (0/4 Stages) ⚠️ 代码已落地待 Stage 83/84 完成后一并标记 ✅
-Phase 31:   ███████░░░░░░░░░░░░░  33% (1/3 Stages) 🔄 Body Archive 生产化（Stage 82 ✅，Stage 83/84 待执行）
+Phase 30:   ░░░░░░░░░░░░░░░░░░░░   0% (0/4 Stages) ⚠️ 代码已落地待 Stage 84 完成后一并标记 ✅
+Phase 31:   ██████████████░░░░░░  67% (2/3 Stages) 🔄 Body Archive 生产化（Stage 82 ✅，Stage 83 ✅，Stage 84 待执行）
 ```
 
 ---
@@ -88,7 +88,7 @@ Phase 31:   ███████░░░░░░░░░░░░░  33% (1
 | Stage | 状态 | 目标 | 类型 | 预估 |
 |-------|------|------|------|------|
 | Stage 82 | ✅ 完成（2026-07-27） | **后端正确性全栈（合并 P0+P1）** — 补全 job 状态机（pending→running→completed/failed/partially_failed）；配置单例化（AppState 注入 body_archiver，main.rs 从 config.yaml 解析，AigwConfig 加 body_archive 字段）；execute() 加 storage_configured() 门禁消除假阳性 completed；trigger enabled 检查返回 409；冷数据回源接通（spend detail 集成 get_message_body）；create_job/claim 事务化；increment_job_completed 原子化消竞态；finalize 失败标 failed；fail_step 加 next_retry_at 退避；start_time→TimestampMillisecond。**TDD 红绿**：18 单测 + async_task.feature 15 场景 + admin_jobs.feature 12 场景 + body_archive_admin_real 3 @real_api；三后端 real BDD 全绿。对应 Q1/Q3/Q4 | 后端+测试 | 10h |
-| Stage 83 | ⏳ 待开始 | **读路径 + 缓存激活 + 凭证安全 + FileSystem 后端** — 实现 query_parquet_with_cache（footer cache → row group 定位 → col chunk range read 三段流水线），激活 FooterCache 死代码消除全文件下载（P99 19MB → 仅 footer + 列块）；read_body_from_storage 区分 NotFound vs 不可达（Err 不吞 None）；S3 凭证支持 ${ENV_VAR} 占位符；StorageBackend::FileSystem 接入 LocalFileSystem（CI 无需 S3）。**TDD 红绿**：8 测试先红后绿；**BDD+real BDD**：本地 FS 全链路 + 三后端回源 | 后端+测试 | 6h |
+| Stage 83 | ✅ 完成（2026-07-27） | **读路径 + 缓存激活 + 凭证安全 + FileSystem 后端** — 实现 query_parquet_with_cache（footer cache → row group 定位 → col chunk range read 三段流水线），激活 FooterCache 死代码消除全文件下载（P99 19MB → 仅 footer + 列块）；read_body_from_storage 区分 NotFound vs 不可达（Err 不吞 None）；S3 凭证支持 ${ENV_VAR} 占位符；StorageBackend::FileSystem 接入 LocalFileSystem（CI 无需 S3）。**TDD 红绿**：10 测试先红后绿；**BDD+real BDD**：本地 FS 全链路 + 三后端回源 | 后端+测试 | 6h |
 | Stage 84 | ⏳ 待开始 | **前端 Jobs 页面生产化重构** — 路由化（/dash/jobs/:jobId 子路由，useSearchParams，URI 直达/刷新/分享）；Tab 美化（body_archive→"Body Archive"）+ Trigger 同行布局；列表表格化 + 分页（后端 list response 加 total）；详情页去冗余 tab + 标题人类可读 + Steps 分页 + Payload/Result 列；Logs 加 Step Key 列按 step 分组；假阳性 completed 矛盾检测（rows_archived=0 灰色 no-op）；Archive Disabled 真禁用 Trigger；错误 toast 替换 silent fail；a11y 键盘导航。**TDD 红绿**：11 BDD 场景先红后绿（Playwright mock API，3 viewports）；**real BDD**：分页/trigger 409/冷回源 body。对应 Q2/Q4-Q8 | 前端+测试 | 8h |
 
 **依赖关系**: Stage 82 → 83（后端串行，读路径优化依赖冷回源端点）；Stage 82 → 84（前端兜底 + 矛盾检测依赖后端 summary.running + result 字段，可与 83 部分并行）
@@ -521,3 +521,4 @@ Phase 31:   ███████░░░░░░░░░░░░░  33% (1
 | v28.0 | 2026-07-24 | **Phase 30 规划**：新增 Phase 30（Stages 78-81，Body Archive 冷存储，共 46h）：78=DB Schema+Core Archiver(12h)、79=Query Router+Footer Cache(10h)、80=Admin API+Col Chunk Cache+存量归档(14h)、81=前端管理页面(10h)。按需求对齐：不需要独立 CLI（admin API 覆盖存量归档）；日 compaction/监控指标推迟；写→读→API→前端串行交付。设计文档：`stage-78~81.md` + `docs/plans/2026-07-22-body-archive-s3-parquet.md`。总进度 77/81。|
 | v29.0 | 2026-07-25 | **Phase 31 规划 + Phase 30 生产审计**：用户实测发现 8 问题，三路 subagent 并行审计（后端 AsyncTask+Engine / 后端 BodyArchive / 前端 Jobs UI）确认 Phase 30 代码已落地但未达生产预期——6 P0 + 10 P1 + 12 P2 缺陷。Phase 30 标记为 ⚠️ 待修复，修复转入 Phase 31。**工作量下调**：用户反馈原 4 Stage/50h 偏高 2-5 倍，按 subagent 并发实测 + 同触文件合并，收敛为 3 Stage/24h：82=后端正确性全栈(状态机+配置失联+假阳性completed+冷回源+并发安全+retry+schema，10h)、83=读路径+缓存激活+凭证+FS后端(6h)、84=前端生产化重构(8h)。**每个 Stage 强制 TDD 红绿循环（先写失败测试跑红→重构至绿）+ BDD + real BDD 三后端实际执行验证，发现错误及时修复**。设计文档：`stage-82~84.md`。总进度 77/84（Stage 78-81 编码完成但待修复验收）。|
 | v30.0 | 2026-07-27 | **Stage 82 完成**：恢复 dangling commit 链 f6089fd（含 Stage 78-81 + Stage 82 P0 修复）到 feat/body-archive，rebase --onto + cherry-pick HEAD 的 6 个 BDD/migrate 修复。实现：mark_job_running/failed/partially_failed 三态 + storage_configured 门禁 + 配置单例化 + 冷回源端点 + create_job/claim 事务化 + fail_step 退避。验证：aigw-core lib 247/247、Stage 82 单测 18/18（`stage82_state_machine.rs`）、mock BDD 169（含 async_task 15 + admin_jobs 12）、三后端 real BDD 全绿。drive-by：migration 021 `body_archived` BOOLEAN（PG/MySQL）、`JobLogEntry.id` i64。Phase 31 进度 1/3。总进度 78/84。|
+| v31.0 | 2026-07-27 | **Stage 83 完成**：读路径 + 缓存激活 + 凭证安全 + FileSystem 后端。实现 `query_parquet_with_cache`（parquet `async`+`object_store` feature，`ParquetObjectReader`+`ArrowReaderMetadata::load_async` 拉 footer，`FooterCache` 命中跳过，4 列投影 stream）；`read_body_from_storage` 区分 NotFound→`Ok(None)` vs 不可达→`Err`；`resolve_env_placeholders` 解析 `${ENV_VAR}`；`build_object_store_for_backend` 接 `LocalFileSystem::new_with_prefix`；`write_parquet_to_store` 改 async 去掉 `block_in_place`。TDD 10 测试红→绿（`stage83_read_path.rs`）；mock BDD 176（161 pass / 15 skip）；real BDD 36/36 × sqlite/pg/mysql 全绿。aigw-core lib 247 + Stage 82 18 不变。Phase 31 进度 2/3，总进度 79/84。|

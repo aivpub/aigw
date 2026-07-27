@@ -1,13 +1,13 @@
 # aigw -- 下一步行动
 
 **上次更新**: 2026-07-27
-**当前阶段**: Phase 31 🔄 Body Archive 生产化（Stage 82 ✅，Stage 83/84 待执行）
+**当前阶段**: Phase 31 🔄 Body Archive 生产化（Stage 82 ✅，Stage 83 ✅，Stage 84 待执行）
 
 ---
 
-## 当前状态：78/84 Stages（Stage 82 ✅，Phase 31 进度 1/3）
+## 当前状态：79/84 Stages（Stage 82-83 ✅，Phase 31 进度 2/3）
 
-Phase 30（Stage 78-81）代码已编码落地（feat/body-archive 分支），2026-07-25 审计确认未达生产预期（6 P0 + 10 P1 + 12 P2）。修复转入 Phase 31（Stage 82-84，3 Stage / 24h）。**Stage 82 已于 2026-07-27 完成**：恢复 dangling commit 链 f6089fd + cherry-pick HEAD 修复，实现 P0 全栈（状态机三态 + 配置单例化 + storage_configured 门禁 + 冷回源端点 + 事务化 + 退避），aigw-core 247/247、Stage 82 单测 18/18、mock BDD 169、三后端 real BDD 全绿。下一步 Stage 83（读路径 + 缓存激活 + FileSystem 后端，6h）。每个 Stage 强制 TDD 红绿 + BDD + real BDD 三后端验证。
+Phase 30（Stage 78-81）代码已编码落地（feat/body-archive 分支），2026-07-25 审计确认未达生产预期（6 P0 + 10 P1 + 12 P2）。修复转入 Phase 31（Stage 82-84，3 Stage / 24h）。**Stage 82 已于 2026-07-27 完成**：恢复 dangling commit 链 f6089fd + cherry-pick HEAD 修复，实现 P0 全栈。**Stage 83 已于 2026-07-27 完成**：读路径 + 缓存激活 + FileSystem 后端，`query_parquet_with_cache`（footer cache → row group → col chunk range read），激活 FooterCache 死代码，`read_body_from_storage` 区分 NotFound vs 不可达，S3 `${ENV_VAR}` 占位符，`StorageBackend::FileSystem` 接 `LocalFileSystem`。验证：aigw-core lib 247/247、Stage 82 单测 18/18、Stage 83 单测 10/10（红→绿）、mock BDD 176（161 pass / 15 skip）、三后端 real BDD 36/36 全绿。下一步 Stage 84（前端生产化重构，8h）。
 
 ### 项目里程碑
 
@@ -36,16 +36,16 @@ Phase 26:   ████████████████████ 100% (3
 Phase 27:   ████████████████████ 100% (3/3)  ✅ 全栈质量修复 + Usage 图表增强
 Phase 28:   ████████████████████ 100% (1/1)  ✅ 安全与质量加固
 Phase 29:   ████████████████████ 100% (4/4)  ✅ Cross-DB BDD Hardening
-Phase 30:   ░░░░░░░░░░░░░░░░░░░░   0% (0/4)  ⚠️ 代码已落地，待 Stage 83/84 完成后一并标记 ✅
-Phase 31:   ███████░░░░░░░░░░░░░  33% (1/3)  🔄 Stage 82 ✅，Stage 83/84 待执行
+Phase 30:   ░░░░░░░░░░░░░░░░░░░░   0% (0/4)  ⚠️ 代码已落地，待 Stage 84 完成后一并标记 ✅
+Phase 31:   ██████████████░░░░░░  67% (2/3)  🔄 Stage 82-83 ✅，Stage 84 待执行
 ```
 
 ### 测试目标
 
 | 层 | 框架 | 当前 |
 |---|------|------|
-| 后端单元 | libtest | ~265 tests（aigw-core 247 + Stage 82 单测 18）|
-| 后端 BDD | cucumber-rust | 169 scenarios（mock 161 pass / 8 skip，含 async_task 15 + admin_jobs 12）|
+| 后端单元 | libtest | ~275 tests（aigw-core 247 + Stage 82 单测 18 + Stage 83 单测 10）|
+| 后端 BDD | cucumber-rust | 176 scenarios（mock 161 pass / 15 skip，含 async_task 15 + admin_jobs 12 + body_archive_read 7 @skip）|
 | 后端 real BDD | cucumber-rust + testcontainers | 36 scenarios × 3 后端（sqlite/pg/mysql 全绿）|
 | 前端 BDD | Playwright + playwright-bdd | 108 tests |
 
@@ -56,8 +56,8 @@ Phase 31:   ███████░░░░░░░░░░░░░  33% (1
 | 优先级 | Phase | 目标 | 状态 |
 |--------|-------|------|------|
 | ✅ | Phase 31 | 后端正确性全栈（Stage 82）| ✅ 完成（2026-07-27）|
-| P1 | Phase 31 | 读路径 + 缓存激活 + 凭证 + FS（Stage 83）| ⏳ 下一个 |
-| P0 | Phase 31 | 前端 Jobs 页面生产化重构（Stage 84）| ⏳ |
+| ✅ | Phase 31 | 读路径 + 缓存激活 + 凭证 + FS（Stage 83）| ✅ 完成（2026-07-27）|
+| P0 | Phase 31 | 前端 Jobs 页面生产化重构（Stage 84）| ⏳ 下一个 |
 
 ---
 
@@ -68,8 +68,8 @@ Phase 31:   ███████░░░░░░░░░░░░░  33% (1
 | Stage | 目标 | 类型 | 预估 | 状态 |
 |-------|------|------|------|------|
 | Stage 82 | 后端正确性全栈（状态机 running/failed/partially_failed + 配置单例化 + execute storage_configured 门禁 + 冷数据回源接通 + create_job/claim 事务化 + increment 原子化 + finalize 错误传播 + retry 退避 + start_time TimestampMillisecond）。TDD：18 单测 + async_task 15 BDD + admin_jobs 12 BDD + body_archive_admin_real 3 @real_api；real BDD：三后端全绿 | 后端 | 10h | ✅ 完成（2026-07-27）|
-| Stage 83 | 读路径 + 缓存激活（query_parquet_with_cache footer cache→row group→col chunk range read）+ read_body 错误区分 + S3 env 凭证 + FileSystem 后端。TDD：8 测试红绿；real BDD：本地 FS 全链路 + 三后端回源 | 后端 | 6h | ⏳ 下一个 |
-| Stage 84 | 前端生产化重构（路由化 /dash/jobs/:jobId + Tab 美化 + 列表分页 + 详情去冗余 + Steps 分页 + Logs 按 step + 矛盾检测 + a11y）。TDD：11 BDD 红绿（Playwright mock，3 viewports）；real BDD：分页/trigger 409/冷回源 body | 前端 | 8h | ⏳ |
+| Stage 83 | 读路径 + 缓存激活（query_parquet_with_cache footer cache→row group→col chunk range read）+ read_body 错误区分 + S3 env 凭证 + FileSystem 后端。TDD：10 测试红绿；real BDD：三后端全绿 | 后端 | 6h | ✅ 完成（2026-07-27）|
+| Stage 84 | 前端生产化重构（路由化 /dash/jobs/:jobId + Tab 美化 + 列表分页 + 详情去冗余 + Steps 分页 + Logs 按 step + 矛盾检测 + a11y）。TDD：11 BDD 红绿（Playwright mock，3 viewports）；real BDD：分页/trigger 409/冷回源 body | 前端 | 8h | ⏳ 下一个 |
 
 **合计**: 24h，3 Stages
 
