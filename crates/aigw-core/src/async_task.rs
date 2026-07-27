@@ -47,7 +47,8 @@ pub struct JobRecord {
 /// A log entry from the `async_job_logs` table.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct JobLogEntry {
-    pub id: String,
+    /// Auto-increment primary key (INTEGER/BIGSERIAL/BIGINT across backends).
+    pub id: i64,
     pub job_id: String,
     pub step_key: Option<String>,
     pub level: String,

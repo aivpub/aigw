@@ -117,6 +117,12 @@ async fn main() {
         .before(bdd_steps::real_api_steps::before_scenario_hook)
         .after(bdd_steps::real_api_steps::after_scenario_hook)
         .filter_run("tests/features", move |feature, _rule, scenario| {
+            // Never run scenarios tagged @skip — they document future work
+            // (e.g. Stage 83 ColChunkCache / read-path scenarios awaiting
+            // implementation) and would fail on undefined steps today.
+            if scenario.tags.iter().any(|t| t == "skip") {
+                return false;
+            }
             if real_api_mode {
                 feature.tags.iter().chain(scenario.tags.iter())
                     .any(|t| t == "real_api")

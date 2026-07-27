@@ -115,6 +115,21 @@ pub fn build_spend_router(state: SharedState) -> Router {
         .with_state(state)
 }
 
+/// Build an axum Router with all admin jobs routes (Stage 80/82 admin API).
+pub fn build_admin_jobs_router(state: SharedState) -> Router {
+    Router::new()
+        .route(
+            "/admin/jobs/trigger",
+            axum::routing::post(aigw_server::routes::jobs::trigger_job),
+        )
+        .route("/admin/jobs/stats", axum::routing::get(aigw_server::routes::jobs::job_stats_handler))
+        .route("/admin/jobs/{job_id}/logs", axum::routing::get(aigw_server::routes::jobs::job_logs_handler))
+        .route("/admin/jobs/{job_id}", axum::routing::get(aigw_server::routes::jobs::job_detail_handler))
+        .route("/admin/jobs", axum::routing::get(aigw_server::routes::jobs::list_jobs_handler))
+        .route("/admin/archive/stats", axum::routing::get(aigw_server::routes::jobs::archive_stats_handler))
+        .with_state(state)
+}
+
 /// Helper: send an HTTP request and return (status, json_body)
 pub async fn make_request(
     app: &Router,
