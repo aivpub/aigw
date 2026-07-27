@@ -6,7 +6,7 @@
 **预估**: 8h
 **前置**: Stage 84（Phase 31 Body Archive 生产化已完成；本 Stage 与 Body Archive 解耦，独立于 spend_logs 表）
 
-**设计文档**: `docs/plans/2026-07-25-request-id-to-gw-call-id-rename.md`（v5，已评审对齐核心预期）
+**设计文档**: `docs/plans/2026-07-25-request-id-to-gw-call-id-rename.md`（**v6.1**，Gate-2 多模型评审定稿，含 6 项增量修正；评审纪要见 `docs/research/2026-07-27-stage-85-design-review-consolidated.md`）
 
 ---
 
@@ -15,6 +15,12 @@
 **任意一条 SpendLog 记录都能用上游 `request_id` 去 provider 侧对上账，无论成功还是 4xx/5xx 失败。**
 
 这是本 Stage 唯一业务目标（详见设计文档 §1.3）。改名 `call_id`、流式提取、失败路径提取均为支撑项。
+
+> ⚠️ **Gate-2 评审 v6.1 关键修正（实施前必读）**：设计 v5 的"扩展 `update_spend_log` + `COALESCE`"对**失败路径 + 非流式成功路径无效**——这两类路径是 INSERT-only（`chat.rs:1047/1148/1518`、`v1_messages.rs:421/609/705` 失败 + `chat.rs:1536`/`v1_messages.rs:999` 非流式成功），没有 Phase 2 UPDATE 可扩展。**upstream_id 必须在 `SpendLog` 构造时直接赋 `request_id` 字段写入 INSERT**。`update_spend_log` 的 `upstream_request_id` 参数 + `COALESCE` 仅用于流式 Phase 2 UPDATE（3 处调用：`chat.rs:1359/1385`、`v1_messages.rs:897`）。详见设计 §11.2。
+>
+> ⚠️ **Anthropic 流式提取位置**：`v1_messages.rs:814` 只在 `choices` 非空时 push 到 `chunk_jsons`；Anthropic-native `message_start` 事件无 `choices` → 在 push 循环体内提取会失效。须在 `serde_json::from_str` 成功后、`if choices` 分支**之前**用 `raw.get("message")` borrow 提取（§11.3）。
+>
+> ⚠️ **migrate export**：`insert_rows` direct-match 优先、override 仅 fallback → export 反向 override `("request_id","call_id")` 会被 direct match 抢占，把 aigw 上游 `request_id`（历史行 NULL）写进 litellm PK。须在 `insert_rows` 前从源行**剥离 `request_id` 列**（§11.1）。
 
 ## 背景
 
@@ -39,7 +45,7 @@ v5 设计文档已评审定稿（5 轮迭代），核验代码后修正了 migra
 
 ```
 ① DB schema + 模型/DB 层（串行前置，~1.5h）
-   022 迁移 pg/mysql/sqlite（双重条件探测幂等）+ models.rs（SpendLog + Tag）+ db.rs（~86 处 + 上游 id 写入方法）+ body_archive（~48 处 + parquet reader 兼容）+ daily_spend_queue UNIQUE 列串
+   023 迁移 pg/mysql/sqlite（双重条件探测幂等）+ models.rs（SpendLog + Tag）+ db.rs（~86 处 + 上游 id 写入方法）+ body_archive（~48 处 + parquet reader 兼容）+ daily_spend_queue UNIQUE 列串
         ↓ 编译前提
 ② 路由层 + 上游 id 全路径提取 + 前端 + migrate（subagent 并行，~3h）
    chat.rs/v1_messages.rs 字段改名 + 流式 chunk id 提取 + 4xx/5xx 失败路径提取 + Phase 2 UPDATE 调用补 upstream_id + spend.rs/openapi/main.rs span 字段 + 前端（3 interface + 展示列 + CSV + 搜索）+ migrate override
@@ -52,13 +58,13 @@ v5 设计文档已评审定稿（5 轮迭代），核验代码后修正了 migra
 
 ### ① DB schema + 模型层（设计文档 §3-§4.1-§4.4）
 
-- **022 迁移**（`022_rename_request_id_to_call_id.sql`，pg/mysql/sqlite 三份）：
+- **023 迁移**（`023_rename_request_id_to_call_id.sql`，pg/mysql/sqlite 三份）：
   - Phase 1: `spend_logs.request_id` RENAME → `call_id`（双重条件 `EXISTS(request_id) AND NOT EXISTS(call_id)`）
   - Phase 2: 新增 `spend_logs.request_id TEXT`（上游 ID，可空）
   - Phase 3: `daily_tag_spend.request_id` RENAME → `call_id`
   - Phase 4: `CREATE INDEX idx_spend_logs_request_id ON spend_logs(request_id)`
   - MySQL 全用 `INFORMATION_SCHEMA + PREPARE`（原生不支持 `ADD COLUMN IF NOT EXISTS`）
-  - 002/015 原迁移不动，统一由 022 收敛
+  - 002/015 原迁移不动，统一由 023 收敛
 - **models.rs**：`SpendLog.request_id` → `call_id` + 新增 `request_id: Option<String>`；`Tag { tag, request_id }` → `Tag { tag, call_id }`（:185）
 - **db.rs**（三套 Sqlite/Mysql/Postgres + Database 转发层，~86 处）：SQL 列名改名 + 方法名（`get_spend_log_by_request_id` → `get_spend_log_by_call_id`）+ `update_spend_log` 扩展 `upstream_request_id: Option<&str>` 参数，UPDATE 用 `COALESCE($new, request_id)`（没提取到不覆盖）
 - **body_archive**（~48 处）：`BodyRow.request_id` → `call_id`；parquet reader 加列名兼容（读到旧 `request_id` 列映射为 `call_id`）；上线前清空开发/测试环境存量 parquet
@@ -124,7 +130,7 @@ v5 设计文档已评审定稿（5 轮迭代），核验代码后修正了 migra
 
 | 文件 | 操作 |
 |------|------|
-| `migrations/022_rename_request_id_to_call_id.sql`（pg/mysql/sqlite 三份） | 新增：RENAME + ADD COLUMN + INDEX，双重条件幂等 |
+| `migrations/023_rename_request_id_to_call_id.sql`（pg/mysql/sqlite 三份） | 新增：RENAME + ADD COLUMN + INDEX，双重条件幂等 |
 | `crates/aigw-core/src/models.rs` | `SpendLog.request_id` → `call_id` + 新增 `request_id: Option<String>` + `Tag` 变体改名 |
 | `crates/aigw-core/src/db.rs` | SQL 列名 + 方法名 + 参数名（三套 ~86 处）+ 扩展 `update_spend_log` 加 `upstream_request_id` |
 | `crates/aigw-core/src/body_archive/{mod,writer,query}.rs` | 字段 + SQL + 函数参数改名（~48 处）+ parquet reader 列名兼容 |
@@ -164,7 +170,7 @@ v5 设计文档已评审定稿（5 轮迭代），核验代码后修正了 migra
 - migrate 源端 `request_id` 必须 override 到 `call_id`，否则存量导入 PK 为 NULL 失败（§4.5）
 - 对外协议响应体 `request_id` 误改成 `call_id` 会破坏客户端契约（§6.3）
 - 流式上游 id 必须从 chunk 提取，非 body（§4.3）
-- 022 迁移双重条件探测保证幂等（§3.1）
+- 023 迁移双重条件探测保证幂等（§3.1）
 
 ---
 

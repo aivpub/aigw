@@ -1,9 +1,9 @@
 # 技术方案：request_id → call_id 改名 & 新增 upstream request_id
 
 - **日期**: 2026-07-25
-- **状态**: 待实施（v5 — 在 v4 基础上，失败路径 4xx/5xx 也提取并存储上游 request id；§4.3 补失败路径提取逻辑 + Phase 2 UPDATE 调用补 upstream_id 参数，§8 风险表相应更新，§7 步骤 7/8/17 补失败路径耗时与验证；§1.3 重排目标主次、§9 补顶层业务动机决策）
+- **状态**: 待实施（v6.1 — v6 基础上补齐 Gate-2 评审 6 项：①export override 被 direct-match 抢占→源行剥离 request_id；②失败路径 upstream_id 走 INSERT 非 UPDATE（核心预期关键）；③Anthropic 流式提取位置须在 choices 分支前 + borrow；④Anthropic 失败响应头须预提取 request-id；⑤双列搜索 bind 机械 per-impl；⑥migrate NULL 语义澄清。详见 `docs/research/2026-07-27-stage-85-design-review-consolidated.md`）
 - **类型**: 数据库 Schema 变更 + 全链路字段重命名
-- **审计纪要**: v1 评审发现 4 项会导致编译失败或迁移报错的硬伤,见 §3.1 / §4.3 / §4.5 / §4.6;v2 已修正。v2 评审再发现 2 项迁移脚本硬伤（幂等条件不成立、MySQL 语法不支持）+ 3 项遗漏（parquet 兼容性、Tag.request_id 统计、索引/回滚）,v3 已修正。v3 评审又发现 2 项硬伤:①§4.5 migrate 映射机制描述错误（虚构 SpendLog 构造处,实际走列名批量映射,且源端单 request_id 对目标 call_id+request_id 双列需显式 override 否则 PK 为 NULL 插入失败）;②对外 API 响应体的协议字段 request_id 未讨论（Anthropic/OpenAI 契约,字段名保留值= call_id）。另补 3 项遗漏:③非 BDD 单测 9 文件 28 处 request_id 漏列;④可观测性完全未讨论（main.rs:126 tracing span 字段 request_id 与 DB 改名后语义不一致）;⑤前端 3 个独立 interface 定义 + 5 个 state 变量,20min 低估为 40-60min;并修正 remote_export.rs:547 边界误判（547 是 aigw 测试夹具需改,573 才是 litellm 表不改）。v4 已全部修正,见 §4.5 / §6.3 / §10 / §4.6 / §7。v5 评审决定：失败路径 4xx/5xx 也提取并存储上游 request id（v4 §8 原列为后续增强），§4.3 补失败路径提取逻辑（OpenAI error body 的 id / Anthropic error body 的 request_id + 响应头 fallback）+ Phase 2 UPDATE 调用补 upstream_id 参数，§8 风险表相应更新，§7 步骤 7/8 耗时 +10min、步骤 17 补失败路径验证⑤⑥
+- **审计纪要**: v1-v5 见历史；v6 022→023 + import override 方向 + 测试清单；v6.1 export override direct-match + 失败路径 INSERT + Anthropic 流式/失败提取位置 + 双列 bind + migrate NULL 语义。Gate-2 评审：lead 独立 + 3 路 subagent（migration / migrate-frontend-tracing-tests / extraction-protocol）。
 
 ---
 
@@ -98,17 +98,17 @@ aigw 的设计与 litellm 的差异在于：aigw 在请求刚发起时就 INSERT
 
 ## 3. 数据库变更
 
-### 3.1 迁移策略（**幂等：只加 022，不改 002/015**）
+### 3.1 迁移策略（**幂等：只加 023，不改 002/015**）
 
-> ⚠️ **v1 硬伤修正**: v1 同时「改原迁移 002/015 的列名」+「新增 022 做 RENAME」，会导致**新装库**先跑 002（列已是 `call_id`）再跑 022 时 `RENAME` 报错（列不存在）。v2 改为**只加 022 迁移，不动 002/015**，存量库与新装库都靠 022 收敛。
+> ⚠️ **v1 硬伤修正**: v1 同时「改原迁移 002/015 的列名」+「新增 023 做 RENAME」，会导致**新装库**先跑 002（列已是 `call_id`）再跑 023 时 `RENAME` 报错（列不存在）。v2 改为**只加 023 迁移，不动 002/015**，存量库与新装库都靠 023 收敛。
 >
 > ⚠️ **v3 修正（v2 遗留）**：v2 的幂等条件单查 `EXISTS(request_id)`，与 Phase 2 新增的同名列冲突（重跑即报错）；MySQL Phase 2 误用原生 MySQL 不支持的 `ADD COLUMN IF NOT EXISTS`。v3 已全部修正，见下文。
 
-**策略**：022 用条件探测，只在**旧列 `request_id` 存在且新列 `call_id` 不存在**时才 RENAME。`002/015` 保持原样不动 —— 它们仍以 `request_id` 建表，由 022 统一改名收敛。
+**策略**：023 用条件探测，只在**旧列 `request_id` 存在且新列 `call_id` 不存在**时才 RENAME。`002/015` 保持原样不动 —— 它们仍以 `request_id` 建表，由 023 统一改名收敛。
 
-> ⚠️ **v3 修正（v2 硬伤）**：v2 的探测条件只查 `EXISTS(request_id)`。但 Phase 2 会新增一个同样叫 `request_id` 的列（存上游 ID），导致 022 重跑时 Phase 1 探测为 TRUE、再次执行 RENAME 报错（`call_id` 已存在）。v3 改为 `EXISTS(request_id) AND NOT EXISTS(call_id)` 双重条件，保证 SQL 层面真正幂等（不依赖迁移器版本表）。
+> ⚠️ **v3 修正（v2 硬伤）**：v2 的探测条件只查 `EXISTS(request_id)`。但 Phase 2 会新增一个同样叫 `request_id` 的列（存上游 ID），导致 023 重跑时 Phase 1 探测为 TRUE、再次执行 RENAME 报错（`call_id` 已存在）。v3 改为 `EXISTS(request_id) AND NOT EXISTS(call_id)` 双重条件，保证 SQL 层面真正幂等（不依赖迁移器版本表）。
 
-**Postgres** (`022_rename_request_id_to_call_id.sql`):
+**Postgres** (`023_rename_request_id_to_call_id.sql`):
 
 ```sql
 -- Phase 1: spend_logs 主键改名（旧列存在且新列不存在时才执行；零数据迁移，仅改元数据）
@@ -202,26 +202,26 @@ ALTER TABLE daily_tag_spend RENAME COLUMN request_id TO call_id;
 CREATE INDEX IF NOT EXISTS idx_spend_logs_request_id ON spend_logs(request_id);
 ```
 
-> SQLite 的幂等性靠 aigw 迁移器（`aigw-core` 的迁移执行器）在执行 SQL 前用 `PRAGMA table_info` 探测「旧列存在且新列不存在」来保证；若现有迁移器已具备「跳过已应用迁移」的能力，则 022 整体只会跑一次，无需细粒度探测。
+> SQLite 的幂等性靠 sqlx 迁移版本表（`_sqlx_migrations`）保证每个迁移文件只应用一次——SQLite 的 RENAME/ADD COLUMN SQL 本身不可重入（无 IF NOT EXISTS），但版本表保证单次应用，故无需 PRAGMA 探测。PG/MySQL 的双重条件探测作为防御性措施，若 SQL 被直接重应用也可幂等。
 
 ### 3.2 原迁移文件（**不改**）
 
-`002_spend_logs.sql` / `015_daily_spend.sql`（pg/mysql/sqlite 共 6 个文件）**保持原样不动**，仍以 `request_id` 建表。所有库统一由 022 收敛为 `call_id`。这样：
+`002_spend_logs.sql` / `015_daily_spend.sql`（pg/mysql/sqlite 共 6 个文件）**保持原样不动**，仍以 `request_id` 建表。所有库统一由 023 收敛为 `call_id`。这样：
 
-- 存量库：002/015 已应用（列名 `request_id`）→ 022 RENAME 生效。
-- 新装库：002/015 应用（列名 `request_id`）→ 022 RENAME 生效。
-- 重跑库：022 已应用（列已是 `call_id` + 新 `request_id`）→ 双重条件探测 `EXISTS(request_id) AND NOT EXISTS(call_id)` 为 FALSE，跳过 RENAME；`ADD COLUMN IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` 幂等。SQL 层面自身即可重入，不依赖迁移器版本表。
+- 存量库：002/015 已应用（列名 `request_id`）→ 023 RENAME 生效。
+- 新装库：002/015 应用（列名 `request_id`）→ 023 RENAME 生效。
+- 重跑库：023 已应用（列已是 `call_id` + 新 `request_id`）→ 双重条件探测 `EXISTS(request_id) AND NOT EXISTS(call_id)` 为 FALSE，跳过 RENAME；`ADD COLUMN IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` 幂等。SQL 层面自身即可重入，不依赖迁移器版本表。
 
 ### 3.3 索引影响
 
 | 索引 | 变更 |
 |------|------|
 | `spend_logs` 主键（`call_id`，原 `request_id`） | RENAME 不影响索引，无需额外操作 |
-| **新增** `idx_spend_logs_request_id ON spend_logs(request_id)` | 022 Phase 4 创建。对账是本方案核心动机，对账查询形态是 `WHERE request_id = 'msg_xxx'` 点查，单列索引直接命中；可空列索引开销很小 |
+| **新增** `idx_spend_logs_request_id ON spend_logs(request_id)` | 023 Phase 4 创建。对账是本方案核心动机，对账查询形态是 `WHERE request_id = 'msg_xxx'` 点查，单列索引直接命中；可空列索引开销很小 |
 
 ### 3.4 回滚说明
 
-回滚 = 反向执行 022，无数据迁移、仅元数据操作，可随时执行：
+回滚 = 反向执行 023，无数据迁移、仅元数据操作，可随时执行：
 
 ```sql
 -- Postgres
@@ -232,7 +232,7 @@ ALTER TABLE daily_tag_spend RENAME COLUMN call_id TO request_id;
 -- 代码回滚到改名前版本即可（字段名一一对应，无残留状态）
 ```
 
-> 回滚会**丢失** 022 之后积累的上游 `request_id` 数据（该列被 DROP）。生产执行回滚前先导出备份。MySQL/SQLite 语句同理（MySQL `DROP COLUMN IF EXISTS` 需 MariaDB；原生 MySQL 用 §3.1 的 PREPARE 探测写法）。
+> 回滚会**丢失** 023 之后积累的上游 `request_id` 数据（该列被 DROP）。生产执行回滚前先导出备份。MySQL/SQLite 语句同理（MySQL `DROP COLUMN IF EXISTS` 需 MariaDB；原生 MySQL 用 §3.1 的 PREPARE 探测写法）。
 
 ### 3.5 历史数据说明
 
@@ -463,7 +463,7 @@ async fn global_spend_log_detail(Path(call_id): Path<String>) -> ... {
 >
 > 1. **上线前**：清空开发/测试环境的 body_archive 存储目录与 `body_rows` 表，以新 schema 重新积累；
 > 2. **代码侧**：parquet reader 增加列名兼容（读到 `request_id` 列时映射为 `call_id`）作为防御，低成本且避免未来再踩同类问题；
-> 3. 若实施时 body_archive 已上线有真实数据，则改为在 022 中同步做一次 parquet 文件批量重写（重命名列），并在本文档补充该步骤。
+> 3. 若实施时 body_archive 已上线有真实数据，则改为在 023 中同步做一次 parquet 文件批量重写（重命名列），并在本文档补充该步骤。
 
 ### 4.5 Migrate 工具（aigw-migrate/）
 
@@ -472,7 +472,7 @@ async fn global_spend_log_detail(Path(call_id): Path<String>) -> ... {
 > ⚠️ **v4 硬伤修正（v3 虚构映射处）**：v3 写「写入 aigw `SpendLog` 结构体的映射处」并给出 `SpendLog { call_id: litellm_record.request_id, ... }` 代码示例——**该构造处实际不存在**。migrate 工具走通用行流管线（`UnifiedRow = Vec<(String, Value)>`），全程不构造 `aigw-core::models::SpendLog` 结构体。真实机制见下方「映射机制」，真实改动点是列名 override 规则。
 
 **映射机制（v4 实测）**：`remote_import.rs:482 migrate_spend_logs` 的实际链路是
-1. `target.column_types("spend_logs")`（`native.rs:350`）从**目标库真实 schema** 取列名 → 022 迁移把列改名后，这里自动拿到 `call_id`；
+1. `target.column_types("spend_logs")`（`native.rs:350`）从**目标库真实 schema** 取列名 → 023 迁移把列改名后，这里自动拿到 `call_id`；
 2. `source.column_types("LiteLLM_SpendLogs")` 取源列名（含 `request_id`）；
 3. `build_snake_overrides`（`remote_import.rs:38-43`）生成 `camelCase→snake` override map；
 4. `native::insert_rows_batch`（`native.rs:1297`）→ `build_row_values`（`native.rs:1181/1275`）按 override 在源行里按列名查值，拼 `INSERT INTO spend_logs (...) VALUES ...`。
@@ -483,9 +483,9 @@ async fn global_spend_log_detail(Path(call_id): Path<String>) -> ... {
 
 ```rust
 // remote_import.rs — migrate_spend_logs 调用 insert_rows_batch 前，
-// 在 overrides（build_snake_overrides 产物）上补一条显式重定向：
-//   key   = 源列名 "request_id"（camel_to_snake 后仍是 "request_id"）
-//   value = 目标列名 "call_id"
+// 在 overrides（build_snake_overrides 产物，key=目标列名 / value=源列名，由 `native.rs::build_row_values` 以 `column_override.get(target_col).and_then(|src| row_map.get(src))` 消费）上补一条显式重定向：
+//   key   = 目标列名 "call_id"
+//   value = 源列名 "request_id"（camel_to_snake 后仍是 "request_id"）
 // 使源端 LiteLLM_SpendLogs.request_id 的值写入目标 spend_logs.call_id (PK)。
 // 目标 spend_logs.request_id (上游 ID 列) 在 migrate 路径下不赋值，保持 NULL（见 §3.5）。
 //
@@ -493,7 +493,7 @@ async fn global_spend_log_detail(Path(call_id): Path<String>) -> ... {
 // 源端 call_id → 目标 litellm request_id 的列名映射在 export 路径补一条 override。
 ```
 
-> 注：override 注入点在 `migrate_spend_logs` 拿到 `overrides` 之后、`insert_rows_batch` 调用之前（`remote_import.rs:546` `let overrides = build_snake_overrides(...)` 紧接着），以 `overrides.insert("request_id".into(), "call_id".into())` 形式追加。export 侧在 `remote_export.rs:367-394` 对应位置追加反向 override。具体行号实施时按当前代码定位。
+> 注：override 注入点在 `migrate_spend_logs` 拿到 `overrides` 之后、`insert_rows_batch` 调用之前（`remote_import.rs:566` `let overrides = build_snake_overrides(...)` 紧接着），以 `overrides.insert("call_id".to_string(), "request_id".to_string())` 形式追加（key=目标 call_id、value=源 request_id）。export 侧在 `remote_export.rs:384` 对应位置追加**反向** override `overrides.insert("request_id".to_string(), "call_id".to_string())`（目标=litellm request_id、源=aigw call_id PK）。**方向必须核对**：`build_row_values`（native.rs:1291）以 target 列名为 key 查 override，错向则 PK 仍 NULL。建议跑现有 migrate idempotent 测试（`test_migrate_spend_logs_resume_idempotent`）验证。
 
 **边界：litellm 源/目标表 SQL 不改**（仅 override 与 aigw 测试夹具改）：
 
@@ -504,7 +504,7 @@ async fn global_spend_log_detail(Path(call_id): Path<String>) -> ... {
 | `native.rs:1474/1482` — `SELECT "startTime", "request_id", "spend" FROM "LiteLLM_SpendLogs"` | **litellm 源表列**（测试断言） | **不改** |
 | `native.rs:25` — 注释「idempotent on `request_id`」 | **litellm 源表语义** | **不改** |
 | `remote_import.rs:865/1023/1041/1200/1211` — `CREATE TABLE "LiteLLM_SpendLogs"(...request_id...)` 测试夹具 | **litellm 源表 schema** | **不改** |
-| `remote_import.rs:1224` — `CREATE TABLE "spend_logs"(request_id TEXT PRIMARY KEY...)` 测试夹具 | **aigw 目标表测试夹具** | **改**（`request_id`→`call_id`，与 022 收敛一致；否则测试跑 022 后列名不符） |
+| `remote_import.rs:1224` — `CREATE TABLE "spend_logs"(request_id TEXT PRIMARY KEY...)` 测试夹具 | **aigw 目标表测试夹具** | **改**（`request_id`→`call_id`，与 023 收敛一致；否则测试跑 023 后列名不符） |
 | `remote_export.rs:547` — `CREATE TABLE "spend_logs"(request_id TEXT PRIMARY KEY...)` 测试夹具 | **aigw 源表测试夹具** | **改**（同上） |
 | `remote_export.rs:573/574` — `CREATE TABLE "LiteLLM_SpendLogs"(request_id...)` 测试夹具 | **litellm 目标兼容表** | **不改** |
 | `main.rs:128` — 注释「idempotent on request_id」 | **litellm 源表语义** | **不改** |
@@ -551,6 +551,7 @@ BDD（`crates/aigw-server/tests/`）：
 | `bdd_steps/spend_steps.rs` | step 定义 | 14 |
 | `bdd_steps/common.rs` | 公共 step | 1 |
 | `bdd_steps/common_steps.rs` | 公共 step（v4 补） | 见实测 |
+| `features/body_archive_read.feature` | BDD 业务文本（v6 补，Stage 83 增） | 6 |
 
 非 BDD 单元/集成测试（v4 补，方案 v3 完全漏列）：
 
@@ -561,6 +562,8 @@ BDD（`crates/aigw-server/tests/`）：
 | `aigw-core/src/body_archive/writer.rs` | `#[cfg(test)]` (:147) | 2 | `BodyRow{...}` + `format!("req-{:04}", i)` |
 | `aigw-core/src/db.rs` | `#[cfg(test)]` (:4230) | 1 | :4599 `SpendLog{request_id:...}` 构造 |
 | `aigw-server/src/routes/spend.rs` | `#[cfg(test)]` (:1152) | 5 | `SpendLog{...}` + 路由路径 `/global/spend/logs/{request_id}` 断言 + `assert!(val.get("request_id")...)` |
+| `aigw-core/tests/stage82_state_machine.rs` | 集成测试（v6 补，Stage 82 增） | 1 | async_job 步骤 SpendLog/request_id 构造 |
+| `aigw-core/tests/stage83_read_path.rs` | 集成测试（v6 补，Stage 83 增） | 3 | BodyRow `request_id` 构造 |
 
 > BDD `.feature` 是业务文本（如 `Then the spend log has request_id "xxx"`），改字段名要同步改对应 step 定义，两端要对齐。非 BDD 单测里的 `SpendLog{request_id:...}` 构造与 `BodyRow{request_id:...}` 构造改名后必编译失败，务必同步。
 
@@ -677,8 +680,8 @@ GET /global/spend/logs?request_id=xxx   ← 参数名不变，行为改为搜索
 
 | 步骤 | 内容 | 预计耗时 |
 |------|------|----------|
-| 1 | 创建 DB 迁移脚本 `022_rename_request_id_to_call_id.sql`（pg/mysql/sqlite；双重条件探测 `EXISTS(request_id) AND NOT EXISTS(call_id)`；MySQL 全用 PREPARE 写法；含 Phase 4 索引） | 25min |
-| 2 | **不改** `002_spend_logs.sql` / `015_daily_spend.sql`（由 022 统一收敛，见 §3.2） | 0min |
+| 1 | 创建 DB 迁移脚本 `023_rename_request_id_to_call_id.sql`（pg/mysql/sqlite；双重条件探测 `EXISTS(request_id) AND NOT EXISTS(call_id)`；MySQL 全用 PREPARE 写法；含 Phase 4 索引） | 25min |
+| 2 | **不改** `002_spend_logs.sql` / `015_daily_spend.sql`（由 023 统一收敛，见 §3.2） | 0min |
 | 3 | 修改模型层 `models.rs`：`SpendLog.request_id` → `call_id` + 新增 `request_id: Option<String>` + `Tag` 变体（:185）改名 | 10min |
 | 4 | 修改 DB 层 `db.rs`：SQL 列名、方法名、参数名（三套实现 ~86 处）+ 新增/扩展上游 id 写入方法（§4.2 方案 A） | 40min |
 | 5 | 修改 body_archive：字段 + SQL（~48 处）+ parquet reader 列名兼容（§4.4）；清空开发/测试环境存量 parquet | 25min |
@@ -711,7 +714,7 @@ GET /global/spend/logs?request_id=xxx   ← 参数名不变，行为改为搜索
 | **migrate 源端 request_id 未 override 到 call_id**（v4 新增） | 高 | 存量导入 PK 为 NULL，INSERT 失败 | §4.5 注入 `request_id→call_id` override；§7 步骤 12 |
 | **对外协议响应体 request_id 误改成 call_id**（v4 新增） | 中 | 客户端契约破坏，对账断链 | §6.3 明确协议字段边界；§4.6 B 补不改清单 |
 | **tracing span/log 字段 request_id 与 DB 改名语义不一致**（v4 新增） | 中 | 排障时日志字段名误导（reader 误以为是上游 ID） | §10 明确处置：span 字段同步改名或加 call_id 别名 |
-| **022 迁移非幂等导致新装库报错** | 低（v3 已修） | 新部署失败 | §3.1 双重条件探测 `EXISTS(request_id) AND NOT EXISTS(call_id)` + `IF NOT EXISTS`；§7 步骤 15 三端三路径联调验证 |
+| **023 迁移非幂等导致新装库报错** | 低（v3 已修） | 新部署失败 | §3.1 双重条件探测 `EXISTS(request_id) AND NOT EXISTS(call_id)` + `IF NOT EXISTS`；§7 步骤 15 三端三路径联调验证 |
 | **MySQL `ADD COLUMN IF NOT EXISTS` 语法报错** | 低（v3 已修） | 迁移失败 | §3.1 MySQL 全部改 PREPARE 探测写法 |
 | **存量 parquet schema 不匹配** | 低（v3 已覆盖） | body_archive 读历史数据报错 | §4.4：上线前清空 + reader 列名兼容防御 |
 | **流式上游 id 未提取** | 高 | 上游 ID 永远 NULL，对账断链 | §4.3 补流式 SSE chunk 解析（OpenAI chunk.id / Anthropic message_start.id） |
@@ -729,10 +732,10 @@ GET /global/spend/logs?request_id=xxx   ← 参数名不变，行为改为搜索
 - **为什么不保持 `request_id` 做 PK 名**：行业惯例中 `request_id` 指向上游 provider 的 ID，litellm 就是如此。保留这个名字会持续造成混淆
 - **为什么不新增 `upstream_response_id` 而用 `request_id`**：语义上就是上游的请求 ID，与 litellm 保持一致，减少学习成本
 - **为什么查询参数保持 `request_id` 不变**：对用户来说，「通过 request ID 搜索」是自然语义，不需要区分是搜索网关 ID 还是上游 ID（已知妥协见 §6.2）
-- **为什么只加 022 迁移而不改 002/015**（v2 新增）：避免「新装库 002 已建 call_id → 022 RENAME 报错」的幂等冲突；存量/新装/重跑三类库都靠 022 条件探测统一收敛，工作量更小、行为更可预测
-- **为什么 022 探测条件是双重条件**（v3 新增）：Phase 2 新增的列也叫 `request_id`，单查 `EXISTS(request_id)` 在重跑时恒为 TRUE，会再次触发 RENAME 报错。必须 `EXISTS(request_id) AND NOT EXISTS(call_id)` 才能在 SQL 层面自身幂等，不依赖迁移器版本表
+- **为什么只加 023 迁移而不改 002/015**（v2 新增）：避免「新装库 002 已建 call_id → 023 RENAME 报错」的幂等冲突；存量/新装/重跑三类库都靠 023 条件探测统一收敛，工作量更小、行为更可预测
+- **为什么 023 探测条件是双重条件**（v3 新增）：Phase 2 新增的列也叫 `request_id`，单查 `EXISTS(request_id)` 在重跑时恒为 TRUE，会再次触发 RENAME 报错。必须 `EXISTS(request_id) AND NOT EXISTS(call_id)` 才能在 SQL 层面自身幂等，不依赖迁移器版本表
 - **为什么 MySQL 不用 `ADD COLUMN IF NOT EXISTS`**（v3 新增）：原生 MySQL 不支持该语法（仅 MariaDB 支持），统一用 `INFORMATION_SCHEMA + PREPARE` 探测写法，三端行为一致
-- **为什么 022 就建 `request_id` 索引而非推迟**（v3 新增）：对账是本方案核心动机，对账查询形态是 `WHERE request_id = ?` 点查，单列索引直接命中；可空列索引开销极小，没必要留到「未来」
+- **为什么 023 就建 `request_id` 索引而非推迟**（v3 新增）：对账是本方案核心动机，对账查询形态是 `WHERE request_id = ?` 点查，单列索引直接命中；可空列索引开销极小，没必要留到「未来」
 - **为什么流式要从 chunk 提取 id 而非 body**（v2 新增）：aigw 流式是 SSE 透传，没有整体 JSON body；OpenAI 每个 chunk 带 `id`，Anthropic 在 `message_start` 事件带 `message.id`，只能在 chunk 级别解析
 
 ---
@@ -765,5 +768,126 @@ GET /global/spend/logs?request_id=xxx   ← 参数名不变，行为改为搜索
 > 无论哪种，`chat.rs`/`v1_messages.rs` 里 `tracing::warn!("mismatch request_id: ...")` 的 message 文本可保留不改——它描述的是 HTTP 出站头 mismatch，属 §2.2 HTTP 层语义，与 DB 字段无关。
 
 **对账缺口提示（非本次改动范围，记录供后续跟进）**：aigw 未用 `PropagateRequestIdLayer` 把 `x-request-id` 回写响应头，客户端无法从响应拿到调用 ID 对账。本次改名后，若要让客户端用 `call_id` 对账，需后续单独加 `PropagateRequestIdLayer`（或自定义响应头 `x-gw-call-id`）。不阻塞本次发布。
+
+---
+
+## 11. v6.1 Gate-2 评审增量（2026-07-27）
+
+> Gate-2 多模型评审（lead 独立 + 3 路 subagent：migration / migrate-frontend-tracing-tests / extraction-protocol）发现 6 项需在实施前补齐的设计缺陷。详见 `docs/research/2026-07-27-stage-85-design-review-consolidated.md`。本节为权威增量，覆盖前文与之冲突的描述。
+
+### 11.1 export override 被 direct-match 抢占（Lens B C2 — High，静默数据丢失）
+
+§4.5 的 export 反向 override `["request_id"] = "call_id"` **不会被消费**。`insert_rows`（`native.rs:1222-1236`）的查找顺序是 **direct match 优先，override 仅作 fallback**：
+
+```rust
+let v = row_map.get(col_name.as_str())           // (1) direct: row_map[target_col]
+    .or_else(|| column_override.get(col_name.as_str())   // (2) fallback only
+        .and_then(|mapped| row_map.get(mapped.as_str())))
+```
+
+export 场景：aigw 源有 `call_id` + `request_id`；litellm 目标只有 `request_id`。对目标 `request_id`：direct match `row_map["request_id"]` 命中 aigw 的上游 `request_id`（按 §3.5 历史 litellm 导入行该列为 NULL）→ 把 **NULL 写进 litellm 的 `request_id` PK**。override 永远到不了。
+
+**修复**：在 `remote_export.rs:384` `insert_rows` 调用前，**从每条 aigw 源行剥离 `request_id` 列**（使 direct match 失败、override 生效）；或改 `insert_rows` 让 override 优先（侵入其他表，不推荐）。本设计采用**源行剥离**：
+
+```rust
+// remote_export.rs migrate_spend_logs，insert_rows 前：
+let rows_stripped: Vec<UnifiedRow> = rows.iter().map(|r| {
+    r.iter().filter(|(n, _)| n != "request_id").cloned().collect()
+}).collect();
+// 再 overrides.insert("request_id".to_string(), "call_id".to_string())
+// insert_rows(target, "LiteLLM_SpendLogs", &tgt_col_info, &rows_stripped, &overrides)
+```
+
+### 11.2 失败路径 upstream_id 走 INSERT，非 UPDATE（Lens C C1 — Critical，核心预期 breaker）
+
+§4.3 v5 把失败路径 ×3 当作 `update_spend_log` 调用点，**错误**。实际三处失败路径只调 `insert_spend_log(&sl)`：
+- `chat.rs:1047`（超时）、`chat.rs:1148`（流式 4xx/5xx）、`chat.rs:1518`（非流式 4xx/5xx）
+- `v1_messages.rs:421/609/705` — 全是 `insert_spend_log`
+
+`COALESCE($new, request_id)` UPDATE 保护**不覆盖**失败行 → 失败 `request_id` 仍 NULL → **v5 核心预期"失败请求也能对账"静默失败**。
+
+**修复**：失败路径把 `upstream_id` 直接放进 `SpendLog.request_id` 字段在 INSERT 时写入：
+
+```rust
+// chat.rs / v1_messages.rs 失败分支：
+let fail_upstream_id = extract_upstream_id_from_error(&error_body, &resp_headers);
+let sl = SpendLog {
+    call_id: fail_request_id,
+    request_id: fail_upstream_id,   // ← INSERT 时即写入，不走 UPDATE
+    ...
+};
+state.db.insert_spend_log(&sl).await;
+```
+
+`update_spend_log` 的 `upstream_request_id` 参数 + `COALESCE` 保护**仅用于流式 Phase 2 UPDATE**（成功路径：首 chunk 提取 id 后回填）。`update_spend_log` 实际调用点 3 处（非设计原称的 5 处）：`chat.rs:1359`（流式失败 Phase 2）、`chat.rs:1385`（流式成功 Phase 2）、`v1_messages.rs:897`（流式成功 Phase 2）。
+
+### 11.3 Anthropic 流式提取位置（Lens C C2 — High）
+
+§4.3 v4 伪代码"在 push chunk_jsons 的同一循环体内提取"。但 `v1_messages.rs:814` 只在 `raw.get("choices")` 非空时 push；Anthropic-native `message_start` 事件无 `choices` → push 不触发 → 提取永远不执行。且 `raw` 在 `push(raw)` 被 move，提取放 push 之后是 use-after-move。
+
+**修复**：提取放在 `serde_json::from_str::<Value>(data)` 成功后、`if choices` 分支**之前**，用 `raw.get("message")`（borrow，不 move）：
+
+```rust
+// v1_messages.rs:805 之后、:814 if choices 之前：
+if upstream_id.is_none() {
+    if let Some(msg) = raw.get("message") {
+        if let Some(id) = msg.get("id").and_then(|v| v.as_str()) {
+            upstream_id = Some(id.to_string());
+        }
+    }
+}
+// 再走原有 if choices 分支 push(raw)
+```
+
+chat.rs（OpenAI）同样放 push 之前 borrow 提取，但 OpenAI chunk 恒有 `choices`，hazard 较低。
+
+### 11.4 Anthropic 失败响应头须预提取 request-id（Lens C C4 — Medium）
+
+§4.3 v5 Anthropic 失败 fallback 到响应头 `request-id` / `x-request-id`。但 `v1_messages.rs:713/949` 的 `upstream_resp.text().await` **消费了 `upstream_resp`**，之后 `upstream_resp.headers()` 不可达。预提取的 `upstream_req_id`（`:624-628`）只有 `x-request-id`，没有 Anthropic 官方头 `request-id`。
+
+**修复**：在 `:624-628` 预提取 `x-request-id` 时一并预提取 `request-id`：
+
+```rust
+// v1_messages.rs:624-628 扩展：
+let upstream_req_id = upstream_resp.headers().get("x-request-id")
+    .or_else(|| upstream_resp.headers().get("request-id"))  // ← 新增
+    .and_then(|v| v.to_str().ok()).map(|s| s.to_string());
+```
+
+失败 fallback 链：error body `request_id` 字段 → `upstream_req_id`（含 `request-id`/`x-request-id`）。
+
+### 11.5 双列搜索 bind 机械 per-impl（Lens C C5 — Medium）
+
+§4.2 `WHERE call_id LIKE $1 OR request_id LIKE $1` 未说明 per-impl 差异 + Postgres count 占位符计数 hazard。
+
+| impl | 位置 | 改法 |
+|------|------|------|
+| Sqlite filtered | `db.rs:1482-1521` | SQL-level：`AND (call_id = ? OR request_id = ?)`，bind 两次 |
+| Sqlite count | `db.rs:1534-1548` | 同上 |
+| Mysql count | `db.rs:1826-1851` | 同上 |
+| Postgres count | `db.rs:2107-2132` | SQL-level，但占位符用计数器 `i`，`OR` 要 `i` 递增两次（连续 push `$i` `$i+1` 再 `i+=2`） |
+| Mysql filtered | `db.rs:1788-1814` | **内存过滤**非 SQL：filter closure 改 `log.call_id != rid && log.request_id != rid` |
+| Postgres filtered | `db.rs:2070-2095` | 同 Mysql filtered，内存过滤 |
+
+### 11.6 migrate NULL 语义澄清（Lens B M1 — Medium）
+
+§3.5 "历史调用从未存储上游 ID" 误判。litellm 的 `request_id` **就是**上游 provider id（§1.2 `response_obj.get("id")`）。修正 import override 后，litellm 源 `request_id` 经 direct match **同时**写入 aigw 目标 `call_id`（PK，经 override）+ 目标 `request_id`（上游列，经 direct match）——**两列同值，语义正确**，不是缺陷。
+
+§3.5 修订：migrate 导入的存量行，`call_id` = `request_id` = litellm 原 `request_id`（同值）。售后对账历史记录时，用任一列都能回查 litellm。**不再追求上游列 NULL**（既做不到也不该做）。
+
+### 11.7 实施时 line-number 修正（Lens B L1 / Lens C C6/C8 — Low，记录给实施者）
+
+- `remote_import.rs` aigw `spend_logs` 测试夹具实际在 `:1243-1260`（非 `:1224`，:1224 在 litellm 夹具内）。
+- chat.rs 非流式 success SpendLog 在 `:1536-1582`（非 `:1184`，:1184 是流式 Phase 1 占位 INSERT）。
+- `update_spend_log` 共 5 处（trait `:1192` + Sqlite `:1341` + Mysql `:1629` + Postgres `:1904` + Database dispatch `:2166`），非"3 处"。
+- chat.rs 对外响应 body **不含** `request_id` 字段（仅 `v1_messages.rs` 的 `anthropic_error` 注入）——§6.3 该条事实有误，但属"不改"边界，无实施影响。
+- MySQL `RENAME COLUMN` 是本仓首次使用的新模式（现有 018 用 DROP+rebuild）；目标 8.4 支持，但 README 应显式标注最低 MySQL 8.0 / MariaDB 10.5.2。
+- parquet reader（`body_archive/query.rs:60-70`）按 **projection mask 列名** 定位、`batch.column(N)` 按位置取值。`BodyRow.request_id` 改名后，projection 需先尝试 `call_id` 再 fallback `request_id`，否则读旧 parquet 文件会找不到列。§4.4 处置（清空存量 + reader 列名兼容）正确。
+
+### 11.8 §7 步骤同步
+
+- 步骤 7（chat.rs）：失败路径 `SpendLog{ call_id, request_id: fail_upstream_id, .. }` 在 INSERT 写入（非补 UPDATE 参数）；流式 Phase 2 UPDATE 才补 `upstream_id`。
+- 步骤 8（v1_messages.rs）：同上；额外 `:624-628` 预提取 `request-id` 头；流式提取放 `if choices` 之前 borrow。
+- 步骤 12（migrate）：import override `("call_id","request_id")` + export 源行剥离 `request_id` + export override `("request_id","call_id")`。
 
 **§7 步骤补充**：在步骤 10（改 `main.rs`）后追加一步——「处置 `main.rs:126` tracing span 字段（§10 方案 A：`request_id` → `call_id`）」，耗时 5min。
