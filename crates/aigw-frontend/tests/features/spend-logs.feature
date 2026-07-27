@@ -22,8 +22,8 @@ Feature: Spend Logs
     When I change the page size to 50
     Then the spend logs query should include page_size=50
 
-  Scenario: Request ID search filters logs
-    When I type "req-001" into the request ID search
+  Scenario: Call ID search filters logs
+    When I type "req-001" into the call ID search
     Then the spend logs list should update
 
   Scenario: Click row opens detail drawer

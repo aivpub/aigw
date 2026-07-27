@@ -281,7 +281,8 @@ async fn get_spend_log_detail_noauth(world: &mut TestWorld, request_id: String) 
 async fn given_spend_log_basic(world: &mut TestWorld, request_id: String) {
     let state = world.ensure_state().await;
     let log = aigw_core::models::SpendLog {
-        request_id,
+        call_id: request_id,
+        request_id: None,
         call_type: "completion".to_string(),
         api_key: "master_key".to_string(),
         spend: 0.01,
@@ -323,7 +324,8 @@ async fn given_spend_log_basic(world: &mut TestWorld, request_id: String) {
 async fn given_spend_log_with_body(world: &mut TestWorld, request_id: String) {
     let state = world.ensure_state().await;
     let log = aigw_core::models::SpendLog {
-        request_id,
+        call_id: request_id,
+        request_id: None,
         call_type: "completion".to_string(),
         api_key: "master_key".to_string(),
         spend: 0.05,

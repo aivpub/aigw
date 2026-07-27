@@ -608,7 +608,7 @@ export function SpendLogsPage() {
               </>
             )}
             <div className="h-5 w-px bg-border mx-1" />
-            <div className="w-36 relative"><Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground"/><Input placeholder="Request ID…" value={requestIdInput} onChange={e => handleRequestIdInput(e.target.value)} className="h-7 pl-7 text-xs"/></div>
+            <div className="w-36 relative"><Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground"/><Input placeholder="Call / Upstream ID…" value={requestIdInput} onChange={e => handleRequestIdInput(e.target.value)} className="h-7 pl-7 text-xs"/></div>
             <div className="w-32"><Input placeholder="Model…" value={modelFilter} onChange={e => { setModelFilter(e.target.value); setPage(1); }} className="h-7 text-xs"/></div>
             <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setPage(1); }}>
               <SelectTrigger className="h-7 w-[100px] text-xs"><SelectValue placeholder="Status"/></SelectTrigger>

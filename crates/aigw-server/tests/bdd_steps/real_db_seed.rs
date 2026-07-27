@@ -13,7 +13,7 @@ use serde_json;
 /// A row of test data to insert into spend_logs.
 #[derive(Debug, Clone)]
 pub(crate) struct SeedRow {
-    pub request_id: String,
+    pub call_id: String,
     pub api_key: String,
     pub spend: f64,
     pub total_tokens: i64,
@@ -36,7 +36,7 @@ pub(crate) struct SeedRow {
 impl SeedRow {
     /// Create a minimal row with defaults. request_tags defaults to NULL.
     pub(crate) fn new(
-        request_id: &str,
+        call_id: &str,
         api_key: &str,
         spend: f64,
         total_tokens: i64,
@@ -44,7 +44,7 @@ impl SeedRow {
         ts_iso8601: &str,
     ) -> Self {
         Self {
-            request_id: request_id.to_string(),
+            call_id: call_id.to_string(),
             api_key: api_key.to_string(),
             spend,
             total_tokens,
@@ -63,11 +63,11 @@ impl SeedRow {
     }
 }
 
-/// Delete all rows whose request_id starts with the given prefix.
+/// Delete all rows whose call_id starts with the given prefix.
 /// Idempotent — safe to call before each seeding.
 pub(crate) async fn cleanup_by_prefix(db_url: &str, prefix: &str) -> anyhow::Result<()> {
     let pool = aigw_migrate::native::SourcePool::connect(db_url).await?;
-    let sql = format!("DELETE FROM spend_logs WHERE request_id LIKE '{}%'", prefix);
+    let sql = format!("DELETE FROM spend_logs WHERE call_id LIKE '{}%'", prefix);
     pool.execute_raw(&sql).await?;
     Ok(())
 }
@@ -108,14 +108,14 @@ pub(crate) async fn seed_spend_logs(
 
         let sql = format!(
             r#"INSERT INTO spend_logs
-            (request_id, call_type, api_key, spend, total_tokens, prompt_tokens, completion_tokens,
+            (call_id, call_type, api_key, spend, total_tokens, prompt_tokens, completion_tokens,
              start_time, end_time, model, status, {user_ident}, team_id, organization_id,
              request_tags, custom_llm_provider, end_user)
             VALUES ('{}', 'completion', '{}', {}, {}, {}, {},
                     {}, {}, '{}', '{}',
                     {}, {}, {},
                     {}, {}, {})"#,
-            row.request_id,
+            row.call_id,
             row.api_key,
             row.spend,
             row.total_tokens,

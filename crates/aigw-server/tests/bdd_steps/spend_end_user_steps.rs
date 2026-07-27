@@ -36,7 +36,8 @@ async fn given_spend_log_with_end_user(world: &mut TestWorld, step: &Step) {
 
     let now = chrono::Utc::now();
     let log = SpendLog {
-        request_id: uuid::Uuid::new_v4().to_string(),
+        call_id: uuid::Uuid::new_v4().to_string(),
+        request_id: None,
         call_type: "completion".to_string(),
         api_key: key_token,
         spend: 0.015,
@@ -76,7 +77,8 @@ async fn given_spend_log_without_end_user(world: &mut TestWorld) {
 
     let now = chrono::Utc::now();
     let log = SpendLog {
-        request_id: uuid::Uuid::new_v4().to_string(),
+        call_id: uuid::Uuid::new_v4().to_string(),
+        request_id: None,
         call_type: "completion".to_string(),
         api_key: key_token,
         spend: 0.01, total_tokens: 50, prompt_tokens: 30, completion_tokens: 20,

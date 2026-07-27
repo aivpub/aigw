@@ -58,7 +58,8 @@ async fn given_recent_data_all_archived(world: &mut TestWorld) {
     let state = world.ensure_state().await;
     let now = chrono::Utc::now();
     let log = aigw_core::models::SpendLog {
-        request_id: uuid::Uuid::new_v4().to_string(),
+        call_id: uuid::Uuid::new_v4().to_string(),
+        request_id: None,
         call_type: "completion".to_string(),
         api_key: "hash1".to_string(),
         spend: 0.01,
@@ -178,7 +179,9 @@ async fn given_n_records_for_hour(world: &mut TestWorld, count: usize) {
     let state = world.ensure_state().await;
     for i in 0..count {
         let log = aigw_core::models::SpendLog {
-            request_id: format!("req-{:04}", i),
+            call_id: format!("req-{:04}", i),
+            // Archive filter (Stage 85) requires a non-null upstream id.
+            request_id: Some(format!("upstream-{:04}", i)),
             call_type: "completion".to_string(),
             api_key: "hash-test".to_string(),
             spend: 0.01, total_tokens: 100, prompt_tokens: 50, completion_tokens: 50,
@@ -207,7 +210,8 @@ async fn given_n_records_for_hour(world: &mut TestWorld, count: usize) {
 async fn given_all_archived_for_hour(world: &mut TestWorld) {
     let state = world.ensure_state().await;
     let log = aigw_core::models::SpendLog {
-        request_id: "req-arch-all".to_string(),
+        call_id: "req-arch-all".to_string(),
+        request_id: None,
         call_type: "completion".to_string(),
         api_key: "hash-test".to_string(),
         spend: 0.01, total_tokens: 100, prompt_tokens: 50, completion_tokens: 50,
@@ -240,7 +244,10 @@ async fn given_storage_unreachable(world: &mut TestWorld) {
     let hour_label = anchor.format("%Y-%m-%dT%H").to_string();
     set_flag(world, "test_hour", &serde_json::json!(hour_label));
     let log = aigw_core::models::SpendLog {
-        request_id: "unreachable-test-001".to_string(),
+        call_id: "unreachable-test-001".to_string(),
+        // Archive filter (Stage 85) skips rows with NULL upstream id; this row
+        // MUST carry one so execute() reaches the (unreachable) storage layer.
+        request_id: Some("upstream-unreachable-001".to_string()),
         call_type: "completion".to_string(),
         api_key: "hash-unreachable".to_string(),
         spend: 0.01, total_tokens: 100, prompt_tokens: 50, completion_tokens: 50,
@@ -269,7 +276,9 @@ async fn given_50_pending_for_parquet(world: &mut TestWorld) {
     let state = world.ensure_state().await;
     for i in 0..50 {
         let log = aigw_core::models::SpendLog {
-            request_id: format!("parquet-req-{:04}", i),
+            call_id: format!("parquet-req-{:04}", i),
+            // Archive filter (Stage 85) requires a non-null upstream id.
+            request_id: Some(format!("upstream-parquet-{:04}", i)),
             call_type: "completion".to_string(),
             api_key: "hash-test".to_string(),
             spend: 0.01, total_tokens: 100, prompt_tokens: 50, completion_tokens: 50,
@@ -438,7 +447,8 @@ async fn then_sorted_by_request_id(_world: &mut TestWorld) {}
 async fn given_8_day_old_archived_data(world: &mut TestWorld) {
     let state = world.ensure_state().await;
     let log = aigw_core::models::SpendLog {
-        request_id: format!("old-{}", uuid::Uuid::new_v4()),
+        call_id: format!("old-{}", uuid::Uuid::new_v4()),
+        request_id: None,
         call_type: "completion".to_string(),
         api_key: "hash-old".to_string(),
         spend: 0.01, total_tokens: 100, prompt_tokens: 50, completion_tokens: 50,
@@ -466,7 +476,8 @@ async fn given_8_day_old_archived_data(world: &mut TestWorld) {
 async fn given_3_day_old_archived_data(world: &mut TestWorld) {
     let state = world.ensure_state().await;
     let log = aigw_core::models::SpendLog {
-        request_id: format!("recent-{}", uuid::Uuid::new_v4()),
+        call_id: format!("recent-{}", uuid::Uuid::new_v4()),
+        request_id: None,
         call_type: "completion".to_string(),
         api_key: "hash-recent".to_string(),
         spend: 0.01, total_tokens: 100, prompt_tokens: 50, completion_tokens: 50,
@@ -494,7 +505,8 @@ async fn given_3_day_old_archived_data(world: &mut TestWorld) {
 async fn given_8_day_old_archived_record(world: &mut TestWorld) {
     let state = world.ensure_state().await;
     let log = aigw_core::models::SpendLog {
-        request_id: format!("old-{}", uuid::Uuid::new_v4()),
+        call_id: format!("old-{}", uuid::Uuid::new_v4()),
+        request_id: None,
         call_type: "completion".to_string(),
         api_key: "hash-old".to_string(),
         spend: 0.01, total_tokens: 100, prompt_tokens: 50, completion_tokens: 50,
@@ -582,7 +594,8 @@ async fn given_already_archived(world: &mut TestWorld) {
     let state = world.ensure_state().await;
     for i in 0..2 {
         let log = aigw_core::models::SpendLog {
-            request_id: format!("archived-{}", i),
+            call_id: format!("archived-{}", i),
+            request_id: None,
             call_type: "completion".to_string(),
             api_key: "hash-archived".to_string(),
             spend: 0.01, total_tokens: 100, prompt_tokens: 50, completion_tokens: 50,
@@ -683,7 +696,9 @@ async fn then_storage_backend_fs(world: &mut TestWorld) {
 
 fn make_spend_log_for_hour(hour: chrono::DateTime<chrono::Utc>) -> aigw_core::models::SpendLog {
     aigw_core::models::SpendLog {
-        request_id: uuid::Uuid::new_v4().to_string(),
+        call_id: uuid::Uuid::new_v4().to_string(),
+        // Archive filter (Stage 85) requires a non-null upstream id.
+        request_id: Some(format!("upstream-{}", uuid::Uuid::new_v4())),
         call_type: "completion".to_string(),
         api_key: "hash-test".to_string(),
         spend: 0.01,

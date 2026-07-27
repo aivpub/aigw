@@ -78,12 +78,12 @@ Then("the spend logs query should include page_size={int}", async ({ page }, _si
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// Request ID search (Stage 36)
+// Call ID search (Stage 36; renamed Stage 85)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-When("I type {string} into the request ID search", async ({ page }, requestId: string) => {
-  const input = page.getByPlaceholder("Request ID…");
-  await input.fill(requestId);
+When("I type {string} into the call ID search", async ({ page }, callId: string) => {
+  const input = page.getByPlaceholder("Call / Upstream ID…");
+  await input.fill(callId);
   await page.waitForTimeout(600); // debounce + fetch
 });
 
