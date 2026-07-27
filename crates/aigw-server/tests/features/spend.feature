@@ -27,3 +27,22 @@ Feature: Spend 查询
     When 使用 master-key 发送 GET /global/spend/logs 请求带 page_size=10
     Then 响应状态码为 200
     And 响应 data 不含 "messages" 和 "response" 字段
+
+  # ━━━━ Stage 85: call_id / upstream request_id 双列 ━━━━
+  # 核心预期:任意 SpendLog 都能用上游 request_id 对账;搜索同时命中 call_id 与 request_id。
+  Scenario: SpendLog 同时返回 call_id 与上游 request_id
+    Given 一条含上游 request_id 的支出记录 "gw-call-001" 已入库
+    When 使用 master-key 发送 GET /global/spend/logs/gw-call-001 请求
+    Then 响应状态码为 200
+    And 响应 body 的 call_id 为 "gw-call-001"
+    And 响应 body 的 request_id 为 "msg_upstream_001"
+
+  Scenario: 搜索参数 request_id 同时匹配 call_id 与上游 request_id
+    Given 一条含上游 request_id 的支出记录 "gw-call-001" 已入库
+    And 一条含上游 request_id 的支出记录 "gw-call-002" 已入库
+    When 使用 master-key 发送 GET /global/spend/logs 请求搜索 request_id 为 "gw-call-002"
+    Then 响应状态码为 200
+    And 响应 data 包含 call_id 为 "gw-call-002" 的记录
+    When 使用 master-key 发送 GET /global/spend/logs 请求搜索 request_id 为 "msg_upstream_001"
+    Then 响应状态码为 200
+    And 响应 data 包含 call_id 为 "gw-call-001" 的记录

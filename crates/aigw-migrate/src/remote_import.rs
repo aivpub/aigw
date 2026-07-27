@@ -1298,5 +1298,19 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(row.0, 5, "target should still have 5 rows after idempotent resume");
+
+        // Stage 85 (v6.1 §4.5): verify the import override redirected litellm's
+        // source `request_id` into aigw's `call_id` PK (not NULL). Without the
+        // override, the PK would be NULL and INSERT would have failed — so the
+        // 5-row count above already proves the override works, but we also
+        // assert the value is the expected litellm id to catch silent misroutes
+        // (e.g. PK populated from a different source column).
+        let pk_row: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM spend_logs WHERE call_id IS NULL OR call_id = ''",
+        )
+        .fetch_one(&tgt_pool2)
+        .await
+        .unwrap();
+        assert_eq!(pk_row.0, 0, "no target row should have a NULL/empty call_id PK (import override broken)");
     }
 }

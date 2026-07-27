@@ -36,10 +36,14 @@ SET @sql = IF(@col_exists > 0 AND @new_col_exists = 0,
     'SELECT 1');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
--- Phase 4: index on upstream request_id (reconciliation point-lookup)
+-- Phase 4: index on upstream request_id (reconciliation point-lookup).
+-- MySQL requires a prefix length for indexing a TEXT column (error 1170
+-- "BLOB/TEXT column used in key specification without a key length" otherwise).
+-- 128 chars covers all known upstream id formats (Anthropic msg_xxx / OpenAI
+-- chatcmpl-xxx are well under 64 chars) while keeping the index compact.
 SET @idx_exists = (SELECT COUNT(*) FROM information_schema.statistics
     WHERE table_schema = DATABASE() AND table_name = 'spend_logs' AND index_name = 'idx_spend_logs_request_id');
 SET @sql = IF(@idx_exists = 0,
-    'CREATE INDEX idx_spend_logs_request_id ON spend_logs(request_id)',
+    'CREATE INDEX idx_spend_logs_request_id ON spend_logs(request_id(128))',
     'SELECT 1');
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;

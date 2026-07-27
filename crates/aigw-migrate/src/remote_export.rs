@@ -561,6 +561,14 @@ mod tests {
         sqlx::query(
             r#"CREATE TABLE "spend_logs" (call_id TEXT PRIMARY KEY, model TEXT, spend REAL DEFAULT 0, request_id TEXT)"#,
         ).execute(&src_pool).await.unwrap();
+        // Seed one row: call_id is the aigw PK; request_id (upstream) is NULL —
+        // simulates a historical row migrated FROM litellm where the upstream
+        // col was never populated. The export reverse-override must redirect
+        // aigw call_id → litellm's request_id PK; if direct-match won instead
+        // it would write NULL into litellm's PK (data loss, v6.1 §11.1).
+        sqlx::query(
+            r#"INSERT INTO "spend_logs" (call_id, model, spend, request_id) VALUES ('aigw-call-001', 'gpt-4', 0.05, NULL)"#,
+        ).execute(&src_pool).await.unwrap();
         src_pool.close().await;
 
         // Setup litellm target DB
@@ -619,6 +627,15 @@ mod tests {
         let model_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM \"LiteLLM_ProxyModelTable\"")
             .fetch_one(&tgt_pool).await.unwrap();
         assert_eq!(model_count.0, 1);
+
+        // Stage 85 (v6.1 §11.1): verify the export reverse-override redirected
+        // aigw's `call_id` PK into litellm's `request_id` PK — NOT the aigw
+        // upstream `request_id` (which is NULL for this seeded row). Direct-match
+        // would have written NULL → litellm PK NULL → data loss.
+        let spend_row: (String,) = sqlx::query_as(
+            "SELECT request_id FROM \"LiteLLM_SpendLogs\" WHERE model = 'gpt-4'",
+        ).fetch_one(&tgt_pool).await.unwrap();
+        assert_eq!(spend_row.0, "aigw-call-001", "export must map aigw call_id → litellm request_id PK (direct-match would have written NULL)");
 
         let model_row: (String,) = sqlx::query_as(
             "SELECT litellm_params FROM \"LiteLLM_ProxyModelTable\" WHERE model_id = 'model-1'",
