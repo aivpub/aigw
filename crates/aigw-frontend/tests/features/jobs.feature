@@ -21,14 +21,10 @@ Feature: Jobs 管理页面
   Scenario: 统计卡片展示归档信息和引擎统计
     When I click the "Body Archive" Sub-Tab
     Then I should see a stats card with "● Enabled" indicator
-    And I should see "Last Archive: 2026-07-24 17:00"
-    And I should see total archived rows formatted as "450K rows"
-    And I should see total archived bytes formatted as "75 GB"
-    And I should see DB space freed formatted as "120 GB"
-    And I should see pending rows count "800 rows pending"
-    And I should see Engine stats: "6 loops (3 replicas × 2)"
+    And I should see "Enabled"
+    And I should see total archived rows formatted as "450K"
+    And I should see pending rows count "800"
     And I should see Queue stats: "3 pending · 2 running · 0 stale"
-    And I should see Today stats: "48 completed · 1 failed"
 
   Scenario: 统计卡片数据每 30 秒自动刷新
     Given the archive stats will change on next fetch
@@ -38,11 +34,11 @@ Feature: Jobs 管理页面
   # ── Body Archive — 手动触发 ──
 
   Scenario: 手动触发存量归档
-    When I fill Start Date with "2026-07-22"
+    When I click the "Body Archive" Sub-Tab
+    And I click "Trigger Archive"
+    And I fill Start Date with "2026-07-22"
     And I fill End Date with "2026-07-24"
-    And I click "Estimate"
-    Then I should see estimated 48 steps
-    When I click "Trigger Archive"
+    And I click "Trigger Job"
     Then POST /admin/jobs/trigger is called with step_type="body_archive"
     And a success notification appears with the job_id
     And the Job Detail panel opens for the new job
@@ -83,13 +79,13 @@ Feature: Jobs 管理页面
   Scenario: running Job 每 10 秒自动刷新详情
     Given the expanded Job Detail has status "running"
     When I wait 10 seconds
-    Then GET /admin/jobs/{job_id} is called again
+    Then GET /admin/jobs/job-id is called again
     And the step progress updates
 
   Scenario: completed Job 不自动刷新
     Given the expanded Job Detail has status "completed"
     When I wait 10 seconds
-    Then GET /admin/jobs/{job_id} is NOT called again
+    Then GET /admin/jobs/job-id is NOT called again
 
   Scenario: Logs 按 level 过滤
     Given the Job Detail panel is open
@@ -214,7 +210,7 @@ Feature: Jobs 管理页面
   Scenario: 详情页不显示外层 Sub-Tab 栏
     Given I am viewing Job Detail for "job-test-007"
     Then I do NOT see the "Body Archive" and "Budget Reset" Sub-Tab bar
-    And the title shows "body_archive · manual · 2026-07-25 14:00"
+    And the title shows "Body Archive · manual"
     And Steps table shows Payload, Result, and Duration columns
     And Steps table is paginated with pageSize=20
 

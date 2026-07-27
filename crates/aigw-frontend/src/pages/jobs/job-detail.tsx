@@ -67,8 +67,14 @@ function formatStepResult(result: Record<string, unknown> | null): string {
   if (typeof result.rows_archived === "number") {
     parts.push(formatCount(result.rows_archived) + " rows");
   }
+  if (typeof result.size_bytes === "number" && result.size_bytes > 0) {
+    parts.push(formatBytes(result.size_bytes as number));
+  }
   if (typeof result.bytes_written === "number" && result.bytes_written > 0) {
     parts.push(formatBytes(result.bytes_written as number));
+  }
+  if (typeof result.rows_exported === "number") {
+    parts.push(String(result.rows_exported));
   }
   if (typeof result.duration_ms === "number" && result.duration_ms > 0) {
     parts.push(formatDuration(result.duration_ms as number));
