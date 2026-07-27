@@ -2,9 +2,22 @@
 //!
 //! Reads Parquet files from S3/local storage and extracts specific body fields
 //! for a given request_id. Uses column projection to minimize I/O.
+//!
+//! Stage 83 added `query_parquet_with_cache`: a footer-cached, row-group-aware
+//! range read that avoids re-fetching the parquet footer (and full file) on
+//! repeated queries to the same object.
+
+use std::sync::Arc;
 
 use arrow::array::{Array, StringArray};
-use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use parquet::arrow::arrow_reader::{
+    ArrowReaderMetadata, ParquetRecordBatchReaderBuilder as SyncReaderBuilder,
+};
+use parquet::arrow::async_reader::ParquetObjectReader;
+use parquet::arrow::{ParquetRecordBatchStreamBuilder, ProjectionMask};
+use parquet::file::metadata::ParquetMetaData;
+
+use crate::body_archive::FooterCache;
 
 /// Body payload returned from Parquet cold storage.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -25,12 +38,12 @@ pub fn decode_body_from_parquet(
 
     // Use Bytes for ChunkReader compatibility
     let bytes = bytes::Bytes::copy_from_slice(parquet_data);
-    let builder = ParquetRecordBatchReaderBuilder::try_new(bytes)
+    let builder = SyncReaderBuilder::try_new(bytes)
         .map_err(|e| format!("Parquet reader: {}", e))?;
 
     // Build projection: only read request_id, messages, response, proxy_server_request
     let schema_desc = builder.metadata().file_metadata().schema_descr();
-    let mask = parquet::arrow::ProjectionMask::columns(
+    let mask = ProjectionMask::columns(
         &schema_desc,
         ["request_id", "messages", "response", "proxy_server_request"],
     );
@@ -83,6 +96,125 @@ fn extract_json_column(
     }
     let text = string_col.value(row);
     serde_json::from_str(text).ok()
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Stage 83: footer-cached range read (query_parquet_with_cache)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Query a Parquet object on object storage for a specific `request_id`,
+/// caching the parsed footer (`ParquetMetaData`) so repeated queries to the
+/// same object skip the footer round-trip.
+///
+/// Pipeline:
+/// 1. `footer_cache.get(path)` hit → reuse metadata; miss → `head` + range-read
+///    the footer via `ParquetObjectReader`/`ArrowReaderMetadata`, then cache.
+/// 2. Use the metadata + projected columns
+///    (`request_id`, `messages`, `response`, `proxy_server_request`) to build
+///    an async record-batch stream that only fetches the column chunks needed.
+/// 3. Scan the decoded rows for `target_request_id` and return its body.
+///
+/// `path_str` is the object-store location (e.g.
+/// `year=2026/month=07/day=25/hour=14/data.parquet`).
+pub async fn query_parquet_with_cache(
+    store: &Arc<dyn object_store::ObjectStore>,
+    footer_cache: &FooterCache,
+    path_str: &str,
+    target_request_id: &str,
+) -> Result<Option<BodyPayload>, String> {
+    use object_store::path::Path as ObjPath;
+
+    let path = ObjPath::from(path_str);
+
+    // 1. Obtain the object size via head(); needed to drive footer decoding.
+    let meta = store
+        .head(&path)
+        .await
+        .map_err(|e| format!("head {}: {}", path_str, e))?;
+
+    // 2. Resolve footer metadata — cache hit avoids re-fetching the footer.
+    let metadata = if let Some(cached) = footer_cache.get(path_str) {
+        cached
+    } else {
+        // ParquetObjectReader drives all IO via the store (footer + col chunks).
+        let mut reader = ParquetObjectReader::new(store.clone(), meta.clone());
+        let arrow_meta = ArrowReaderMetadata::load_async(&mut reader, Default::default())
+            .await
+            .map_err(|e| format!("load footer metadata: {}", e))?;
+        let md = arrow_meta.metadata().clone();
+        footer_cache.put(path_str, md.clone());
+        md
+    };
+
+    // 3. Build a stream that reads only the projected columns for the row
+    //    groups that might contain `target_request_id`. With bloom filters or
+    //    per-row-group statistics we could prune; without them we scan all row
+    //    groups but still only fetch the 4 projected column chunks (not the
+    //    full row-group payload of every column).
+    let schema_desc = metadata.file_metadata().schema_descr();
+    let mask = ProjectionMask::columns(
+        &schema_desc,
+        ["request_id", "messages", "response", "proxy_server_request"],
+    );
+
+    let reader = ParquetObjectReader::new(store.clone(), meta);
+    let arrow_meta = try_new_arrow_reader_metadata(metadata)?;
+    let builder = ParquetRecordBatchStreamBuilder::new_with_metadata(reader, arrow_meta);
+
+    let stream = builder
+        .with_projection(mask)
+        .build()
+        .map_err(|e| format!("build stream: {}", e))?;
+
+    let mut found: Option<BodyPayload> = None;
+    tokio::pin!(stream);
+    while let Some(batch_result) = futures::StreamExt::next(&mut stream).await {
+        let batch = batch_result.map_err(|e| format!("read batch: {}", e))?;
+        if let Some(body) = find_body_in_batch(&batch, target_request_id) {
+            found = Some(body);
+            break;
+        }
+    }
+
+    Ok(found)
+}
+
+/// Construct an `ArrowReaderMetadata` from a known `ParquetMetaData` without
+/// re-decoding the footer. `ArrowReaderMetadata::try_new` is the supported
+/// path (it re-derives the arrow schema from the parquet schema).
+fn try_new_arrow_reader_metadata(
+    metadata: Arc<ParquetMetaData>,
+) -> Result<ArrowReaderMetadata, String> {
+    ArrowReaderMetadata::try_new(metadata, Default::default())
+        .map_err(|e| format!("ArrowReaderMetadata::try_new: {}", e))
+}
+
+/// Scan a record batch for the target request_id and return its body fields.
+fn find_body_in_batch(
+    batch: &arrow::record_batch::RecordBatch,
+    target_request_id: &str,
+) -> Option<BodyPayload> {
+    let num_rows = batch.num_rows();
+    let request_col = batch
+        .column(0)
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .ok_or_else(|| "request_id not StringArray".to_string())
+        .ok()?;
+
+    for row in 0..num_rows {
+        if request_col.value(row) == target_request_id {
+            let messages = extract_json_column(batch, 1, row);
+            let response = extract_json_column(batch, 2, row);
+            let proxy_server_request = extract_json_column(batch, 3, row);
+            return Some(BodyPayload {
+                messages,
+                response,
+                proxy_server_request,
+            });
+        }
+    }
+    None
 }
 
 #[cfg(test)]

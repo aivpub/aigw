@@ -20,8 +20,8 @@ use tracing::info;
 use crate::async_task::{AsyncTask, NewStep, StepOutput};
 use crate::body_archive::cache::FooterCache;
 use crate::body_archive::config::BodyArchiveConfig;
-use crate::body_archive::query::{decode_body_from_parquet, BodyPayload};
-use crate::body_archive::storage::build_object_store;
+use crate::body_archive::query::{query_parquet_with_cache, BodyPayload};
+use crate::body_archive::storage::{build_object_store_for_backend, resolve_env_placeholders};
 use crate::body_archive::writer::write_parquet_to_store;
 use crate::db::{Database, DbError, Result};
 
@@ -42,6 +42,14 @@ impl BodyArchiver {
 
     pub fn config(&self) -> &BodyArchiveConfig {
         &self.config
+    }
+
+    /// Return a copy of the storage backend with `${ENV_VAR}` placeholders
+    /// resolved from the environment (Stage 83 credential safety).
+    pub fn resolved_storage(&self) -> BodyArchiveConfig {
+        let mut cfg = self.config.clone();
+        cfg.storage = resolve_env_placeholders(&self.config.storage);
+        cfg
     }
 
     /// Check whether storage is properly configured for archiving.
@@ -173,29 +181,9 @@ impl AsyncTask for BodyArchiver {
         };
         let storage_path = build_storage_path(prefix, hour);
 
-        // 3. Write Parquet + upload to storage
-        let s3_config = match &self.config.storage {
-            crate::body_archive::config::StorageBackend::S3 {
-                bucket, region, endpoint,
-                access_key_id, secret_access_key,
-                prefix, use_ssl, compatibility_mode, url_style,
-            } => crate::body_archive::config::S3Config {
-                bucket: bucket.clone(),
-                region: region.clone(),
-                endpoint: endpoint.clone().unwrap_or_default(),
-                access_key_id: access_key_id.clone(),
-                secret_access_key: secret_access_key.clone(),
-                prefix: prefix.clone(),
-                use_ssl: *use_ssl,
-                compatibility_mode: *compatibility_mode,
-                url_style: url_style.clone(),
-                ..Default::default()
-            },
-            crate::body_archive::config::StorageBackend::FileSystem { path: _ } => {
-                return Err(DbError::Other("filesystem storage not yet supported in execute".into()));
-            }
-        };
-        let object_store = build_object_store(&s3_config)
+        // 3. Write Parquet + upload to storage (S3 or FileSystem).
+        let resolved = resolve_env_placeholders(&self.config.storage);
+        let object_store = build_object_store_for_backend(&resolved)
             .map_err(|e| DbError::Other(format!("storage init: {}", e)))?;
 
         let bytes_written = write_parquet_to_store(
@@ -204,6 +192,7 @@ impl AsyncTask for BodyArchiver {
             &rows,
             self.config.archive.row_group_size,
         )
+        .await
         .map_err(|e| DbError::Other(format!("parquet write: {}", e)))?;
 
         // 4. Mark rows as archived in DB
@@ -322,54 +311,102 @@ impl BodyArchiver {
         }
     }
 
-    /// Read body from Parquet file at the given storage path.
+    /// Read body from Parquet file at the given storage path, using the
+    /// configured storage backend (S3 or FileSystem). Uses the footer cache
+    /// so repeated reads of the same hour file skip the footer round-trip.
+    ///
+    /// Error semantics (Stage 83 P1-2):
+    /// - Object not found → `Ok(None)` (cold data legitimately absent)
+    /// - Store unreachable / decode failure → `Err`
     pub async fn read_body_from_storage(
         &self,
         parquet_path: &str,
         request_id: &str,
     ) -> Result<Option<BodyPayload>> {
-        // Build object store from storage config
-        let s3_config = match &self.config.storage {
-            crate::body_archive::config::StorageBackend::S3 {
-                bucket, region, endpoint,
-                access_key_id, secret_access_key,
-                prefix, use_ssl, compatibility_mode, url_style,
-            } => crate::body_archive::config::S3Config {
-                bucket: bucket.clone(),
-                region: region.clone(),
-                endpoint: endpoint.clone().unwrap_or_default(),
-                access_key_id: access_key_id.clone(),
-                secret_access_key: secret_access_key.clone(),
-                prefix: prefix.clone(),
-                use_ssl: *use_ssl,
-                compatibility_mode: *compatibility_mode,
-                url_style: url_style.clone(),
-                ..Default::default()
-            },
-            crate::body_archive::config::StorageBackend::FileSystem { .. } => {
-                return Err(DbError::Other("filesystem storage not supported for cold reads".into()));
-            }
-        };
-        let store = build_object_store(&s3_config)
+        let resolved = resolve_env_placeholders(&self.config.storage);
+        let store = build_object_store_for_backend(&resolved)
             .map_err(|e| DbError::Other(format!("storage init: {}", e)))?;
+        self.read_body_from_storage_with_store(&store, parquet_path, request_id)
+            .await
+    }
 
-        // Try to fetch the Parquet file
-        let path = object_store::path::Path::from(parquet_path);
-        let result = store.get(&path).await;
-
-        match result {
-            Ok(response) => {
-                let data = response.bytes().await
-                    .map_err(|e| DbError::Other(format!("read bytes: {}", e)))?;
-                let body = decode_body_from_parquet(&data, request_id)
-                    .map_err(|e| DbError::Other(format!("decode: {}", e)))?;
-                Ok(body)
-            }
-            Err(_) => {
-                // Storage unreachable or file not found
-                Ok(None)
+    /// Read body from Parquet at `parquet_path` using a caller-provided store.
+    /// Split out so tests (and the FS round-trip) can inject an InMemory or
+    /// LocalFileSystem store without touching env config.
+    pub async fn read_body_from_storage_with_store(
+        &self,
+        store: &std::sync::Arc<dyn object_store::ObjectStore>,
+        parquet_path: &str,
+        request_id: &str,
+    ) -> Result<Option<BodyPayload>> {
+        // Footer-cached range read: NotFound → Ok(None), other errors → Err.
+        match query_parquet_with_cache(store, &self.footer_cache, parquet_path, request_id).await {
+            Ok(body) => Ok(body),
+            Err(msg) => {
+                // Distinguish "object not found" from genuine failures.
+                if msg.contains("not found") || msg.contains("NotFound") {
+                    Ok(None)
+                } else {
+                    Err(DbError::Other(format!("cold read: {}", msg)))
+                }
             }
         }
+    }
+
+    /// Footer-cached range read over an arbitrary object store. Thin wrapper
+    /// over [`query_parquet_with_cache`] that exposes the archiver's footer
+    /// cache so callers don't have to construct one themselves.
+    pub async fn query_parquet_with_cache(
+        &self,
+        store: &std::sync::Arc<dyn object_store::ObjectStore>,
+        path_str: &str,
+        target_request_id: &str,
+    ) -> std::result::Result<Option<BodyPayload>, String> {
+        query_parquet_with_cache(store, &self.footer_cache, path_str, target_request_id).await
+    }
+
+    /// Archive a slice of body rows to object storage for the given hour,
+    /// returning the storage path the parquet was written to. Public so tests
+    /// (and a future admin "dry-run") can exercise the write path without the
+    /// full Engine + DB pipeline.
+    pub async fn archive_rows_to_storage(
+        &self,
+        rows: &[BodyRow],
+        hour: &str,
+    ) -> Result<String> {
+        if !self.storage_configured() {
+            return Err(DbError::Other("body archive storage not configured".into()));
+        }
+        if rows.is_empty() {
+            return Ok(String::new());
+        }
+
+        let prefix = match &self.config.storage {
+            crate::body_archive::config::StorageBackend::S3 { prefix, .. } => prefix.as_str(),
+            crate::body_archive::config::StorageBackend::FileSystem { path } => {
+                // FileSystem stores under its root; LocalFileSystem resolves
+                // keys relative to the configured root, so the object-store
+                // key must NOT include the FS root path (that would double it).
+                let _ = path;
+                ""
+            }
+        };
+        let storage_path = build_storage_path(prefix, hour);
+
+        let resolved = resolve_env_placeholders(&self.config.storage);
+        let store = build_object_store_for_backend(&resolved)
+            .map_err(|e| DbError::Other(format!("storage init: {}", e)))?;
+
+        write_parquet_to_store(
+            &*store,
+            &storage_path,
+            rows,
+            self.config.archive.row_group_size,
+        )
+        .await
+        .map_err(|e| DbError::Other(format!("parquet write: {}", e)))?;
+
+        Ok(storage_path)
     }
 }
 
@@ -448,20 +485,33 @@ pub struct BodyRow {
     pub proxy_server_request: Option<String>,
 }
 
+/// Build the object-store key for a given hour. The key is always relative
+/// (no leading slash): `year=YYYY/month=MM/day=DD/hour=HH/data.parquet`.
+/// `prefix` is optional (S3 bucket key prefix); for FileSystem it must be
+/// empty because the FS root is already configured on the store.
 fn build_storage_path(prefix: &str, hour: &str) -> String {
     // Parse "2026-07-22T14" → year=2026/month=07/day=22/hour=14/data.parquet
     let parts: Vec<&str> = hour.split('T').collect();
-    if parts.len() != 2 {
-        return format!("{}/{}/data.parquet", prefix, hour);
+    let rel = if parts.len() == 2 {
+        let date_parts: Vec<&str> = parts[0].split('-').collect();
+        if date_parts.len() == 3 {
+            format!(
+                "year={}/month={}/day={}/hour={}/data.parquet",
+                date_parts[0], date_parts[1], date_parts[2], parts[1]
+            )
+        } else {
+            format!("{}/data.parquet", hour)
+        }
+    } else {
+        format!("{}/data.parquet", hour)
+    };
+
+    let prefix = prefix.trim_start_matches('/');
+    if prefix.is_empty() {
+        rel
+    } else {
+        format!("{}/{}", prefix, rel)
     }
-    let date_parts: Vec<&str> = parts[0].split('-').collect();
-    if date_parts.len() != 3 {
-        return format!("{}/{}/data.parquet", prefix, hour);
-    }
-    format!(
-        "{}/year={}/month={}/day={}/hour={}/data.parquet",
-        prefix, date_parts[0], date_parts[1], date_parts[2], parts[1]
-    )
 }
 
 async fn query_unarchived_rows(

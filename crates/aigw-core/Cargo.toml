@@ -39,11 +39,12 @@ opentelemetry_sdk = { version = "0.32.1", features = ["trace", "rt-tokio"] }
 opentelemetry-otlp = { version = "0.32.0", features = ["grpc-tonic", "http-proto"] }
 tracing-opentelemetry = "0.33"
 # Body Archive — Parquet cold storage
-parquet = { version = "54", features = ["arrow", "zstd"] }
+parquet = { version = "54", features = ["arrow", "zstd", "async", "object_store"] }
 arrow = { version = "54" }
 object_store = { version = "0.11", features = ["aws"] }
 moka = { version = "0.12", features = ["sync"] }
 bytes = "1"
+futures = "0.3"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
