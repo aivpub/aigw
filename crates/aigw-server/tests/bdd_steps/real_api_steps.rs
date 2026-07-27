@@ -933,3 +933,55 @@ async fn then_sse_has_anthropic_event(world: &mut TestWorld) {
         &text[..text.len().min(500)]
     );
 }
+
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Stage 82: Body Archive Admin API — trigger 409 / 401 / 404
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+use cucumber::gherkin::Step;
+
+/// When "使用 master-key 发送 POST /admin/jobs/trigger 请求" + docstring JSON body.
+/// ServerGuard starts aigw-server without a body_archive config, so
+/// body_archive.enabled defaults to false → trigger returns 409 Conflict.
+#[when(expr = "使用 master-key 发送 POST \\/admin\\/jobs\\/trigger 请求")]
+async fn when_post_admin_jobs_trigger_master(world: &mut TestWorld, step: &Step) {
+    if !real_api_enabled() {
+        set_skip_pass(world, 409, serde_json::json!({"error": {"message": "body archive is disabled"}}));
+        return;
+    }
+    let body = step.docstring.as_ref().expect("POST /admin/jobs/trigger docstring body").to_string();
+    let url = format!("{}/admin/jobs/trigger", base_url());
+    let mk = world.master_key.clone();
+    let resp = client()
+        .post(&url)
+        .header("Authorization", format!("Bearer {}", mk))
+        .header("Content-Type", "application/json")
+        .body(body)
+        .send()
+        .await
+        .expect("POST /admin/jobs/trigger request failed");
+    world.last_status = Some(resp.status().as_u16());
+    world.last_body = resp.json().await.ok();
+}
+
+/// When "不携带 Authorization 发送 POST /admin/jobs/trigger 请求" + docstring JSON body.
+/// No Authorization header → SpendAuth rejects → 401.
+#[when(expr = "不携带 Authorization 发送 POST \\/admin\\/jobs\\/trigger 请求")]
+async fn when_post_admin_jobs_trigger_noauth(world: &mut TestWorld, step: &Step) {
+    if !real_api_enabled() {
+        set_skip_pass(world, 401, serde_json::json!({"error": {"type": "authentication_error"}}));
+        return;
+    }
+    let body = step.docstring.as_ref().expect("POST /admin/jobs/trigger docstring body").to_string();
+    let url = format!("{}/admin/jobs/trigger", base_url());
+    let resp = client()
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .body(body)
+        .send()
+        .await
+        .expect("POST /admin/jobs/trigger (noauth) request failed");
+    world.last_status = Some(resp.status().as_u16());
+    world.last_body = resp.json().await.ok();
+}
