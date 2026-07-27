@@ -1,7 +1,7 @@
 //! Parquet writer for body archive data.
 //!
 //! Converts BodyRow records into an Arrow RecordBatch, writes as Parquet
-//! with ZSTD compression and Bloom filters on request_id, and uploads to storage.
+//! with ZSTD compression and Bloom filters on call_id, and uploads to storage.
 
 use arrow::array::{BooleanBuilder, RecordBatch, StringBuilder, TimestampMillisecondBuilder};
 use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
@@ -62,7 +62,7 @@ pub fn write_parquet_to_buffer(rows: &[BodyRow], row_group_size: usize) -> Resul
     }
 
     let schema = Arc::new(Schema::new(vec![
-        Field::new("request_id", DataType::Utf8, false),
+        Field::new("call_id", DataType::Utf8, false),
         Field::new("start_time", DataType::Timestamp(TimeUnit::Millisecond, None), false),
         Field::new("model", DataType::Utf8, false),
         Field::new("status", DataType::Utf8, true),
@@ -74,7 +74,7 @@ pub fn write_parquet_to_buffer(rows: &[BodyRow], row_group_size: usize) -> Resul
     ]));
 
     let num_rows = rows.len();
-    let mut request_ids = StringBuilder::with_capacity(num_rows, 64);
+    let mut call_ids = StringBuilder::with_capacity(num_rows, 64);
     let mut start_times = TimestampMillisecondBuilder::with_capacity(num_rows);
     let mut models = StringBuilder::with_capacity(num_rows, 32);
     let mut statuses = StringBuilder::with_capacity(num_rows, 16);
@@ -85,7 +85,7 @@ pub fn write_parquet_to_buffer(rows: &[BodyRow], row_group_size: usize) -> Resul
     let mut proxy_requests = StringBuilder::with_capacity(num_rows, 512);
 
     for row in rows {
-        request_ids.append_value(&row.request_id);
+        call_ids.append_value(&row.call_id);
         start_times.append_value(parse_start_time_to_millis(&row.start_time));
         models.append_value(&row.model);
         append_option_string(&mut statuses, &row.status);
@@ -99,7 +99,7 @@ pub fn write_parquet_to_buffer(rows: &[BodyRow], row_group_size: usize) -> Resul
     let batch = RecordBatch::try_new(
         schema.clone(),
         vec![
-            Arc::new(request_ids.finish()),
+            Arc::new(call_ids.finish()),
             Arc::new(start_times.finish()),
             Arc::new(models.finish()),
             Arc::new(statuses.finish()),
@@ -117,7 +117,7 @@ pub fn write_parquet_to_buffer(rows: &[BodyRow], row_group_size: usize) -> Resul
             ZstdLevel::try_new(3).map_err(|e| format!("ZstdLevel: {}", e))?
         ))
         .set_max_row_group_size(row_group_size)
-        .set_column_bloom_filter_enabled(ColumnPath::from("request_id"), true)
+        .set_column_bloom_filter_enabled(ColumnPath::from("call_id"), true)
         .set_column_bloom_filter_enabled(ColumnPath::from("session_id"), true)
         .set_dictionary_enabled(true)
         .build();
@@ -170,7 +170,7 @@ mod tests {
     #[test]
     fn test_write_single_row_parquet() {
         let rows = vec![BodyRow {
-            request_id: "req-001".into(),
+            call_id: "req-001".into(),
             start_time: "2026-07-22T14:30:00+00:00".into(),
             model: "gpt-4".into(),
             status: Some("success".into()),
@@ -190,7 +190,7 @@ mod tests {
     #[test]
     fn test_write_multiple_rows_to_file() {
         let rows: Vec<BodyRow> = (0..100).map(|i| BodyRow {
-            request_id: format!("req-{:04}", i),
+            call_id: format!("req-{:04}", i),
             start_time: format!("2026-07-22T{:02}:00:00+00:00", i % 24),
             model: if i % 2 == 0 { "gpt-4".into() } else { "claude-3".into() },
             status: Some("success".into()),

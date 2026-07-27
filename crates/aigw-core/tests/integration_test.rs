@@ -217,7 +217,7 @@ mod postgres_tests {
             db.insert_key(&make_key(&key_b, "alias-b")).await.expect("insert key b");
 
             let make_log = |api_key: &str, spend: f64, tokens: i32| SpendLog {
-                request_id: Uuid::new_v4().to_string(),
+                call_id: Uuid::new_v4().to_string(),
                 call_type: "completion".to_string(),
                 api_key: api_key.to_string(),
                 spend,
@@ -249,6 +249,9 @@ mod postgres_tests {
                 mcp_namespaced_tool_name: None,
                 agent_id: None,
                 proxy_server_request: None,
+                body_archived: false,
+                parquet_path: None,
+                request_id: None,
             };
             db.insert_spend_log(&make_log(&key_a, 10.0, 100)).await.expect("insert log a1");
             db.insert_spend_log(&make_log(&key_a, 3.0, 30)).await.expect("insert log a2");

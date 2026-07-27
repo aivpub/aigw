@@ -193,7 +193,7 @@ async fn batch_upsert_daily_spend(
         "daily_organization_spend" => ("organization_id", "organization_id, date, api_key, model, custom_llm_provider, mcp_namespaced_tool_name, endpoint"),
         "daily_end_user_spend" => ("end_user_id", "end_user_id, date, api_key, model, custom_llm_provider, mcp_namespaced_tool_name, endpoint"),
         "daily_agent_spend" => ("agent_id", "agent_id, date, api_key, model, custom_llm_provider, mcp_namespaced_tool_name, endpoint"),
-        "daily_tag_spend" => ("tag", "request_id, tag, date, api_key, model, custom_llm_provider, mcp_namespaced_tool_name, endpoint"),
+        "daily_tag_spend" => ("tag", "call_id, tag, date, api_key, model, custom_llm_provider, mcp_namespaced_tool_name, endpoint"),
         _ => return Err(crate::db::DbError::Other(format!("unknown daily_spend table: {}", table_name))),
     };
 

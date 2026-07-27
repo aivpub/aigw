@@ -1188,10 +1188,12 @@ impl Database {
 pub trait SpendLogStore {
     async fn insert_spend_log(&self, log: &SpendLog) -> Result<()>;
     /// Update a spend_log after streaming completes — fills in tokens, spend,
-    /// end_time, response, duration, TTFT, and status. Uses request_id as the unique key.
+    /// end_time, response, duration, TTFT, status, and (via COALESCE) the
+    /// upstream provider request_id.  Uses call_id as the unique key.
     async fn update_spend_log(
         &self,
-        request_id: &str,
+        call_id: &str,
+        upstream_request_id: Option<&str>,
         spend: f64,
         total_tokens: i32,
         prompt_tokens: i32,
@@ -1221,7 +1223,7 @@ pub trait SpendLogStore {
         provider: Option<&str>,
         start_date: Option<&str>,
         end_date: Option<&str>,
-        request_id: Option<&str>,
+        call_id: Option<&str>,
         limit: Option<i32>,
         offset: Option<i32>,
     ) -> Result<Vec<SpendLog>>;
@@ -1231,10 +1233,10 @@ pub trait SpendLogStore {
         model: Option<&str>,
         start_date: Option<&str>,
         end_date: Option<&str>,
-        request_id: Option<&str>,
+        call_id: Option<&str>,
     ) -> Result<i64>;
-    /// Get a single spend log by request_id — returns all columns including body blobs.
-    async fn get_spend_log_by_request_id(&self, request_id: &str) -> Result<Option<SpendLog>>;
+    /// Get a single spend log by call_id — returns all columns including body blobs.
+    async fn get_spend_log_by_call_id(&self, call_id: &str) -> Result<Option<SpendLog>>;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1253,27 +1255,27 @@ pub trait HealthCheckStore {
 
 const INSERT_SPEND_LOG_SQLITE: &str = r#"
 INSERT INTO spend_logs (
-    request_id, call_type, api_key, spend, total_tokens,
+    call_id, call_type, api_key, spend, total_tokens,
     prompt_tokens, completion_tokens, start_time, end_time,
     request_duration_ms, completion_start_time, model, model_id, model_group,
     custom_llm_provider, api_base, "user", metadata,
     cache_hit, cache_key, request_tags, team_id, organization_id,
     end_user, requester_ip_address, messages, response,
     session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request,
-    body_archived, parquet_path
-) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    body_archived, parquet_path, request_id
+) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 "#;
 
 const QUERY_SPEND_LOGS_ALL_SQLITE: &str = r#"
 SELECT
-    request_id, call_type, api_key, spend, total_tokens,
+    call_id, call_type, api_key, spend, total_tokens,
     prompt_tokens, completion_tokens, start_time, end_time,
     request_duration_ms, completion_start_time, model, model_id, model_group,
     custom_llm_provider, api_base, "user", metadata,
     cache_hit, cache_key, request_tags, team_id, organization_id,
     end_user, requester_ip_address, messages, response,
     session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request,
-    body_archived, parquet_path
+    body_archived, parquet_path, request_id
 FROM spend_logs
 ORDER BY start_time DESC
 LIMIT ?
@@ -1281,14 +1283,14 @@ LIMIT ?
 
 const QUERY_SPEND_LOGS_BY_KEY_SQLITE: &str = r#"
 SELECT
-    request_id, call_type, api_key, spend, total_tokens,
+    call_id, call_type, api_key, spend, total_tokens,
     prompt_tokens, completion_tokens, start_time, end_time,
     request_duration_ms, completion_start_time, model, model_id, model_group,
     custom_llm_provider, api_base, "user", metadata,
     cache_hit, cache_key, request_tags, team_id, organization_id,
     end_user, requester_ip_address, messages, response,
     session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request,
-    body_archived, parquet_path
+    body_archived, parquet_path, request_id
 FROM spend_logs
 WHERE api_key = ?
 ORDER BY start_time DESC
@@ -1299,7 +1301,7 @@ LIMIT ?
 impl SpendLogStore for SqlitePool {
     async fn insert_spend_log(&self, log: &SpendLog) -> Result<()> {
         sqlx::query(INSERT_SPEND_LOG_SQLITE)
-            .bind(&log.request_id)
+            .bind(&log.call_id)
             .bind(&log.call_type)
             .bind(&log.api_key)
             .bind(log.spend)
@@ -1333,6 +1335,7 @@ impl SpendLogStore for SqlitePool {
             .bind(&log.proxy_server_request)
             .bind(log.body_archived)
             .bind(&log.parquet_path)
+            .bind(&log.request_id)
             .execute(self)
             .await?;
         Ok(())
@@ -1340,7 +1343,8 @@ impl SpendLogStore for SqlitePool {
 
     async fn update_spend_log(
         &self,
-        request_id: &str,
+        call_id: &str,
+        upstream_request_id: Option<&str>,
         spend: f64,
         total_tokens: i32,
         prompt_tokens: i32,
@@ -1351,8 +1355,11 @@ impl SpendLogStore for SqlitePool {
         response: serde_json::Value,
         status: &str,
     ) -> Result<()> {
+        // COALESCE keeps an already-extracted upstream id when the caller
+        // passes None (e.g. streaming where the id was extracted at chunk
+        // time but the Phase 2 UPDATE doesn't re-supply it).
         sqlx::query(
-            "UPDATE spend_logs SET spend=?, total_tokens=?, prompt_tokens=?, completion_tokens=?, end_time=?, request_duration_ms=?, completion_start_time=?, response=?, status=? WHERE request_id=?"
+            "UPDATE spend_logs SET spend=?, total_tokens=?, prompt_tokens=?, completion_tokens=?, end_time=?, request_duration_ms=?, completion_start_time=?, response=?, status=?, request_id=COALESCE(?, request_id) WHERE call_id=?"
         )
         .bind(spend)
         .bind(total_tokens)
@@ -1363,7 +1370,8 @@ impl SpendLogStore for SqlitePool {
         .bind(completion_start_time)
         .bind(response)
         .bind(status)
-        .bind(request_id)
+        .bind(upstream_request_id)
+        .bind(call_id)
         .execute(self)
         .await?;
         Ok(())
@@ -1463,7 +1471,7 @@ impl SpendLogStore for SqlitePool {
             r#"SELECT COALESCE(NULLIF(sl.custom_llm_provider, ''), 'unknown') as provider,
                COALESCE(SUM(sl.total_tokens), 0) as total_tokens,
                COALESCE(SUM(sl.spend), 0) as total_spend,
-               COUNT(sl.request_id) as requests
+               COUNT(sl.call_id) as requests
                FROM spend_logs sl
                WHERE 1=1{date_filter}
                GROUP BY provider
@@ -1486,7 +1494,7 @@ impl SpendLogStore for SqlitePool {
         _provider: Option<&str>,
         start_date: Option<&str>,
         end_date: Option<&str>,
-        request_id: Option<&str>,
+        call_id: Option<&str>,
         limit: Option<i32>,
         offset: Option<i32>,
     ) -> Result<Vec<SpendLog>> {
@@ -1494,14 +1502,14 @@ impl SpendLogStore for SqlitePool {
         let offset_val = offset.unwrap_or(0);
         let mut sql = String::from(
             r#"SELECT
-                request_id, call_type, api_key, spend, total_tokens,
+                call_id, call_type, api_key, spend, total_tokens,
                 prompt_tokens, completion_tokens, start_time, end_time,
                 request_duration_ms, completion_start_time, model, model_id, model_group,
                 custom_llm_provider, api_base, "user", metadata,
                 cache_hit, cache_key, request_tags, team_id, organization_id,
                 end_user, requester_ip_address, messages, response,
                 session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request,
-                body_archived, parquet_path
+                body_archived, parquet_path, request_id
             FROM spend_logs WHERE 1=1"#
         );
 
@@ -1509,7 +1517,8 @@ impl SpendLogStore for SqlitePool {
         if model.is_some() { sql.push_str(" AND model = ?"); }
         if start_date.is_some() { sql.push_str(" AND start_time >= ?"); }
         if end_date.is_some() { sql.push_str(" AND start_time <= ?"); }
-        if request_id.is_some() { sql.push_str(" AND request_id = ?"); }
+        // Dual-column search: match gateway call_id OR upstream request_id.
+        if call_id.is_some() { sql.push_str(" AND (call_id = ? OR request_id = ?)"); }
 
         sql.push_str(" ORDER BY start_time DESC LIMIT ? OFFSET ?");
 
@@ -1518,7 +1527,7 @@ impl SpendLogStore for SqlitePool {
         if let Some(m) = model { query = query.bind(m); }
         if let Some(sd) = start_date { query = query.bind(sd); }
         if let Some(ed) = end_date { query = query.bind(ed); }
-        if let Some(rid) = request_id { query = query.bind(rid); }
+        if let Some(rid) = call_id { query = query.bind(rid); query = query.bind(rid); }
         query = query.bind(limit_val);
         query = query.bind(offset_val);
 
@@ -1531,38 +1540,39 @@ impl SpendLogStore for SqlitePool {
         model: Option<&str>,
         start_date: Option<&str>,
         end_date: Option<&str>,
-        request_id: Option<&str>,
+        call_id: Option<&str>,
     ) -> Result<i64> {
         let mut sql = String::from("SELECT COUNT(*) FROM spend_logs WHERE 1=1");
         if api_key.is_some() { sql.push_str(" AND api_key = ?"); }
         if model.is_some() { sql.push_str(" AND model = ?"); }
         if start_date.is_some() { sql.push_str(" AND start_time >= ?"); }
         if end_date.is_some() { sql.push_str(" AND start_time <= ?"); }
-        if request_id.is_some() { sql.push_str(" AND request_id = ?"); }
+        // Dual-column search: match gateway call_id OR upstream request_id.
+        if call_id.is_some() { sql.push_str(" AND (call_id = ? OR request_id = ?)"); }
 
         let mut query = sqlx::query_as::<_, (i64,)>(&sql);
         if let Some(k) = api_key { query = query.bind(k); }
         if let Some(m) = model { query = query.bind(m); }
         if let Some(sd) = start_date { query = query.bind(sd); }
         if let Some(ed) = end_date { query = query.bind(ed); }
-        if let Some(rid) = request_id { query = query.bind(rid); }
+        if let Some(rid) = call_id { query = query.bind(rid); query = query.bind(rid); }
 
         query.fetch_one(self).await.map(|row: (i64,)| row.0).map_err(DbError::from)
     }
 
-    async fn get_spend_log_by_request_id(&self, request_id: &str) -> Result<Option<SpendLog>> {
+    async fn get_spend_log_by_call_id(&self, call_id: &str) -> Result<Option<SpendLog>> {
         sqlx::query_as::<_, SpendLog>(
-            r#"SELECT request_id, call_type, api_key, spend, total_tokens,
+            r#"SELECT call_id, call_type, api_key, spend, total_tokens,
             prompt_tokens, completion_tokens, start_time, end_time,
             request_duration_ms, completion_start_time, model, model_id, model_group,
             custom_llm_provider, api_base, "user", metadata,
             cache_hit, cache_key, request_tags, team_id, organization_id,
             end_user, requester_ip_address, messages, response,
             session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request,
-            body_archived, parquet_path
-            FROM spend_logs WHERE request_id = ?"#,
+            body_archived, parquet_path, request_id
+            FROM spend_logs WHERE call_id = ?"#,
         )
-        .bind(request_id)
+        .bind(call_id)
         .fetch_optional(self)
         .await
         .map_err(DbError::from)
@@ -1577,17 +1587,17 @@ impl SpendLogStore for SqlitePool {
 impl SpendLogStore for MySqlPool {
     async fn insert_spend_log(&self, log: &SpendLog) -> Result<()> {
         sqlx::query(
-            "INSERT INTO spend_logs (request_id, call_type, api_key, spend, total_tokens, \
+            "INSERT INTO spend_logs (call_id, call_type, api_key, spend, total_tokens, \
              prompt_tokens, completion_tokens, start_time, end_time, \
              request_duration_ms, completion_start_time, model, model_id, model_group, \
              custom_llm_provider, api_base, user, metadata, \
              cache_hit, cache_key, request_tags, team_id, organization_id, \
              end_user, requester_ip_address, messages, response, \
              session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request, \
-             body_archived, parquet_path) \
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+             body_archived, parquet_path, request_id) \
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         )
-        .bind(&log.request_id)
+        .bind(&log.call_id)
         .bind(&log.call_type)
         .bind(&log.api_key)
         .bind(log.spend)
@@ -1621,6 +1631,7 @@ impl SpendLogStore for MySqlPool {
         .bind(&log.proxy_server_request)
         .bind(log.body_archived)
         .bind(&log.parquet_path)
+        .bind(&log.request_id)
         .execute(self)
         .await?;
         Ok(())
@@ -1628,7 +1639,8 @@ impl SpendLogStore for MySqlPool {
 
     async fn update_spend_log(
         &self,
-        request_id: &str,
+        call_id: &str,
+        upstream_request_id: Option<&str>,
         spend: f64,
         total_tokens: i32,
         prompt_tokens: i32,
@@ -1640,7 +1652,7 @@ impl SpendLogStore for MySqlPool {
         status: &str,
     ) -> Result<()> {
         sqlx::query(
-            "UPDATE spend_logs SET spend=?, total_tokens=?, prompt_tokens=?, completion_tokens=?, end_time=?, request_duration_ms=?, completion_start_time=?, response=?, status=? WHERE request_id=?"
+            "UPDATE spend_logs SET spend=?, total_tokens=?, prompt_tokens=?, completion_tokens=?, end_time=?, request_duration_ms=?, completion_start_time=?, response=?, status=?, request_id=COALESCE(?, request_id) WHERE call_id=?"
         )
         .bind(spend)
         .bind(total_tokens)
@@ -1651,7 +1663,8 @@ impl SpendLogStore for MySqlPool {
         .bind(completion_start_time)
         .bind(response)
         .bind(status)
-        .bind(request_id)
+        .bind(upstream_request_id)
+        .bind(call_id)
         .execute(self)
         .await?;
         Ok(())
@@ -1666,14 +1679,14 @@ impl SpendLogStore for MySqlPool {
         // MySQL zero-date guard: upstream litellm may sync rows with
         // start_time='0000-00-00 00:00:00', which sqlx rejects when
         // decoding into chrono::DateTime<Utc>. Filter them at the SQL level.
-        let sql = "SELECT request_id, call_type, api_key, spend, total_tokens, \
+        let sql = "SELECT call_id, call_type, api_key, spend, total_tokens, \
                    prompt_tokens, completion_tokens, start_time, end_time, \
                    request_duration_ms, completion_start_time, model, model_id, model_group, \
                    custom_llm_provider, api_base, user, metadata, \
                    cache_hit, cache_key, request_tags, team_id, organization_id, \
                    end_user, requester_ip_address, messages, response, \
                    session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request, \
-                   body_archived, parquet_path \
+                   body_archived, parquet_path, request_id \
                    FROM spend_logs WHERE start_time > '1000-01-01'";
         match api_key {
             Some(key) => sqlx::query_as(&format!(
@@ -1769,7 +1782,7 @@ impl SpendLogStore for MySqlPool {
             r#"SELECT COALESCE(NULLIF(sl.custom_llm_provider, ''), 'unknown') as provider,
                CAST(COALESCE(SUM(sl.total_tokens), 0) AS SIGNED) as total_tokens,
                COALESCE(SUM(sl.spend), 0) as total_spend,
-               COUNT(sl.request_id) as requests
+               COUNT(sl.call_id) as requests
                FROM spend_logs sl
                WHERE 1=1{date_filter}
                GROUP BY provider
@@ -1788,7 +1801,7 @@ impl SpendLogStore for MySqlPool {
     async fn query_spend_logs_filtered(
         &self, api_key: Option<&str>, model: Option<&str>, _provider: Option<&str>,
         start_date: Option<&str>, end_date: Option<&str>,
-        request_id: Option<&str>,
+        call_id: Option<&str>,
         limit: Option<i32>, offset: Option<i32>,
     ) -> Result<Vec<SpendLog>> {
         // Fallback: use basic query and do in-memory filter
@@ -1811,7 +1824,8 @@ impl SpendLogStore for MySqlPool {
                     if let Some(dt) = dt { if log.start_time > dt { return false; } }
                 }
             }
-            if let Some(rid) = request_id { if log.request_id != rid { return false; } }
+            // Dual-column in-memory search: match gateway call_id OR upstream request_id.
+            if let Some(rid) = call_id { if log.call_id != rid && log.request_id.as_deref() != Some(rid) { return false; } }
             true
         }).collect();
         let start = offset_val as usize;
@@ -1829,38 +1843,39 @@ impl SpendLogStore for MySqlPool {
         model: Option<&str>,
         start_date: Option<&str>,
         end_date: Option<&str>,
-        request_id: Option<&str>,
+        call_id: Option<&str>,
     ) -> Result<i64> {
         let mut sql = String::from("SELECT COUNT(*) FROM spend_logs WHERE 1=1");
         if api_key.is_some() { sql.push_str(" AND api_key = ?"); }
         if model.is_some() { sql.push_str(" AND model = ?"); }
         if start_date.is_some() { sql.push_str(" AND start_time >= ?"); }
         if end_date.is_some() { sql.push_str(" AND start_time <= ?"); }
-        if request_id.is_some() { sql.push_str(" AND request_id = ?"); }
+        // Dual-column search: match gateway call_id OR upstream request_id.
+        if call_id.is_some() { sql.push_str(" AND (call_id = ? OR request_id = ?)"); }
 
         let mut query = sqlx::query_as::<_, (i64,)>(&sql);
         if let Some(k) = api_key { query = query.bind(k); }
         if let Some(m) = model { query = query.bind(m); }
         if let Some(sd) = start_date { query = query.bind(sd); }
         if let Some(ed) = end_date { query = query.bind(ed); }
-        if let Some(rid) = request_id { query = query.bind(rid); }
+        if let Some(rid) = call_id { query = query.bind(rid); query = query.bind(rid); }
 
         query.fetch_one(self).await.map(|row: (i64,)| row.0).map_err(DbError::from)
     }
 
-    async fn get_spend_log_by_request_id(&self, request_id: &str) -> Result<Option<SpendLog>> {
+    async fn get_spend_log_by_call_id(&self, call_id: &str) -> Result<Option<SpendLog>> {
         sqlx::query_as::<_, SpendLog>(
-            r#"SELECT request_id, call_type, api_key, spend, total_tokens,
+            r#"SELECT call_id, call_type, api_key, spend, total_tokens,
             prompt_tokens, completion_tokens, start_time, end_time,
             request_duration_ms, completion_start_time, model, model_id, model_group,
             custom_llm_provider, api_base, "user", metadata,
             cache_hit, cache_key, request_tags, team_id, organization_id,
             end_user, requester_ip_address, messages, response,
             session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request,
-            body_archived, parquet_path
-            FROM spend_logs WHERE request_id = ?"#,
+            body_archived, parquet_path, request_id
+            FROM spend_logs WHERE call_id = ?"#,
         )
-        .bind(request_id)
+        .bind(call_id)
         .fetch_optional(self)
         .await
         .map_err(DbError::from)
@@ -1875,19 +1890,19 @@ impl SpendLogStore for MySqlPool {
 impl SpendLogStore for PgPool {
     async fn insert_spend_log(&self, log: &SpendLog) -> Result<()> {
         sqlx::query(
-            r#"INSERT INTO spend_logs (request_id, call_type, api_key, spend, total_tokens,
+            r#"INSERT INTO spend_logs (call_id, call_type, api_key, spend, total_tokens,
             prompt_tokens, completion_tokens, start_time, end_time,
             request_duration_ms, completion_start_time, model, model_id, model_group,
             custom_llm_provider, api_base, "user", metadata,
             cache_hit, cache_key, request_tags, team_id, organization_id,
             end_user, requester_ip_address, messages, response,
             session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request,
-            body_archived, parquet_path)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34)"#
+            body_archived, parquet_path, request_id)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35)"#
         )
-            .bind(&log.request_id).bind(&log.call_type).bind(&log.api_key)
+            .bind(&log.call_id).bind(&log.call_type).bind(&log.api_key)
             .bind(log.spend).bind(log.total_tokens).bind(log.prompt_tokens)
-            .bind(log.completion_tokens).bind(log.start_time).bind(log.end_time)
+            .bind(log.completion_tokens).bind(log.start_time).bind(&log.end_time)
             .bind(log.request_duration_ms).bind(log.completion_start_time)
             .bind(&log.model).bind(&log.model_id).bind(&log.model_group)
             .bind(&log.custom_llm_provider).bind(&log.api_base).bind(&log.user)
@@ -1897,13 +1912,15 @@ impl SpendLogStore for PgPool {
             .bind(&log.messages).bind(&log.response).bind(&log.session_id)
             .bind(&log.status).bind(&log.mcp_namespaced_tool_name).bind(&log.agent_id)
             .bind(&log.proxy_server_request).bind(log.body_archived).bind(&log.parquet_path)
+            .bind(&log.request_id)
             .execute(self).await?;
         Ok(())
     }
 
     async fn update_spend_log(
         &self,
-        request_id: &str,
+        call_id: &str,
+        upstream_request_id: Option<&str>,
         spend: f64,
         total_tokens: i32,
         prompt_tokens: i32,
@@ -1915,7 +1932,7 @@ impl SpendLogStore for PgPool {
         status: &str,
     ) -> Result<()> {
         sqlx::query(
-            "UPDATE spend_logs SET spend=$1, total_tokens=$2, prompt_tokens=$3, completion_tokens=$4, end_time=$5, request_duration_ms=$6, completion_start_time=$7, response=$8, status=$9 WHERE request_id=$10"
+            "UPDATE spend_logs SET spend=$1, total_tokens=$2, prompt_tokens=$3, completion_tokens=$4, end_time=$5, request_duration_ms=$6, completion_start_time=$7, response=$8, status=$9, request_id=COALESCE($10, request_id) WHERE call_id=$11"
         )
         .bind(spend)
         .bind(total_tokens)
@@ -1926,7 +1943,8 @@ impl SpendLogStore for PgPool {
         .bind(completion_start_time)
         .bind(response)
         .bind(status)
-        .bind(request_id)
+        .bind(upstream_request_id)
+        .bind(call_id)
         .execute(self)
         .await?;
         Ok(())
@@ -1938,14 +1956,14 @@ impl SpendLogStore for PgPool {
         limit: Option<i32>,
     ) -> Result<Vec<SpendLog>> {
         let limit_val = limit.unwrap_or(100);
-        let sql = r#"SELECT request_id, call_type, api_key, spend, total_tokens,
+        let sql = r#"SELECT call_id, call_type, api_key, spend, total_tokens,
             prompt_tokens, completion_tokens, start_time, end_time,
             request_duration_ms, completion_start_time, model, model_id, model_group,
             custom_llm_provider, api_base, "user", metadata,
             cache_hit, cache_key, request_tags, team_id, organization_id,
             end_user, requester_ip_address, messages, response,
             session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request,
-            body_archived, parquet_path
+            body_archived, parquet_path, request_id
             FROM spend_logs"#;
         match api_key {
             Some(key) => sqlx::query_as(&format!(
@@ -2049,7 +2067,7 @@ impl SpendLogStore for PgPool {
             r#"SELECT COALESCE(NULLIF(sl.custom_llm_provider, ''), 'unknown') as provider,
                COALESCE(SUM(sl.total_tokens), 0) as total_tokens,
                COALESCE(SUM(sl.spend), 0) as total_spend,
-               COUNT(sl.request_id) as requests
+               COUNT(sl.call_id) as requests
                FROM spend_logs sl
                WHERE 1=1{date_filter}
                GROUP BY provider
@@ -2070,7 +2088,7 @@ impl SpendLogStore for PgPool {
     async fn query_spend_logs_filtered(
         &self, api_key: Option<&str>, model: Option<&str>, _provider: Option<&str>,
         start_date: Option<&str>, end_date: Option<&str>,
-        request_id: Option<&str>,
+        call_id: Option<&str>,
         limit: Option<i32>, offset: Option<i32>,
     ) -> Result<Vec<SpendLog>> {
         let limit_val = limit.unwrap_or(30);
@@ -2092,7 +2110,8 @@ impl SpendLogStore for PgPool {
                     if let Some(dt) = dt { if log.start_time > dt { return false; } }
                 }
             }
-            if let Some(rid) = request_id { if log.request_id != rid { return false; } }
+            // Dual-column in-memory search: match gateway call_id OR upstream request_id.
+            if let Some(rid) = call_id { if log.call_id != rid && log.request_id.as_deref() != Some(rid) { return false; } }
             true
         }).collect();
         let start = offset_val as usize;
@@ -2110,7 +2129,7 @@ impl SpendLogStore for PgPool {
         model: Option<&str>,
         start_date: Option<&str>,
         end_date: Option<&str>,
-        request_id: Option<&str>,
+        call_id: Option<&str>,
     ) -> Result<i64> {
         let ts_cast = "::TIMESTAMPTZ";
 
@@ -2120,30 +2139,35 @@ impl SpendLogStore for PgPool {
         if model.is_some() { sql.push_str(&format!(" AND model = ${}", i)); i += 1; }
         if start_date.is_some() { sql.push_str(&format!(" AND start_time >= '{}'{}", start_date.unwrap().replace('\'', "''"), ts_cast)); }
         if end_date.is_some() { sql.push_str(&format!(" AND start_time <= '{}'{}", end_date.unwrap().replace('\'', "''"), ts_cast)); }
-        if request_id.is_some() { sql.push_str(&format!(" AND request_id = ${}", i)); }
+        // Dual-column search: match gateway call_id OR upstream request_id.
+        // Two placeholders ($i and $i+1), both bound to the same search term.
+        // (i is not read again after this branch — last conditional.)
+        if call_id.is_some() {
+            sql.push_str(&format!(" AND (call_id = ${} OR request_id = ${})", i, i + 1));
+        }
 
         let mut query = sqlx::query_as::<_, (i64,)>(&sql);
         if let Some(k) = api_key { query = query.bind(k); }
         if let Some(m) = model { query = query.bind(m); }
         // start_date / end_date already inlined with ::TIMESTAMPTZ cast above — no bind needed
-        if let Some(rid) = request_id { query = query.bind(rid); }
+        if let Some(rid) = call_id { query = query.bind(rid); query = query.bind(rid); }
 
         query.fetch_one(self).await.map(|row: (i64,)| row.0).map_err(DbError::from)
     }
 
-    async fn get_spend_log_by_request_id(&self, request_id: &str) -> Result<Option<SpendLog>> {
+    async fn get_spend_log_by_call_id(&self, call_id: &str) -> Result<Option<SpendLog>> {
         sqlx::query_as::<_, SpendLog>(
-            r#"SELECT request_id, call_type, api_key, spend, total_tokens,
+            r#"SELECT call_id, call_type, api_key, spend, total_tokens,
             prompt_tokens, completion_tokens, start_time, end_time,
             request_duration_ms, completion_start_time, model, model_id, model_group,
             custom_llm_provider, api_base, "user", metadata,
             cache_hit, cache_key, request_tags, team_id, organization_id,
             end_user, requester_ip_address, messages, response,
             session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request,
-            body_archived, parquet_path
-            FROM spend_logs WHERE request_id = $1"#,
+            body_archived, parquet_path, request_id
+            FROM spend_logs WHERE call_id = $1"#,
         )
-        .bind(request_id)
+        .bind(call_id)
         .fetch_optional(self)
         .await
         .map_err(DbError::from)
@@ -2165,7 +2189,8 @@ impl Database {
 
     pub async fn update_spend_log(
         &self,
-        request_id: &str,
+        call_id: &str,
+        upstream_request_id: Option<&str>,
         spend: f64,
         total_tokens: i32,
         prompt_tokens: i32,
@@ -2177,9 +2202,9 @@ impl Database {
         status: &str,
     ) -> Result<()> {
         match self {
-            Database::Sqlite(pool) => pool.update_spend_log(request_id, spend, total_tokens, prompt_tokens, completion_tokens, end_time, request_duration_ms, completion_start_time, response, status).await,
-            Database::Mysql(pool) => pool.update_spend_log(request_id, spend, total_tokens, prompt_tokens, completion_tokens, end_time, request_duration_ms, completion_start_time, response, status).await,
-            Database::Postgres(pool) => pool.update_spend_log(request_id, spend, total_tokens, prompt_tokens, completion_tokens, end_time, request_duration_ms, completion_start_time, response, status).await,
+            Database::Sqlite(pool) => pool.update_spend_log(call_id, upstream_request_id, spend, total_tokens, prompt_tokens, completion_tokens, end_time, request_duration_ms, completion_start_time, response, status).await,
+            Database::Mysql(pool) => pool.update_spend_log(call_id, upstream_request_id, spend, total_tokens, prompt_tokens, completion_tokens, end_time, request_duration_ms, completion_start_time, response, status).await,
+            Database::Postgres(pool) => pool.update_spend_log(call_id, upstream_request_id, spend, total_tokens, prompt_tokens, completion_tokens, end_time, request_duration_ms, completion_start_time, response, status).await,
         }
     }
 
@@ -2274,21 +2299,21 @@ impl Database {
         provider: Option<&str>,
         start_date: Option<&str>,
         end_date: Option<&str>,
-        request_id: Option<&str>,
+        call_id: Option<&str>,
         limit: Option<i32>,
         offset: Option<i32>,
     ) -> Result<Vec<SpendLog>> {
         match self {
             Database::Sqlite(pool) => {
-                pool.query_spend_logs_filtered(api_key, model, provider, start_date, end_date, request_id, limit, offset)
+                pool.query_spend_logs_filtered(api_key, model, provider, start_date, end_date, call_id, limit, offset)
                     .await
             }
             Database::Mysql(pool) => {
-                pool.query_spend_logs_filtered(api_key, model, provider, start_date, end_date, request_id, limit, offset)
+                pool.query_spend_logs_filtered(api_key, model, provider, start_date, end_date, call_id, limit, offset)
                     .await
             }
             Database::Postgres(pool) => {
-                pool.query_spend_logs_filtered(api_key, model, provider, start_date, end_date, request_id, limit, offset)
+                pool.query_spend_logs_filtered(api_key, model, provider, start_date, end_date, call_id, limit, offset)
                     .await
             }
         }
@@ -2300,21 +2325,21 @@ impl Database {
         model: Option<&str>,
         start_date: Option<&str>,
         end_date: Option<&str>,
-        request_id: Option<&str>,
+        call_id: Option<&str>,
     ) -> Result<i64> {
         match self {
-            Database::Sqlite(pool) => pool.query_spend_logs_count(api_key, model, start_date, end_date, request_id).await,
-            Database::Mysql(pool) => pool.query_spend_logs_count(api_key, model, start_date, end_date, request_id).await,
-            Database::Postgres(pool) => pool.query_spend_logs_count(api_key, model, start_date, end_date, request_id).await,
+            Database::Sqlite(pool) => pool.query_spend_logs_count(api_key, model, start_date, end_date, call_id).await,
+            Database::Mysql(pool) => pool.query_spend_logs_count(api_key, model, start_date, end_date, call_id).await,
+            Database::Postgres(pool) => pool.query_spend_logs_count(api_key, model, start_date, end_date, call_id).await,
         }
     }
 
-    /// Get a single spend log by request_id — returns all columns including body blobs.
-    pub async fn get_spend_log_by_request_id(&self, request_id: &str) -> Result<Option<SpendLog>> {
+    /// Get a single spend log by call_id — returns all columns including body blobs.
+    pub async fn get_spend_log_by_call_id(&self, call_id: &str) -> Result<Option<SpendLog>> {
         match self {
-            Database::Sqlite(pool) => pool.get_spend_log_by_request_id(request_id).await,
-            Database::Mysql(pool) => pool.get_spend_log_by_request_id(request_id).await,
-            Database::Postgres(pool) => pool.get_spend_log_by_request_id(request_id).await,
+            Database::Sqlite(pool) => pool.get_spend_log_by_call_id(call_id).await,
+            Database::Mysql(pool) => pool.get_spend_log_by_call_id(call_id).await,
+            Database::Postgres(pool) => pool.get_spend_log_by_call_id(call_id).await,
         }
     }
 
@@ -2355,7 +2380,7 @@ impl Database {
         let sql_base = r#"SELECT
                 COALESCE(SUM(spend), 0),
                 COALESCE(SUM(total_tokens), 0),
-                COUNT(request_id),
+                COUNT(call_id),
                 COUNT(CASE WHEN status = 'success' THEN 1 END),
                 COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END),
                 COALESCE(SUM(prompt_tokens), 0),
@@ -2377,7 +2402,7 @@ impl Database {
                 let sql_mysql = r#"SELECT
                     COALESCE(SUM(spend), 0),
                     CAST(COALESCE(SUM(total_tokens), 0) AS SIGNED),
-                    CAST(COUNT(request_id) AS SIGNED),
+                    CAST(COUNT(call_id) AS SIGNED),
                     CAST(COUNT(CASE WHEN status = 'success' THEN 1 END) AS SIGNED),
                     CAST(COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END) AS SIGNED),
                     CAST(COALESCE(SUM(prompt_tokens), 0) AS SIGNED),
@@ -2414,7 +2439,7 @@ impl Database {
         match self {
             Database::Sqlite(pool) => {
                 // SQLite: DATE() already returns TEXT — no cast needed.
-                let sql = "SELECT DATE(start_time), COALESCE(SUM(spend), 0), COALESCE(SUM(total_tokens), 0), COUNT(request_id), \
+                let sql = "SELECT DATE(start_time), COALESCE(SUM(spend), 0), COALESCE(SUM(total_tokens), 0), COUNT(call_id), \
                     COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), \
                     COUNT(CASE WHEN status = 'success' THEN 1 END), \
                     COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END) \
@@ -2429,7 +2454,7 @@ impl Database {
             }
             Database::Mysql(pool) => {
                 // MySQL: CAST DATE and SUM/COUNT AS SIGNED for i64 compatibility.
-                let sql = "SELECT CAST(DATE(start_time) AS CHAR), COALESCE(SUM(spend), 0), CAST(COALESCE(SUM(total_tokens), 0) AS SIGNED), CAST(COUNT(request_id) AS SIGNED), \
+                let sql = "SELECT CAST(DATE(start_time) AS CHAR), COALESCE(SUM(spend), 0), CAST(COALESCE(SUM(total_tokens), 0) AS SIGNED), CAST(COUNT(call_id) AS SIGNED), \
                     CAST(COALESCE(SUM(prompt_tokens), 0) AS SIGNED), CAST(COALESCE(SUM(completion_tokens), 0) AS SIGNED), \
                     CAST(COUNT(CASE WHEN status = 'success' THEN 1 END) AS SIGNED), \
                     CAST(COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END) AS SIGNED) \
@@ -2444,7 +2469,7 @@ impl Database {
             }
             Database::Postgres(pool) => {
                 // PostgreSQL: DATE(…)::TEXT converts DATE → TEXT.
-                let sql = "SELECT DATE(start_time)::TEXT, COALESCE(SUM(spend), 0), COALESCE(SUM(total_tokens), 0), COUNT(request_id), \
+                let sql = "SELECT DATE(start_time)::TEXT, COALESCE(SUM(spend), 0), COALESCE(SUM(total_tokens), 0), COUNT(call_id), \
                     COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), \
                     COUNT(CASE WHEN status = 'success' THEN 1 END), \
                     COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END) \
@@ -2475,7 +2500,7 @@ impl Database {
         let end_ts = format!("{}T23:59:59", end_date);
         match self {
             Database::Sqlite(pool) => {
-                let sql = "SELECT strftime('%Y-%m-%dT%H:00:00', start_time), COALESCE(SUM(spend), 0), COALESCE(SUM(total_tokens), 0), COUNT(request_id), \
+                let sql = "SELECT strftime('%Y-%m-%dT%H:00:00', start_time), COALESCE(SUM(spend), 0), COALESCE(SUM(total_tokens), 0), COUNT(call_id), \
                     COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), \
                     COUNT(CASE WHEN status = 'success' THEN 1 END), \
                     COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END) \
@@ -2489,7 +2514,7 @@ impl Database {
                 q.fetch_all(pool).await.map_err(DbError::from)
             }
             Database::Mysql(pool) => {
-                let sql = "SELECT DATE_FORMAT(start_time, '%Y-%m-%dT%H:00:00'), COALESCE(SUM(spend), 0), CAST(COALESCE(SUM(total_tokens), 0) AS SIGNED), CAST(COUNT(request_id) AS SIGNED), \
+                let sql = "SELECT DATE_FORMAT(start_time, '%Y-%m-%dT%H:00:00'), COALESCE(SUM(spend), 0), CAST(COALESCE(SUM(total_tokens), 0) AS SIGNED), CAST(COUNT(call_id) AS SIGNED), \
                     CAST(COALESCE(SUM(prompt_tokens), 0) AS SIGNED), CAST(COALESCE(SUM(completion_tokens), 0) AS SIGNED), \
                     CAST(COUNT(CASE WHEN status = 'success' THEN 1 END) AS SIGNED), \
                     CAST(COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END) AS SIGNED) \
@@ -2503,7 +2528,7 @@ impl Database {
                 q.fetch_all(pool).await.map_err(DbError::from)
             }
             Database::Postgres(pool) => {
-                let sql = "SELECT to_char(start_time, 'YYYY-MM-DD\"T\"HH24:00:00'), COALESCE(SUM(spend), 0), COALESCE(SUM(total_tokens), 0), COUNT(request_id), \
+                let sql = "SELECT to_char(start_time, 'YYYY-MM-DD\"T\"HH24:00:00'), COALESCE(SUM(spend), 0), COALESCE(SUM(total_tokens), 0), COUNT(call_id), \
                     COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), \
                     COUNT(CASE WHEN status = 'success' THEN 1 END), \
                     COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END) \
@@ -2530,14 +2555,14 @@ impl Database {
         // SQLite/MySQL are lenient). vk.key_alias is functionally dependent on sl.api_key
         // via the LEFT JOIN on vk.token (PK), so grouping by it does not change cardinality.
         let sql = "SELECT sl.api_key, vk.key_alias, \
-            COALESCE(SUM(sl.spend), 0) AS total_spend, COUNT(sl.request_id) AS total_requests, COALESCE(SUM(sl.total_tokens), 0) AS total_tokens \
+            COALESCE(SUM(sl.spend), 0) AS total_spend, COUNT(sl.call_id) AS total_requests, COALESCE(SUM(sl.total_tokens), 0) AS total_tokens \
             FROM spend_logs sl LEFT JOIN virtual_keys vk ON sl.api_key = vk.token \
             WHERE date(sl.start_time) >= date({p1}) AND date(sl.start_time) <= date({p2}) \
             GROUP BY sl.api_key, vk.key_alias ORDER BY 3 DESC LIMIT {limit}";
         let sql = sql.replace("{limit}", &limit.to_string());
         // MySQL needs CAST on aggregates because SUM returns DECIMAL type.
         let sql_mysql = "SELECT sl.api_key, vk.key_alias, \
-            COALESCE(SUM(sl.spend), 0) AS total_spend, CAST(COUNT(sl.request_id) AS SIGNED) AS total_requests, CAST(COALESCE(SUM(sl.total_tokens), 0) AS SIGNED) AS total_tokens \
+            COALESCE(SUM(sl.spend), 0) AS total_spend, CAST(COUNT(sl.call_id) AS SIGNED) AS total_requests, CAST(COALESCE(SUM(sl.total_tokens), 0) AS SIGNED) AS total_tokens \
             FROM spend_logs sl LEFT JOIN virtual_keys vk ON sl.api_key = vk.token \
             WHERE date(sl.start_time) >= date({p1}) AND date(sl.start_time) <= date({p2}) \
             GROUP BY sl.api_key, vk.key_alias ORDER BY 3 DESC LIMIT {limit}";
@@ -4192,7 +4217,7 @@ impl Database {
         provider: Option<&str>,
         start_date: Option<&str>,
         end_date: Option<&str>,
-        request_id: Option<&str>,
+        call_id: Option<&str>,
         status: Option<&str>,
         min_tokens: Option<i32>,
         max_tokens: Option<i32>,
@@ -4213,7 +4238,11 @@ impl Database {
         if let Some(p) = provider { conditions.push(format!("custom_llm_provider = '{}'", p.replace('\'', "''"))); }
         if let Some(s) = start_date { conditions.push(format!("start_time >= '{}'{}", s.replace('\'', "''"), ts_cast)); }
         if let Some(e) = end_date { conditions.push(format!("start_time <= '{}'{}", e.replace('\'', "''"), ts_cast)); }
-        if let Some(rid) = request_id { conditions.push(format!("request_id = '{}'", rid.replace('\'', "''"))); }
+        // Dual-column search: match gateway call_id OR upstream request_id.
+        if let Some(rid) = call_id {
+            let esc = rid.replace('\'', "''");
+            conditions.push(format!("(call_id = '{}' OR request_id = '{}')", esc, esc));
+        }
         if let Some(st) = status {
             if st == "success" { conditions.push("status = 'success'".to_string()); }
             else if st == "failure" { conditions.push("status LIKE 'failure%'".to_string()); }
@@ -4232,14 +4261,14 @@ impl Database {
         let o = offset.unwrap_or(0);
 
         let sql = format!(
-            r#"SELECT request_id, call_type, api_key, spend, total_tokens,
+            r#"SELECT call_id, call_type, api_key, spend, total_tokens,
             prompt_tokens, completion_tokens, start_time, end_time,
             request_duration_ms, completion_start_time, model, model_id, model_group,
             custom_llm_provider, api_base, "user", metadata,
             cache_hit, cache_key, request_tags, team_id, organization_id,
             end_user, requester_ip_address, messages, response,
             session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request,
-            body_archived, parquet_path
+            body_archived, parquet_path, request_id
             FROM spend_logs {} ORDER BY start_time DESC LIMIT {} OFFSET {}"#,
             where_clause, l, o
         );
@@ -4625,7 +4654,7 @@ mod tests {
     ) -> SpendLog {
         let now = Utc::now();
         SpendLog {
-            request_id: Uuid::new_v4().to_string(),
+            call_id: Uuid::new_v4().to_string(),
             call_type: "completion".to_string(),
             api_key: api_key.to_string(),
             spend,
@@ -4659,10 +4688,9 @@ mod tests {
             proxy_server_request: None,
             body_archived: false,
             parquet_path: None,
+            request_id: None,
         }
     }
-
-    // ---- test helpers ----
 
     #[tokio::test]
     async fn test_insert_and_query_spend_log() {

@@ -566,7 +566,7 @@ async fn test_steps_from_payload_rejects_when_storage_unconfigured() {
 async fn test_writer_start_time_is_timestamp_millisecond_and_cache_hit_boolean() {
     use aigw_core::body_archive::BodyRow;
     let rows = vec![BodyRow {
-        request_id: "req-1".into(),
+        call_id: "req-1".into(),
         start_time: "2026-07-22T14:30:00+00:00".into(),
         model: "gpt-4".into(),
         status: Some("success".into()),

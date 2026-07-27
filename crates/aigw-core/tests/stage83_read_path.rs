@@ -28,7 +28,7 @@ use std::sync::Arc;
 
 fn make_row(rid: &str, hour: i64) -> BodyRow {
     BodyRow {
-        request_id: rid.into(),
+        call_id: rid.into(),
         start_time: format!("2026-07-25T{:02}:00:00+00:00", hour),
         model: "gpt-4".into(),
         status: Some("success".into()),
@@ -193,8 +193,7 @@ async fn test_query_parquet_with_cache_hits_footer_cache_on_second_call() {
 }
 
 #[tokio::test]
-async fn test_query_parquet_with_cache_returns_none_for_missing_request_id() {
-    let rows = vec![make_row("req-001", 14)];
+async fn test_query_parquet_with_cache_returns_none_for_missing_request_id() {    let rows = vec![make_row("req-001", 14)];
     let (store, path) = seed_inmemory(&rows).await;
     let store: Arc<dyn ObjectStore> = store;
     let archiver = BodyArchiver::new(BodyArchiveConfig::default());

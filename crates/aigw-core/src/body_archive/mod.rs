@@ -196,8 +196,8 @@ impl AsyncTask for BodyArchiver {
         .map_err(|e| DbError::Other(format!("parquet write: {}", e)))?;
 
         // 4. Mark rows as archived in DB
-        let request_ids: Vec<String> = rows.iter().map(|r| r.request_id.clone()).collect();
-        mark_rows_archived(db, &request_ids, &storage_path).await?;
+        let call_ids: Vec<String> = rows.iter().map(|r| r.call_id.clone()).collect();
+        mark_rows_archived(db, &call_ids, &storage_path).await?;
 
         info!(%hour, row_count, bytes_written, path = %storage_path, "body_archive: hour archived");
 
@@ -287,10 +287,10 @@ impl BodyArchiver {
     pub async fn get_message_body(
         &self,
         db: &Database,
-        request_id: &str,
+        call_id: &str,
     ) -> Result<Option<BodyPayload>> {
         // Use the existing GetSpendLog trait method to fetch the row
-        let log = db.get_spend_log_by_request_id(request_id).await?;
+        let log = db.get_spend_log_by_call_id(call_id).await?;
 
         match log {
             Some(ref entry) if entry.messages.is_some() => {
@@ -304,7 +304,7 @@ impl BodyArchiver {
             Some(ref entry) if entry.body_archived && entry.parquet_path.is_some() => {
                 // Cold path: body archived to Parquet
                 let path = entry.parquet_path.as_ref().unwrap();
-                self.read_body_from_storage(path, request_id).await
+                self.read_body_from_storage(path, call_id).await
             }
             Some(_) => Ok(None), // DB row exists but body is null and not archived
             None => Ok(None),    // Record not found
@@ -321,12 +321,12 @@ impl BodyArchiver {
     pub async fn read_body_from_storage(
         &self,
         parquet_path: &str,
-        request_id: &str,
+        call_id: &str,
     ) -> Result<Option<BodyPayload>> {
         let resolved = resolve_env_placeholders(&self.config.storage);
         let store = build_object_store_for_backend(&resolved)
             .map_err(|e| DbError::Other(format!("storage init: {}", e)))?;
-        self.read_body_from_storage_with_store(&store, parquet_path, request_id)
+        self.read_body_from_storage_with_store(&store, parquet_path, call_id)
             .await
     }
 
@@ -337,10 +337,10 @@ impl BodyArchiver {
         &self,
         store: &std::sync::Arc<dyn object_store::ObjectStore>,
         parquet_path: &str,
-        request_id: &str,
+        call_id: &str,
     ) -> Result<Option<BodyPayload>> {
         // Footer-cached range read: NotFound → Ok(None), other errors → Err.
-        match query_parquet_with_cache(store, &self.footer_cache, parquet_path, request_id).await {
+        match query_parquet_with_cache(store, &self.footer_cache, parquet_path, call_id).await {
             Ok(body) => Ok(body),
             Err(msg) => {
                 // Distinguish "object not found" from genuine failures.
@@ -360,9 +360,9 @@ impl BodyArchiver {
         &self,
         store: &std::sync::Arc<dyn object_store::ObjectStore>,
         path_str: &str,
-        target_request_id: &str,
+        target_call_id: &str,
     ) -> std::result::Result<Option<BodyPayload>, String> {
-        query_parquet_with_cache(store, &self.footer_cache, path_str, target_request_id).await
+        query_parquet_with_cache(store, &self.footer_cache, path_str, target_call_id).await
     }
 
     /// Archive a slice of body rows to object storage for the given hour,
@@ -474,7 +474,7 @@ impl BodyArchiver {
 /// A row of body data from spend_logs, ready for archival.
 #[derive(Debug, Clone)]
 pub struct BodyRow {
-    pub request_id: String,
+    pub call_id: String,
     pub start_time: String,
     pub model: String,
     pub status: Option<String>,
@@ -520,13 +520,13 @@ async fn query_unarchived_rows(
     limit: usize,
 ) -> Result<Vec<BodyRow>> {
     let query_base = r#"
-        SELECT request_id, start_time, model, status, cache_hit, session_id,
+        SELECT call_id, start_time, model, status, cache_hit, session_id,
                messages, response, proxy_server_request
         FROM spend_logs
         WHERE body_archived = FALSE
           AND messages IS NOT NULL
           AND strftime('%Y-%m-%dT%H', start_time) = ?
-        ORDER BY request_id
+        ORDER BY call_id
         LIMIT ?
     "#;
 
@@ -538,7 +538,7 @@ async fn query_unarchived_rows(
                 .fetch_all(pool)
                 .await?;
             Ok(rows.into_iter().map(|(rid, st, m, s, ch, sid, msg, resp, psr)| BodyRow {
-                request_id: rid,
+                call_id: rid,
                 start_time: st,
                 model: m,
                 status: s,
@@ -551,13 +551,13 @@ async fn query_unarchived_rows(
         }
         Database::Mysql(pool) => {
             let mysql_query = r#"
-                SELECT request_id, start_time, model, status, cache_hit, session_id,
+                SELECT call_id, start_time, model, status, cache_hit, session_id,
                        messages, response, proxy_server_request
                 FROM spend_logs
                 WHERE body_archived = FALSE
                   AND messages IS NOT NULL
                   AND DATE_FORMAT(start_time, '%Y-%m-%dT%H') = ?
-                ORDER BY request_id
+                ORDER BY call_id
                 LIMIT ?
             "#;
             let rows = sqlx::query_as::<_, (String, chrono::NaiveDateTime, String, Option<String>, Option<String>, Option<String>, Option<serde_json::Value>, Option<serde_json::Value>, Option<serde_json::Value>)>(mysql_query)
@@ -566,7 +566,7 @@ async fn query_unarchived_rows(
                 .fetch_all(pool)
                 .await?;
             Ok(rows.into_iter().map(|(rid, st, m, s, ch, sid, msg, resp, psr)| BodyRow {
-                request_id: rid,
+                call_id: rid,
                 start_time: st.to_string(),
                 model: m,
                 status: s,
@@ -579,7 +579,7 @@ async fn query_unarchived_rows(
         }
         Database::Postgres(pool) => {
             let pg_query = r#"
-                SELECT request_id,
+                SELECT call_id,
                        to_char(start_time, 'YYYY-MM-DD"T"HH24:MI:SS') as start_time,
                        model, status, cache_hit, session_id,
                        messages::text, response::text, proxy_server_request::text
@@ -587,8 +587,8 @@ async fn query_unarchived_rows(
                 WHERE body_archived = FALSE
                   AND messages IS NOT NULL
                   AND to_char(start_time, 'YYYY-MM-DD"T"HH24') = $1
-                ORDER BY request_id
-                LIMIT $2
+                  ORDER BY call_id
+                  LIMIT $2
             "#;
             let rows = sqlx::query_as::<_, (String, String, String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>)>(pg_query)
                 .bind(hour)
@@ -596,7 +596,7 @@ async fn query_unarchived_rows(
                 .fetch_all(pool)
                 .await?;
             Ok(rows.into_iter().map(|(rid, st, m, s, ch, sid, msg, resp, psr)| BodyRow {
-                request_id: rid,
+                call_id: rid,
                 start_time: st,
                 model: m,
                 status: s,
@@ -610,41 +610,41 @@ async fn query_unarchived_rows(
     }
 }
 
-async fn mark_rows_archived(db: &Database, request_ids: &[String], path: &str) -> Result<()> {
-    if request_ids.is_empty() {
+async fn mark_rows_archived(db: &Database, call_ids: &[String], path: &str) -> Result<()> {
+    if call_ids.is_empty() {
         return Ok(());
     }
 
     // Build placeholders for IN clause
-    let placeholders = request_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let placeholders = call_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
     let sql = format!(
-        "UPDATE spend_logs SET body_archived = TRUE, parquet_path = ? WHERE request_id IN ({})",
+        "UPDATE spend_logs SET body_archived = TRUE, parquet_path = ? WHERE call_id IN ({})",
         placeholders
     );
 
     match db {
         Database::Sqlite(pool) => {
             let mut query = sqlx::query(&sql).bind(path);
-            for id in request_ids {
+            for id in call_ids {
                 query = query.bind(id);
             }
             query.execute(pool).await?;
         }
         Database::Mysql(pool) => {
             let mut query = sqlx::query(&sql).bind(path);
-            for id in request_ids {
+            for id in call_ids {
                 query = query.bind(id);
             }
             query.execute(pool).await?;
         }
         Database::Postgres(pool) => {
-            let pg_placeholders: Vec<String> = (2..=request_ids.len()+1).map(|i| format!("${}", i)).collect();
+            let pg_placeholders: Vec<String> = (2..=call_ids.len()+1).map(|i| format!("${}", i)).collect();
             let pg_sql = format!(
-                "UPDATE spend_logs SET body_archived = TRUE, parquet_path = $1 WHERE request_id IN ({})",
+                "UPDATE spend_logs SET body_archived = TRUE, parquet_path = $1 WHERE call_id IN ({})",
                 pg_placeholders.join(",")
             );
             let mut query = sqlx::query(&pg_sql).bind(path);
-            for id in request_ids {
+            for id in call_ids {
                 query = query.bind(id);
             }
             query.execute(pool).await?;

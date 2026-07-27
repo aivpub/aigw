@@ -115,7 +115,7 @@ impl VirtualKey {
 /// Spend log entry — column-compatible with litellm's `LiteLLM_SpendLogs`
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct SpendLog {
-    pub request_id: String, // UUID, PK
+    pub call_id: String, // aigw gateway UUID v7, PK (renamed from request_id)
     pub call_type: String,
     pub api_key: String, // hashed API token
     pub spend: f64,
@@ -149,6 +149,12 @@ pub struct SpendLog {
     pub proxy_server_request: Option<serde_json::Value>,
     pub body_archived: bool,
     pub parquet_path: Option<String>,
+    /// Upstream provider's request id (e.g. Anthropic `msg_xxx`, OpenAI
+    /// `chatcmpl-xxx`).  Extracted from the upstream response body / error
+    /// body / response headers, for reconciliation against the provider.
+    /// Populated at INSERT time for non-streaming success + 4xx/5xx failure
+    /// paths, and at streaming Phase 2 UPDATE time for streaming paths.
+    pub request_id: Option<String>,
 }
 
 /// Daily spend pre-aggregation record — maps to one of 6 daily_*_spend tables.
@@ -182,7 +188,7 @@ pub enum DailySpendKind {
     Organization,
     EndUser,
     Agent,
-    Tag { tag: String, request_id: String },
+    Tag { tag: String, call_id: String },
 }
 
 /// Spend aggregation by model
