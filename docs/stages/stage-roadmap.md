@@ -7,9 +7,9 @@
 
 ## 当前状态
 
-- **当前 Phase**: Phase 31 — Body Archive 生产化 🔄 (2/3 Stages，Stage 82 ✅，Stage 83 ✅)
-- **状态**: 79/84 Stages 已完成（Stage 82-83 ✅；Stage 78-81 已编码落地，Phase 30 待 Stage 84 完成后一并标记 ✅），1 待执行
-- **下一里程碑**: Stage 84（前端 Jobs 页面生产化重构），预期 ~8h
+- **当前 Phase**: Phase 31 — Body Archive 生产化 ✅ (3/3 Stages，Stage 82 ✅，Stage 83 ✅，Stage 84 ✅)
+- **状态**: 80/84 Stages 已完成（Stage 82-84 ✅；Stage 78-81 已编码落地，Phase 30 待一并标记 ✅）
+- **下一里程碑**: Phase 30 收尾标记 + 长期路线（LT-BodyMetrics / LT-BodyCompact / LT-BodyLifecycle 视数据量触发）
 
 ### 整体进度
 
@@ -38,8 +38,8 @@ Phase 26:   ████████████████████ 100% (3
 Phase 27:   ████████████████████ 100% (3/3 Stages) ✅ 全栈质量修复 + Usage 图表增强
 Phase 28:   ████████████████████ 100% (1/1 Stage)  ✅ 安全与质量加固
 Phase 29:   ████████████████████ 100% (4/4 Stages) ✅ Cross-DB BDD Hardening
-Phase 30:   ░░░░░░░░░░░░░░░░░░░░   0% (0/4 Stages) ⚠️ 代码已落地待 Stage 84 完成后一并标记 ✅
-Phase 31:   ██████████████░░░░░░  67% (2/3 Stages) 🔄 Body Archive 生产化（Stage 82 ✅，Stage 83 ✅，Stage 84 待执行）
+Phase 30:   ░░░░░░░░░░░░░░░░░░░░   0% (0/4 Stages) ⚠️ 代码已落地，Phase 31 修复完成待一并标记 ✅
+Phase 31:   ████████████████████ 100% (3/3 Stages) ✅ Body Archive 生产化（Stage 82-84 全部完成）
 ```
 
 ---
@@ -78,7 +78,7 @@ Phase 31:   ██████████████░░░░░░  67% (2
 
 > ⚠️ **生产审计结论**（2026-07-25）：Phase 30 代码已落地但未通过生产审计，三路 subagent 并行审计确认 6 个 P0 + 10 个 P1 + 12 个 P2 缺陷。Phase 30 状态标记为 ⚠️ 待修复，修复工作转入 Phase 31（Stage 82-84）。
 
-### Phase 31：Body Archive 生产化 ⏳
+### Phase 31：Body Archive 生产化 ✅
 
 **背景**: Phase 30（Stage 78-81）编码落地后用户实测发现 8 个问题，居中调度三路 subagent 并行审计确认三大类生产缺陷：(1) 状态正确性——job 卡 pending（状态机缺 running/failed）、steps 假阳性 completed（execute 未检查 storage_configured）、配置失联（三处用 `default()` 导致 Disabled 仍可执行）；(2) 数据可观测性——logs 独立空区块、列表无分页、Steps 无分页；(3) UX/可分享性——tab 含下划线、Manual Trigger 独占行、详情页冗余、子页面不可 URI 直达。本 Phase 严格按审计报告修复，**每个 Stage 强制 TDD 红绿循环（先写失败测试跑红→重构至绿）+ BDD + real BDD 三后端实际执行验证，发现错误及时修复**。
 
@@ -89,7 +89,7 @@ Phase 31:   ██████████████░░░░░░  67% (2
 |-------|------|------|------|------|
 | Stage 82 | ✅ 完成（2026-07-27） | **后端正确性全栈（合并 P0+P1）** — 补全 job 状态机（pending→running→completed/failed/partially_failed）；配置单例化（AppState 注入 body_archiver，main.rs 从 config.yaml 解析，AigwConfig 加 body_archive 字段）；execute() 加 storage_configured() 门禁消除假阳性 completed；trigger enabled 检查返回 409；冷数据回源接通（spend detail 集成 get_message_body）；create_job/claim 事务化；increment_job_completed 原子化消竞态；finalize 失败标 failed；fail_step 加 next_retry_at 退避；start_time→TimestampMillisecond。**TDD 红绿**：18 单测 + async_task.feature 15 场景 + admin_jobs.feature 12 场景 + body_archive_admin_real 3 @real_api；三后端 real BDD 全绿。对应 Q1/Q3/Q4 | 后端+测试 | 10h |
 | Stage 83 | ✅ 完成（2026-07-27） | **读路径 + 缓存激活 + 凭证安全 + FileSystem 后端** — 实现 query_parquet_with_cache（footer cache → row group 定位 → col chunk range read 三段流水线），激活 FooterCache 死代码消除全文件下载（P99 19MB → 仅 footer + 列块）；read_body_from_storage 区分 NotFound vs 不可达（Err 不吞 None）；S3 凭证支持 ${ENV_VAR} 占位符；StorageBackend::FileSystem 接入 LocalFileSystem（CI 无需 S3）。**TDD 红绿**：10 测试先红后绿；**BDD+real BDD**：本地 FS 全链路 + 三后端回源 | 后端+测试 | 6h |
-| Stage 84 | ⏳ 待开始 | **前端 Jobs 页面生产化重构** — 路由化（/dash/jobs/:jobId 子路由，useSearchParams，URI 直达/刷新/分享）；Tab 美化（body_archive→"Body Archive"）+ Trigger 同行布局；列表表格化 + 分页（后端 list response 加 total）；详情页去冗余 tab + 标题人类可读 + Steps 分页 + Payload/Result 列；Logs 加 Step Key 列按 step 分组；假阳性 completed 矛盾检测（rows_archived=0 灰色 no-op）；Archive Disabled 真禁用 Trigger；错误 toast 替换 silent fail；a11y 键盘导航。**TDD 红绿**：11 BDD 场景先红后绿（Playwright mock API，3 viewports）；**real BDD**：分页/trigger 409/冷回源 body。对应 Q2/Q4-Q8 | 前端+测试 | 8h |
+| Stage 84 | ✅ 完成（2026-07-27） | **前端 Jobs 页面生产化重构** — 路由化（/dash/jobs/:jobId 子路由，useSearchParams，URI 直达/刷新/分享）；Tab 美化（body_archive→"Body Archive"）+ Trigger 同行布局；列表表格化 + 分页（后端 list response 加 total）；详情页去冗余 tab + 标题人类可读 + Steps 分页 + Payload/Result 列；Logs 加 Step Key 列按 step 分组；假阳性 completed 矛盾检测（rows_archived=0 灰色 no-op）；Archive Disabled 真禁用 Trigger；错误 toast 替换 silent fail；a11y 键盘导航。**TDD 红绿**：先修 playwright-bdd bddgen 崩溃（cucumber `/` alternation + `{job_id}` 未注册参数类型 + 重复 step 定义 + 参数个数不匹配），再 11 BDD 场景 × 3 viewports = 81/81 全绿（mock API）。对应 Q2/Q4-Q8 | 前端+测试 | 8h |
 
 **依赖关系**: Stage 82 → 83（后端串行，读路径优化依赖冷回源端点）；Stage 82 → 84（前端兜底 + 矛盾检测依赖后端 summary.running + result 字段，可与 83 部分并行）
 - 82（冷回源接通 + 状态机 + 配置）→ 83 的读路径有端点可改

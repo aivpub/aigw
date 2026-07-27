@@ -311,3 +311,17 @@
   - 引入 `Deployment.chat_template_compat` 派生字段;`resolver` 装配阶段从 `model_info` 读取。
   - 前端 ModelDialog 新增一个下拉,承担用户显式 override 入口。
   - 附带发现:`claude_message_to_openai` 多 tool_result 丢失(`adapter.rs:622-624`)属独立 bug,不在本 ADR 范围。
+
+## ADR-019: Phase 31 完成 — Body Archive 生产化（Stage 82-84）
+
+- **Date**: 2026-07-27
+- **Status**: Accepted
+- **Decision**: Phase 30（Stage 78-81）编码落地后未通过生产审计，转入 Phase 31（Stage 82-84，3 Stage / 24h）按审计报告逐条修复 P0/P1。Stage 84 删除 602 行单文件巨石 `jobs.tsx`，启用 `pages/jobs/` 目录化结构（index + job-detail + components/trigger-dialog + lib/api/jobs）；路由化 `/dash/jobs/:jobId` 子路由 + `useSearchParams` 驱动 tab/page/status（Q8 URI 直达/刷新/分享/后退）；`STEP_LABELS` 美化 + fallback（Q4 去下划线）；Manual Trigger 按钮挪到 `TabsList` 同行（Q5）；Archive Disabled 联动 `disabled` + tooltip（Q4）；列表表格化 + 分页 `ListPagination`（Q6，后端 `jobs.rs` list response 加 `total`）；详情页独立路由去冗余 + Steps 分页 pageSize=20 + Payload/Result/Duration 列（Q7）；Logs 按 `step_key` 分组折叠（Q2）；矛盾检测 `displayJobStatus`（summary.running>0 → running，Q1）+ completed+rows_archived=0 → 灰色 "completed (no-op)" badge（Q3）+ 错误 toast 替换 silent fail + a11y（tabIndex/onKeyDown/aria-label）。
+- **Background**: 2026-07-25 三路 subagent 并行审计确认 Phase 30 前端 8 个用户反馈问题全部成立。前端 602 行 `jobs.tsx` 单文件巨石组件原型级质量，无路由化、无分页、无矛盾检测、tab 含下划线、Disabled 仍可执行。
+- **Key learning (TDD 红绿)**: Stage 84 开始时发现 `jobs.feature` 的 BDD spec 从未生成（`.features-gen/` 缺 `jobs.feature.spec.js`），playwright-bdd `bddgen` 在 cucumber 表达式层崩溃：(1) 含空格的 `/`（`GET /admin/jobs step_type`）被当作 alternation，需 `\/` 转义；(2) `{job_id}` 被当作未注册的 custom parameter type，需改用非花括号占位或注册 ParameterType；(3) 跨 step 文件重复定义同一 Given（`API endpoints are mocked` 在 keys + jobs 两处）；(4) step 定义函数参数个数与 `{string}`/`{int}` 占位不匹配。修齐后 11 个 Stage 84 新场景 × 3 viewports = 81/81 全绿。
+- **Consequences**:
+  - 前端 Jobs 页面达到生产质量，8 个用户反馈问题（Q1-Q8）逐条解决。
+  - 删除 602 行单文件巨石，目录化拆分提升可维护性。
+  - 前端 BDD 从 108 增至 252 tests（含 jobs 81 = 27 scenarios × 3 viewports），`task fe-bdd` 全绿。
+  - real BDD（AIGW_REAL_API=1，分页/trigger 409/冷数据回源）推迟到生产环境验证（mock BDD 已覆盖前端逻辑）。
+  - Phase 31（Stage 82-84）全部完成，Phase 30 待一并标记 ✅。

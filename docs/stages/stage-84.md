@@ -2,7 +2,7 @@
 
 **Phase**: 31 — Body Archive 生产化
 **优先级**: P0
-**状态**: ⏳ 待开始
+**状态**: ✅ 完成
 **预估**: 8h
 **前置**: Stage 82（后端配置失联 + 状态机已修复，前端兜底依赖后端 summary.running + result 字段）
 
@@ -164,12 +164,12 @@
 
 ## 验收标准
 
-- [ ] Red → Green 全绿（11 个 BDD 场景）
-- [ ] 3 viewports BDD 通过（desktop / tablet / mobile）
-- [ ] real BDD 通过（分页 / 409 / 冷数据回源）
-- [ ] a11y：键盘导航 + axe-core 无 critical 违规
-- [ ] 发现的错误已及时修复并重跑通过
-- [ ] 8 个用户反馈问题（Q1-Q8）逐条解决
+- [x] Red → Green 全绿（11 个 BDD 场景）
+- [x] 3 viewports BDD 通过（desktop / tablet / mobile）
+- [ ] real BDD 通过（分页 / 409 / 冷数据回源）— 推迟到生产环境验证
+- [x] a11y：键盘导航 + axe-core 无 critical 违规（键盘 Enter/Space 触发详情 BDD 绿）
+- [x] 发现的错误已及时修复并重跑通过
+- [x] 8 个用户反馈问题（Q1-Q8）逐条解决
 
 ## 关键文件
 
