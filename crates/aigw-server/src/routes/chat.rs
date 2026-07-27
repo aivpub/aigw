@@ -1002,7 +1002,8 @@ pub async fn chat_completions(
             let fail_request_id = request_id.clone();
             tokio::spawn(async move {
                 let sl = SpendLog {
-                    request_id: fail_request_id,
+                    call_id: fail_request_id,
+                    request_id: None,
                     call_type: "completion".to_string(),
                     api_key: fail_token_hash,
                     spend: 0.0,
@@ -1067,6 +1068,7 @@ pub async fn chat_completions(
     let upstream_req_id = upstream_resp
         .headers()
         .get("x-request-id")
+        .or_else(|| upstream_resp.headers().get("request-id"))
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
     if let Some(ref upstream_rid) = upstream_req_id {
@@ -1106,9 +1108,16 @@ pub async fn chat_completions(
             let fail_session_id = session_id.clone();
             let fail_requester_ip = requester_ip.clone();
             let fail_request_id = request_id.clone();
+            // v6.1 §11.2: failure-path upstream id at INSERT (no Phase 2 UPDATE).
+            // OpenAI 4xx/5xx error body may carry `id`; fallback to upstream header.
+            let fail_upstream_id = serde_json::from_str::<serde_json::Value>(&error_body)
+                .ok()
+                .and_then(|v| v.get("id").and_then(|x| x.as_str()).map(|s| s.to_string()))
+                .or_else(|| upstream_req_id.clone());
             tokio::spawn(async move {
                 let sl = SpendLog {
-                    request_id: fail_request_id,
+                    call_id: fail_request_id,
+                    request_id: fail_upstream_id,
                     call_type: "completion".to_string(),
                     api_key: fail_token_hash,
                     spend: 0.0,
@@ -1182,7 +1191,8 @@ pub async fn chat_completions(
         // Phase 1: pre-insert placeholder SpendLog
         {
             let sl = SpendLog {
-                request_id: request_id.clone(),
+                call_id: request_id.clone(),
+                request_id: None,
                 call_type: "completion".to_string(),
                 api_key: token_hash.clone(),
                 spend: 0.0,
@@ -1230,6 +1240,9 @@ pub async fn chat_completions(
             let mut stream_completion_tokens: i32 = 0;
             let mut stream_total_tokens: i32 = 0;
             let mut failure: Option<(u16, String)> = None;
+            // v6.1 §4.3: extract upstream id from the first chunk carrying it
+            // (OpenAI chunks put `id` at the top level). Borrow val before any push/move.
+            let mut upstream_id: Option<String> = None;
 
             while let Some(chunk_result) = stream.next().await {
                 match chunk_result {
@@ -1243,6 +1256,12 @@ pub async fn chat_completions(
                                 if let Some(data) = line.strip_prefix("data: ") {
                                     if data != "[DONE]" {
                                         if let Ok(val) = serde_json::from_str::<Value>(data) {
+                                            // Extract upstream id (borrow, before any push/move).
+                                            if upstream_id.is_none() {
+                                                if let Some(id) = val.get("id").and_then(|v| v.as_str()) {
+                                                    upstream_id = Some(id.to_string());
+                                                }
+                                            }
                                             if let Some(usage) = val.get("usage") {
                                                 stream_prompt_tokens = usage
                                                     .get("prompt_tokens")
@@ -1357,7 +1376,7 @@ pub async fn chat_completions(
             match failure {
                 Some((status_code, err)) => {
                     let _ = state_clone.db.update_spend_log(
-                        &request_id, 0.0, 0, 0, 0,
+                        &request_id, upstream_id.as_deref(), 0.0, 0, 0, 0,
                         now, duration_ms, cst,
                         json!({"error": err, "status_code": status_code}),
                         &format!("failure:{}", status_code),
@@ -1383,7 +1402,7 @@ pub async fn chat_completions(
                 }
                 None => {
                     let _ = state_clone.db.update_spend_log(
-                        &request_id, streaming_spend, stream_total_tokens, stream_prompt_tokens, stream_completion_tokens,
+                        &request_id, upstream_id.as_deref(), streaming_spend, stream_total_tokens, stream_prompt_tokens, stream_completion_tokens,
                         now, duration_ms, cst, assembled_response, "success",
                     ).await;
                     if let Some(ref m) = stream_metrics {
@@ -1476,9 +1495,12 @@ pub async fn chat_completions(
             let fail_session_id2 = session_id.clone();
             let fail_requester_ip2 = requester_ip.clone();
             let fail_request_id = request_id.clone();
+            // v6.1 §11.2: non-streaming success — upstream id from resp_body at INSERT.
+            let fail_upstream_id = fail_resp.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
             tokio::spawn(async move {
                 let sl = SpendLog {
-                    request_id: fail_request_id,
+                    call_id: fail_request_id,
+                    request_id: fail_upstream_id,
                     call_type: "completion".to_string(),
                     api_key: fail_token_hash,
                     spend: 0.0,
@@ -1534,7 +1556,9 @@ pub async fn chat_completions(
         );
 
         let spend_log = aigw_core::models::SpendLog {
-            request_id: request_id.clone(),
+            call_id: request_id.clone(),
+            // v6.1 §4.3: non-streaming success — upstream id at INSERT from resp_body.
+            request_id: resp_body.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()),
             call_type: "completion".to_string(),
             api_key: auth.token_hash.clone(),
             spend: spend_amount,

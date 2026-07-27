@@ -292,6 +292,7 @@ pub async fn spend_logs(
             let ttft_ms = compute_ttft(log);
             let key_name: Option<String> = key_map.get(&log.api_key).cloned().flatten();
             json!({
+                "call_id": log.call_id,
                 "request_id": log.request_id,
                 "call_type": log.call_type,
                 "api_key": log.api_key,
@@ -335,17 +336,17 @@ pub async fn spend_logs(
     })))
 }
 
-/// GET /global/spend/logs/{request_id} — Get single spend log detail with full body blobs.
+/// GET /global/spend/logs/{call_id} — Get single spend log detail with full body blobs.
 pub async fn global_spend_log_detail(
     State(state): State<SharedState>,
     SpendAuth(auth): SpendAuth,
-    Path(request_id): Path<String>,
+    Path(call_id): Path<String>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&auth)?;
 
     let log = state
         .db
-        .get_spend_log_by_request_id(&request_id)
+        .get_spend_log_by_call_id(&call_id)
         .await
         .map_err(|e| {
             (
@@ -384,10 +385,10 @@ pub async fn global_spend_log_detail(
         // Cold data — body archived to Parquet. Try to retrieve from storage.
         match &state.body_archiver {
             Some(archiver) => {
-                match archiver.get_message_body(&state.db, &request_id).await {
+                match archiver.get_message_body(&state.db, &call_id).await {
                     Ok(Some(body)) => body,
                     Ok(None) => {
-                        tracing::warn!(%request_id, "body_archived=true but cold retrieval returned None — storage or file missing");
+                        tracing::warn!(%call_id, "body_archived=true but cold retrieval returned None — storage or file missing");
                         aigw_core::body_archive::query::BodyPayload {
                             messages: None,
                             response: None,
@@ -395,7 +396,7 @@ pub async fn global_spend_log_detail(
                         }
                     }
                     Err(e) => {
-                        tracing::error!(%request_id, %e, "cold retrieval error");
+                        tracing::error!(%call_id, %e, "cold retrieval error");
                         aigw_core::body_archive::query::BodyPayload {
                             messages: None,
                             response: None,
@@ -405,7 +406,7 @@ pub async fn global_spend_log_detail(
                 }
             }
             None => {
-                tracing::warn!(%request_id, "body_archived=true but body_archiver not configured");
+                tracing::warn!(%call_id, "body_archived=true but body_archiver not configured");
                 aigw_core::body_archive::query::BodyPayload {
                     messages: None,
                     response: None,
@@ -423,6 +424,7 @@ pub async fn global_spend_log_detail(
     };
 
     Ok(Json(json!({
+        "call_id": log.call_id,
         "request_id": log.request_id,
         "call_type": log.call_type,
         "api_key": log.api_key,
@@ -640,6 +642,7 @@ pub async fn global_spend_logs(
             let ttft_ms = compute_ttft(log);
             let key_name: Option<String> = key_map.get(&log.api_key).cloned().flatten();
             json!({
+                "call_id": log.call_id,
                 "request_id": log.request_id,
                 "call_type": log.call_type,
                 "api_key": log.api_key,
@@ -1237,7 +1240,7 @@ use aigw_core::models::SpendLog;
             .route("/spend/users", axum::routing::get(spend_users))
             .route("/spend/tags", axum::routing::get(spend_tags))
             .route("/global/spend", axum::routing::get(global_spend))
-            .route("/global/spend/logs/{request_id}", axum::routing::get(global_spend_log_detail))
+            .route("/global/spend/logs/{call_id}", axum::routing::get(global_spend_log_detail))
             .route("/global/spend/logs", axum::routing::get(global_spend_logs))
             .route("/global/spend/keys", axum::routing::get(global_spend_keys))
             .route("/global/spend/activity", axum::routing::get(global_spend_activity))
@@ -1334,7 +1337,8 @@ use aigw_core::models::SpendLog;
             .expect("init sqlite");
         // Insert a spend log first
         let log = SpendLog {
-            request_id: "test-req-001".to_string(),
+            call_id: "test-req-001".to_string(),
+            request_id: None,
             call_type: "completion".to_string(),
             api_key: "hashed-key".to_string(),
             spend: 0.05,
@@ -1388,7 +1392,7 @@ use aigw_core::models::SpendLog;
         });
 
         let app = Router::new()
-            .route("/global/spend/logs/{request_id}", axum::routing::get(global_spend_log_detail))
+            .route("/global/spend/logs/{call_id}", axum::routing::get(global_spend_log_detail))
             .with_state(state);
 
         let request = Request::builder()
@@ -1404,7 +1408,7 @@ use aigw_core::models::SpendLog;
             .await
             .unwrap();
         let val: Value = serde_json::from_slice(&body_bytes).unwrap();
-        assert_eq!(val.get("request_id").and_then(|v| v.as_str()), Some("test-req-001"));
+        assert_eq!(val.get("call_id").and_then(|v| v.as_str()), Some("test-req-001"));
         assert_eq!(val.get("model").and_then(|v| v.as_str()), Some("gpt-4"));
         assert_eq!(val.get("spend").and_then(|v| v.as_f64()), Some(0.05));
         // Body blobs should be present
@@ -1419,7 +1423,8 @@ use aigw_core::models::SpendLog;
             .expect("init sqlite");
         // Insert a spend log with body
         let log = SpendLog {
-            request_id: "test-req-bodyless".to_string(),
+            call_id: "test-req-bodyless".to_string(),
+            request_id: None,
             call_type: "completion".to_string(),
             api_key: "master_key".to_string(),
             spend: 0.01,

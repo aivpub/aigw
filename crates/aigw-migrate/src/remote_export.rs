@@ -381,9 +381,24 @@ async fn migrate_spend_logs(
 
     let src_col_names: Vec<String> = rows[0].iter().map(|(n, _)| n.clone()).collect();
     let tgt_col_info = target.column_types("LiteLLM_SpendLogs").await?;
-    let overrides: HashMap<String, String> = src_col_names
+    let mut overrides: HashMap<String, String> = src_col_names
         .iter()
         .map(|n| (camel_to_snake(n), n.clone()))
+        .collect();
+
+    // Stage 85 (v6.1 §11.1): export aigw → litellm. aigw source has `call_id`
+    // (PK) + `request_id` (upstream); litellm target has only `request_id` (PK).
+    // `insert_rows` tries direct name-match FIRST, override only as fallback —
+    // so for target `request_id`, direct match would pick aigw's upstream
+    // `request_id` (NULL for historical rows migrated FROM litellm) and write
+    // NULL into litellm's PK. To force the override to win, strip `request_id`
+    // from each aigw source row so direct match fails; then the override
+    // `request_id → call_id` redirects aigw's `call_id` (PK, always populated)
+    // into litellm's `request_id` PK.
+    overrides.insert("request_id".to_string(), "call_id".to_string());
+    let rows_stripped: Vec<native::UnifiedRow> = rows
+        .iter()
+        .map(|r| r.iter().filter(|(n, _)| n != "request_id").cloned().collect())
         .collect();
 
     if tgt_col_info.is_empty() {
@@ -391,7 +406,7 @@ async fn migrate_spend_logs(
         return Ok(0);
     }
 
-    native::insert_rows(target, "LiteLLM_SpendLogs", &tgt_col_info, &rows, &overrides).await
+    native::insert_rows(target, "LiteLLM_SpendLogs", &tgt_col_info, &rows_stripped, &overrides).await
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -542,9 +557,9 @@ mod tests {
             "INSERT INTO \"proxy_models\" (model_id, model_name, litellm_params) VALUES ('model-1', 'gpt-4', ?)"
         ).bind(&encrypted_params).execute(&src_pool).await.unwrap();
 
-        // Spend logs
+        // Spend logs (aigw source schema — Stage 85 renamed PK to call_id)
         sqlx::query(
-            r#"CREATE TABLE "spend_logs" (request_id TEXT PRIMARY KEY, model TEXT, spend REAL DEFAULT 0)"#,
+            r#"CREATE TABLE "spend_logs" (call_id TEXT PRIMARY KEY, model TEXT, spend REAL DEFAULT 0, request_id TEXT)"#,
         ).execute(&src_pool).await.unwrap();
         src_pool.close().await;
 

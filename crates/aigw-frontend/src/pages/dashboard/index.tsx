@@ -40,7 +40,8 @@ import { format } from "date-fns";
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 interface SpendLog {
-  request_id: string;
+  call_id: string;
+  request_id?: string | null;
   call_type: string;
   api_key: string;
   spend: number;
@@ -395,7 +396,7 @@ export function DashboardPage() {
                   </TableHeader>
                   <TableBody>
                     {logs.map((log) => (
-                      <TableRow key={log.request_id}>
+                      <TableRow key={log.call_id}>
                         <TableCell className="text-xs">
                           {log.start_time
                             ? format(new Date(log.start_time), "MM-dd HH:mm")
@@ -429,7 +430,7 @@ export function DashboardPage() {
               <div className="md:hidden space-y-2">
                 {logs.map((log) => (
                   <div
-                    key={log.request_id}
+                    key={log.call_id}
                     className="flex items-center justify-between rounded-md border p-3"
                   >
                     <div className="space-y-1 min-w-0">

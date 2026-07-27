@@ -563,7 +563,18 @@ async fn migrate_spend_logs(
     );
 
     // Snake-case overrides so target-side lookup finds camelCase source cols.
-    let overrides = build_snake_overrides(&select_columns);
+    let mut overrides = build_snake_overrides(&select_columns);
+
+    // Stage 85 (v6.1 §4.5): litellm source has ONE `request_id` (the upstream
+    // provider id, per litellm semantics). After the 023 migration, aigw target
+    // `spend_logs` has BOTH `call_id` (PK, NOT NULL) and `request_id` (upstream,
+    // nullable). Without this override, column-name-based mapping would write
+    // source `request_id` → target `request_id` (upstream col), leaving target
+    // `call_id` (PK) NULL → INSERT fails. Redirect source `request_id` → target
+    // `call_id` (PK). The target upstream `request_id` col stays NULL for
+    // migrated rows (historical — semantically the same value lives in call_id).
+    // override map is keyed by TARGET col, value is SOURCE col (see build_row_values).
+    overrides.insert("call_id".to_string(), "request_id".to_string());
 
     // ── Step C: producer/consumer pipeline ───────────────────────────────
     //
@@ -1241,7 +1252,7 @@ mod tests {
         let tgt_pool = create_pool(tgt_str).await;
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS "spend_logs" (
-                request_id TEXT PRIMARY KEY, call_type TEXT NOT NULL DEFAULT '',
+                call_id TEXT PRIMARY KEY, call_type TEXT NOT NULL DEFAULT '',
                 api_key TEXT NOT NULL DEFAULT '', spend REAL DEFAULT 0,
                 total_tokens INTEGER DEFAULT 0, prompt_tokens INTEGER DEFAULT 0,
                 completion_tokens INTEGER DEFAULT 0, start_time TEXT NOT NULL,
@@ -1256,7 +1267,9 @@ mod tests {
                 messages BLOB, response BLOB,
                 session_id TEXT, status TEXT,
                 mcp_namespaced_tool_name TEXT, agent_id TEXT,
-                proxy_server_request BLOB
+                proxy_server_request BLOB,
+                body_archived BOOLEAN DEFAULT FALSE, parquet_path TEXT,
+                request_id TEXT
             )"#,
         ).execute(&tgt_pool).await.unwrap();
         tgt_pool.close().await;

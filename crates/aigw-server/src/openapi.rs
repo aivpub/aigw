@@ -252,7 +252,8 @@ pub fn generate_openapi_spec() -> Value {
                             "items": {
                                 "type": "object",
                                 "properties": {
-                                    "request_id": { "type": "string" },
+                                    "call_id": { "type": "string" },
+                                    "request_id": { "type": "string", "nullable": true, "description": "Upstream provider request id (e.g. Anthropic msg_xxx / OpenAI chatcmpl-xxx). Null for aigw-side failures that never reached upstream." },
                                     "call_type": { "type": "string" },
                                     "api_key": { "type": "string" },
                                     "spend": { "type": "number", "format": "float" },

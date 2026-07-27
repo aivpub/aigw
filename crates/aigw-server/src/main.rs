@@ -123,7 +123,10 @@ impl<B> tower_http::trace::MakeSpan<B> for RequestIdMakeSpan {
         tracing::span!(
             Level::INFO,
             "request",
-            request_id = %request_id,
+            // v6.1 §10 option A: span field renamed call_id to match the DB PK
+            // semantics (the HTTP-layer `request_id` variable holds aigw's UUID v7,
+            // which is the value stored as spend_logs.call_id). Variable name stays.
+            call_id = %request_id,
             method = %request.method(),
             uri = %request.uri(),
         )
@@ -395,7 +398,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/spend/models", get(spend::spend_models))
         .route("/spend/providers", get(spend::spend_providers))
         .route("/global/spend", get(spend::global_spend))
-        .route("/global/spend/logs/{request_id}", get(spend::global_spend_log_detail))
+        .route("/global/spend/logs/{call_id}", get(spend::global_spend_log_detail))
         .route("/global/spend/logs", get(spend::global_spend_logs))
         .route("/global/spend/keys", get(spend::global_spend_keys))
         .route("/global/spend/models", get(spend::global_spend_models))

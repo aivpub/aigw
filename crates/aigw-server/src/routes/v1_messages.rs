@@ -381,9 +381,11 @@ pub async fn messages_handler(
             let log_requester_ip = requester_ip.clone();
             let log_metadata = metadata.clone();
             let rid = request_id.clone();
+            // v6.1 §11.2: resolver-failure path (aigw-side, never reached upstream) → no upstream id.
             tokio::spawn(async move {
                 let sl = SpendLog {
-                    request_id: rid,
+                    call_id: rid,
+                    request_id: None,
                     call_type: call_type.to_string(),
                     api_key: log_token_hash,
                     spend: 0.0,
@@ -564,7 +566,8 @@ pub async fn messages_handler(
             tokio::spawn(async move {
                 let end_time = chrono::Utc::now();
                 let sl = SpendLog {
-                    request_id: rid,
+                    call_id: rid,
+                    request_id: None, // timeout — no upstream response
                     call_type: call_type2,
                     api_key: auth_token_hash_clone,
                     spend: 0.0,
@@ -621,9 +624,12 @@ pub async fn messages_handler(
     let upstream_latency_ms = upstream_start.elapsed().as_millis() as i64;
 
     // Check if upstream returned a different x-request-id than what we sent.
+    // v6.1 §11.4: also capture Anthropic's `request-id` header (no `x-` prefix)
+    // before `.text().await` consumes upstream_resp downstream.
     let upstream_req_id = upstream_resp
         .headers()
         .get("x-request-id")
+        .or_else(|| upstream_resp.headers().get("request-id"))
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
     if let Some(ref upstream_rid) = upstream_req_id {
@@ -663,9 +669,17 @@ pub async fn messages_handler(
         let ccp = upstream_custom_llm_provider.clone();
         let mdata = metadata.clone();
         let rid = request_id.clone();
+        // v6.1 §11.2/§11.4: failure-path upstream id at INSERT.
+        // Anthropic error body carries `request_id` (protocol field, value=upstream id);
+        // fallback to pre-extracted upstream_req_id (request-id / x-request-id header).
+        let fail_upstream_id = serde_json::from_str::<Value>(&error_body)
+            .ok()
+            .and_then(|v| v.get("request_id").and_then(|x| x.as_str()).map(|s| s.to_string()))
+            .or_else(|| upstream_req_id.clone());
         tokio::spawn(async move {
             let sl = SpendLog {
-                request_id: rid,
+                call_id: rid,
+                request_id: fail_upstream_id,
                 call_type: call_type.to_string(),
                 api_key: auth_token_hash_clone,
                 spend: 0.0,
@@ -729,7 +743,8 @@ pub async fn messages_handler(
         // Phase 1: pre-insert placeholder
         {
             let sl = SpendLog {
-                request_id: streaming_request_id.clone(),
+                call_id: streaming_request_id.clone(),
+                request_id: None,
                 call_type: call_type.to_string(),
                 api_key: auth_token_hash.clone(),
                 spend: 0.0,
@@ -790,6 +805,10 @@ pub async fn messages_handler(
             let mut chunk_jsons: Vec<Value> = Vec::new();
             // Use AnthropicToOpenAIStream for full SSE→SSE tool_use conversion
             let mut stream_adapter = AnthropicToOpenAIStream::new();
+            // v6.1 §11.3: extract upstream id BEFORE the `if choices` branch (which only
+            // fires for OpenAI-shaped chunks). Anthropic-native `message_start` has no
+            // `choices`; borrow `raw` here so the later `push(raw)` move is unaffected.
+            let mut upstream_id: Option<String> = None;
 
             while let Some(chunk_result) = stream.next().await {
                 match chunk_result {
@@ -803,6 +822,17 @@ pub async fn messages_handler(
                                 if let Some(data) = line.strip_prefix("data: ") {
                                     if data != "[DONE]" {
                                         if let Ok(raw) = serde_json::from_str::<Value>(data) {
+                                            // Extract upstream id (borrow raw, before any push/move).
+                                            // Anthropic: message_start.message.id; OpenAI: top-level id.
+                                            if upstream_id.is_none() {
+                                                if let Some(id) = raw.get("id").and_then(|v| v.as_str()) {
+                                                    upstream_id = Some(id.to_string());
+                                                } else if let Some(msg) = raw.get("message") {
+                                                    if let Some(id) = msg.get("id").and_then(|v| v.as_str()) {
+                                                        upstream_id = Some(id.to_string());
+                                                    }
+                                                }
+                                            }
                                             if let Some(usage) = raw.get("usage") {
                                                 last_prompt_tokens = usage.get("prompt_tokens")
                                                     .or_else(|| usage.get("input_tokens"))
@@ -896,6 +926,7 @@ pub async fn messages_handler(
             let cst = first_chunk_time.unwrap_or(now);
             let _ = state_clone.db.update_spend_log(
                 &sr_id,
+                upstream_id.as_deref(),
                 streaming_spend,
                 last_prompt_tokens + last_completion_tokens,
                 last_prompt_tokens,
@@ -997,7 +1028,10 @@ pub async fn messages_handler(
         let spend_amount =
             super::chat::calc_spend(prompt_tokens, completion_tokens, input_cost, output_cost);
         let spend_log = aigw_core::models::SpendLog {
-            request_id: request_id.clone(),
+            call_id: request_id.clone(),
+            // v6.1 §4.3: non-streaming success — upstream id at INSERT from resp_body.
+            // (Both OpenAI `chatcmpl-xxx` and Anthropic `msg_xxx` put `id` at top level.)
+            request_id: resp_body.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()),
             call_type: "completion".to_string(),
             api_key: auth_token_hash.clone(),
             spend: spend_amount,

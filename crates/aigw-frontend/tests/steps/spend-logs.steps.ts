@@ -174,7 +174,8 @@ Given("API detail endpoints are slow to respond", async ({ page }) => {
     return route.fulfill({
       status: 200,
       json: {
-        request_id: "req-001",
+        call_id: "req-001",
+        request_id: "chatcmpl-abc123",
         call_type: "completion",
         model: "gpt-4",
         api_key: "sk-abc***",

@@ -32,7 +32,7 @@ import { parseMessages } from "@/components/log-viewer/MessageViewer";
 /* ─────────────────────────────────────────────── Types ── */
 
 interface SpendLog {
-  request_id: string; call_type: string; api_key: string; key_name?: string | null;
+  call_id: string; request_id?: string | null; call_type: string; api_key: string; key_name?: string | null;
   spend: number; total_tokens: number; prompt_tokens: number; completion_tokens: number;
   start_time: string; end_time: string; request_duration_ms: number | null; ttft_ms: number | null;
   model: string; model_id?: string | null; model_group?: string | null;
@@ -44,7 +44,7 @@ interface SpendLog {
 }
 
 interface SpendLogDetail {
-  request_id: string; call_type: string; api_key: string; key_name?: string | null;
+  call_id: string; request_id?: string | null; call_type: string; api_key: string; key_name?: string | null;
   spend: number; total_tokens: number; prompt_tokens: number; completion_tokens: number;
   start_time: string; end_time: string; request_duration_ms: number | null; ttft_ms: number | null;
   model: string; model_id?: string | null; model_group?: string | null;
@@ -117,8 +117,8 @@ function truncateEndUser(s: string): string {
 }
 
 function exportToCSV(logs: SpendLog[], startDate: string, endDate: string) {
-  const headers = ["Request ID","Time","Type","Model","Status","Prompt Tokens","Completion Tokens","Total Tokens","TTFT (ms)","Duration (ms)","Cost","User","End User","API Key"];
-  const rows = logs.map(l => [l.request_id,l.start_time,l.call_type,l.model,l.status??"",l.prompt_tokens,l.completion_tokens,l.total_tokens,l.ttft_ms??"",l.request_duration_ms??"",l.spend,l.user??"",l.end_user??"",l.api_key.slice(0,12)+"…"]);
+  const headers = ["Call ID","Upstream ID","Time","Type","Model","Status","Prompt Tokens","Completion Tokens","Total Tokens","TTFT (ms)","Duration (ms)","Cost","User","End User","API Key"];
+  const rows = logs.map(l => [l.call_id,l.request_id ?? "",l.start_time,l.call_type,l.model,l.status??"",l.prompt_tokens,l.completion_tokens,l.total_tokens,l.ttft_ms??"",l.request_duration_ms??"",l.spend,l.user??"",l.end_user??"",l.api_key.slice(0,12)+"…"]);
   const csv = [headers,...rows].map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
   const blob = new Blob(["﻿"+csv],{type:"text/csv;charset=utf-8"});
   const url = URL.createObjectURL(blob);
@@ -347,8 +347,8 @@ function DetailDrawer({ log, open, onClose, isDetailLoading, detailError, onRetr
             ) : null}
           </SheetTitle>
           <SheetDescription className="text-[10px] font-mono break-all flex items-center gap-1">
-            <code>{log.request_id}</code>
-            <CopyIconButton text={log.request_id} />
+            <code>{log.call_id}</code>
+            <CopyIconButton text={log.call_id} />
           </SheetDescription>
         </SheetHeader>
 
@@ -636,7 +636,8 @@ export function SpendLogsPage() {
                       <TableHead className="text-xs whitespace-nowrap">End User</TableHead>
                       <TableHead className="text-xs whitespace-nowrap">IP</TableHead>
                       <TableHead className="text-xs whitespace-nowrap">Status</TableHead>
-                      <TableHead className="text-xs whitespace-nowrap">Request ID</TableHead>
+                      <TableHead className="text-xs whitespace-nowrap">Call ID</TableHead>
+                      <TableHead className="text-xs whitespace-nowrap">Upstream ID</TableHead>
                       <TableHead className="text-xs whitespace-nowrap text-right">TTFT</TableHead>
                       <TableHead className="text-xs whitespace-nowrap text-right">Duration</TableHead>
                       <TableHead className="text-xs whitespace-nowrap text-right">Tokens</TableHead>
@@ -645,7 +646,7 @@ export function SpendLogsPage() {
                   </TableHeader>
                   <TableBody>
                     {logs.map(log => (
-                      <TableRow key={log.request_id} data-testid="spend-log-row" className="cursor-pointer hover:bg-muted/50" onClick={() => { setSelectedLog(log); setDrawerOpen(true); setDetailRequestId(log.request_id); }}>
+                      <TableRow key={log.call_id} data-testid="spend-log-row" className="cursor-pointer hover:bg-muted/50" onClick={() => { setSelectedLog(log); setDrawerOpen(true); setDetailRequestId(log.call_id); }}>
                         <TableCell className="text-xs whitespace-nowrap">{log.start_time ? format(new Date(log.start_time), "MM-dd HH:mm:ss") : "—"}</TableCell>
                         <TableCell><Badge variant="outline" className="text-[10px] px-1 py-0">{log.call_type || "—"}</Badge></TableCell>
                         <TableCell className="text-xs whitespace-nowrap">
@@ -665,7 +666,8 @@ export function SpendLogsPage() {
                           </span>
                         </TableCell>
                         <TableCell><Badge variant={log.status==="success"?"default":"destructive"} className="text-[10px] px-1.5 py-0">{log.status || "—"}</Badge></TableCell>
-                        <TableCell className="text-xs font-mono"><div className="flex items-center gap-1">{truncate8(log.request_id)}<RowCopyButton text={log.request_id}/></div></TableCell>
+                        <TableCell className="text-xs font-mono"><div className="flex items-center gap-1">{truncate8(log.call_id)}<RowCopyButton text={log.call_id}/></div></TableCell>
+                        <TableCell className="text-xs font-mono text-muted-foreground">{log.request_id ? truncate8(log.request_id) : "—"}</TableCell>
                         <TableCell className="text-xs font-mono text-right">{fmtTtft(log.ttft_ms)}</TableCell>
                         <TableCell className="text-xs font-mono text-right">{fmtDuration(log.request_duration_ms)}</TableCell>
                         <TableCell className="text-xs text-right"><span className="text-muted-foreground">{fmtTokens(log.prompt_tokens)}</span>{" / "}<span>{fmtTokens(log.completion_tokens)}</span></TableCell>
@@ -677,7 +679,7 @@ export function SpendLogsPage() {
               </div>
               <div className="md:hidden space-y-2">
                 {logs.map(log => (
-                  <div key={log.request_id} data-testid="spend-log-row" className="rounded-md border p-3 cursor-pointer hover:bg-muted/50" onClick={() => { setSelectedLog(log); setDrawerOpen(true); setDetailRequestId(log.request_id); }}>
+                  <div key={log.call_id} data-testid="spend-log-row" className="rounded-md border p-3 cursor-pointer hover:bg-muted/50" onClick={() => { setSelectedLog(log); setDrawerOpen(true); setDetailRequestId(log.call_id); }}>
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
                         <Badge variant="outline" className="text-[10px] px-1 py-0">{log.call_type||"—"}</Badge>
@@ -697,8 +699,8 @@ export function SpendLogsPage() {
                       <div>Time: <span>{log.start_time ? format(new Date(log.start_time), "HH:mm:ss") : "—"}</span></div>
                     </div>
                     <div className="flex items-center gap-1 mt-1 text-xs text-muted-foreground">
-                      <span className="font-mono">{truncate8(log.request_id)}</span>
-                      <RowCopyButton text={log.request_id}/>
+                      <span className="font-mono">{truncate8(log.call_id)}</span>
+                      <RowCopyButton text={log.call_id}/>
                     </div>
                   </div>
                 ))}
