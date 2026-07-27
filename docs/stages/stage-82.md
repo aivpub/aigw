@@ -2,11 +2,13 @@
 
 **Phase**: 31 — Body Archive 生产化
 **优先级**: P0
-**状态**: ⏳ 待开始
+**状态**: ✅ 完成（2026-07-27）
 **预估**: 10h
 **前置**: Stage 78-81 代码已落地（feat/body-archive 分支）
 
 > 合并自原 Stage 82 + Stage 83（二者同触 `crates/aigw-core/src/engine.rs` 和 `crates/aigw-core/src/body_archive/mod.rs`，合并避免反复改同一文件；工作量按 subagent 并发实测下调）。对应用户反馈 Q1/Q3/Q4。对应审计 P0-1~P0-6 + P1-3~P1-7（审计结论见 stage-roadmap.md Phase 31 背景）。
+
+> **完成纪要**（2026-07-27）：实现落在 dangling commit 链 `f6089fd`（含 Stage 78-81 + Stage 82 P0 修复），本会话通过 `git rebase --onto f6089fd f0258ea` 恢复到 `feat/body-archive` 并 cherry-pick HEAD 的 6 个 BDD/migrate 修复 commit。验证：aigw-core lib 247/247、Stage 82 单测 18/18（`crates/aigw-core/tests/stage82_state_machine.rs`）、mock BDD 169 scenarios（161 pass / 8 skip，含 async_task 15 + admin_jobs 12）、三后端 real BDD 全绿（sqlite/pg/mysql 36/36 each）。drive-by 修复：migration 021 `body_archived` 改 BOOLEAN（PG/MySQL，原 INTEGER 与 `SpendLog.body_archived: bool` 不兼容）、`JobLogEntry.id: String → i64`（async_job_logs.id 是自增 INTEGER/BIGSERIAL/BIGINT）。冷回源端点 `GET /global/spend/logs/{id}` 已接通但仅返回 DB body（Parquet 读路径在 Stage 83 实现）；trigger 409/401/404 由 `body_archive_admin_real.feature`（@real_api）覆盖。
 
 ---
 
