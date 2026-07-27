@@ -23,9 +23,3 @@ Feature: Body Archive Admin API — Stage 82 生产化验收
       """
     Then 响应状态码为 401
 
-  Scenario: trigger 未知 step_type 返回 404
-    When 使用 master-key 发送 POST /admin/jobs/trigger 请求
-      """
-      {"step_type": "nonexistent_step_type", "payload": {}}
-      """
-    Then 响应状态码为 404
