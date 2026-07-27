@@ -39,6 +39,16 @@
 - **Resolution**: 每个 loop 体用 `std::panic::AssertUnwindSafe + catch_unwind` 包裹，panic 时 log + sleep 30s + 继续；`Engine::run` 接收 `CancellationToken`，loop 内 `select!` 监听 shutdown，优雅退出前等待 in-flight step。
 - **Target Phase**: Phase 32 候选（Phase 31 修复 P0/P1 后处理）。
 
+### TD-006: 客户端无法从响应头获取 call_id 对账
+
+- **Date**: 2026-07-27
+- **Priority**: P2
+- **Source**: `docs/plans/2026-07-25-request-id-to-gw-call-id-rename.md` §10
+- **Description**: aigw 未配置 `tower_http::PropagateRequestIdLayer`，调用方无法从响应头拿到 aigw 生成的调用 ID。Stage 85 完成后 DB 有 `call_id`（可前端/日志查），但客户端若想就地用调用 ID 对账需自行从响应 body 取，响应头无回写。
+- **Impact**: 客户端对账需多一跳（查 API/前端），无法响应头直取。不阻塞 Stage 85 核心预期（DB 侧对账链路已打通）。
+- **Resolution**: 后续加 `PropagateRequestIdLayer` 或自定义响应头 `x-gw-call-id` 回写客户端。需评估是否暴露内部 ID 给客户端的安全影响。
+- **Target Phase**: 视客户端对账需求触发，暂不排期。
+
 ## Resolved Items
 
 ### TD-002: @real_api step bindings implemented (Resolved 2026-07-05)

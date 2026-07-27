@@ -38,6 +38,7 @@ Phase 28:   ████████████████████ 100% (1
 Phase 29:   ████████████████████ 100% (4/4)  ✅ Cross-DB BDD Hardening
 Phase 30:   ░░░░░░░░░░░░░░░░░░░░   0% (0/4)  ⚠️ 代码已落地，Phase 31 修复完成待一并标记 ✅
 Phase 31:   ████████████████████ 100% (3/3)  ✅ Stage 82-84 全部完成
+Phase 32:   ░░░░░░░░░░░░░░░░░░░░   0% (0/1)  ⏳ request_id → call_id 改名 + 上游对账链路（Stage 85）
 ```
 
 ### 测试目标
@@ -58,6 +59,17 @@ Phase 31:   ████████████████████ 100% (3
 | ✅ | Phase 31 | 后端正确性全栈（Stage 82）| ✅ 完成（2026-07-27）|
 | ✅ | Phase 31 | 读路径 + 缓存激活 + 凭证 + FS（Stage 83）| ✅ 完成（2026-07-27）|
 | ✅ | Phase 31 | 前端 Jobs 页面生产化重构（Stage 84）| ✅ 完成（2026-07-27）|
+| ⏳ | Phase 32 | request_id → call_id 改名 + 上游对账链路打通（Stage 85）| ⏳ 待开始（2026-07-27）|
+
+---
+
+## Phase 32: request_id → call_id 改名 + 上游对账链路打通 ⏳
+
+**起因**: 当前 aigw 把自身 UUID v7 存在 `spend_logs.request_id`（PK，语义=网关调用标识），但行业惯例（含 litellm）中 `request_id` 指上游 provider 返回的请求 ID。导致语义混淆 + 售后对账断链（SpendLog 未存上游 ID，退款/排查无法与 provider 对账）。**核心预期**：任意 SpendLog 都能用上游 `request_id` 与 provider 对账，无论成功还是 4xx/5xx 失败。
+
+**单 Stage 说明**: 设计文档 `docs/plans/2026-07-25-request-id-to-gw-call-id-rename.md`（v5，5 轮评审定稿）总耗时 ~6h，强耦合串行无并行收益，收敛为 1 Stage / 8h。v5 增量：失败路径 4xx/5xx 也提取并存储上游 id（覆盖对账盲区）。**三处不改边界**：HTTP 层 `tower_http::request_id` + 对外协议响应体 `request_id`（Anthropic/OpenAI 契约）+ litellm 源端 SQL。
+
+**设计文档**: docs/stages/stage-85.md + docs/plans/2026-07-25-request-id-to-gw-call-id-rename.md
 
 ---
 

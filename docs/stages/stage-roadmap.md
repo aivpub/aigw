@@ -108,6 +108,27 @@ Phase 31:   ████████████████████ 100% (3
 
 **设计文档**: `docs/stages/stage-82.md` ~ `docs/stages/stage-84.md`
 
+### Phase 32：request_id → call_id 改名 + 上游对账链路打通 ⏳
+
+**背景**: 当前 aigw 把自身 UUID v7 存在 `spend_logs.request_id`（PK，语义=网关调用标识），但行业惯例（含 litellm）中 `request_id` 指上游 provider 返回的请求 ID。导致语义混淆 + 售后对账断链（SpendLog 未存上游 ID，退款/排查无法与 provider 对账）。设计文档经 5 轮评审迭代定稿（v5），核验代码后修正 migrate 映射机制描述、补对外协议字段边界（§6.3）、可观测性影响（§10）、失败路径 4xx/5xx 提取（v5 增量）。
+
+**核心预期**: 任意一条 SpendLog 记录都能用上游 `request_id` 去 provider 侧对上账，无论成功还是 4xx/5xx 失败。改名 `call_id`、流式提取、失败路径提取均为支撑项。
+
+**单 Stage 说明**: 设计文档 §7 总耗时 ~6h 人时（Agent 编码加速），强耦合串行（DB schema 是路由层编译前提、路由层是前端/migrate 前提），拆多 Stage 无并行收益反而增加协调成本，故收敛为 1 Stage / 8h（对齐下限 + 三端联调 buffer）。Stage 内分三阶段：① DB schema+模型层 → ② 路由层+上游 id 全路径提取+前端+migrate（subagent 并行）→ ③ 三端联调+全测试+端到端。
+
+| Stage | 状态 | 目标 | 类型 | 预估 |
+|-------|------|------|------|------|
+| Stage 85 | ⏳ 待开始 | **request_id → call_id 改名 + 上游对账链路打通** — 022 迁移（pg/mysql/sqlite 双重条件幂等 RENAME + ADD COLUMN + 索引）；models.rs/db.rs/body_archive/daily_spend_queue 字段改名（~140 处）；路由层 chat.rs/v1_messages.rs 流式 chunk id 提取 + **4xx/5xx 失败路径提取**（OpenAI error body id / Anthropic error body request_id + 响应头 fallback）+ Phase 2 UPDATE 调用补 upstream_id；main.rs tracing span 字段改名；spend.rs/openapi API 字段拆分；migrate 注入 `request_id→call_id` override 解决存量导入 PK 歧义；前端 3 interface + 展示列 + CSV + 搜索；10 BDD + 5 非 BDD 单测。**核心边界**：HTTP 层 `tower_http::request_id`（§2.2）+ 对外协议响应体 `request_id`（§6.3）+ litellm 源端 SQL（§4.5）三处不改。**TDD 红绿**：失败路径 4xx/5xx/流式部分成功/连接超时 4 BDD 场景先红后绿。**验收三判据**：正向对账 `WHERE request_id=?` 走索引 / 反向追溯 call_id→上游 id 四路径非空 / 覆盖盲区 4xx-5xx 上游 id 非空 | 全栈+测试 | 8h |
+
+**关键决策**:
+- **单 Stage 不拆**：工作量 ~6h 低于 8h 下限，强耦合串行无并行收益，收敛为 1 Stage。
+- **核心预期驱动**：所有改动服务"打通上游对账链路"这一唯一业务目标，改名/流式提取/失败路径提取是支撑项（设计文档 §1.3 + §9 顶层决策）。
+- **失败路径也提取（v5）**：4xx/5xx 从 error body/响应头提取上游 id，让失败请求也能对账——核心预期覆盖盲区。
+- **三处不改边界**：HTTP 层 / 对外协议响应体 / litellm 源端 SQL，否则破坏功能或契约。
+- **migrate override 必做**：源端单 `request_id` 对目标 `call_id`+`request_id` 双列，不 override 则 PK 为 NULL 插入失败（设计文档 §4.5）。
+
+**设计文档**: `docs/plans/2026-07-25-request-id-to-gw-call-id-rename.md`（v5）、`docs/stages/stage-85.md`
+
 ### Phase 14：`/v1/messages` 接口修复 ✅ 已完成
 
 | Stage | 状态 | 目标 | 完成日期 |
@@ -522,3 +543,4 @@ Phase 31:   ████████████████████ 100% (3
 | v29.0 | 2026-07-25 | **Phase 31 规划 + Phase 30 生产审计**：用户实测发现 8 问题，三路 subagent 并行审计（后端 AsyncTask+Engine / 后端 BodyArchive / 前端 Jobs UI）确认 Phase 30 代码已落地但未达生产预期——6 P0 + 10 P1 + 12 P2 缺陷。Phase 30 标记为 ⚠️ 待修复，修复转入 Phase 31。**工作量下调**：用户反馈原 4 Stage/50h 偏高 2-5 倍，按 subagent 并发实测 + 同触文件合并，收敛为 3 Stage/24h：82=后端正确性全栈(状态机+配置失联+假阳性completed+冷回源+并发安全+retry+schema，10h)、83=读路径+缓存激活+凭证+FS后端(6h)、84=前端生产化重构(8h)。**每个 Stage 强制 TDD 红绿循环（先写失败测试跑红→重构至绿）+ BDD + real BDD 三后端实际执行验证，发现错误及时修复**。设计文档：`stage-82~84.md`。总进度 77/84（Stage 78-81 编码完成但待修复验收）。|
 | v30.0 | 2026-07-27 | **Stage 82 完成**：恢复 dangling commit 链 f6089fd（含 Stage 78-81 + Stage 82 P0 修复）到 feat/body-archive，rebase --onto + cherry-pick HEAD 的 6 个 BDD/migrate 修复。实现：mark_job_running/failed/partially_failed 三态 + storage_configured 门禁 + 配置单例化 + 冷回源端点 + create_job/claim 事务化 + fail_step 退避。验证：aigw-core lib 247/247、Stage 82 单测 18/18（`stage82_state_machine.rs`）、mock BDD 169（含 async_task 15 + admin_jobs 12）、三后端 real BDD 全绿。drive-by：migration 021 `body_archived` BOOLEAN（PG/MySQL）、`JobLogEntry.id` i64。Phase 31 进度 1/3。总进度 78/84。|
 | v31.0 | 2026-07-27 | **Stage 83 完成**：读路径 + 缓存激活 + 凭证安全 + FileSystem 后端。实现 `query_parquet_with_cache`（parquet `async`+`object_store` feature，`ParquetObjectReader`+`ArrowReaderMetadata::load_async` 拉 footer，`FooterCache` 命中跳过，4 列投影 stream）；`read_body_from_storage` 区分 NotFound→`Ok(None)` vs 不可达→`Err`；`resolve_env_placeholders` 解析 `${ENV_VAR}`；`build_object_store_for_backend` 接 `LocalFileSystem::new_with_prefix`；`write_parquet_to_store` 改 async 去掉 `block_in_place`。TDD 10 测试红→绿（`stage83_read_path.rs`）；mock BDD 176（161 pass / 15 skip）；real BDD 36/36 × sqlite/pg/mysql 全绿。aigw-core lib 247 + Stage 82 18 不变。Phase 31 进度 2/3，总进度 79/84。|
+| v32.0 | 2026-07-27 | **Phase 32 规划**：新增 Phase 32（Stage 85，request_id → call_id 改名 + 上游对账链路打通，8h）。核心预期：任意 SpendLog 能用上游 request_id 与 provider 对账，无论成功还是 4xx/5xx 失败。基于设计文档 `docs/plans/2026-07-25-request-id-to-gw-call-id-rename.md`（v5，5 轮评审迭代定稿）。**单 Stage 不拆**：工作量 ~6h 低于 8h 下限，强耦合串行无并行收益。v5 增量：失败路径 4xx/5xx 也提取并存储上游 id（覆盖对账盲区）。**三处不改边界**：HTTP 层 `tower_http::request_id`（§2.2）+ 对外协议响应体 `request_id`（§6.3）+ litellm 源端 SQL（§4.5）。设计文档：`stage-85.md`。总进度 79/85。|
