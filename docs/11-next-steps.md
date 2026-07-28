@@ -1,13 +1,13 @@
 # aigw -- 下一步行动
 
 **上次更新**: 2026-07-28
-**当前阶段**: Phase 33 ✅ aigw↔aigw 多表只读增量同步（`aigw-migrate sync`，Stage 86 完成）
+**当前阶段**: Phase 34 ⏳ 售后对账链路收尾（Spend Logs UI 双 id 区分 + 双列模糊搜索，Stage 87 待开始）
 
 ---
 
-## 当前状态：82/86 Stages（Stage 86 ✅，Phase 33 完成）
+## 当前状态：82/86 Stages（Stage 86 ✅，Phase 34 规划就绪）
 
-**下一项工作 — 长期路线触发式 + Phase 30 一并标记 ✅**：Phase 33（Stage 86 `aigw-migrate sync` 子命令）于 2026-07-28 完成。`aigw-migrate` 新增 `sync` 子命令，在两个 aigw DB 实例间（PG↔SQLite 任意组合）只读增量同步——默认全 11 张业务表，`--tables` 选子集，`spend_logs` 支持 `--days` 增量，其他表全量幂等追加，重跑不重复。复用 `SourcePool`/`CursorRange`/`insert_rows_batch`；新增 `build_aigw_cursor_sql`（锚点 `start_time`，不改 litellm `build_cursor_sql` 保零回归）+ `stream_pg_rows_keyset_aigw`（PG keyset `(start_time, call_id)`）；空 overrides direct-match（aigw↔aigw 同 schema）；`credentials`/`proxy_models` 直接复制密文（同 master_key）；config 默认排除（含 master_key）。TDD 8 UT 红绿全过，`cargo test -p aigw-migrate` 全量无回归。**待办**：① Phase 30（Stage 78-81）代码已落地 + Phase 31 修复完成，待一并回写为 ✅（保持审计可追溯）；② TD-006 客户端 call_id 响应头回写；③ 长期路线 LT-BodyMetrics/LT-BodyCompact/LT-BodyLifecycle 视数据量触发。
+**下一项工作 — Phase 34（Stage 87）**：用户实测反馈 Stage 85（request_id→call_id 改名）后的三个缺口 + 一个回填需求。回填用 SQL SOP 文档（`docs/request-id-backfill-sop.md`，**不占 Stage**——一行 SQL `UPDATE spend_logs SET request_id=call_id WHERE request_id IS NULL AND status='success'` 三方言通用，crate 代码过度工程；含 PG/SQLite/MySQL 三方言命令 + 大表分批 + 回滚）。**Stage 87（UI 双 id + 模糊搜索，5h，全栈）**：Spend Logs 列表 `call_id` 移到最左列（日期列之前）+ 抽屉双 id Badge 显著区分（call_id `variant=default` / request_id `variant=secondary` + 文字标签）+ 后端 db.rs 5 处 `=`→`LIKE '%X%'` 模糊匹配（SQLite :1521/:1551、PG :1828/:1854/:4243，含 `ESCAPE '\'` 通配符转义）+ BDD 3 新场景 + mock 按 query param 过滤。设计文档：`docs/stages/stage-87.md`、`docs/request-id-backfill-sop.md`。**待办**：① Phase 30（Stage 78-81）代码已落地 + Phase 31 修复完成，待一并回写为 ✅；② TD-006 客户端 call_id 响应头回写；③ 长期路线 LT-BodyMetrics/LT-BodyCompact/LT-BodyLifecycle 视数据量触发。
 
 ---
 
@@ -46,6 +46,7 @@ Phase 30:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 Phase 31:   ████████████████████ 100% (3/3)  ✅ Stage 82-84 全部完成
 Phase 32:   ████████████████████ 100% (1/1)  ✅ request_id → call_id 改名 + 上游对账链路（Stage 85）
 Phase 33:   ████████████████████ 100% (1/1)  ✅ aigw↔aigw 多表只读增量同步（Stage 86）
+Phase 34:   ░░░░░░░░░░░░░░░░░░░░   0% (0/1)  ⏳ 售后对账链路收尾（Stage 87）
 ```
 
 ### 测试目标
@@ -68,6 +69,7 @@ Phase 33:   ████████████████████ 100% (1
 | ✅ | Phase 31 | 前端 Jobs 页面生产化重构（Stage 84）| ✅ 完成（2026-07-27）|
 | ✅ | Phase 32 | request_id → call_id 改名 + 上游对账链路打通（Stage 85）| ✅ 完成（2026-07-28）|
 | ✅ | Phase 33 | aigw↔aigw 多表只读增量同步（Stage 86）| ✅ 完成（2026-07-28）|
+| ⏳ | Phase 34 | UI 双 id + 双列模糊搜索（Stage 87）+ 回填 SOP 文档 | ⏳ 待开始 |
 
 ---
 

@@ -7,9 +7,9 @@
 
 ## 当前状态
 
-- **当前 Phase**: Phase 33 — aigw↔aigw 多表只读增量同步（`aigw-migrate sync`）✅ 完成
-- **状态**: 82/86 Stages 已完成（Stage 86 ✅ 2026-07-28；Stage 78-81 已编码落地，Phase 30 待一并标记 ✅）
-- **下一里程碑**: 长期路线（LT-BodyMetrics / LT-BodyCompact / LT-BodyLifecycle 视数据量触发）+ TD-006 客户端 call_id 响应头回写
+- **当前 Phase**: Phase 34 — 售后对账链路收尾（Spend Logs UI 双 id 区分 + 双列模糊搜索）⏳ 待开始
+- **状态**: 82/86 Stages 已完成（Stage 86 ✅ 2026-07-28；Stage 87 待开始；Stage 78-81 已编码落地，Phase 30 待一并标记 ✅）
+- **下一里程碑**: Stage 87（UI 双 id + 模糊搜索）+ 长期路线（LT-BodyMetrics / LT-BodyCompact / LT-BodyLifecycle 视数据量触发）+ TD-006 客户端 call_id 响应头回写
 
 ### 整体进度
 
@@ -42,11 +42,39 @@ Phase 30:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 Phase 31:   ████████████████████ 100% (3/3 Stages) ✅ Body Archive 生产化（Stage 82-84 全部完成）
 Phase 32:   ████████████████████ 100% (1/1 Stage)  ✅ request_id→call_id 改名 + 上游对账链路（Stage 85）
 Phase 33:   ████████████████████ 100% (1/1 Stage)  ✅ aigw↔aigw 多表只读增量同步（Stage 86）
+Phase 34:   ░░░░░░░░░░░░░░░░░░░░   0% (0/1 Stage)  ⏳ 售后对账链路收尾（Stage 87）
 ```
 
 ---
 
 ## 当前 Phase 详情
+
+### Phase 34：售后对账链路收尾 ⏳
+
+**背景**: Stage 85 把 `spend_logs.request_id`（PK）改名 `call_id` + 新增可空 `request_id`（上游 provider id）后，三个实测缺口：(1) 历史迁移行 `request_id` 为 NULL，对账断链——需回填成功行；(2) 列表 `call_id` 在第 8 列不易定位，要放最左；(3) 抽屉只显示 `call_id`，`request_id` 未渲染，两者混淆；(4) 搜索 `?request_id=` 走精确等值，不支持模糊匹配。
+
+**核心预期**: ① 成功历史行 `request_id` 回填为 `call_id`（SQL SOP 文档，不写代码）；② Spend Logs 列表 `call_id` 放最左、抽屉双 id 显著区分、搜索框对 call_id/request_id 模糊匹配。
+
+**拆分**：回填用 SQL SOP 文档（`docs/request-id-backfill-sop.md`，不占 Stage 编号——一行 SQL 三方言通用，写 crate 代码过度工程）；UI + 模糊搜索 1 Stage（Stage 87）。
+
+| Stage | 状态 | 目标 | 类型 | 预估 |
+|-------|------|------|------|------|
+| Stage 87 | ⏳ 待开始 | **Spend Logs UI 双 id + 双列模糊搜索** — ① 前端列重排（`call_id`/`Upstream ID` 移到 `Time` 之前成最左两列）；② 抽屉双 id Badge 显著区分（call_id 用 `variant=default`、request_id 用 `variant=secondary` + 文字标签，NULL 显灰 `—`）；③ 后端 db.rs 5 处 `=`→`LIKE '%X%'` 模糊匹配（SQLite query/count :1521/:1551、PG 内存 :1828、PG count :1854、PG status_filter :4243，含 LIKE 通配符转义 `ESCAPE '\'`）；④ BDD 3 新场景（call_id 最左列、抽屉双 id、模糊搜索）+ mock 按 query param 过滤。TDD 红绿 + 三后端 real BDD。 | 全栈+测试 | 5h |
+
+**依赖关系**: Stage 87 基于 Stage 85 schema 已落地。回填 SOP 与 Stage 87 解耦，运维可独立执行。
+
+**Phase 34 合计**: 5h，1 Stage + 1 SOP 文档。
+
+**关键决策**:
+- **回填不写 CLI 子命令也不占 Stage**：一行 SQL `UPDATE spend_logs SET request_id=call_id WHERE request_id IS NULL AND status='success'` 三方言通用，crate 代码+UT 过度工程；一次性运维操作非产品功能。改为 `docs/request-id-backfill-sop.md` SQL 手册，运维在 DB 执行。
+- **成功判定 `status='success'` 精确**：失败/流式/timeout 行无上游 id，保持 NULL 语义正确。
+- **回填值用 `call_id`**：历史成功行无真实上游 id，call_id 是最佳对账锚点（次优但可用）。
+- **列重排只动桌面表格**：移动端 card 空间有限只显示 call_id，双 id 在抽屉看。
+- **模糊粒度子串 `LIKE '%X%'`**：用户要「输半段能搜到」；前缀不够。LIKE 通配符 `%`/`_` 转义防注入。
+- **5 处 SQL 必须同时改**：列表（query）与计数（count）不匹配会分页错乱。
+- **MySQL 大表循环 YAGNI**：当前数据量未达阈值，SOP 备用不实现。
+
+**设计文档**: `docs/stages/stage-87.md`（UI + 模糊搜索）、`docs/request-id-backfill-sop.md`（回填 SQL 手册）
 
 ### Phase 33：aigw↔aigw 多表只读增量同步 ✅ 已完成
 
@@ -577,3 +605,4 @@ Phase 33:   ████████████████████ 100% (1
 | v33.0 | 2026-07-28 | **Stage 85 完成（Phase 32 ✅）**：Gate-2 多模型评审（lead 独立 + 3 路 subagent：migration / migrate-frontend-tracing-tests / extraction-protocol）发现 v5 设计 3 Critical + 3 High + 4 Medium 缺陷，全部修正至 v6.1。**关键修正**：① 迁移号 022→023（Stage 82 占用 022_next_retry_at）；② migrate import override 方向写反→`overrides["call_id"]="request_id"`（key=target, value=source）；③ **失败路径 upstream_id 走 INSERT 非 UPDATE**（v5 COALESCE-UPDATE 不覆盖失败行，核心预期静默失败）；④ export override 被 direct-match 抢占→源行剥离 request_id；⑤ Anthropic 流式提取位置（choices 分支前 borrow）；⑥ 响应头预提取 request-id；⑦ MySQL 索引前缀长度 128；⑧ body_archive 归档过滤 `request_id IS NOT NULL`（失败请求跳过归档）。实现 023 迁移（pg/mysql/sqlite）+ models/db/body_archive/daily_spend_queue 全链路改名 + 路由层 4 路径上游 id 提取 + migrate override + 前端 3 interface。验证：aigw-core lib 247/247 + aigw-server lib 100/100 + mock BDD 163/163（15 @skip，含新增核心预期 2 场景：双列返回 + 双列搜索）+ aigw-migrate 27/27（含 import override PK 非空断言 + export reverse-override 击败 direct-match 断言）+ frontend build green；PG/MySQL 023 迁移应用通过。总进度 81/85。|
 | v34.0 | 2026-07-28 | **Phase 33 规划**：新增 Phase 33（Stage 86，`aigw-migrate sync` 子命令 — aigw↔aigw 多表只读增量同步，8h）。用户诉求：在 aigw 内部不同 DB 实例间（PG↔SQLite 任意组合）同步数据，参数范式参考现有 `remote-import`/`remote-export`，支持全表同步或 `--tables` 选子集；`spend_logs` 按"最近 N 天"增量，其他表全量幂等追加；只读、一次性 CLI。现有 `aigw-migrate` 是 litellm↔aigw 异构迁移，覆盖不了 aigw↔aigw 同构同步；但底层 `SourcePool`/`CursorRange`/`insert_rows_batch`/`migrate_plain_table` 抽象与 litellm 假设解耦可复用。新增 `build_aigw_cursor_sql`（锚点 `start_time`，不改 litellm 的 `build_cursor_sql`）+ `sync.rs::run_sync`（空 overrides 同 schema direct-match）+ CLI `--tables`（默认全 11 张业务表，config 默认排除）+ `--days N`（chrono UTC）。`credentials`/`proxy_models` 直接复制密文（同 master_key）。只读追加（`INSERT OR IGNORE`/`ON CONFLICT DO NOTHING`），非常驻/非 CDC。TDD 7 UT。设计文档：`stage-86.md`。总进度 81/86。|
 | v35.0 | 2026-07-28 | **Stage 86 完成（Phase 33 ✅）**：实现 `aigw-migrate sync` 子命令——aigw↔aigw 同构只读增量同步。native.rs 新增 `build_aigw_cursor_sql`（锚点 `start_time`，不改 litellm `build_cursor_sql` 保零回归）+ `stream_rows_with_cursor_aigw` dispatch + `stream_pg_rows_keyset_aigw`（PG keyset 用 `(start_time, call_id)` 而非 `(startTime, request_id)`）。sync.rs 新增 `run_sync` + `SyncStats`/`TableSyncStats` + `ALL_AIGW_TABLES`/`DEFAULT_TABLES`/`SPEND_LOGS_BODY_COLUMNS` 常量 + `parse_tables`/`resolve_tables`/`resolve_cursor`（表名校验、`--days` UTC 转 CursorRange、与显式 `--resume-after`/`--end-before` 取更严边界）。main.rs `Sync` 子命令 + short alias（-s/-t/-T/-d/-r/-e/-B/-b）+ env 回退（`AIGW_SYNC_SOURCE_URL`/`AIGW_SYNC_TARGET_URL`）。空 overrides direct-match（aigw↔aigw 同 schema，不做 `call_id←request_id` 重定向）；`credentials`/`proxy_models` 当 plain 复制密文不调 migrate_credentials；config 默认排除。TDD 8 UT 红绿（`tests/sync.rs`：全表同步/`--tables` 子集/`--days 7` 过滤/幂等重跑/`--skip-body`/非法表名报错/config 默认排除+显式 INSERT OR IGNORE 不覆盖/DEFAULT_TABLES 契约）。验证：`cargo test -p aigw-migrate` 全量通过（27+27+8+1，无回归）+ `aigw-migrate sync --help` 输出表清单。总进度 82/86。|
+| v36.0 | 2026-07-28 | **Phase 34 规划**：新增 Phase 34（售后对账链路收尾）。用户实测反馈 Stage 85 后三个缺口 + 回填需求：(1) 历史迁移行 `request_id` 为 NULL 对账断链；(2) 列表 `call_id` 在第 8 列不易定位；(3) 抽屉只显示 `call_id`、`request_id` 未渲染且混淆；(4) 搜索精确等值不支持模糊。**回填用 SQL SOP 文档不占 Stage**：原 v1 计划写 `aigw-migrate backfill-request-id` CLI 子命令，经讨论否决——一行 SQL `UPDATE spend_logs SET request_id=call_id WHERE request_id IS NULL AND status='success'` 三方言通用，crate 代码+UT 过度工程，改为 `docs/request-id-backfill-sop.md` 手册（含 PG/SQLite/MySQL 三方言命令 + 大表分批 + 回滚）。**Stage 87 UI 双 id + 模糊搜索（5h，全栈）**：前端列重排（call_id/Upstream ID 移到 Time 之前）+ 抽屉双 id Badge（default vs secondary + 文字标签）+ 后端 db.rs 5 处 `=`→`LIKE '%X%'`（SQLite :1521/:1551、PG :1828/:1854/:4243，含 `ESCAPE '\'` 通配符转义）+ BDD 3 新场景 + mock 按 query param 过滤。Phase 34 合计 5h，1 Stage + 1 SOP 文档。设计文档：`stage-87.md`、`request-id-backfill-sop.md`。总进度 82/86。|
