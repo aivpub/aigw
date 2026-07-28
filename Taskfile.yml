@@ -118,6 +118,15 @@ tasks:
     desc: "run Playwright BDD tests (requires: task dev in another terminal)"
     dir: crates/aigw-frontend
     cmds:
+      # MUST regenerate BDD specs before every run: playwright-bdd's auto-bddgen
+      # caches by step signature and can silently skip regen when a .feature's
+      # step text AND its step-definition are renamed together, leaving a stale
+      # spec that references old step text → false failures. Forcing `bddgen`
+      # here guarantees the generated specs match the current .feature + steps.
+      # (Stage 85 incident: stale spec referenced "into the request ID search"
+      # after the rename to "into the call ID search" → 3 failures across 3
+      # viewports that were pure cache staleness, not real regressions.)
+      - npx bddgen
       - npx playwright test
       - echo "fe-bdd passed"
 
@@ -125,6 +134,7 @@ tasks:
     desc: "run Playwright BDD tests and show HTML report"
     dir: crates/aigw-frontend
     cmds:
+      - npx bddgen
       - npx playwright test --reporter=html
       - npx playwright show-report
 
@@ -132,6 +142,7 @@ tasks:
     desc: "run Playwright BDD tests in headed browser"
     dir: crates/aigw-frontend
     cmds:
+      - npx bddgen
       - npx playwright test --headed
 
   fe-dev:
