@@ -46,6 +46,7 @@ use aigw_core::provider::ProviderRegistry;
 use aigw_core::rate_limiter::RateLimiter;
 use aigw_core::resolver::ModelResolver;
 use aigw_core::router::{Router as AigwRouter, RouterConfig, RouterState};
+use axum::extract::DefaultBodyLimit;
 use axum::http::HeaderName;
 use axum::{middleware, routing::get, Router};
 use clap::Parser;
@@ -316,6 +317,23 @@ async fn main() -> anyhow::Result<()> {
         .cloned()
         .unwrap_or_default();
 
+    // Resolve request body limit (bytes) from general_settings.request_body_limit_mb.
+    // Unset → default 32 MiB (DEFAULT_REQUEST_BODY_LIMIT_MB). Some(0) → axum built-in 2 MiB.
+    let request_body_limit_mb = config
+        .as_ref()
+        .and_then(|c| c.general_settings.as_ref())
+        .and_then(|gs| gs.request_body_limit_mb);
+    let body_limit_bytes =
+        aigw_core::config::resolve_body_limit_bytes(request_body_limit_mb);
+    match body_limit_bytes {
+        Some(bytes) => tracing::info!(
+            "Request body limit: {} MiB ({} bytes)",
+            bytes / 1024 / 1024,
+            bytes
+        ),
+        None => tracing::info!("Request body limit: axum built-in default (2 MiB)"),
+    }
+
     // Build router
     let app = Router::new()
         .route("/docs", get(docs::docs_ui))
@@ -442,7 +460,13 @@ async fn main() -> anyhow::Result<()> {
         // CORS middleware — allows browser-based frontend to call API
         .layer(middleware::from_fn(cors_layer::add_cors_headers))
         // Response compression — gzip, deflate, brotli (configurable via general_settings.compression)
-        .layer(build_compression_layer(&compression_cfg));
+        .layer(build_compression_layer(&compression_cfg))
+        // Request body size limit — configurable via general_settings.request_body_limit_mb (default 32 MiB).
+        // body_limit_bytes=Some(n) → n MiB; None → axum built-in 2 MiB (opt-out, request_body_limit_mb=0).
+        .layer(match body_limit_bytes {
+            Some(bytes) => DefaultBodyLimit::max(bytes),
+            None => DefaultBodyLimit::disable(),
+        });
 
     // Bind and serve
     let addr: SocketAddr = cli.bind.parse()?;

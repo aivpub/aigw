@@ -68,6 +68,15 @@ pub struct GeneralSettings {
     /// OpenTelemetry tracing configuration
     #[serde(rename = "otel", skip_serializing_if = "Option::is_none")]
     pub otel: Option<OtelConfig>,
+
+    /// Maximum accepted HTTP request body size, in MiB.
+    ///
+    /// Applied as axum's `DefaultBodyLimit::max`. Defaults to 32 MiB when unset,
+    /// which covers large LLM requests (long context, tool definitions, base64
+    /// attachments) while still capping abuse. Set to 0 to restore axum's built-in
+    /// 2 MiB default.
+    #[serde(rename = "request_body_limit_mb", skip_serializing_if = "Option::is_none")]
+    pub request_body_limit_mb: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,6 +110,25 @@ fn default_compression_enabled() -> bool { true }
 fn default_compression_level() -> u32 { 6 }
 fn default_compression_algorithms() -> Vec<String> {
     vec!["gzip".into(), "deflate".into(), "brotli".into()]
+}
+
+/// Default request body limit when `general_settings.request_body_limit_mb` is unset.
+/// 32 MiB — covers large LLM requests (long context, tool definitions, base64 attachments).
+pub const DEFAULT_REQUEST_BODY_LIMIT_MB: u32 = 32;
+
+/// Resolve the effective request body limit (in bytes) from the config option.
+///
+/// Rules:
+/// - `None` or `Some(0)` → restore axum's built-in 2 MiB default (pass None upstream).
+/// - `Some(n)` with `n > 0` → `n` MiB.
+///
+/// Returns `Some(bytes)` to apply via `DefaultBodyLimit::max`, or `None` to keep
+/// axum's built-in default.
+pub fn resolve_body_limit_bytes(mb: Option<u32>) -> Option<usize> {
+    match mb.unwrap_or(DEFAULT_REQUEST_BODY_LIMIT_MB) {
+        0 => None,
+        n => Some(usize::try_from(n).unwrap_or(usize::MAX).saturating_mul(1024 * 1024)),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -185,3 +213,45 @@ fn default_cooldown() -> f64 {
 /// Re-export for backward compatibility
 pub type ModelInfo = ModelEntry;
 pub use ModelParams as LitellmParams;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn body_limit_unset_defaults_to_32mib() {
+        assert_eq!(
+            resolve_body_limit_bytes(None),
+            Some(32 * 1024 * 1024)
+        );
+    }
+
+    #[test]
+    fn body_limit_explicit_value() {
+        assert_eq!(resolve_body_limit_bytes(Some(64)), Some(64 * 1024 * 1024));
+        assert_eq!(resolve_body_limit_bytes(Some(1)), Some(1024 * 1024));
+    }
+
+    #[test]
+    fn body_limit_zero_opts_out_to_axum_default() {
+        assert_eq!(resolve_body_limit_bytes(Some(0)), None);
+    }
+
+    #[test]
+    fn body_limit_parsed_from_yaml_default() {
+        // Unset field → serde yields None → default 32 MiB.
+        let yaml = "general_settings: {}\nmodel_list: []\n";
+        let cfg: AigwConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(cfg.general_settings.unwrap().request_body_limit_mb, None);
+    }
+
+    #[test]
+    fn body_limit_parsed_from_yaml_explicit() {
+        let yaml = "general_settings:\n  request_body_limit_mb: 50\nmodel_list: []\n";
+        let cfg: AigwConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            cfg.general_settings.unwrap().request_body_limit_mb,
+            Some(50)
+        );
+    }
+}

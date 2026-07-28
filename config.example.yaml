@@ -4,6 +4,10 @@
 general_settings:
   master_key: ${MASTER_KEY:-sk-master-change-me}
   database_url: sqlite:/app/data/aigw.db
+  # Maximum accepted HTTP request body size in MiB. Default 32.
+  # Covers large LLM requests (long context, tool definitions, base64 attachments).
+  # Set to 0 to restore axum's built-in 2 MiB limit.
+  # request_body_limit_mb: 32
   # OpenTelemetry distributed tracing (optional)
   # otel:
   #   enabled: false
