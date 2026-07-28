@@ -1,11 +1,17 @@
 # aigw -- 下一步行动
 
 **上次更新**: 2026-07-28
-**当前阶段**: Phase 32 ✅ request_id → call_id 改名 + 上游对账链路打通完成（Stage 85 ✅）
+**当前阶段**: Phase 33 ⏳ aigw↔aigw 多表只读增量同步（`aigw-migrate sync`，Stage 86 待开始）
 
 ---
 
-## 当前状态：81/85 Stages（Stage 85 ✅，Phase 32 进度 1/1）
+## 当前状态：81/86 Stages（Stage 85 ✅，Phase 33 进度 0/1）
+
+**下一项工作 — Stage 86（`aigw-migrate sync` 子命令）⏳ 待开始**：用户诉求是在 aigw 内部不同数据库实例之间（PG↔SQLite 任意组合）同步数据，**参数范式参考现有 `remote-import`/`remote-export`**——支持全表同步或 `--tables` 选子集；`spend_logs` 可按"最近 N 天"增量，其他表全量幂等追加；**只读、一次性 CLI**。现有 `aigw-migrate` 是 litellm↔aigw **异构**迁移（绑死 litellm 表名/camelCase 列/`call_id←request_id` 重定向），覆盖不了 aigw↔aigw **同构**同步；但底层 `SourcePool`/`CursorRange`/`insert_rows_batch`/`migrate_plain_table` 抽象与 litellm 假设解耦，可复用。方案：新增 `build_aigw_cursor_sql`（锚点 `start_time`，不改 litellm 的 `build_cursor_sql`）+ `sync.rs::run_sync`（空 overrides 同 schema direct-match）+ CLI `--tables`（默认全 11 张业务表，config 默认排除）+ `--days N`（chrono UTC 转 CursorRange）。`credentials`/`proxy_models` 直接复制密文（同 master_key，当 plain 处理）。只读追加（`INSERT OR IGNORE`/`ON CONFLICT DO NOTHING`），非常驻/非 CDC。预估 8h，TDD 7 UT。设计文档：`docs/stages/stage-86.md`。
+
+---
+
+## 上一阶段回顾 — Stage 85（Phase 32 ✅）
 
 Stage 85（request_id → call_id 改名 + 上游对账链路打通）于 2026-07-28 完成。Gate-2 多模型评审（lead 独立 + 3 路 subagent）发现 v5 设计 3 Critical + 3 High + 4 Medium 缺陷，全部修正至 v6.1。**关键修正**：迁移号 022→023（Stage 82 占用）；migrate import override 方向写反；**失败路径 upstream_id 走 INSERT 非 UPDATE**（v5 COALESCE-UPDATE 不覆盖失败行，核心预期静默失败——这是评审最重要的发现）；export override 被 direct-match 抢占→源行剥离 request_id；Anthropic 流式提取位置（choices 分支前 borrow）；响应头预提取 request-id；MySQL 索引前缀长度 128；body_archive 归档过滤 `request_id IS NOT NULL`（失败请求跳过归档，用户决策）。验证：aigw-core lib 247/247 + aigw-server lib 100/100 + mock BDD 163/163（15 @skip，含新增核心预期 2 场景）+ aigw-migrate 27/27（含 override 方向断言）+ frontend build green；PG/MySQL 023 迁移应用通过。Phase 30（Stage 78-81）仍待一并标记 ✅。
 
@@ -39,6 +45,7 @@ Phase 29:   ████████████████████ 100% (4
 Phase 30:   ░░░░░░░░░░░░░░░░░░░░   0% (0/4)  ⚠️ 代码已落地，Phase 31 修复完成待一并标记 ✅
 Phase 31:   ████████████████████ 100% (3/3)  ✅ Stage 82-84 全部完成
 Phase 32:   ████████████████████ 100% (1/1)  ✅ request_id → call_id 改名 + 上游对账链路（Stage 85）
+Phase 33:   ░░░░░░░░░░░░░░░░░░░░   0% (0/1)  ⏳ aigw↔aigw 多表只读增量同步（Stage 86）
 ```
 
 ### 测试目标
