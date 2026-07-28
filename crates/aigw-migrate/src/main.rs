@@ -22,6 +22,7 @@ mod native;
 mod pre_check;
 mod remote_export;
 mod remote_import;
+mod sync;
 mod verify;
 
 use clap::{Parser, Subcommand};
@@ -58,6 +59,28 @@ fn resolve_target_master_key(cli: Option<String>) -> anyhow::Result<String> {
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "Target master key required. Provide --target-master-key or set AIGW_MASTER_KEY env var."
+            )
+        })
+}
+
+fn resolve_sync_source_url(cli: Option<String>) -> anyhow::Result<String> {
+    cli.or_else(|| std::env::var("AIGW_SYNC_SOURCE_URL").ok())
+        .or_else(|| std::env::var("AIGW_UPSTREAM_DB_URL").ok())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Source URL required. Provide --source-url or set AIGW_SYNC_SOURCE_URL / AIGW_UPSTREAM_DB_URL env var."
+            )
+        })
+}
+
+fn resolve_sync_target_url(cli: Option<String>) -> anyhow::Result<String> {
+    cli.or_else(|| std::env::var("AIGW_SYNC_TARGET_URL").ok())
+        .or_else(|| std::env::var("AIGW_DATABASE_URL").ok())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Target URL required. Provide --target-url or set AIGW_SYNC_TARGET_URL / AIGW_DATABASE_URL env var."
             )
         })
 }
@@ -173,6 +196,47 @@ enum Commands {
         /// Target master key (litellm key; auto-extracted from LiteLLM_Config if not provided)
         #[arg(long = "target-master-key")]
         target_master_key: Option<String>,
+    },
+    /// aigw-to-aigw multi-table read-only incremental sync (same master_key cluster).
+    ///
+    /// Copies data between two aigw database instances (PG/SQLite/MySQL any
+    /// combination).  Same schema on both ends — no litellm table-name or
+    /// column-redirect mapping.  Default: all 11 business tables; `config`
+    /// excluded (holds master_key).  `spend_logs` supports `--days` / cursor
+    /// incremental; other tables are full-table idempotent copies
+    /// (`INSERT OR IGNORE` / `ON CONFLICT DO NOTHING`).  Encrypted tables
+    /// (`credentials` / `proxy_models`) copy ciphertext verbatim — both ends
+    /// must share the same master_key.  One-shot CLI, not a daemon.
+    Sync {
+        /// Source aigw database URL (or AIGW_SYNC_SOURCE_URL / AIGW_UPSTREAM_DB_URL)
+        #[arg(long, short = 's')]
+        source_url: Option<String>,
+        /// Target aigw database URL (or AIGW_SYNC_TARGET_URL / AIGW_DATABASE_URL)
+        #[arg(long, short = 't')]
+        target_url: Option<String>,
+        /// Comma-separated aigw table names; omit for all 11 business tables.
+        /// `config` is known but excluded by default — pass it explicitly to
+        /// sync (INSERT OR IGNORE only fills missing rows, never overwrites).
+        #[arg(long, short = 'T')]
+        tables: Option<String>,
+        /// spend_logs only: sync rows with `start_time` within the last N days (UTC).
+        /// Other tables are full-table copies and ignore this flag.
+        #[arg(long, short = 'd')]
+        days: Option<i64>,
+        /// spend_logs only: precise lower bound `start_time >= value` (ISO 8601).
+        /// Combined with --days by taking the stricter (later) bound.
+        #[arg(long = "resume-after", short = 'r')]
+        resume_after: Option<String>,
+        /// spend_logs only: precise upper bound `start_time < value` (ISO 8601).
+        /// Combined with --days by taking the stricter (earlier) bound.
+        #[arg(long = "end-before", short = 'e')]
+        end_before: Option<String>,
+        /// Skip spend_logs body columns (messages, response, proxy_server_request).
+        #[arg(long, short = 'B', default_value_t = false)]
+        skip_body: bool,
+        /// Rows per target-side INSERT transaction (default 10).
+        #[arg(long = "batch-size", short = 'b', default_value_t = 10)]
+        batch_size: usize,
     },
 }
 
@@ -327,6 +391,60 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 eprintln!("Remote export complete, but some row counts MISMATCH.");
                 std::process::exit(1);
+            }
+        }
+        Commands::Sync {
+            source_url,
+            target_url,
+            tables,
+            days,
+            resume_after,
+            end_before,
+            skip_body,
+            batch_size,
+        } => {
+            let source_url = resolve_sync_source_url(source_url)?;
+            let target_url = resolve_sync_target_url(target_url)?;
+            let tables = sync::resolve_tables(tables.as_deref())?;
+            let cursor = sync::resolve_cursor(days, resume_after, end_before)?;
+
+            if skip_body {
+                println!("  --skip-body: will null messages/response/proxy_server_request in spend_logs");
+            }
+            if let Some(ref t) = cursor.resume_after {
+                println!("  --resume-after: \"{}\" (spend_logs only)", t);
+            }
+            if let Some(ref t) = cursor.end_before {
+                println!("  --end-before: \"{}\" (spend_logs only)", t);
+            }
+            if let Some(n) = days {
+                println!("  --days: {} (spend_logs only, UTC)", n);
+            }
+            println!(
+                "Sync: aigw ({}) -> aigw ({}) [{} tables{}]",
+                source_url,
+                target_url,
+                tables.len(),
+                if tables.len() == 1 && tables[0] == "config" { " (config explicit)" } else { "" }
+            );
+            println!("  tables: {:?}", tables);
+
+            let stats = sync::run_sync(
+                &source_url,
+                &target_url,
+                &tables,
+                &cursor,
+                skip_body,
+                batch_size,
+            )
+            .await?;
+            println!(
+                "Sync complete: inserted={} ignored={}",
+                stats.total_inserted(),
+                stats.total_ignored()
+            );
+            for (tbl, s) in &stats.per_table {
+                println!("  {}: inserted={} ignored={}", tbl, s.inserted, s.ignored);
             }
         }
     }

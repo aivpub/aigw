@@ -8,6 +8,7 @@
 - [子命令](#子命令)
   - [remote-import](#remote-import) — litellm → aigw（主迁移）
   - [remote-export](#remote-export) — aigw → litellm（回滚）
+  - [sync](#sync) — aigw ↔ aigw 只读增量同步（同 master_key 集群）
   - [import / export](#import--export) — 本地 SQLite 文件互转
   - [verify](#verify) — 行数校验
   - [pre-check](#pre-check) — 迁移前连通性检查
@@ -122,6 +123,58 @@ aigw-migrate remote-export \
   --target-url sqlite:///path/to/litellm.db
 ```
 
+### sync
+
+**aigw ↔ aigw 只读增量同步（同 master_key 集群）。** Stage 86 引入。在两个 aigw 数据库实例之间（PG/SQLite/MySQL 任意组合）复制数据——默认全 11 张业务表，`--tables` 选子集；`spend_logs` 支持 `--days` 增量，其他表全量幂等追加；重跑不重复。
+
+> ⚠️ **与 remote-import 的区别**：`remote-import`/`remote-export` 是 litellm↔aigw **异构**迁移（绑死 litellm 表名/camelCase 列/`call_id←request_id` 重定向 + 加密密钥轮转）。`sync` 是 aigw↔aigw **同构**同步（同表名/同 snake_case/同 PK `call_id`，空 overrides direct-match，不做密钥轮转）。底层 `SourcePool`/`CursorRange`/`insert_rows_batch` 抽象复用。
+
+```
+aigw-migrate sync [OPTIONS]
+```
+
+| 参数 | short | 类型 | 必填 | 说明 |
+|------|-------|------|------|------|
+| `--source-url` | `-s` | URL | 否* | aigw 源库。未提供时读取 `AIGW_SYNC_SOURCE_URL` → `AIGW_UPSTREAM_DB_URL` |
+| `--target-url` | `-t` | URL | 否* | aigw 目标库。未提供时读取 `AIGW_SYNC_TARGET_URL` → `AIGW_DATABASE_URL` |
+| `--tables` | `-T` | list | 否 | aigw 表名逗号分隔；不传=全 11 张业务表。`config` 已知但默认排除 |
+| `--days` | `-d` | int | 否 | spend_logs 专用：`start_time` 在最近 N 天（UTC）。其他表忽略 |
+| `--resume-after` | `-r` | ISO8601 | 否 | spend_logs 精确下界 `start_time >= value`，与 `--days` 取更严 |
+| `--end-before` | `-e` | ISO8601 | 否 | spend_logs 精确上界 `start_time < value`，与 `--days` 取更严 |
+| `--skip-body` | `-B` | flag | 否 | 跳过 spend_logs 的 messages/response/proxy_server_request（目标置 NULL） |
+| `--batch-size` | `-b` | int | 否 | 目标侧每批 INSERT 行数（默认 10） |
+
+**默认同步表清单（11 张业务表，`config` 默认排除）**：
+
+| # | 表 | 处理方式 |
+|---|----|----------|
+| 1 | `virtual_keys` | 全量幂等追加 |
+| 2 | `spend_logs` | 按 `--days`/`--resume-after`/`--end-before` 增量 |
+| 3 | `organizations` | 全量幂等追加 |
+| 4 | `teams` | 全量幂等追加 |
+| 5 | `users` | 全量幂等追加 |
+| 6 | `projects` | 全量幂等追加 |
+| 7 | `budgets` | 全量幂等追加 |
+| 8 | `organization_memberships` | 全量幂等追加 |
+| 9 | `team_memberships` | 全量幂等追加 |
+| 10 | `credentials` | 直接复制密文（同 master_key，当 plain 处理） |
+| 11 | `proxy_models` | 直接复制密文（同 master_key，当 plain 处理） |
+| — | `config` | **默认排除**（含 master_key）；显式 `--tables config` 才同步，`INSERT OR IGNORE` 不覆盖已有行 |
+
+示例：
+```bash
+# 全表同步（默认 11 张业务表）
+aigw-migrate sync -s sqlite:///source.db -t sqlite:///target.db
+
+# 只同步 spend_logs 最近 7 天
+aigw-migrate sync -s postgres://src -t sqlite:///target.db -T spend_logs -d 7
+
+# 同步子集 + 跳过 body
+aigw-migrate sync -s sqlite:///src -t sqlite:///tgt -T spend_logs,teams -B
+```
+
+> **边界**：只读追加（`INSERT OR IGNORE`/`ON CONFLICT DO NOTHING`），不传播 UPDATE/DELETE；一次性 CLI，非常驻/非 CDC。加密表 `credentials`/`proxy_models` 直接复制密文，假设两端共享同一 `master_key`——跨 key 场景请用 `remote-import`。`config` 默认不同步避免覆盖目标鉴权。
+
 ### import / export
 
 **本地 SQLite 文件之间的迁移。** 仅用于开发测试，不涉及加密密钥轮转。
@@ -172,8 +225,10 @@ aigw-migrate pre-check \
 
 | 环境变量 | 对应 CLI 参数 | 说明 |
 |----------|-------------|------|
-| `AIGW_UPSTREAM_DB_URL` | `--source-url`（remote-import）/ `--target-url`（remote-export） | litellm 侧数据库 URL |
-| `AIGW_DATABASE_URL` | `--target-url`（remote-import）/ `--source-url`（remote-export） | aigw 侧数据库 URL |
+| `AIGW_UPSTREAM_DB_URL` | `--source-url`（remote-import）/ `--target-url`（remote-export）/ `--source-url`（sync fallback） | litellm 侧 / sync 源库 URL |
+| `AIGW_DATABASE_URL` | `--target-url`（remote-import）/ `--source-url`（remote-export）/ `--target-url`（sync fallback） | aigw 侧 / sync 目标库 URL |
+| `AIGW_SYNC_SOURCE_URL` | `--source-url`（sync） | sync 专用源库 URL（优先于 `AIGW_UPSTREAM_DB_URL`） |
+| `AIGW_SYNC_TARGET_URL` | `--target-url`（sync） | sync 专用目标库 URL（优先于 `AIGW_DATABASE_URL`） |
 | `AIGW_UPSTREAM_ENCRYPT_KEY` | `--source-master-key`（remote-import）/ `--target-master-key`（remote-export） | 上游 litellm **字段加密 key**（解密 `litellm_params`/`credential_values`）。**非 API 鉴权 key** |
 | `AIGW_MASTER_KEY` | `--target-master-key`（remote-import）/ `--source-master-key`（remote-export） | aigw 的 master 加密密钥 |
 

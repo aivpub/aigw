@@ -7,9 +7,9 @@
 
 ## 当前状态
 
-- **当前 Phase**: Phase 33 — aigw↔aigw 多表只读增量同步（`aigw-migrate sync`）⏳ 待开始
-- **状态**: 81/86 Stages 已完成（Stage 85 ✅ 2026-07-28；Stage 78-81 已编码落地，Phase 30 待一并标记 ✅；Stage 86 ⏳ 待开始）
-- **下一里程碑**: Stage 86 `aigw-migrate sync` 子命令落地 + 长期路线（LT-BodyMetrics / LT-BodyCompact / LT-BodyLifecycle 视数据量触发）+ TD-006 客户端 call_id 响应头回写
+- **当前 Phase**: Phase 33 — aigw↔aigw 多表只读增量同步（`aigw-migrate sync`）✅ 完成
+- **状态**: 82/86 Stages 已完成（Stage 86 ✅ 2026-07-28；Stage 78-81 已编码落地，Phase 30 待一并标记 ✅）
+- **下一里程碑**: 长期路线（LT-BodyMetrics / LT-BodyCompact / LT-BodyLifecycle 视数据量触发）+ TD-006 客户端 call_id 响应头回写
 
 ### 整体进度
 
@@ -40,13 +40,15 @@ Phase 28:   ████████████████████ 100% (1
 Phase 29:   ████████████████████ 100% (4/4 Stages) ✅ Cross-DB BDD Hardening
 Phase 30:   ░░░░░░░░░░░░░░░░░░░░   0% (0/4 Stages) ⚠️ 代码已落地，Phase 31 修复完成待一并标记 ✅
 Phase 31:   ████████████████████ 100% (3/3 Stages) ✅ Body Archive 生产化（Stage 82-84 全部完成）
+Phase 32:   ████████████████████ 100% (1/1 Stage)  ✅ request_id→call_id 改名 + 上游对账链路（Stage 85）
+Phase 33:   ████████████████████ 100% (1/1 Stage)  ✅ aigw↔aigw 多表只读增量同步（Stage 86）
 ```
 
 ---
 
 ## 当前 Phase 详情
 
-### Phase 33：aigw↔aigw 多表只读增量同步 ⏳
+### Phase 33：aigw↔aigw 多表只读增量同步 ✅ 已完成
 
 **背景**: 用户诉求——在 aigw 内部不同数据库实例之间（PG↔SQLite 任意组合）同步数据，参数范式参考现有 `remote-import`/`remote-export`，支持全表同步或 `--tables` 选子集；`spend_logs` 可按"最近 N 天"增量，其他表全量幂等追加；只读、一次性 CLI。现有 `aigw-migrate` 是 litellm↔aigw **异构**迁移（绑死 litellm 表名/camelCase 列/`call_id←request_id` 重定向），覆盖不了 aigw↔aigw **同构**同步。但底层 `SourcePool`/`CursorRange`/`insert_rows_batch`/`migrate_plain_table` 抽象与 litellm 假设解耦，可复用——只需新写一个不走 litellm-mapping 的上层 `sync` 命令。
 
@@ -56,7 +58,7 @@ Phase 31:   ████████████████████ 100% (3
 
 | Stage | 状态 | 目标 | 类型 | 预估 |
 |-------|------|------|------|------|
-| Stage 86 | ⏳ 待开始 | **`aigw-migrate sync` 子命令** — 参数参考 remote-import/remote-export 风格。复用 `SourcePool`/`CursorRange`/`insert_rows_batch`/`migrate_plain_table`；新增 `build_aigw_cursor_sql`（锚点 `start_time`，不动 litellm 的 `build_cursor_sql`）；`sync.rs::run_sync`（source/target 任意 PG/SQLite 组合，按 `--tables` 遍历：plain 表全量幂等 + spend_logs 流式时间游标 + insert_rows_batch，空 overrides 同 schema direct-match）。CLI `Sync` 子命令 + `--tables`（默认全 11 张业务表，config 默认排除）+ `--days N`（chrono UTC 转 CursorRange）+ `--resume-after`/`--end-before`/`--skip-body`/`--batch-size`。`credentials`/`proxy_models` 直接复制密文（同 master_key，当 plain 处理，不调 migrate_credentials）。**TDD 红绿**：7 UT（全表同步、`--tables` 选子集、`--days 7` 过滤、幂等重跑、`--skip-body`、非法表名报错、config 默认排除）。只读追加（`INSERT OR IGNORE`/`ON CONFLICT DO NOTHING`），非常驻。 | 后端+测试 | 8h |
+| Stage 86 | ✅ 完成（2026-07-28） | **`aigw-migrate sync` 子命令** — 参数参考 remote-import/remote-export 风格。复用 `SourcePool`/`CursorRange`/`insert_rows_batch`/`migrate_plain_table`；新增 `build_aigw_cursor_sql`（锚点 `start_time`，不动 litellm 的 `build_cursor_sql`）+ `stream_rows_with_cursor_aigw` + `stream_pg_rows_keyset_aigw`（PG keyset 用 `(start_time, call_id)`）；`sync.rs::run_sync`（source/target 任意 PG/SQLite 组合，按 `--tables` 遍历：plain 表全量幂等 + spend_logs 流式时间游标 + insert_rows_batch，空 overrides 同 schema direct-match）。CLI `Sync` 子命令 + `--tables`（默认全 11 张业务表，config 默认排除）+ `--days N`（chrono UTC 转 CursorRange）+ `--resume-after`/`--end-before`/`--skip-body`/`--batch-size` + short alias（-s/-t/-T/-d/-r/-e/-B/-b）。`credentials`/`proxy_models` 直接复制密文（同 master_key，当 plain 处理，不调 migrate_credentials）。**TDD 红绿**：8 UT（全表同步、`--tables` 选子集、`--days 7` 过滤、幂等重跑、`--skip-body`、非法表名报错、config 默认排除+显式不覆盖、DEFAULT_TABLES 契约）。只读追加（`INSERT OR IGNORE`/`ON CONFLICT DO NOTHING`），非常驻。 | 后端+测试 | 8h |
 
 **依赖关系**: 无前向依赖（Stage 85 已让两端 schema 一致）；本 Stage 与 Phase 30/31 Body Archive、长期路线均解耦。
 
@@ -574,3 +576,4 @@ Phase 31:   ████████████████████ 100% (3
 | v32.0 | 2026-07-27 | **Phase 32 规划**：新增 Phase 32（Stage 85，request_id → call_id 改名 + 上游对账链路打通，8h）。核心预期：任意 SpendLog 能用上游 request_id 与 provider 对账，无论成功还是 4xx/5xx 失败。基于设计文档 `docs/plans/2026-07-25-request-id-to-gw-call-id-rename.md`（v5，5 轮评审迭代定稿）。**单 Stage 不拆**：工作量 ~6h 低于 8h 下限，强耦合串行无并行收益。v5 增量：失败路径 4xx/5xx 也提取并存储上游 id（覆盖对账盲区）。**三处不改边界**：HTTP 层 `tower_http::request_id`（§2.2）+ 对外协议响应体 `request_id`（§6.3）+ litellm 源端 SQL（§4.5）。设计文档：`stage-85.md`。总进度 79/85。|
 | v33.0 | 2026-07-28 | **Stage 85 完成（Phase 32 ✅）**：Gate-2 多模型评审（lead 独立 + 3 路 subagent：migration / migrate-frontend-tracing-tests / extraction-protocol）发现 v5 设计 3 Critical + 3 High + 4 Medium 缺陷，全部修正至 v6.1。**关键修正**：① 迁移号 022→023（Stage 82 占用 022_next_retry_at）；② migrate import override 方向写反→`overrides["call_id"]="request_id"`（key=target, value=source）；③ **失败路径 upstream_id 走 INSERT 非 UPDATE**（v5 COALESCE-UPDATE 不覆盖失败行，核心预期静默失败）；④ export override 被 direct-match 抢占→源行剥离 request_id；⑤ Anthropic 流式提取位置（choices 分支前 borrow）；⑥ 响应头预提取 request-id；⑦ MySQL 索引前缀长度 128；⑧ body_archive 归档过滤 `request_id IS NOT NULL`（失败请求跳过归档）。实现 023 迁移（pg/mysql/sqlite）+ models/db/body_archive/daily_spend_queue 全链路改名 + 路由层 4 路径上游 id 提取 + migrate override + 前端 3 interface。验证：aigw-core lib 247/247 + aigw-server lib 100/100 + mock BDD 163/163（15 @skip，含新增核心预期 2 场景：双列返回 + 双列搜索）+ aigw-migrate 27/27（含 import override PK 非空断言 + export reverse-override 击败 direct-match 断言）+ frontend build green；PG/MySQL 023 迁移应用通过。总进度 81/85。|
 | v34.0 | 2026-07-28 | **Phase 33 规划**：新增 Phase 33（Stage 86，`aigw-migrate sync` 子命令 — aigw↔aigw 多表只读增量同步，8h）。用户诉求：在 aigw 内部不同 DB 实例间（PG↔SQLite 任意组合）同步数据，参数范式参考现有 `remote-import`/`remote-export`，支持全表同步或 `--tables` 选子集；`spend_logs` 按"最近 N 天"增量，其他表全量幂等追加；只读、一次性 CLI。现有 `aigw-migrate` 是 litellm↔aigw 异构迁移，覆盖不了 aigw↔aigw 同构同步；但底层 `SourcePool`/`CursorRange`/`insert_rows_batch`/`migrate_plain_table` 抽象与 litellm 假设解耦可复用。新增 `build_aigw_cursor_sql`（锚点 `start_time`，不改 litellm 的 `build_cursor_sql`）+ `sync.rs::run_sync`（空 overrides 同 schema direct-match）+ CLI `--tables`（默认全 11 张业务表，config 默认排除）+ `--days N`（chrono UTC）。`credentials`/`proxy_models` 直接复制密文（同 master_key）。只读追加（`INSERT OR IGNORE`/`ON CONFLICT DO NOTHING`），非常驻/非 CDC。TDD 7 UT。设计文档：`stage-86.md`。总进度 81/86。|
+| v35.0 | 2026-07-28 | **Stage 86 完成（Phase 33 ✅）**：实现 `aigw-migrate sync` 子命令——aigw↔aigw 同构只读增量同步。native.rs 新增 `build_aigw_cursor_sql`（锚点 `start_time`，不改 litellm `build_cursor_sql` 保零回归）+ `stream_rows_with_cursor_aigw` dispatch + `stream_pg_rows_keyset_aigw`（PG keyset 用 `(start_time, call_id)` 而非 `(startTime, request_id)`）。sync.rs 新增 `run_sync` + `SyncStats`/`TableSyncStats` + `ALL_AIGW_TABLES`/`DEFAULT_TABLES`/`SPEND_LOGS_BODY_COLUMNS` 常量 + `parse_tables`/`resolve_tables`/`resolve_cursor`（表名校验、`--days` UTC 转 CursorRange、与显式 `--resume-after`/`--end-before` 取更严边界）。main.rs `Sync` 子命令 + short alias（-s/-t/-T/-d/-r/-e/-B/-b）+ env 回退（`AIGW_SYNC_SOURCE_URL`/`AIGW_SYNC_TARGET_URL`）。空 overrides direct-match（aigw↔aigw 同 schema，不做 `call_id←request_id` 重定向）；`credentials`/`proxy_models` 当 plain 复制密文不调 migrate_credentials；config 默认排除。TDD 8 UT 红绿（`tests/sync.rs`：全表同步/`--tables` 子集/`--days 7` 过滤/幂等重跑/`--skip-body`/非法表名报错/config 默认排除+显式 INSERT OR IGNORE 不覆盖/DEFAULT_TABLES 契约）。验证：`cargo test -p aigw-migrate` 全量通过（27+27+8+1，无回归）+ `aigw-migrate sync --help` 输出表清单。总进度 82/86。|

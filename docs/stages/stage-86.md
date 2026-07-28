@@ -2,7 +2,7 @@
 
 **Phase**: 33 — 跨实例数据同步
 **优先级**: P2
-**状态**: ⏳ 待开始
+**状态**: ✅ 完成（2026-07-28）
 **预估**: 8h
 **前置**: Stage 85（request_id→call_id 改名已完成，两端 schema 一致）；`aigw-migrate` crate 的 `SourcePool` / `CursorRange` / `insert_rows_batch` / `migrate_plain_table` 抽象已就绪
 
@@ -170,13 +170,15 @@ pub async fn run_sync(source_url, target_url, tables, cursor, skip_body, batch_s
 
 ## 交付清单
 
-- [ ] `crates/aigw-migrate/src/native.rs`: `build_aigw_cursor_sql` + `stream_rows_with_cursor` aigw 分支
-- [ ] `crates/aigw-migrate/src/sync.rs`: `run_sync` + `SyncStats` + 表清单常量 + 表名校验
-- [ ] `crates/aigw-migrate/src/lib.rs`: 导出 `sync` 模块
-- [ ] `crates/aigw-migrate/src/main.rs`: `Sync` 子命令 + `--days`/`--tables` 解析 + `--help` 表清单
-- [ ] `crates/aigw-migrate/tests/sync.rs`: 7 个 UT 场景
-- [ ] `docs/aigw-migrate.md`: 新增 `sync` 子命令章节（含表清单 + 参数对照）
-- [ ] `docs/11-next-steps.md` + `docs/stages/stage-roadmap.md`: Phase 33 规划同步
+- [x] `crates/aigw-migrate/src/native.rs`: `build_aigw_cursor_sql` + `stream_rows_with_cursor_aigw` + `stream_pg_rows_keyset_aigw`（PG keyset 用 `(start_time, call_id)`）
+- [x] `crates/aigw-migrate/src/sync.rs`: `run_sync` + `SyncStats`/`TableSyncStats` + `ALL_AIGW_TABLES`/`DEFAULT_TABLES`/`SPEND_LOGS_BODY_COLUMNS` 常量 + `parse_tables`/`resolve_tables`/`resolve_cursor` 表名校验与游标解析
+- [x] `crates/aigw-migrate/src/lib.rs`: 导出 `sync` 模块 + `pub use sync::run_sync` + `CursorRange` 已导出
+- [x] `crates/aigw-migrate/src/main.rs`: `Sync` 子命令 + `--days`/`--tables`/`--resume-after`/`--end-before`/`--skip-body`/`--batch-size` 解析 + short alias（-s/-t/-T/-d/-r/-e/-B/-b）+ `--help` 表清单 + env 回退（`AIGW_SYNC_SOURCE_URL`/`AIGW_SYNC_TARGET_URL`）
+- [x] `crates/aigw-migrate/tests/sync.rs`: 8 个 UT 场景（全表同步、`--tables` 选子集、`--days 7` 过滤、幂等重跑、`--skip-body`、非法表名报错、config 默认排除+显式不覆盖、DEFAULT_TABLES 契约）
+- [x] `docs/aigw-migrate.md`: 新增 `sync` 子命令章节（含表清单 + 参数对照 + 环境变量）
+- [x] `docs/stages/stage-86.md`: 状态标记 ✅ 完成（2026-07-28）
+
+> **验证**: `cargo test -p aigw-migrate --test sync` 8/8 通过；`cargo test -p aigw-migrate` 全量 27+27+8+1 通过（含原有 native/verify 测试，无回归）；`cargo build -p aigw-migrate --lib` 零 warning；`aigw-migrate sync --help` 输出表清单与参数。UT 走 SQLite→SQLite（`Database::init` 建全量 schema 含 023 rename），PG 跨方言覆盖复用 `bdd-real-*` testcontainers 路径，不阻塞 UT。
 
 ## 风险与决策
 

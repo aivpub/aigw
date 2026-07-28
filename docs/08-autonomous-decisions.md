@@ -345,3 +345,22 @@
   - body_archive 归档过滤加 `request_id IS NOT NULL`（用户决策）：失败请求（无上游 id）跳过 body 归档，省存储。
   - TD-006（客户端无法从响应头拿 call_id 对账）登记为后续跟进。
   - Gate-2 多模型评审显著降低了设计缺陷流入实现的风险（3 Critical + 3 High + 4 Medium 全部在编码前修正）。
+
+## ADR-021: Phase 33 完成 — aigw↔aigw 多表只读增量同步（Stage 86）
+
+- **Date**: 2026-07-28
+- **Status**: Accepted
+- **Decision**: 新增 `aigw-migrate sync` 子命令，在两个 aigw DB 实例间（PG↔SQLite 任意组合）只读增量同步。默认全 11 张业务表，`--tables` 选子集；`spend_logs` 按 `--days`/`--resume-after`/`--end-before` 增量，其他表全量幂等追加；重跑不重复（`INSERT OR IGNORE`/`ON CONFLICT DO NOTHING`）。空 overrides direct-match，不做 litellm 的 `call_id←request_id` 列重定向。
+- **Background**: 用户诉求——在 aigw 内部不同 DB 实例间同步数据，参数范式参考 `remote-import`/`remote-export`，只读一次性 CLI。现有 `aigw-migrate` 是 litellm↔aigw **异构**迁移（绑死 litellm 表名/camelCase/`call_id←request_id` 重定向 + 密钥轮转），覆盖不了 aigw↔aigw **同构**同步。
+- **Key decisions**:
+  - **新增 `build_aigw_cursor_sql` 而非改 `build_cursor_sql`**：aigw 锚点列是 `start_time`（litellm 是 camelCase `startTime`）。不改原函数保 litellm 迁移零回归。PG keyset 用 `(start_time, call_id)` 而非 `(startTime, request_id)`。
+  - **空 overrides direct-match**：aigw↔aigw 同 schema（同表名/同 snake_case/同 PK `call_id`），不需要 litellm 的列重定向。复用 `SourcePool`/`CursorRange`/`insert_rows_batch`/`migrate_plain_table` 底层抽象，不碰 `remote_import`/`remote_export` 的 litellm-mapping 路径。
+  - **加密表直接复制密文**：`credentials`/`proxy_models` 当 plain 表处理，不调 `migrate_credentials`/`migrate_proxy_models`（它们做密钥轮转）。假设两端共享同一 `master_key`（同 aigw 集群内）。跨 key 场景仍用 `remote-import`。
+  - **config 默认排除**：`config` 含 `master_key`，默认不同步避免覆盖目标鉴权；显式 `--tables config` 才同步，走 `INSERT OR IGNORE` 只补齐缺失行不覆盖已有 master_key。
+  - **`--days` 用 UTC**：`start_time` 存 UTC，避免本地时区跨天错位。与显式 `--resume-after`/`--end-before` 叠加时取更严边界（max resume_after, min end_before），不报错。
+  - **只读追加边界**：仅 INSERT，不传播 UPDATE/DELETE；非常驻、非 CDC。符合"只读镜像"诉求。
+- **Consequences**:
+  - aigw 集群内多实例数据同步有了一条命令路径，参数范式与 `remote-import` 一致降低学习成本。
+  - litellm↔aigw 迁移路径完全不受影响（零回归，`build_cursor_sql`/`stream_pg_rows_keyset` 原样）。
+  - 跨 master_key 同步加密表仍需 `remote-import`（明确边界，不混淆）。
+  - TDD 8 UT 覆盖核心预期（全表/子集/`--days`/幂等/`--skip-body`/非法表名/config 默认排除+显式不覆盖/DEFAULT_TABLES 契约）；PG 跨方言覆盖复用 `bdd-real-*` testcontainers，不阻塞 UT。

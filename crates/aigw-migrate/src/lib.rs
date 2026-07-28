@@ -24,9 +24,11 @@ pub mod import;
 pub mod native;
 pub mod pre_check;
 pub mod remote_export;
+pub mod sync;
 pub mod remote_import;
 pub mod verify;
 
 pub use native::CursorRange;
 pub use remote_export::run as remote_export_run;
 pub use remote_import::run_filtered as remote_import_run_filtered;
+pub use sync::run_sync;

@@ -294,6 +294,50 @@ impl SourcePool {
         parts.join(" ")
     }
 
+    /// Build cursor SQL for aigw tables (anchor: `start_time`, snake_case).
+    ///
+    /// Stage 86 (`aigw-migrate sync`): aigw-to-aigw is same-schema, so this is
+    /// the aigw-native counterpart of [`build_cursor_sql`] — the anchor column
+    /// is `start_time` (litellm uses camelCase `startTime`).  This does NOT
+    /// modify `build_cursor_sql`, keeping the litellm-to-aigw migration
+    /// zero-regression.
+    pub fn build_aigw_cursor_sql(
+        &self,
+        table: &str,
+        cursor: &CursorRange,
+        limit: Option<usize>,
+        select_columns: Option<&[String]>,
+    ) -> String {
+        let quoted = self.quote_ident(table);
+        let projection = match select_columns {
+            Some(cols) if !cols.is_empty() => cols
+                .iter()
+                .map(|c| self.quote_ident(c))
+                .collect::<Vec<_>>()
+                .join(", "),
+            _ => "*".to_string(),
+        };
+        let mut parts = vec![format!("SELECT {} FROM {}", projection, quoted)];
+
+        let mut conditions: Vec<String> = Vec::new();
+        if let Some(ref t) = cursor.resume_after {
+            let lit = self.time_literal(t);
+            conditions.push(format!("\"start_time\" >= {}", lit));
+        }
+        if let Some(ref end) = cursor.end_before {
+            let lit = self.time_literal(end);
+            conditions.push(format!("\"start_time\" < {}", lit));
+        }
+        if !conditions.is_empty() {
+            parts.push(format!("WHERE {}", conditions.join(" AND ")));
+        }
+        parts.push("ORDER BY \"start_time\" ASC".to_string());
+        if let Some(n) = limit {
+            parts.push(format!("LIMIT {}", n));
+        }
+        parts.join(" ")
+    }
+
 
     /// Stream rows from a paginated cursor query (used by pipelined migrations).
     ///
@@ -321,6 +365,42 @@ impl SourcePool {
             }
             SourcePool::Mysql(p) => {
                 let sql = self.build_cursor_sql(table, cursor, limit, select_columns);
+                stream_mysql_rows(p, sql, batch_size)
+            }
+        }
+    }
+
+    /// Stream rows from an aigw table using the `start_time` cursor.
+    ///
+    /// Stage 86 (`aigw-migrate sync`): the aigw-native counterpart of
+    /// [`stream_rows_with_cursor`].  SQLite/MySQL build the SQL via
+    /// [`build_aigw_cursor_sql`]; PG uses keyset pagination on
+    /// `(start_time, call_id)` -- aigw's PK after the 023 rename -- instead
+    /// of litellm's `(startTime, request_id)`.  Like the litellm version,
+    /// this is a producer stream meant to be fed into `insert_rows_batch`.
+    pub fn stream_rows_with_cursor_aigw<'a>(
+        &'a self,
+        table: &'a str,
+        cursor: &CursorRange,
+        limit: Option<usize>,
+        select_columns: Option<&'a [String]>,
+        batch_size: usize,
+    ) -> BoxStream<'a, anyhow::Result<UnifiedRow>> {
+        match self {
+            SourcePool::Postgres(p) => stream_pg_rows_keyset_aigw(
+                p,
+                table,
+                cursor.clone(),
+                limit,
+                select_columns,
+                batch_size,
+            ),
+            SourcePool::Sqlite(p) => {
+                let sql = self.build_aigw_cursor_sql(table, cursor, limit, select_columns);
+                stream_sqlite_rows(p, sql, batch_size)
+            }
+            SourcePool::Mysql(p) => {
+                let sql = self.build_aigw_cursor_sql(table, cursor, limit, select_columns);
                 stream_mysql_rows(p, sql, batch_size)
             }
         }
@@ -615,6 +695,158 @@ fn stream_pg_rows_keyset<'a>(
                         }
                     }
                     if name == "request_id" {
+                        if let Value::String(ref s) = val {
+                            anchor_id.clone_from(s);
+                        }
+                    }
+                    unified.push((name, val));
+                }
+                yield unified;
+            }
+
+            // Decrement remaining if a global limit was set.
+            if let Some(ref mut rem) = remaining {
+                let count = rows.len();
+                if count >= *rem {
+                    break;
+                }
+                *rem -= count;
+            }
+
+            // If this batch was smaller than requested, we've hit the end.
+            if rows.len() < limit_clause {
+                break;
+            }
+        }
+    }
+    .boxed()
+}
+
+fn stream_pg_rows_keyset_aigw<'a>(
+    pool: &'a PgPool,
+    table: &'a str,
+    cursor: CursorRange,
+    limit: Option<usize>,
+    select_columns: Option<&'a [String]>,
+    batch_size: usize,
+) -> BoxStream<'a, anyhow::Result<UnifiedRow>> {
+    async_stream::try_stream! {
+        // ── Build projection with ::text cast for JSONB columns ──────
+        //
+        // sqlx refuses to decode PG JSONB (OID 3802) as String — even with
+        // the "json" feature — because its type-check compares OIDs and only
+        // allows TEXT (25) / VARCHAR (1043) → String.  By casting on the PG
+        // side we make every JSONB column arrive as wire-protocol text,
+        // bypassing the serde_json::Value object-tree decode entirely.
+        let src_col_info: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT column_name::text, \
+                    CASE WHEN data_type = 'ARRAY' THEN udt_name ELSE data_type END::text, \
+                    is_nullable::text \
+             FROM information_schema.columns \
+             WHERE lower(table_name) = lower($1) \
+             ORDER BY ordinal_position",
+        )
+        .bind(table)
+        .fetch_all(pool)
+        .await?;
+
+        // Set of jsonb column names for fast projection lookup.
+        let jsonb_cols: std::collections::HashSet<&str> = src_col_info
+            .iter()
+            .filter(|(_, ty, _)| ty == "jsonb")
+            .map(|(n, _, _)| n.as_str())
+            .collect();
+
+        // Build the projection once — it never changes across batches.
+        let projection: String = match select_columns {
+            Some(cols) if !cols.is_empty() => cols
+                .iter()
+                .map(|c| {
+                    let quoted = format!("\"{}\"", c);
+                    if jsonb_cols.contains(c.as_str()) {
+                        format!("{}::text", quoted)
+                    } else {
+                        quoted
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", "),
+            _ => {
+                // SELECT * — build explicit projection with ::text casts.
+                let col_names: Vec<&str> = src_col_info.iter().map(|(n, _, _)| n.as_str()).collect();
+                col_names
+                    .iter()
+                    .map(|c| {
+                        let quoted = format!("\"{}\"", c);
+                        if jsonb_cols.contains(c) {
+                            format!("{}::text", quoted)
+                        } else {
+                            quoted
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }
+        };
+        let quoted_table = format!("\"{}\"", table);
+        let end_before_lit = cursor.end_before.as_ref().map(|t| format!("'{}'::timestamptz", t.replace('T', " ").replace('Z', "")));
+
+        // Anchor: (last_start_time, last_call_id).
+        // Initial value comes from --spend-log-resume-after, defaulting to epoch.
+        let mut anchor_time: String = cursor.resume_after
+            .map(|t| t.replace('T', " ").replace('Z', ""))
+            .unwrap_or_else(|| "1970-01-01 00:00:00".to_string());
+        let mut anchor_id: String = String::new();
+
+        // If the caller set a global limit, track how many rows remain.
+        let mut remaining = limit;
+
+        loop {
+            // Build the keyset SQL with bind parameters.
+            // Use row-constructor comparison so PG can use the
+            // (start_time, call_id) composite index directly (Index
+            // Range Scan, not Filter).  $1::timestamp is required
+            // because PG's timestamp without time zone ≠ text.
+            let mut sql = format!(
+                "SELECT {} FROM {} WHERE (\"start_time\", \"call_id\") > ($1::timestamp, $2)",
+                projection, quoted_table,
+            );
+            if let Some(ref end) = end_before_lit {
+                sql.push_str(&format!(" AND \"start_time\" < {}", end));
+            }
+            sql.push_str(" ORDER BY \"start_time\" ASC, \"call_id\" ASC");
+
+            // Clamp batch size to remaining limit when one is set.
+            let limit_clause = match remaining {
+                Some(rem) if (rem as usize) < batch_size => rem as usize,
+                _ => batch_size,
+            };
+            sql.push_str(&format!(" LIMIT {}", limit_clause));
+
+            // Bind parameters: $1=anchor_time, $2=anchor_id.
+            let rows = sqlx::query(&sql)
+                .bind(&anchor_time)
+                .bind(&anchor_id)
+                .fetch_all(pool)
+                .await?;
+
+            if rows.is_empty() {
+                break;
+            }
+
+            // Track the last row for the next keyset anchor.
+            for row in &rows {
+                let cols = row.columns();
+                let mut unified = Vec::with_capacity(cols.len());
+                for col in cols {
+                    let name = col.name().to_string();
+                    let val = try_pg_get(row, &name);
+                    if name == "start_time" {
+                        if let Value::String(ref s) = val {
+                            anchor_time = s.replace('T', " ").replace('Z', "");
+                        }
+                    }
+                    if name == "call_id" {
                         if let Value::String(ref s) = val {
                             anchor_id.clone_from(s);
                         }
