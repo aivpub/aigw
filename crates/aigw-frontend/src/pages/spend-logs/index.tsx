@@ -346,9 +346,22 @@ function DetailDrawer({ log, open, onClose, isDetailLoading, detailError, onRetr
               <span className="text-[10px] font-normal text-muted-foreground">{log.custom_llm_provider}</span>
             ) : null}
           </SheetTitle>
-          <SheetDescription className="text-[10px] font-mono break-all flex items-center gap-1">
-            <code>{log.call_id}</code>
-            <CopyIconButton text={log.call_id} />
+          <SheetDescription className="text-[10px] font-mono break-all space-y-1" asChild>
+            <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="default" className="text-[10px]">Call ID</Badge>
+              <code>{log.call_id}</code>
+              <CopyIconButton text={log.call_id} />
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="secondary" className="text-[10px]">Upstream ID</Badge>
+              {log.request_id ? (
+                <><code>{log.request_id}</code><CopyIconButton text={log.request_id} /></>
+              ) : (
+                <span className="text-muted-foreground italic">— 无上游 ID（失败/历史行）</span>
+              )}
+            </div>
+            </div>
           </SheetDescription>
         </SheetHeader>
 
@@ -629,6 +642,8 @@ export function SpendLogsPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead className="text-xs whitespace-nowrap">Call ID</TableHead>
+                      <TableHead className="text-xs whitespace-nowrap">Upstream ID</TableHead>
                       <TableHead className="text-xs whitespace-nowrap"><Clock className="h-3 w-3 inline mr-1"/>Time</TableHead>
                       <TableHead className="text-xs whitespace-nowrap">Type</TableHead>
                       <TableHead className="text-xs whitespace-nowrap">Model</TableHead>
@@ -636,8 +651,6 @@ export function SpendLogsPage() {
                       <TableHead className="text-xs whitespace-nowrap">End User</TableHead>
                       <TableHead className="text-xs whitespace-nowrap">IP</TableHead>
                       <TableHead className="text-xs whitespace-nowrap">Status</TableHead>
-                      <TableHead className="text-xs whitespace-nowrap">Call ID</TableHead>
-                      <TableHead className="text-xs whitespace-nowrap">Upstream ID</TableHead>
                       <TableHead className="text-xs whitespace-nowrap text-right">TTFT</TableHead>
                       <TableHead className="text-xs whitespace-nowrap text-right">Duration</TableHead>
                       <TableHead className="text-xs whitespace-nowrap text-right">Tokens</TableHead>
@@ -647,6 +660,8 @@ export function SpendLogsPage() {
                   <TableBody>
                     {logs.map(log => (
                       <TableRow key={log.call_id} data-testid="spend-log-row" className="cursor-pointer hover:bg-muted/50" onClick={() => { setSelectedLog(log); setDrawerOpen(true); setDetailRequestId(log.call_id); }}>
+                        <TableCell className="text-xs font-mono"><div className="flex items-center gap-1">{truncate8(log.call_id)}<RowCopyButton text={log.call_id}/></div></TableCell>
+                        <TableCell className="text-xs font-mono text-muted-foreground">{log.request_id ? truncate8(log.request_id) : "—"}</TableCell>
                         <TableCell className="text-xs whitespace-nowrap">{log.start_time ? format(new Date(log.start_time), "MM-dd HH:mm:ss") : "—"}</TableCell>
                         <TableCell><Badge variant="outline" className="text-[10px] px-1 py-0">{log.call_type || "—"}</Badge></TableCell>
                         <TableCell className="text-xs whitespace-nowrap">
@@ -666,8 +681,6 @@ export function SpendLogsPage() {
                           </span>
                         </TableCell>
                         <TableCell><Badge variant={log.status==="success"?"default":"destructive"} className="text-[10px] px-1.5 py-0">{log.status || "—"}</Badge></TableCell>
-                        <TableCell className="text-xs font-mono"><div className="flex items-center gap-1">{truncate8(log.call_id)}<RowCopyButton text={log.call_id}/></div></TableCell>
-                        <TableCell className="text-xs font-mono text-muted-foreground">{log.request_id ? truncate8(log.request_id) : "—"}</TableCell>
                         <TableCell className="text-xs font-mono text-right">{fmtTtft(log.ttft_ms)}</TableCell>
                         <TableCell className="text-xs font-mono text-right">{fmtDuration(log.request_duration_ms)}</TableCell>
                         <TableCell className="text-xs text-right"><span className="text-muted-foreground">{fmtTokens(log.prompt_tokens)}</span>{" / "}<span>{fmtTokens(log.completion_tokens)}</span></TableCell>

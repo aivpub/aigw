@@ -142,6 +142,21 @@ Then("the spend logs list should update", async ({ page }) => {
   await expect(page.locator("main")).toContainText(/gpt-4|claude-sonnet/i);
 });
 
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Stage 87: Call ID leftmost column + drawer dual-id badges + fuzzy search
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Then("the first column header of the spend logs table should be {string}", async ({ page }, text: string) => {
+  const firstTh = page.locator("table thead th").first();
+  await expect(firstTh).toContainText(text);
+});
+
+Then("I should see a {string} badge in the detail drawer", async ({ page }, badgeText: string) => {
+  const dialog = page.locator("[role='dialog']");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText(badgeText, { exact: true })).toBeVisible();
+});
+
 Then("the spend log data should be displayed in a mobile-friendly format", async ({ page }) => {
   await page.waitForTimeout(1000);
   await expect(page.locator("main")).toContainText(/gpt-4|claude-sonnet/i);

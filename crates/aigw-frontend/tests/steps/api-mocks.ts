@@ -193,6 +193,12 @@ export async function defineMockRoutes(route: Route, request: Request) {
     return route.fulfill({ status: 200, json: { data: [{ provider: "openai", total_spend: 25.0, total_tokens: 50000, requests: 12 }, { provider: "anthropic", total_spend: 17.5, total_tokens: 30000, requests: 8 }], count: 2 } });
   }
   if (url.pathname === "/global/spend/logs") {
+    // Apply fuzzy search filter if ?request_id= query param present
+    const q = url.searchParams.get("request_id");
+    if (q) {
+      const filtered = sampleSpendLogs.filter(log => log.call_id.includes(q) || (log.request_id ?? "").includes(q));
+      return route.fulfill({ status: 200, json: { data: filtered, count: filtered.length, total_count: filtered.length, page: 1, page_size: 30, total_pages: 1 } });
+    }
     return route.fulfill({ status: 200, json: { data: sampleSpendLogs, count: sampleSpendLogs.length, total_count: sampleSpendLogs.length, page: 1, page_size: 30, total_pages: 1 } });
   }
   if (url.pathname === "/global/spend/activity") {

@@ -1517,8 +1517,8 @@ impl SpendLogStore for SqlitePool {
         if model.is_some() { sql.push_str(" AND model = ?"); }
         if start_date.is_some() { sql.push_str(" AND start_time >= ?"); }
         if end_date.is_some() { sql.push_str(" AND start_time <= ?"); }
-        // Dual-column search: match gateway call_id OR upstream request_id.
-        if call_id.is_some() { sql.push_str(" AND (call_id = ? OR request_id = ?)"); }
+        // Dual-column fuzzy search: match gateway call_id OR upstream request_id (LIKE '%X%').
+        if call_id.is_some() { sql.push_str(" AND (call_id LIKE ? ESCAPE '\\' OR request_id LIKE ? ESCAPE '\\')"); }
 
         sql.push_str(" ORDER BY start_time DESC LIMIT ? OFFSET ?");
 
@@ -1527,7 +1527,12 @@ impl SpendLogStore for SqlitePool {
         if let Some(m) = model { query = query.bind(m); }
         if let Some(sd) = start_date { query = query.bind(sd); }
         if let Some(ed) = end_date { query = query.bind(ed); }
-        if let Some(rid) = call_id { query = query.bind(rid); query = query.bind(rid); }
+        let _like_val;
+        if let Some(rid) = call_id {
+            _like_val = format!("%{}%", rid.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
+            query = query.bind(&_like_val);
+            query = query.bind(&_like_val);
+        }
         query = query.bind(limit_val);
         query = query.bind(offset_val);
 
@@ -1547,15 +1552,20 @@ impl SpendLogStore for SqlitePool {
         if model.is_some() { sql.push_str(" AND model = ?"); }
         if start_date.is_some() { sql.push_str(" AND start_time >= ?"); }
         if end_date.is_some() { sql.push_str(" AND start_time <= ?"); }
-        // Dual-column search: match gateway call_id OR upstream request_id.
-        if call_id.is_some() { sql.push_str(" AND (call_id = ? OR request_id = ?)"); }
+        // Dual-column fuzzy search: match gateway call_id OR upstream request_id (LIKE '%X%').
+        if call_id.is_some() { sql.push_str(" AND (call_id LIKE ? ESCAPE '\\' OR request_id LIKE ? ESCAPE '\\')"); }
 
         let mut query = sqlx::query_as::<_, (i64,)>(&sql);
         if let Some(k) = api_key { query = query.bind(k); }
         if let Some(m) = model { query = query.bind(m); }
         if let Some(sd) = start_date { query = query.bind(sd); }
         if let Some(ed) = end_date { query = query.bind(ed); }
-        if let Some(rid) = call_id { query = query.bind(rid); query = query.bind(rid); }
+        let _like_val;
+        if let Some(rid) = call_id {
+            _like_val = format!("%{}%", rid.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
+            query = query.bind(&_like_val);
+            query = query.bind(&_like_val);
+        }
 
         query.fetch_one(self).await.map(|row: (i64,)| row.0).map_err(DbError::from)
     }
@@ -1824,8 +1834,8 @@ impl SpendLogStore for MySqlPool {
                     if let Some(dt) = dt { if log.start_time > dt { return false; } }
                 }
             }
-            // Dual-column in-memory search: match gateway call_id OR upstream request_id.
-            if let Some(rid) = call_id { if log.call_id != rid && log.request_id.as_deref() != Some(rid) { return false; } }
+            // Dual-column in-memory fuzzy search: match gateway call_id OR upstream request_id (substring).
+            if let Some(rid) = call_id { if !log.call_id.contains(rid) && !log.request_id.as_deref().map_or(false, |r| r.contains(rid)) { return false; } }
             true
         }).collect();
         let start = offset_val as usize;
@@ -1850,15 +1860,20 @@ impl SpendLogStore for MySqlPool {
         if model.is_some() { sql.push_str(" AND model = ?"); }
         if start_date.is_some() { sql.push_str(" AND start_time >= ?"); }
         if end_date.is_some() { sql.push_str(" AND start_time <= ?"); }
-        // Dual-column search: match gateway call_id OR upstream request_id.
-        if call_id.is_some() { sql.push_str(" AND (call_id = ? OR request_id = ?)"); }
+        // Dual-column fuzzy search: match gateway call_id OR upstream request_id (LIKE '%X%').
+        if call_id.is_some() { sql.push_str(" AND (call_id LIKE ? ESCAPE '\\' OR request_id LIKE ? ESCAPE '\\')"); }
 
         let mut query = sqlx::query_as::<_, (i64,)>(&sql);
         if let Some(k) = api_key { query = query.bind(k); }
         if let Some(m) = model { query = query.bind(m); }
         if let Some(sd) = start_date { query = query.bind(sd); }
         if let Some(ed) = end_date { query = query.bind(ed); }
-        if let Some(rid) = call_id { query = query.bind(rid); query = query.bind(rid); }
+        let _like_val;
+        if let Some(rid) = call_id {
+            _like_val = format!("%{}%", rid.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
+            query = query.bind(&_like_val);
+            query = query.bind(&_like_val);
+        }
 
         query.fetch_one(self).await.map(|row: (i64,)| row.0).map_err(DbError::from)
     }
@@ -2110,8 +2125,8 @@ impl SpendLogStore for PgPool {
                     if let Some(dt) = dt { if log.start_time > dt { return false; } }
                 }
             }
-            // Dual-column in-memory search: match gateway call_id OR upstream request_id.
-            if let Some(rid) = call_id { if log.call_id != rid && log.request_id.as_deref() != Some(rid) { return false; } }
+            // Dual-column in-memory fuzzy search: match gateway call_id OR upstream request_id (substring).
+            if let Some(rid) = call_id { if !log.call_id.contains(rid) && !log.request_id.as_deref().map_or(false, |r| r.contains(rid)) { return false; } }
             true
         }).collect();
         let start = offset_val as usize;
@@ -4238,10 +4253,10 @@ impl Database {
         if let Some(p) = provider { conditions.push(format!("custom_llm_provider = '{}'", p.replace('\'', "''"))); }
         if let Some(s) = start_date { conditions.push(format!("start_time >= '{}'{}", s.replace('\'', "''"), ts_cast)); }
         if let Some(e) = end_date { conditions.push(format!("start_time <= '{}'{}", e.replace('\'', "''"), ts_cast)); }
-        // Dual-column search: match gateway call_id OR upstream request_id.
+        // Dual-column fuzzy search: match gateway call_id OR upstream request_id (LIKE '%X%' ESCAPE '\').
         if let Some(rid) = call_id {
-            let esc = rid.replace('\'', "''");
-            conditions.push(format!("(call_id = '{}' OR request_id = '{}')", esc, esc));
+            let esc = rid.replace('\'', "''").replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+            conditions.push(format!("(call_id LIKE '%{}%' ESCAPE '\\' OR request_id LIKE '%{}%' ESCAPE '\\')", esc, esc));
         }
         if let Some(st) = status {
             if st == "success" { conditions.push("status = 'success'".to_string()); }
@@ -5289,5 +5304,82 @@ mod tests {
             .await.expect("aggregate with limit");
 
         assert_eq!(rankings.len(), 2, "should respect limit=2");
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // Stage 87: LIKE fuzzy search on call_id / request_id
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    #[tokio::test]
+    async fn test_fuzzy_search_call_id_prefix() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+
+        let mut l1 = make_test_spend_log(&"sk-test", "u1", 1.0, None);
+        l1.call_id = "req-001".to_string();
+        l1.request_id = Some("chatcmpl-abc123".to_string());
+        db.insert_spend_log(&l1).await.expect("insert l1");
+
+        let mut l2 = make_test_spend_log(&"sk-test", "u1", 2.0, None);
+        l2.call_id = "req-002".to_string();
+        l2.request_id = Some("msg_xyz789".to_string());
+        db.insert_spend_log(&l2).await.expect("insert l2");
+
+        let mut l3 = make_test_spend_log(&"sk-test", "u1", 3.0, None);
+        l3.call_id = "req-003".to_string();
+        l3.request_id = None;
+        db.insert_spend_log(&l3).await.expect("insert l3");
+
+        // Search by call_id prefix "req-00" — matches all 3
+        let logs = db.query_spend_logs_filtered(None, None, None, None, None, Some("req-00"), Some(100), Some(0))
+            .await.expect("query prefix");
+        assert_eq!(logs.len(), 3, "prefix 'req-00' should match all 3 logs");
+
+        // Search by request_id substring "chatcmpl" — matches l1 only
+        let logs = db.query_spend_logs_filtered(None, None, None, None, None, Some("chatcmpl"), Some(100), Some(0))
+            .await.expect("query chatcmpl");
+        assert_eq!(logs.len(), 1, "substring 'chatcmpl' should match 1 log");
+        assert_eq!(logs[0].call_id, "req-001");
+
+        // Search by request_id substring "xyz" — matches l2 only
+        let logs = db.query_spend_logs_filtered(None, None, None, None, None, Some("xyz"), Some(100), Some(0))
+            .await.expect("query xyz");
+        assert_eq!(logs.len(), 1, "substring 'xyz' should match 1 log");
+        assert_eq!(logs[0].call_id, "req-002");
+
+        // Count matching — should be consistent
+        let count = db.query_spend_logs_count(None, None, None, None, Some("req-00"))
+            .await.expect("count prefix");
+        assert_eq!(count, 3, "count should match query for 'req-00'");
+
+        let count = db.query_spend_logs_count(None, None, None, None, Some("chatcmpl"))
+            .await.expect("count chatcmpl");
+        assert_eq!(count, 1, "count should match query for 'chatcmpl'");
+    }
+
+    #[tokio::test]
+    async fn test_fuzzy_search_like_wildcard_escaped() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+
+        let mut l1 = make_test_spend_log(&"sk-test", "u1", 1.0, None);
+        l1.call_id = "req%001".to_string(); // contains literal %
+        l1.request_id = None;
+        db.insert_spend_log(&l1).await.expect("insert l1");
+
+        let mut l2 = make_test_spend_log(&"sk-test", "u1", 2.0, None);
+        l2.call_id = "req_002".to_string(); // contains literal _
+        l2.request_id = None;
+        db.insert_spend_log(&l2).await.expect("insert l2");
+
+        // Searching for "req%" should match only l1, not everything (escaped)
+        let logs = db.query_spend_logs_filtered(None, None, None, None, None, Some("req%"), Some(100), Some(0))
+            .await.expect("query req%");
+        assert_eq!(logs.len(), 1, "escaped '%' should not act as wildcard");
+        assert_eq!(logs[0].call_id, "req%001");
+
+        // Searching for "req_" should match l2
+        let logs = db.query_spend_logs_filtered(None, None, None, None, None, Some("req_"), Some(100), Some(0))
+            .await.expect("query req_");
+        assert_eq!(logs.len(), 1, "escaped '_' should not act as wildcard");
+        assert_eq!(logs[0].call_id, "req_002");
     }
 }
