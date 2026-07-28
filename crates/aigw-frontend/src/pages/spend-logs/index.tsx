@@ -117,7 +117,7 @@ function truncateEndUser(s: string): string {
 }
 
 function exportToCSV(logs: SpendLog[], startDate: string, endDate: string) {
-  const headers = ["Call ID","Upstream ID","Time","Type","Model","Status","Prompt Tokens","Completion Tokens","Total Tokens","TTFT (ms)","Duration (ms)","Cost","User","End User","API Key"];
+  const headers = ["Call ID","Request ID","Time","Type","Model","Status","Prompt Tokens","Completion Tokens","Total Tokens","TTFT (ms)","Duration (ms)","Cost","User","End User","API Key"];
   const rows = logs.map(l => [l.call_id,l.request_id ?? "",l.start_time,l.call_type,l.model,l.status??"",l.prompt_tokens,l.completion_tokens,l.total_tokens,l.ttft_ms??"",l.request_duration_ms??"",l.spend,l.user??"",l.end_user??"",l.api_key.slice(0,12)+"…"]);
   const csv = [headers,...rows].map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
   const blob = new Blob(["﻿"+csv],{type:"text/csv;charset=utf-8"});
@@ -354,11 +354,11 @@ function DetailDrawer({ log, open, onClose, isDetailLoading, detailError, onRetr
               <CopyIconButton text={log.call_id} />
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="secondary" className="text-[10px]">Upstream ID</Badge>
+              <Badge variant="secondary" className="text-[10px]">Request ID</Badge>
               {log.request_id ? (
                 <><code>{log.request_id}</code><CopyIconButton text={log.request_id} /></>
               ) : (
-                <span className="text-muted-foreground italic">— 无上游 ID（失败/历史行）</span>
+                <span className="text-muted-foreground italic">— 无 Request ID（失败/历史行）</span>
               )}
             </div>
             </div>
@@ -621,7 +621,7 @@ export function SpendLogsPage() {
               </>
             )}
             <div className="h-5 w-px bg-border mx-1" />
-            <div className="w-36 relative"><Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground"/><Input placeholder="Call / Upstream ID…" value={requestIdInput} onChange={e => handleRequestIdInput(e.target.value)} className="h-7 pl-7 text-xs"/></div>
+            <div className="w-36 relative"><Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground"/><Input placeholder="Call / Request ID…" value={requestIdInput} onChange={e => handleRequestIdInput(e.target.value)} className="h-7 pl-7 text-xs"/></div>
             <div className="w-32"><Input placeholder="Model…" value={modelFilter} onChange={e => { setModelFilter(e.target.value); setPage(1); }} className="h-7 text-xs"/></div>
             <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setPage(1); }}>
               <SelectTrigger className="h-7 w-[100px] text-xs"><SelectValue placeholder="Status"/></SelectTrigger>
@@ -643,7 +643,7 @@ export function SpendLogsPage() {
                   <TableHeader>
                     <TableRow>
                       <TableHead className="text-xs whitespace-nowrap">Call ID</TableHead>
-                      <TableHead className="text-xs whitespace-nowrap">Upstream ID</TableHead>
+                      <TableHead className="text-xs whitespace-nowrap">Request ID</TableHead>
                       <TableHead className="text-xs whitespace-nowrap"><Clock className="h-3 w-3 inline mr-1"/>Time</TableHead>
                       <TableHead className="text-xs whitespace-nowrap">Type</TableHead>
                       <TableHead className="text-xs whitespace-nowrap">Model</TableHead>

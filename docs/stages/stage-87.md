@@ -21,7 +21,7 @@ Stage 85 已在前端落地了 `call_id` + `request_id` 的展示与搜索，但
 | 用户诉求 | 现状 | 缺口 |
 |----------|------|------|
 | (A) `call_id` 列表最左列 | `call_id` 是第 8 列（Time/Type/Model/Key/EndUser/IP/Status 之后），见 `index.tsx:639/669` | 要移到 `Time`（:632）之前 |
-| (B) 抽屉显示双 id | 抽屉 header 只显示 `call_id`（`index.tsx:349-352`），`request_id` 未渲染 | 要加 `request_id` 且显著区分 |
+| (B) 抽屉显示双 id | 抽屉 header 只显示 `call_id`（`index.tsx:349-352`），`request_id` 未渲染 | 要加 `request_id` 且显著区分，Badge 标签使用 "Call ID" / "Request ID" |
 | (C) 模糊搜索 | 搜索 `?request_id=` 后端走 `call_id = ? OR request_id = ?` 精确等值（db.rs:1521/1551/1828/1854/4243-4244） | 要改 `LIKE '%X%'` 模糊匹配 |
 
 ## ① 前端：列重排（crates/aigw-frontend/src/pages/spend-logs/index.tsx）

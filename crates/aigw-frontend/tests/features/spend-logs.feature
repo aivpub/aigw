@@ -75,10 +75,10 @@ Feature: Spend Logs
   Scenario: Call ID is the leftmost column in the table header
     Then the first column header of the spend logs table should be "Call ID"
 
-  Scenario: Detail drawer shows both Call ID and Upstream ID badges
+  Scenario: Detail drawer shows both Call ID and Request ID badges
     When I click on the first spend log row
     Then I should see a "Call ID" badge in the detail drawer
-    And I should see a "Upstream ID" badge in the detail drawer
+    And I should see a "Request ID" badge in the detail drawer
 
   Scenario: Fuzzy search by call_id prefix filters logs
     When I type "req-00" into the call ID search
