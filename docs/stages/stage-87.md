@@ -2,7 +2,7 @@
 
 **Phase**: 34 — 售后对账链路收尾
 **优先级**: P1
-**状态**: ⏳ 待开始
+**状态**: ✅ 完成（2026-07-28）
 **预估**: 5h
 **前置**: Stage 85（spend_logs 同时有 `call_id` PK + 可空 `request_id`，前端 3 interface + 展示列 + CSV + 搜索已落地）；`docs/request-id-backfill-sop.md`（历史行回填 SQL SOP，与本 Stage 解耦）
 
@@ -90,14 +90,13 @@ Stage 85 已在前端落地了 `call_id` + `request_id` 的展示与搜索，但
 
 ## 交付清单
 
-- [ ] `crates/aigw-frontend/src/pages/spend-logs/index.tsx`：列重排（Call ID 最左）+ 抽屉双 id Badge
-- [ ] `crates/aigw-core/src/db.rs`：5 处 `=` → `LIKE '%X%'` + 通配符转义
-- [ ] `crates/aigw-frontend/tests/features/spend-logs.feature`：3 新场景
-- [ ] `crates/aigw-frontend/tests/steps/spend-logs.steps.ts`：新断言
-- [ ] `crates/aigw-frontend/tests/steps/api-mocks.ts`：mock 按 query param 过滤
-- [ ] `crates/aigw-core` UT：LIKE 模糊匹配三后端一致
-- [ ] `docs/stages/stage-88.md`：本文档
-- [ ] `docs/stages/stage-roadmap.md` + `docs/11-next-steps.md`：Phase 34 同步
+- [x] `crates/aigw-frontend/src/pages/spend-logs/index.tsx`：列重排（Call ID 最左）+ 抽屉双 id Badge
+- [x] `crates/aigw-core/src/db.rs`：5 处 `=` → `LIKE '%X%'` + 通配符转义
+- [x] `crates/aigw-frontend/tests/features/spend-logs.feature`：3 新场景
+- [x] `crates/aigw-frontend/tests/steps/spend-logs.steps.ts`：新断言
+- [x] `crates/aigw-frontend/tests/steps/api-mocks.ts`：mock 按 query param 过滤
+- [x] `crates/aigw-core` UT：LIKE 模糊匹配三后端一致（254 全过）
+- [x] `docs/stages/stage-87.md`：本文档
 
 ## 风险与决策
 
