@@ -207,6 +207,19 @@ enum Commands {
     /// (`INSERT OR IGNORE` / `ON CONFLICT DO NOTHING`).  Encrypted tables
     /// (`credentials` / `proxy_models`) copy ciphertext verbatim — both ends
     /// must share the same master_key.  One-shot CLI, not a daemon.
+    ///
+    /// # Examples
+    ///
+    /// Sync spend_logs from the last 3 days with batch size 10:
+    ///
+    /// ```text
+    /// aigw-migrate sync \
+    ///   -s postgres://user:pass@source:5432/aigw \
+    ///   -t postgres://user:pass@target:5432/aigw \
+    ///   --tables spend_logs \
+    ///   --days 3 \
+    ///   --batch-size 10
+    /// ```
     Sync {
         /// Source aigw database URL (or AIGW_SYNC_SOURCE_URL / AIGW_UPSTREAM_DB_URL)
         #[arg(long, short = 's')]
@@ -237,6 +250,9 @@ enum Commands {
         /// Rows per target-side INSERT transaction (default 10).
         #[arg(long = "batch-size", short = 'b', default_value_t = 10)]
         batch_size: usize,
+        /// Print SQL queries and per-batch read/write timing to stderr.
+        #[arg(long, default_value_t = false)]
+        debug: bool,
     },
 }
 
@@ -402,6 +418,7 @@ async fn main() -> anyhow::Result<()> {
             end_before,
             skip_body,
             batch_size,
+            debug,
         } => {
             let source_url = resolve_sync_source_url(source_url)?;
             let target_url = resolve_sync_target_url(target_url)?;
@@ -420,6 +437,9 @@ async fn main() -> anyhow::Result<()> {
             if let Some(n) = days {
                 println!("  --days: {} (spend_logs only, UTC)", n);
             }
+            if debug {
+                println!("  --debug: showing SQL and per-batch timing");
+            }
             println!(
                 "Sync: aigw ({}) -> aigw ({}) [{} tables{}]",
                 source_url,
@@ -436,6 +456,7 @@ async fn main() -> anyhow::Result<()> {
                 &cursor,
                 skip_body,
                 batch_size,
+                debug,
             )
             .await?;
             println!(

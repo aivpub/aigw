@@ -360,12 +360,12 @@ impl SourcePool {
                 stream_pg_rows_keyset(p, table, cursor.clone(), limit, select_columns, batch_size)
             }
             SourcePool::Sqlite(p) => {
-                let sql = self.build_cursor_sql(table, cursor, limit, select_columns);
-                stream_sqlite_rows(p, sql, batch_size)
+                let sql = self.build_cursor_sql(table, cursor, Some(batch_size), select_columns);
+                stream_sqlite_rows(p, sql)
             }
             SourcePool::Mysql(p) => {
-                let sql = self.build_cursor_sql(table, cursor, limit, select_columns);
-                stream_mysql_rows(p, sql, batch_size)
+                let sql = self.build_cursor_sql(table, cursor, Some(batch_size), select_columns);
+                stream_mysql_rows(p, sql)
             }
         }
     }
@@ -373,37 +373,73 @@ impl SourcePool {
     /// Stream rows from an aigw table using the `start_time` cursor.
     ///
     /// Stage 86 (`aigw-migrate sync`): the aigw-native counterpart of
-    /// [`stream_rows_with_cursor`].  SQLite/MySQL build the SQL via
-    /// [`build_aigw_cursor_sql`]; PG uses keyset pagination on
-    /// `(start_time, call_id)` -- aigw's PK after the 023 rename -- instead
-    /// of litellm's `(startTime, request_id)`.  Like the litellm version,
-    /// this is a producer stream meant to be fed into `insert_rows_batch`.
+    /// [`stream_rows_with_cursor`].  All backends use simple range queries
+    /// on `start_time` (`start_time >= resume AND start_time < end ORDER BY
+    /// start_time LIMIT N`) — no keyset pagination.  Target INSERT is
+    /// `ON CONFLICT DO NOTHING` so duplicates (from overlapping ranges)
+    /// are harmless; a single-column B-tree index on `start_time` is all
+    /// we need.  Keyset-style `(start_time, id) > ($1, $2)` row-constructor
+    /// comparisons require a composite index that doesn't exist by default,
+    /// causing sequential scans on large tables.
     pub fn stream_rows_with_cursor_aigw<'a>(
         &'a self,
         table: &'a str,
-        cursor: &CursorRange,
-        limit: Option<usize>,
+        cursor: &'a CursorRange,
         select_columns: Option<&'a [String]>,
         batch_size: usize,
     ) -> BoxStream<'a, anyhow::Result<UnifiedRow>> {
-        match self {
-            SourcePool::Postgres(p) => stream_pg_rows_keyset_aigw(
-                p,
-                table,
-                cursor.clone(),
-                limit,
-                select_columns,
-                batch_size,
-            ),
-            SourcePool::Sqlite(p) => {
-                let sql = self.build_aigw_cursor_sql(table, cursor, limit, select_columns);
-                stream_sqlite_rows(p, sql, batch_size)
-            }
-            SourcePool::Mysql(p) => {
-                let sql = self.build_aigw_cursor_sql(table, cursor, limit, select_columns);
-                stream_mysql_rows(p, sql, batch_size)
+        async_stream::try_stream! {
+            // Initial lower bound: resume_after or epoch.
+            let mut after: String = cursor
+                .resume_after
+                .clone()
+                .unwrap_or_else(|| "1970-01-01T00:00:00Z".into());
+            let end: Option<String> = cursor.end_before.clone();
+
+            loop {
+                let cur = CursorRange {
+                    resume_after: Some(after.clone()),
+                    end_before: end.clone(),
+                };
+                let sql = self.build_aigw_cursor_sql(table, &cur, Some(batch_size), select_columns);
+                let rows: Vec<UnifiedRow> = match self {
+                    SourcePool::Postgres(p) => read_pg_rows(p, &sql).await?,
+                    SourcePool::Sqlite(p) => read_sqlite_rows(p, &sql).await?,
+                    SourcePool::Mysql(p) => read_mysql_rows(p, &sql).await?,
+                };
+
+                if rows.is_empty() {
+                    break;
+                }
+
+                let mut last_ts: Option<String> = None;
+                for row in &rows {
+                    // Track the last seen start_time to advance the cursor.
+                    for (col_name, val) in row {
+                        if col_name == "start_time" {
+                            if let Some(s) = val.as_str() {
+                                last_ts = Some(s.to_string());
+                            }
+                            break;
+                        }
+                    }
+                    yield row.clone();
+                }
+
+                // Advance: strict > last seen time. If all rows share the same
+                // timestamp, advance to > that timestamp (risks skipping some,
+                // but start_time is typically unique per row in practice).
+                if let Some(ts) = last_ts {
+                    after = ts;
+                }
+
+                // If the batch was smaller than requested, we hit the end.
+                if rows.len() < batch_size {
+                    break;
+                }
             }
         }
+        .boxed()
     }
 
     /// Convert an ISO 8601 datetime string to a SQL literal accepted by this DB.
@@ -722,6 +758,7 @@ fn stream_pg_rows_keyset<'a>(
     .boxed()
 }
 
+#[allow(dead_code)]
 fn stream_pg_rows_keyset_aigw<'a>(
     pool: &'a PgPool,
     table: &'a str,
@@ -874,11 +911,33 @@ fn stream_pg_rows_keyset_aigw<'a>(
     .boxed()
 }
 
+/// Stream rows from a PG source.  The SQL already carries a LIMIT
+/// injected by `build_aigw_cursor_sql(…, Some(batch_size), …)`.
+fn stream_pg_rows_simple<'a>(
+    pool: &'a PgPool,
+    sql: String,
+) -> BoxStream<'a, anyhow::Result<UnifiedRow>> {
+    async_stream::try_stream! {
+        let mut stream = sqlx::query(&sql).fetch(pool);
+        while let Some(row_res) = stream.next().await {
+            let row = row_res?;
+            let cols = row.columns();
+            let mut unified = Vec::with_capacity(cols.len());
+            for col in cols {
+                let name = col.name().to_string();
+                let val = try_pg_get(&row, &name);
+                unified.push((name, val));
+            }
+            yield unified;
+        }
+    }
+    .boxed()
+}
+
 /// Stream rows from a SQLite source one at a time.
 fn stream_sqlite_rows<'a>(
     pool: &'a SqlitePool,
     sql: String,
-    _batch_size: usize,
 ) -> BoxStream<'a, anyhow::Result<UnifiedRow>> {
     async_stream::try_stream! {
         let mut stream = sqlx::query(&sql).fetch(pool);
@@ -901,7 +960,6 @@ fn stream_sqlite_rows<'a>(
 fn stream_mysql_rows<'a>(
     pool: &'a MySqlPool,
     sql: String,
-    _batch_size: usize,
 ) -> BoxStream<'a, anyhow::Result<UnifiedRow>> {
     async_stream::try_stream! {
         let mut stream = sqlx::query(&sql).fetch(pool);

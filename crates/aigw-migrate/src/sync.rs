@@ -145,7 +145,13 @@ pub fn resolve_cursor(
             anyhow::bail!("--days must be >= 0, got {}", n);
         }
         let now = chrono::Utc::now();
-        let resume = now - chrono::Duration::days(n);
+        // resume = start of the day N days ago (00:00:00Z), so the SQL `>=`
+        // includes all rows from that day onwards.
+        let resume = (now - chrono::Duration::days(n))
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .map(|dt| chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc))
+            .unwrap_or(now - chrono::Duration::days(n));
         cursor.resume_after = Some(match cursor.resume_after {
             Some(existing) => {
                 // Stricter (later) lower bound wins.
@@ -198,18 +204,22 @@ pub async fn run_sync(
     cursor: &CursorRange,
     skip_body: bool,
     batch_size: usize,
+    debug: bool,
 ) -> anyhow::Result<SyncStats> {
     let batch_size = if batch_size == 0 { 10 } else { batch_size };
     let source = SourcePool::connect(source_url).await?;
     let target = SourcePool::connect(target_url).await?;
     let empty_overrides: HashMap<String, String> = HashMap::new();
 
+    if debug {
+        eprintln!("[DEBUG] source kind: {:?}, target kind: {:?}", source.kind(), target.kind());
+    }
+
     let mut stats = SyncStats::default();
     for table in tables {
         let t = std::time::Instant::now();
         let result = if table == "spend_logs" {
-            sync_spend_logs(&source, &target, cursor, skip_body, batch_size, &empty_overrides)
-                .await
+            sync_spend_logs(&source, &target, cursor, skip_body, batch_size, debug).await
         } else {
             sync_plain_table(&source, &target, table, &empty_overrides).await
         };
@@ -259,6 +269,33 @@ async fn sync_plain_table(
     })
 }
 
+/// Returns the identity column name for the source `spend_logs` table and
+/// any column overrides needed for INSERT.  Handles pre-023 and post-023
+/// schema divergence:
+///
+/// - pre-023: the source has `request_id` as PK (no `call_id`).  Since the
+///   target is always post-023 with `call_id` (PK) + `request_id` (upstream
+///   provider id), we map `target.call_id ← source.request_id`.
+/// - post-023: the source has `call_id` (PK) + `request_id` (upstream).  Both
+///   columns match the target by name directly — same-schema, no overrides.
+///
+/// Returns `(id_column_name, overrides)`.
+async fn spend_logs_id_mapping(source: &SourcePool) -> anyhow::Result<(String, HashMap<String, String>)> {
+    let src_cols = source.column_types("spend_logs").await?;
+    let has_call_id = src_cols.iter().any(|(n, _, _)| n == "call_id");
+    let has_request_id = src_cols.iter().any(|(n, _, _)| n == "request_id");
+    if has_call_id {
+        // post-023: same schema on both ends, direct match.
+        Ok(("call_id".into(), HashMap::new()))
+    } else if has_request_id {
+        let mut overrides = HashMap::new();
+        overrides.insert("call_id".into(), "request_id".into());
+        Ok(("request_id".into(), overrides))
+    } else {
+        anyhow::bail!("spend_logs source has neither call_id nor request_id column");
+    }
+}
+
 /// Stream `spend_logs` from the source through the `start_time` cursor and
 /// batch-insert into the target.  `skip_body` prunes the three body columns
 /// from the source SELECT so they never leave the source DB.
@@ -268,8 +305,11 @@ async fn sync_spend_logs(
     cursor: &CursorRange,
     skip_body: bool,
     batch_size: usize,
-    overrides: &HashMap<String, String>,
+    debug: bool,
 ) -> anyhow::Result<TableSyncStats> {
+    // Detect source schema (pre-023 vs post-023) and build overrides.
+    let (id_column, overrides) = spend_logs_id_mapping(source).await?;
+
     // Target columns (filtered if --skip-body drops body columns).
     let tgt_cols_all = target.column_types("spend_logs").await?;
     let skip_set: std::collections::HashSet<&str> = if skip_body {
@@ -286,39 +326,162 @@ async fn sync_spend_logs(
         anyhow::bail!("spend_logs: all columns filtered out");
     }
 
-    // Source SELECT projection: every target column we will insert.  Because
-    // aigw is same-schema on both ends, the source column names equal the
-    // target column names — direct match, no overrides.
-    let select_columns: Vec<String> = filtered_cols.iter().map(|(n, _, _)| n.clone()).collect();
+    // Source SELECT projection: map target column names → actual source column
+    // names.  In post-023 the mapping is identity; in pre-023 we must replace
+    // `call_id` (which doesn't exist on the source) with `request_id`.
+    let select_columns: Vec<String> = filtered_cols
+        .iter()
+        .map(|(n, _, _)| {
+            if n == "call_id" {
+                id_column.clone()
+            } else {
+                n.clone()
+            }
+        })
+        .collect();
+
+    if debug {
+        let col_names: Vec<&str> = select_columns.iter().map(|s| s.as_str()).collect();
+        eprintln!("[DEBUG] source id_column: \"{}\"", id_column);
+        eprintln!(
+            "[DEBUG] select_columns ({}): [{}]",
+            select_columns.len(),
+            col_names.join(", ")
+        );
+        eprintln!(
+            "[DEBUG] insert target cols ({}): [{}]",
+            filtered_cols.len(),
+            filtered_cols.iter().map(|(n, _, _)| n.as_str()).collect::<Vec<_>>().join(", ")
+        );
+        if !overrides.is_empty() {
+            eprintln!("[DEBUG] column overrides {:?}", overrides);
+        }
+        // Print equivalent SQL that would runnon-PG path via build_aigw_cursor_sql,
+        // PG uses keyset pagination which is similar but with (start_time, id) anchor).
+        let sql = source.build_aigw_cursor_sql("spend_logs", cursor, Some(batch_size), Some(&select_columns));
+        eprintln!("[DEBUG] cursor SQL (SQLite/MySQL; PG uses keyset pagination):");
+        eprintln!("[DEBUG]   {}", sql);
+        eprintln!(
+            "[DEBUG] target INSERT: {} (col_names) ON CONFLICT DO NOTHING, batch_size={}",
+            target.insert_prefix(),
+            batch_size
+        );
+    }
+
+    // Count matching rows first for progress context.
+    let quoted = source.quote_ident("spend_logs");
+    let mut conditions: Vec<String> = Vec::new();
+    if let Some(ref after) = cursor.resume_after {
+        conditions.push(format!("{} >= {}", quoted, source.time_literal(after)));
+    }
+    if let Some(ref before) = cursor.end_before {
+        conditions.push(format!("{} < {}", quoted, source.time_literal(before)));
+    }
+    let count_sql = if conditions.is_empty() {
+        format!("SELECT COUNT(*) FROM {}", quoted)
+    } else {
+        format!("SELECT COUNT(*) FROM {} WHERE {}", quoted, conditions.join(" AND "))
+    };
+    let total_est = source.query_scalar_string(&count_sql)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(-1);
+    if total_est >= 0 {
+        eprintln!("  [EST] spend_logs: ~{} rows matching cursor", total_est);
+    }
 
     let mut stream = source.stream_rows_with_cursor_aigw(
         "spend_logs",
         cursor,
-        None,
         Some(&select_columns),
         batch_size,
     );
 
+    let t_start = std::time::Instant::now();
+    let log_every = (batch_size * 10).max(10);
     let mut inserted_total = 0usize;
     let mut ignored_total = 0usize;
+    let mut since_log = 0usize;
+    let mut last_cursor: Option<String> = None;
     let mut buf: Vec<UnifiedRow> = Vec::with_capacity(batch_size);
+    let mut write_acc = std::time::Duration::ZERO;
+    eprintln!("  [START] spend_logs: streaming from source, batch_size={} ...", batch_size);
     while let Some(row_res) = stream.next().await {
         let row = row_res?;
+        // Track cursor position for progress reporting.
+        for (col_name, val) in &row {
+            if col_name == "start_time" {
+                if let Some(s) = val.as_str() {
+                    last_cursor = Some(s.to_string());
+                }
+                break;
+            }
+        }
         buf.push(row);
+        since_log += 1;
         if buf.len() >= batch_size {
             let batch = std::mem::replace(&mut buf, Vec::with_capacity(batch_size));
+            let t_write = std::time::Instant::now();
             let (ins, ign) =
-                native::insert_rows_batch(target, "spend_logs", &filtered_cols, &batch, overrides)
+                native::insert_rows_batch(target, "spend_logs", &filtered_cols, &batch, &overrides)
                     .await?;
+            let write_elapsed = t_write.elapsed();
+            write_acc += write_elapsed;
             inserted_total += ins;
             ignored_total += ign;
+            if since_log >= log_every {
+                let total_elapsed = t_start.elapsed();
+                let rate = inserted_total as f64 / total_elapsed.as_secs_f64().max(0.001);
+                if debug {
+                    let read_elapsed = total_elapsed.saturating_sub(write_acc);
+                    eprintln!(
+                        "  [PROGRESS] spend_logs: scanned={} inserted={} ignored={} ({:.0} rows/s, read={:?} write={:?}, cursor={})",
+                        since_log,
+                        inserted_total,
+                        ignored_total,
+                        rate,
+                        read_elapsed,
+                        write_acc,
+                        last_cursor.as_deref().unwrap_or("<none>"),
+                    );
+                } else {
+                    eprintln!(
+                        "  [PROGRESS] spend_logs: scanned={} inserted={} ignored={} ({:.0} rows/s, cursor={})",
+                        since_log,
+                        inserted_total,
+                        ignored_total,
+                        rate,
+                        last_cursor.as_deref().unwrap_or("<none>"),
+                    );
+                }
+                since_log = 0;
+            }
         }
     }
     if !buf.is_empty() {
         let (ins, ign) =
-            native::insert_rows_batch(target, "spend_logs", &filtered_cols, &buf, overrides).await?;
+            native::insert_rows_batch(target, "spend_logs", &filtered_cols, &buf, &overrides).await?;
         inserted_total += ins;
         ignored_total += ign;
+    }
+    let elapsed = t_start.elapsed();
+    let rate = inserted_total as f64 / elapsed.as_secs_f64().max(0.001);
+    if debug {
+        let read_elapsed = elapsed.saturating_sub(write_acc);
+        eprintln!(
+            "  [TIMING] spend_logs: {:?} ({} inserted, {} ignored, {:.0} rows/s, read={:?} write={:?})",
+            elapsed, inserted_total, ignored_total, rate, read_elapsed, write_acc
+        );
+    } else {
+        eprintln!(
+            "  [TIMING] spend_logs: {:?} ({} inserted, {} ignored, {:.0} rows/s)",
+            elapsed, inserted_total, ignored_total, rate
+        );
+    }
+    if let Some(ts) = &last_cursor {
+        eprintln!("  [RESUME] spend_logs last cursor: {}", ts);
     }
     Ok(TableSyncStats {
         inserted: inserted_total,

@@ -140,6 +140,7 @@ async fn test_full_sync_sqlite_to_sqlite() {
         &CursorRange::default(),
         false,
         10,
+        false,
     )
     .await
     .expect("run_sync");
@@ -202,6 +203,7 @@ async fn test_tables_subset_only_syncs_named() {
         &CursorRange::default(),
         false,
         10,
+        false,
     )
     .await
     .unwrap();
@@ -251,6 +253,7 @@ async fn test_days_filter_spend_logs_only() {
         &cursor,
         false,
         10,
+        false,
     )
     .await
     .unwrap();
@@ -289,6 +292,7 @@ async fn test_idempotent_rerun() {
         &CursorRange::default(),
         false,
         10,
+        false,
     )
     .await
     .unwrap();
@@ -301,6 +305,7 @@ async fn test_idempotent_rerun() {
         &CursorRange::default(),
         false,
         10,
+        false,
     )
     .await
     .unwrap();
@@ -340,6 +345,7 @@ async fn test_skip_body_nulls_body_columns() {
         &CursorRange::default(),
         true, // skip_body
         10,
+        false,
     )
     .await
     .unwrap();
@@ -409,6 +415,7 @@ async fn test_config_excluded_by_default_explicit_syncs() {
         &CursorRange::default(),
         false,
         10,
+        false,
     )
     .await
     .unwrap();
@@ -433,6 +440,7 @@ async fn test_config_excluded_by_default_explicit_syncs() {
         &CursorRange::default(),
         false,
         10,
+        false,
     )
     .await
     .unwrap();
