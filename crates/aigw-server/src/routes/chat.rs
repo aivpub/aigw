@@ -37,6 +37,10 @@ pub(crate) struct ResolvedUpstream {
     pub(crate) input_cost_per_token: Option<f64>,
     /// USD per output token (from model_info JSON)
     pub(crate) output_cost_per_token: Option<f64>,
+    /// USD per cache-read input token
+    pub(crate) cache_read_input_token_cost: Option<f64>,
+    /// USD per cache-creation input token
+    pub(crate) cache_creation_input_token_cost: Option<f64>,
     /// proxy_models UUID (model_id)
     pub(crate) model_id: Option<String>,
     /// proxy_models.model_name — deployment name for model_group (litellm-compatible)
@@ -52,7 +56,7 @@ pub(crate) struct ResolvedUpstream {
 ///   - model_info is the authoritative cost lookup location
 ///   - litellm_params is where users set pricing; Deployment.__init__ mirrors it to model_info
 #[allow(dead_code)]
-fn extract_pricing(model_info: &Value, params_json: &Value) -> (Option<f64>, Option<f64>) {
+fn extract_pricing(model_info: &Value, params_json: &Value) -> (Option<f64>, Option<f64>, Option<f64>, Option<f64>) {
     let input = model_info
         .get("input_cost_per_token")
         .and_then(|v| v.as_f64())
@@ -61,15 +65,68 @@ fn extract_pricing(model_info: &Value, params_json: &Value) -> (Option<f64>, Opt
         .get("output_cost_per_token")
         .and_then(|v| v.as_f64())
         .or_else(|| params_json.get("output_cost_per_token").and_then(|v| v.as_f64()));
-    (input, output)
+    let cache_read = model_info
+        .get("cache_read_input_token_cost")
+        .and_then(|v| v.as_f64())
+        .or_else(|| params_json.get("cache_read_input_token_cost").and_then(|v| v.as_f64()));
+    let cache_create = model_info
+        .get("cache_creation_input_token_cost")
+        .and_then(|v| v.as_f64())
+        .or_else(|| params_json.get("cache_creation_input_token_cost").and_then(|v| v.as_f64()));
+    (input, output, cache_read, cache_create)
 }
 
-/// Calculate spend from token counts and per-token pricing.
-/// Returns 0.0 if no pricing data is available.
-pub(crate) fn calc_spend(prompt_tokens: i32, completion_tokens: i32, input_cost: Option<f64>, output_cost: Option<f64>) -> f64 {
-    let input = prompt_tokens as f64 * input_cost.unwrap_or(0.0);
-    let output = completion_tokens as f64 * output_cost.unwrap_or(0.0);
-    input + output
+/// Calculate spend with three-tier cache billing.
+///
+/// If cache_read/cache_creation pricing is absent, falls back to input_cost_per_token
+/// (litellm `_cost_per_token_custom_pricing_helper` behaviour).
+/// Anthropic callers MUST normalize prompt_tokens before calling (add cache_read + cache_creation).
+pub(crate) fn calc_spend(
+    prompt_tokens: i32,
+    completion_tokens: i32,
+    input_cost: Option<f64>,
+    output_cost: Option<f64>,
+    cache_read_tokens: i32,
+    cache_creation_tokens: i32,
+    cache_read_cost: Option<f64>,
+    cache_creation_cost: Option<f64>,
+) -> f64 {
+    let regular = 0.max(prompt_tokens - cache_read_tokens - cache_creation_tokens) as f64;
+    // Fallback: cache pricing missing → use regular input cost (don't zero out)
+    let read_cost = cache_read_cost.unwrap_or(input_cost.unwrap_or(0.0));
+    let create_cost = cache_creation_cost.unwrap_or(input_cost.unwrap_or(0.0));
+    let base_input = input_cost.unwrap_or(0.0);
+    regular * base_input
+        + cache_read_tokens as f64 * read_cost
+        + cache_creation_tokens as f64 * create_cost
+        + completion_tokens as f64 * output_cost.unwrap_or(0.0)
+}
+
+/// Extract cache-read tokens from usage JSON (Anthropic + OpenAI formats).
+pub(crate) fn extract_cache_read_tokens(usage: &Value) -> i32 {
+    // Anthropic: usage.cache_read_input_tokens
+    if let Some(v) = usage.get("cache_read_input_tokens").and_then(|v| v.as_i64()) {
+        return v as i32;
+    }
+    // OpenAI: usage.prompt_tokens_details.cached_tokens
+    usage.get("prompt_tokens_details")
+        .and_then(|d| d.get("cached_tokens"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0) as i32
+}
+
+/// Extract cache-creation tokens from usage JSON.
+pub(crate) fn extract_cache_creation_tokens(usage: &Value) -> i32 {
+    // Anthropic: usage.cache_creation_input_tokens
+    if let Some(v) = usage.get("cache_creation_input_tokens").and_then(|v| v.as_i64()) {
+        return v as i32;
+    }
+    // OpenAI: prompt_tokens_details.cache_write_tokens or cache_creation_tokens
+    let details = usage.get("prompt_tokens_details");
+    details.and_then(|d| d.get("cache_write_tokens"))
+        .or_else(|| details.and_then(|d| d.get("cache_creation_tokens")))
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0) as i32
 }
 
 /// Look up a model by name in proxy_models, decrypt litellm_params if encrypted,
@@ -138,7 +195,7 @@ pub(crate) async fn resolve_upstream_params(
             // Extract pricing: model_info is the primary source (litellm-standard),
             // decrypted litellm_params is the fallback for deployments where pricing
             // was set only in proxy config and not mirrored to model_info.
-            let (input_cost, output_cost) = extract_pricing(&m.model_info, &params_json);
+            let (input_cost, output_cost, cache_read_cost, cache_create_cost) = extract_pricing(&m.model_info, &params_json);
 
             // Extract model_group / custom_llm_provider from proxy_models for SpendLog
             let model_id = Some(m.model_id.clone());
@@ -248,6 +305,8 @@ pub(crate) async fn resolve_upstream_params(
                     model_name: upstream_model,
                     input_cost_per_token: input_cost,
                     output_cost_per_token: output_cost,
+                    cache_read_input_token_cost: cache_read_cost,
+                    cache_creation_input_token_cost: cache_create_cost,
                     model_id,
                     model_group: model_group.clone(),
                     custom_llm_provider: custom_llm_provider.clone(),
@@ -276,6 +335,8 @@ pub(crate) async fn resolve_upstream_params(
                     model_name: upstream_model,
                     input_cost_per_token: input_cost,
                     output_cost_per_token: output_cost,
+                    cache_read_input_token_cost: cache_read_cost,
+                    cache_creation_input_token_cost: cache_create_cost,
                     model_id,
                     model_group,
                     custom_llm_provider,
@@ -305,6 +366,8 @@ pub(crate) async fn resolve_upstream_params(
                         model_name: model_name.to_string(),
                         input_cost_per_token: None,
                         output_cost_per_token: None,
+                        cache_read_input_token_cost: None,
+                        cache_creation_input_token_cost: None,
                         model_id: None,
                         model_group: None,
                         custom_llm_provider: None,
@@ -1239,6 +1302,8 @@ pub async fn chat_completions(
             let mut stream_prompt_tokens: i32 = 0;
             let mut stream_completion_tokens: i32 = 0;
             let mut stream_total_tokens: i32 = 0;
+            let mut stream_cache_read: i32 = 0;
+            let mut stream_cache_creation: i32 = 0;
             let mut failure: Option<(u16, String)> = None;
             // v6.1 §4.3: extract upstream id from the first chunk carrying it
             // (OpenAI chunks put `id` at the top level). Borrow val before any push/move.
@@ -1275,6 +1340,8 @@ pub async fn chat_completions(
                                                     .get("total_tokens")
                                                     .and_then(|v| v.as_i64())
                                                     .unwrap_or(0) as i32;
+                                                stream_cache_read = extract_cache_read_tokens(usage);
+                                                stream_cache_creation = extract_cache_creation_tokens(usage);
                                             }
                                             if let Some(choices) = val.get("choices") {
                                                 if !choices.as_array().map(|a| a.is_empty()).unwrap_or(true) {
@@ -1299,7 +1366,23 @@ pub async fn chat_completions(
             }
 
             let now = chrono::Utc::now();
-            let streaming_spend = calc_spend(stream_prompt_tokens, stream_completion_tokens, deployment.input_cost_per_token, deployment.output_cost_per_token);
+            // Anthropic-style providers: normalize prompt_tokens for cache tokens
+            // (Anthropic doesn't include cache_read/cache_creation in input_tokens)
+            let effective_prompt = if deployment.provider_type.is_anthropic_style() {
+                stream_prompt_tokens + stream_cache_read + stream_cache_creation
+            } else {
+                stream_prompt_tokens
+            };
+            let streaming_spend = calc_spend(
+                effective_prompt,
+                stream_completion_tokens,
+                deployment.input_cost_per_token,
+                deployment.output_cost_per_token,
+                stream_cache_read,
+                stream_cache_creation,
+                deployment.cache_read_input_token_cost,
+                deployment.cache_creation_input_token_cost,
+            );
 
             // Build a completion-style response JSON from collected chunks
             let assembled_response = if chunk_jsons.is_empty() {
@@ -1442,6 +1525,8 @@ pub async fn chat_completions(
                     endpoint: "/v1/chat/completions".to_string(),
                     prompt_tokens: stream_prompt_tokens as i64,
                     completion_tokens: stream_completion_tokens as i64,
+                    cache_read_input_tokens: stream_cache_read as i64,
+                    cache_creation_input_tokens: stream_cache_creation as i64,
                     spend: streaming_spend,
                     api_requests: 1,
                     successful_requests: 1,
@@ -1552,11 +1637,25 @@ pub async fn chat_completions(
         // 6. Record spend log
         let now = chrono::Utc::now();
         let usage = resp_body.get("usage");
+        let prompt_tokens = usage.and_then(|u| u.get("prompt_tokens")).and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+        let completion_tokens = usage.and_then(|u| u.get("completion_tokens")).and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+        let cache_read = usage.map(|u| extract_cache_read_tokens(u)).unwrap_or(0);
+        let cache_create = usage.map(|u| extract_cache_creation_tokens(u)).unwrap_or(0);
+        // Anthropic normalization
+        let effective_prompt = if deployment.provider_type.is_anthropic_style() {
+            prompt_tokens + cache_read + cache_create
+        } else {
+            prompt_tokens
+        };
         let spend_amount = calc_spend(
-            usage.and_then(|u| u.get("prompt_tokens")).and_then(|v| v.as_i64()).unwrap_or(0) as i32,
-            usage.and_then(|u| u.get("completion_tokens")).and_then(|v| v.as_i64()).unwrap_or(0) as i32,
+            effective_prompt,
+            completion_tokens,
             deployment.input_cost_per_token,
             deployment.output_cost_per_token,
+            cache_read,
+            cache_create,
+            deployment.cache_read_input_token_cost,
+            deployment.cache_creation_input_token_cost,
         );
 
         let spend_log = aigw_core::models::SpendLog {
@@ -1663,6 +1762,8 @@ pub async fn chat_completions(
                 endpoint: "/v1/chat/completions".to_string(),
                 prompt_tokens: spend_log.prompt_tokens as i64,
                 completion_tokens: spend_log.completion_tokens as i64,
+                cache_read_input_tokens: 0,
+                cache_creation_input_tokens: 0,
                 spend: spend_log.spend,
                 api_requests: 1,
                 successful_requests: if is_success { 1 } else { 0 },
@@ -2449,5 +2550,88 @@ mod tests {
         assert_eq!(deployments[0].upstream_model, "azure/gpt-4");
         // The proxy model_name (model_group) should be the deployment name
         assert_eq!(deployments[0].model_group.as_deref(), Some("my-gpt-proxy"));
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // Stage 90: Cache detection + three-tier billing tests
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    #[test]
+    fn test_calc_spend_no_cache_no_pricing() {
+        let spend = calc_spend(100, 50, None, None, 0, 0, None, None);
+        assert_eq!(spend, 0.0);
+    }
+
+    #[test]
+    fn test_calc_spend_with_cache_read() {
+        // prompt=600, cache_read=500, cache_create=0, input=$0.01, cache_read=$0.0025
+        // regular = 100 * 0.01 = $1.0, cache_read = 500 * 0.0025 = $1.25, total = $2.25
+        let spend = calc_spend(600, 0, Some(0.01), Some(0.02), 500, 0, Some(0.0025), None);
+        assert!((spend - 2.25).abs() < 0.0001, "expected 2.25, got {}", spend);
+    }
+
+    #[test]
+    fn test_calc_spend_cache_cost_fallback() {
+        // cache pricing None → fallback to input_cost_per_token
+        // prompt=600, cache_read=500, input=$0.01
+        // regular = 100 * 0.01 = 1.0, cache_read = 500 * 0.01 = 5.0, total = 6.0
+        let spend = calc_spend(600, 0, Some(0.01), None, 500, 0, None, None);
+        assert!((spend - 6.0).abs() < 0.0001, "expected 6.0, got {}", spend);
+    }
+
+    #[test]
+    fn test_calc_spend_with_cache_create() {
+        // prompt=700, cache_read=300, cache_create=50, input=$0.01
+        // regular = 350 * 0.01 = 3.5
+        // cache_read = 300 * 0.0025 = 0.75
+        // cache_create = 50 * 0.0125 = 0.625
+        // total = 4.875
+        let spend = calc_spend(700, 100, Some(0.01), Some(0.02), 300, 50, Some(0.0025), Some(0.0125));
+        // regular=350*0.01=3.5 + cache_read=300*0.0025=0.75 + cache_create=50*0.0125=0.625 + completion=100*0.02=2.0 = 6.875
+        assert!((spend - 6.875).abs() < 0.0001, "expected 6.875, got {}", spend);
+    }
+
+    #[test]
+    fn test_calc_spend_cache_tokens_exceed_prompt() {
+        // When cache tokens > prompt (can happen at provider level), regular = 0
+        let spend = calc_spend(100, 0, Some(0.01), None, 200, 0, Some(0.005), None);
+        // regular = max(0, 100-200) * 0.01 = 0, cache_read = 200 * 0.005 = 1.0
+        assert!((spend - 1.0).abs() < 0.0001);
+    }
+
+    #[test]
+    fn test_extract_cache_read_openai_format() {
+        let usage = json!({
+            "prompt_tokens": 600,
+            "prompt_tokens_details": {"cached_tokens": 500}
+        });
+        assert_eq!(extract_cache_read_tokens(&usage), 500);
+    }
+
+    #[test]
+    fn test_extract_cache_read_anthropic_format() {
+        let usage = json!({"cache_read_input_tokens": 500});
+        assert_eq!(extract_cache_read_tokens(&usage), 500);
+    }
+
+    #[test]
+    fn test_extract_cache_creation_openai_format() {
+        let usage = json!({
+            "prompt_tokens_details": {"cache_write_tokens": 50}
+        });
+        assert_eq!(extract_cache_creation_tokens(&usage), 50);
+    }
+
+    #[test]
+    fn test_extract_cache_creation_anthropic_format() {
+        let usage = json!({"cache_creation_input_tokens": 50});
+        assert_eq!(extract_cache_creation_tokens(&usage), 50);
+    }
+
+    #[test]
+    fn test_extract_cache_read_none() {
+        let usage = json!({"prompt_tokens": 100, "completion_tokens": 50});
+        assert_eq!(extract_cache_read_tokens(&usage), 0);
+        assert_eq!(extract_cache_creation_tokens(&usage), 0);
     }
 }

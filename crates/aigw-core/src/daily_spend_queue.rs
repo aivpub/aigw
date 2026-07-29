@@ -101,6 +101,8 @@ type AggEntry = (
     String, // model_group
     i64,    // prompt_tokens
     i64,    // completion_tokens
+    i64,    // cache_read_input_tokens
+    i64,    // cache_creation_input_tokens
     f64,    // spend
     i64,    // api_requests
     i64,    // successful_requests
@@ -147,6 +149,8 @@ fn aggregate_daily_spend(
                 log.model_group.clone(),
                 0,     // prompt_tokens
                 0,     // completion_tokens
+                0,     // cache_read_input_tokens
+                0,     // cache_creation_input_tokens
                 0.0,   // spend
                 0,     // api_requests
                 0,     // successful_requests
@@ -157,10 +161,12 @@ fn aggregate_daily_spend(
         entry.7 = log.model_group.clone();  // model_group — take last value
         entry.8 += log.prompt_tokens;
         entry.9 += log.completion_tokens;
-        entry.10 += log.spend;
-        entry.11 += log.api_requests;
-        entry.12 += log.successful_requests;
-        entry.13 += log.failed_requests;
+        entry.10 += log.cache_read_input_tokens;
+        entry.11 += log.cache_creation_input_tokens;
+        entry.12 += log.spend;
+        entry.13 += log.api_requests;
+        entry.14 += log.successful_requests;
+        entry.15 += log.failed_requests;
     }
 
     tables
@@ -201,12 +207,15 @@ async fn batch_upsert_daily_spend(
         let id = uuid::Uuid::new_v4().to_string();
         let sql = format!(
             "INSERT INTO {} (id, {}, date, api_key, model, model_group, custom_llm_provider, \
-             mcp_namespaced_tool_name, endpoint, prompt_tokens, completion_tokens, spend, \
+             mcp_namespaced_tool_name, endpoint, prompt_tokens, completion_tokens, \
+             cache_read_input_tokens, cache_creation_input_tokens, spend, \
              api_requests, successful_requests, failed_requests) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT ({}) DO UPDATE SET \
              prompt_tokens = {}.prompt_tokens + EXCLUDED.prompt_tokens, \
              completion_tokens = {}.completion_tokens + EXCLUDED.completion_tokens, \
+             cache_read_input_tokens = {}.cache_read_input_tokens + EXCLUDED.cache_read_input_tokens, \
+            cache_creation_input_tokens = {}.cache_creation_input_tokens + EXCLUDED.cache_creation_input_tokens, \
              spend = {}.spend + EXCLUDED.spend, \
              api_requests = {}.api_requests + EXCLUDED.api_requests, \
              successful_requests = {}.successful_requests + EXCLUDED.successful_requests, \
@@ -215,6 +224,7 @@ async fn batch_upsert_daily_spend(
             table_name, entity_col,
             conflict_cols,
             table_name, table_name, table_name, table_name, table_name, table_name,
+            table_name, table_name,
         );
 
         match db {
@@ -235,6 +245,8 @@ async fn batch_upsert_daily_spend(
                     .bind(entry.11)
                     .bind(entry.12)
                     .bind(entry.13)
+                    .bind(entry.14)
+                    .bind(entry.15)
                     .execute(pool)
                     .await?;
             }
@@ -255,6 +267,8 @@ async fn batch_upsert_daily_spend(
                     .bind(entry.11)
                     .bind(entry.12)
                     .bind(entry.13)
+                    .bind(entry.14)
+                    .bind(entry.15)
                     .execute(pool)
                     .await?;
             }
@@ -276,6 +290,8 @@ async fn batch_upsert_daily_spend(
                     .bind(entry.11)
                     .bind(entry.12)
                     .bind(entry.13)
+                    .bind(entry.14)
+                    .bind(entry.15)
                     .execute(pool)
                     .await?;
             }

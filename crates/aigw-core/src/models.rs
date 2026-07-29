@@ -172,6 +172,8 @@ pub struct DailySpendLog {
     pub endpoint: String,
     pub prompt_tokens: i64,
     pub completion_tokens: i64,
+    pub cache_read_input_tokens: i64,
+    pub cache_creation_input_tokens: i64,
     pub spend: f64,
     pub api_requests: i64,
     pub successful_requests: i64,

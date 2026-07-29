@@ -27,6 +27,12 @@ pub struct Deployment {
     pub input_cost_per_token: Option<f64>,
     /// USD per output token
     pub output_cost_per_token: Option<f64>,
+    /// USD per cache-read input token (Anthropic cache_read_input_tokens / OpenAI prompt_tokens_details.cached_tokens)
+    /// Falls back to input_cost_per_token when absent (litellm behaviour)
+    pub cache_read_input_token_cost: Option<f64>,
+    /// USD per cache-creation input token (Anthropic cache_creation_input_tokens / OpenAI prompt_tokens_details.cache_write_tokens)
+    /// Typically 25% more than input_cost; falls back to input_cost_per_token when absent
+    pub cache_creation_input_token_cost: Option<f64>,
     /// Decrypted litellm_params JSON (all original fields preserved)
     pub raw_params: Value,
     /// proxy_models UUID (model_id column)
@@ -78,6 +84,14 @@ impl ProviderType {
                 }
             }
         }
+    }
+
+    /// Whether this provider is Anthropic-native style.
+    /// Anthropic returns cache tokens in top-level usage fields (cache_read_input_tokens,
+    /// cache_creation_input_tokens) and its input_tokens does NOT include cached tokens.
+    /// Callers must normalize before calc_spend.
+    pub fn is_anthropic_style(&self) -> bool {
+        matches!(self, ProviderType::AnthropicNative)
     }
 }
 
@@ -135,6 +149,8 @@ mod tests {
             provider_type: ProviderType::OpenAICompatible,
             input_cost_per_token: Some(0.00003),
             output_cost_per_token: Some(0.00006),
+            cache_read_input_token_cost: Some(0.0000075),
+            cache_creation_input_token_cost: Some(0.0000375),
             raw_params: serde_json::json!({"model": "gpt-4", "custom_llm_provider": "openai"}),
             model_id: Some("m1".to_string()),
             model_group: Some("gpt-4".to_string()),
@@ -150,6 +166,8 @@ mod tests {
         assert_eq!(d.provider_type, ProviderType::OpenAICompatible);
         assert_eq!(d.input_cost_per_token, Some(0.00003));
         assert_eq!(d.output_cost_per_token, Some(0.00006));
+        assert_eq!(d.cache_read_input_token_cost, Some(0.0000075));
+        assert_eq!(d.cache_creation_input_token_cost, Some(0.0000375));
         assert_eq!(
             d.raw_params["custom_llm_provider"].as_str(),
             Some("openai")

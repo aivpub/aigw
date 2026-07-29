@@ -71,6 +71,8 @@ impl ModelResolver {
                     provider_type: ProviderType::OpenAICompatible,
                     input_cost_per_token: None,
                     output_cost_per_token: None,
+                    cache_read_input_token_cost: None,
+                    cache_creation_input_token_cost: None,
                     raw_params: json!({}),
                     model_id: None,
                     model_group: None,
@@ -142,8 +144,8 @@ impl ModelResolver {
             params_json.clone()
         };
 
-        // Extract pricing
-        let (input_cost, output_cost) = extract_pricing(&m.model_info, &params_json);
+        // Extract pricing (including cache tiers)
+        let (input_cost, output_cost, cache_read_cost, cache_create_cost) = extract_pricing(&m.model_info, &params_json);
 
         // Extract model_group/model_id/custom_llm_provider from proxy_models for SpendLog
         let model_id = Some(m.model_id.clone());
@@ -264,6 +266,8 @@ impl ModelResolver {
                 provider_type,
                 input_cost_per_token: input_cost,
                 output_cost_per_token: output_cost,
+                cache_read_input_token_cost: cache_read_cost,
+                cache_creation_input_token_cost: cache_create_cost,
                 raw_params: params_json,
                 model_id,
                 model_group: model_group.clone(),
@@ -320,6 +324,8 @@ impl ModelResolver {
                 provider_type,
                 input_cost_per_token: input_cost,
                 output_cost_per_token: output_cost,
+                cache_read_input_token_cost: cache_read_cost,
+                cache_creation_input_token_cost: cache_create_cost,
                 raw_params: params_json,
                 model_id,
                 model_group,
@@ -333,7 +339,7 @@ impl ModelResolver {
 }
 
 /// Extract pricing — primary from model_info, fallback to litellm_params.
-fn extract_pricing(model_info: &Value, params_json: &Value) -> (Option<f64>, Option<f64>) {
+fn extract_pricing(model_info: &Value, params_json: &Value) -> (Option<f64>, Option<f64>, Option<f64>, Option<f64>) {
     let input = model_info
         .get("input_cost_per_token")
         .and_then(|v| v.as_f64())
@@ -342,7 +348,15 @@ fn extract_pricing(model_info: &Value, params_json: &Value) -> (Option<f64>, Opt
         .get("output_cost_per_token")
         .and_then(|v| v.as_f64())
         .or_else(|| params_json.get("output_cost_per_token").and_then(|v| v.as_f64()));
-    (input, output)
+    let cache_read = model_info
+        .get("cache_read_input_token_cost")
+        .and_then(|v| v.as_f64())
+        .or_else(|| params_json.get("cache_read_input_token_cost").and_then(|v| v.as_f64()));
+    let cache_create = model_info
+        .get("cache_creation_input_token_cost")
+        .and_then(|v| v.as_f64())
+        .or_else(|| params_json.get("cache_creation_input_token_cost").and_then(|v| v.as_f64()));
+    (input, output, cache_read, cache_create)
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

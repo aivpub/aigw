@@ -386,6 +386,8 @@ mod router_tests {
             provider_type: ProviderType::OpenAICompatible,
             input_cost_per_token: None,
             output_cost_per_token: None,
+            cache_read_input_token_cost: None,
+            cache_creation_input_token_cost: None,
             raw_params: json!({}),
             model_id: Some(format!("id-{}", name)),
             model_group: None,
