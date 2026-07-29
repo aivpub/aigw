@@ -4607,6 +4607,7 @@ impl Database {
 mod tests {
     use super::*;
     use crate::crypto::hash_token;
+    use serde_json::json;
 
     /// All 23 tables defined in the migrations (aigw names)
     const ALL_TABLES: &[&str] = &[
@@ -5684,5 +5685,283 @@ mod tests {
             .await.expect("query req_");
         assert_eq!(logs.len(), 1, "escaped '_' should not act as wildcard");
         assert_eq!(logs[0].call_id, "req_002");
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // Stage 88: Soft-delete tests (tombstone-then-delete)
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    fn make_test_org(org_id: &str, alias: &str) -> Organization {
+        let now = Utc::now();
+        Organization {
+            organization_id: org_id.to_string(),
+            organization_alias: alias.to_string(),
+            budget_id: "default".to_string(),
+            metadata: json!({}),
+            models: json!([]),
+            spend: 0.0,
+            model_spend: json!({}),
+            object_permission_id: None,
+            created_at: now,
+            created_by: "test".to_string(),
+            updated_at: now,
+            updated_by: "test".to_string(),
+        }
+    }
+
+    fn make_test_team(team_id: &str, alias: &str) -> Team {
+        let now = Utc::now();
+        Team {
+            team_id: team_id.to_string(),
+            team_alias: Some(alias.to_string()),
+            organization_id: None,
+            object_permission_id: None,
+            admins: json!([]),
+            members: json!([]),
+            members_with_roles: json!([]),
+            metadata: json!({}),
+            max_budget: None,
+            soft_budget: None,
+            spend: 0.0,
+            models: json!([]),
+            max_parallel_requests: None,
+            tpm_limit: None,
+            rpm_limit: None,
+            budget_duration: None,
+            budget_reset_at: None,
+            blocked: false,
+            created_at: now,
+            updated_at: now,
+            model_spend: json!({}),
+            model_max_budget: json!({}),
+            router_settings: None,
+            team_member_permissions: json!([]),
+            access_group_ids: json!([]),
+            policies: json!([]),
+            default_team_member_models: json!([]),
+            budget_limits: None,
+            model_id: None,
+            allow_team_guardrail_config: false,
+        }
+    }
+
+    fn make_test_user(user_id: &str, email: &str) -> User {
+        let now = Some(Utc::now());
+        User {
+            user_id: user_id.to_string(),
+            user_alias: None,
+            team_id: None,
+            sso_user_id: None,
+            organization_id: None,
+            object_permission_id: None,
+            password: None,
+            teams: json!([]),
+            user_role: None,
+            max_budget: None,
+            spend: 0.0,
+            user_email: Some(email.to_string()),
+            models: json!([]),
+            metadata: json!({}),
+            max_parallel_requests: None,
+            tpm_limit: None,
+            rpm_limit: None,
+            budget_duration: None,
+            budget_reset_at: None,
+            allowed_cache_controls: json!([]),
+            policies: json!([]),
+            model_spend: json!({}),
+            model_max_budget: json!({}),
+            virtual_keys_count: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    fn make_test_model_from_id(model_id: &str, model_name: &str) -> ProxyModel {
+        ProxyModel {
+            model_id: model_id.to_string(),
+            model_name: model_name.to_string(),
+            litellm_params: json!({"model": model_name}),
+            model_info: json!({}),
+            created_at: "2026-01-01".to_string(),
+            created_by: None,
+            updated_at: "2026-01-01".to_string(),
+            updated_by: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_delete_organization_soft() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+
+        let org = make_test_org("org-1", "Test Org");
+        db.insert_organization(&org).await.expect("insert");
+
+        // Verify org exists
+        let found = db.get_organization_by_id("org-1").await.expect("get");
+        assert!(found.is_some());
+
+        // Soft-delete
+        db.delete_organization("org-1").await.expect("delete");
+
+        // Verify org gone from source table
+        let found = db.get_organization_by_id("org-1").await.expect("get");
+        assert!(found.is_none(), "organization should be deleted from source");
+
+        // Verify org in archive
+        let deleted = db.list_deleted_organizations().await.expect("list deleted");
+        assert_eq!(deleted.len(), 1);
+        assert_eq!(deleted[0].organization_id, "org-1");
+        assert_eq!(deleted[0].organization_alias, "Test Org");
+        // deleted_at should be non-zero
+        assert!(deleted[0].deleted_at.timestamp() > 0);
+    }
+
+    #[tokio::test]
+    async fn test_delete_team_soft() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+
+        let team = make_test_team("team-1", "Test Team");
+        db.insert_team(&team).await.expect("insert");
+
+        // Soft-delete
+        db.delete_team("team-1").await.expect("delete");
+
+        // Verify team gone from source
+        let found = db.get_team_by_id("team-1").await.expect("get");
+        assert!(found.is_none());
+
+        // Verify team in archive
+        let deleted = db.list_deleted_teams().await.expect("list deleted");
+        assert_eq!(deleted.len(), 1);
+        assert_eq!(deleted[0].team_id, "team-1");
+        assert_eq!(deleted[0].team_alias.as_deref(), Some("Test Team"));
+    }
+
+    #[tokio::test]
+    async fn test_delete_user_soft() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+
+        let user = make_test_user("user-1", "test@example.com");
+        db.insert_user(&user).await.expect("insert");
+
+        // Soft-delete
+        db.delete_user("user-1").await.expect("delete");
+
+        // Verify user gone from source
+        let found = db.get_user_by_id("user-1").await.expect("get");
+        assert!(found.is_none());
+
+        // Verify user in archive
+        let deleted = db.list_deleted_users().await.expect("list deleted");
+        assert_eq!(deleted.len(), 1);
+        assert_eq!(deleted[0].user_id, "user-1");
+    }
+
+    #[tokio::test]
+    async fn test_delete_model_soft() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+
+        let model = make_test_model_from_id("model-1", "gpt-4");
+        db.insert_model(&model).await.expect("insert");
+
+        // Soft-delete
+        db.delete_model("model-1").await.expect("delete");
+
+        // Verify model gone from source
+        let found = db.get_model_by_id("model-1").await.expect("get");
+        assert!(found.is_none());
+
+        // Verify model in archive
+        let deleted = db.list_deleted_models().await.expect("list deleted");
+        assert_eq!(deleted.len(), 1);
+        assert_eq!(deleted[0].model_id, "model-1");
+        assert_eq!(deleted[0].model_name, "gpt-4");
+    }
+
+    #[tokio::test]
+    async fn test_delete_org_idempotent() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+
+        let org = make_test_org("org-idem", "Idempotent Org");
+        db.insert_organization(&org).await.expect("insert");
+
+        // First delete
+        db.delete_organization("org-idem").await.expect("delete 1");
+        // Second delete (idempotent)
+        db.delete_organization("org-idem").await.expect("delete 2");
+
+        // Archive should have exactly 1 record
+        let deleted = db.list_deleted_organizations().await.expect("list deleted");
+        assert_eq!(deleted.len(), 1, "idempotent delete should not duplicate");
+    }
+
+    #[tokio::test]
+    async fn test_delete_team_idempotent() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+
+        let team = make_test_team("team-idem", "Idempotent Team");
+        db.insert_team(&team).await.expect("insert");
+
+        db.delete_team("team-idem").await.expect("delete 1");
+        db.delete_team("team-idem").await.expect("delete 2");
+
+        let deleted = db.list_deleted_teams().await.expect("list deleted");
+        assert_eq!(deleted.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_delete_user_idempotent() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+
+        let user = make_test_user("user-idem", "idem@example.com");
+        db.insert_user(&user).await.expect("insert");
+
+        db.delete_user("user-idem").await.expect("delete 1");
+        db.delete_user("user-idem").await.expect("delete 2");
+
+        let deleted = db.list_deleted_users().await.expect("list deleted");
+        assert_eq!(deleted.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_delete_model_idempotent() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+
+        let model = make_test_model_from_id("model-idem", "gpt-4-idem");
+        db.insert_model(&model).await.expect("insert");
+
+        db.delete_model("model-idem").await.expect("delete 1");
+        db.delete_model("model-idem").await.expect("delete 2");
+
+        let deleted = db.list_deleted_models().await.expect("list deleted");
+        assert_eq!(deleted.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_list_deleted_multiple_records() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+
+        // Create and delete 3 orgs
+        for i in 1..=3 {
+            let org = make_test_org(&format!("org-{}", i), &format!("Org {}", i));
+            db.insert_organization(&org).await.expect("insert");
+        }
+        for i in 1..=3 {
+            db.delete_organization(&format!("org-{}", i)).await.expect("delete");
+        }
+
+        let deleted = db.list_deleted_organizations().await.expect("list deleted");
+        assert_eq!(deleted.len(), 3);
+        // Most recently deleted first (DESC)
+        assert_eq!(deleted[0].organization_alias, "Org 3");
+    }
+
+    #[tokio::test]
+    async fn test_list_deleted_empty() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+
+        let deleted = db.list_deleted_teams().await.expect("list deleted");
+        assert!(deleted.is_empty());
     }
 }
