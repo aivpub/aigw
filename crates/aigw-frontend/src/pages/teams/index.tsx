@@ -46,7 +46,7 @@ interface TeamListResponse {
 export function TeamsPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
-  const [viewMode, setViewMode] = useState<"active" | "deleted">("active");
+  const [viewMode, setViewMode] = useState<string>("active");
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);

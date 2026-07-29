@@ -307,8 +307,8 @@ export function OrgsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      </>
+      )}
     </div>
-    </>
-    )}
   );
 }
