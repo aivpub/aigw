@@ -7,9 +7,9 @@
 
 ## 当前状态
 
-- **当前 Phase**: Phase 34 — 售后对账链路收尾（Spend Logs UI 双 id 区分 + 双列模糊搜索）⏳ 待开始
-- **状态**: 82/86 Stages 已完成（Stage 86 ✅ 2026-07-28；Stage 87 待开始；Stage 78-81 已编码落地，Phase 30 待一并标记 ✅）
-- **下一里程碑**: Stage 87（UI 双 id + 模糊搜索）+ 长期路线（LT-BodyMetrics / LT-BodyCompact / LT-BodyLifecycle 视数据量触发）+ TD-006 客户端 call_id 响应头回写
+- **当前 Phase**: Phase 36 — Upstream Prompt Cache Detection & Differentiated Billing ⏳ 待开始
+- **状态**: 83/89 Stages 已完成（Stage 86 ✅ 2026-07-28；Stage 87 ✅ 2026-07-28；Stage 88-89 待开始；Stage 90 待开始；Stage 78-81 已编码落地，Phase 30 待一并标记 ✅）
+- **下一里程碑**: Stage 90（calc_spend 三级缓存差异化计费 + upstream response 缓存 token 解析）与 Stage 88-89（Core Entity Soft-Delete）可并行
 
 ### 整体进度
 
@@ -42,14 +42,69 @@ Phase 30:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 Phase 31:   ████████████████████ 100% (3/3 Stages) ✅ Body Archive 生产化（Stage 82-84 全部完成）
 Phase 32:   ████████████████████ 100% (1/1 Stage)  ✅ request_id→call_id 改名 + 上游对账链路（Stage 85）
 Phase 33:   ████████████████████ 100% (1/1 Stage)  ✅ aigw↔aigw 多表只读增量同步（Stage 86）
-Phase 34:   ░░░░░░░░░░░░░░░░░░░░   0% (0/1 Stage)  ⏳ 售后对账链路收尾（Stage 87）
+Phase 34:   ████████████████████ 100% (1/1 Stage)  ✅ 售后对账链路收尾（Stage 87）
+Phase 35:   ░░░░░░░░░░░░░░░░░░░░   0% (0/2 Stages) ⏳ Core Entity Soft-Delete（Stage 88-89）
+Phase 36:   ░░░░░░░░░░░░░░░░░░░░   0% (0/1 Stage)  ⏳ Upstream Cache Detection & Billing（Stage 90）
 ```
 
 ---
 
 ## 当前 Phase 详情
 
-### Phase 34：售后对账链路收尾 ⏳
+### Phase 36：Upstream Prompt Cache Detection & Differentiated Billing ⏳
+
+**背景**: 调研确认（`docs/research/2026-07-28-upstream-prompt-cache-detection-and-billing.md`）litellm 对上游 provider 的 prompt caching 有两套解析（Anthropic 顶层字段 + OpenAI `prompt_tokens_details`）和三级差异化计费（regular / cache_read / cache_creation），而 aigw 当前 `calc_spend` 对所有 prompt token 使用同一单价，`Deployment` 不含缓存定价字段。核心目标：补齐上游缓存 token 解析 → 三级计费 → daily 聚合表写入的完整链路。
+
+**拆分**：1 Stage（Stage 90 — 后端全栈，10h），无前端变更。
+
+| Stage | 状态 | 目标 | 类型 | 预估 |
+|-------|------|------|------|------|
+| Stage 90 | ⏳ 待开始 | **calc_spend 三级缓存差异化计费 + upstream response 缓存 token 解析** — ① `Deployment` + `ResolvedUpstream` 增 `cache_read_input_token_cost`/`cache_creation_input_token_cost` 字段，`extract_pricing()` 从 `model_info`→`litellm_params` 两级 fallback 提取；② `calc_spend` 重构为三级计费（`regular = prompt - cache_read - cache_creation`，分别乘不同单价），fallback 策略：缓存定价缺失时回退 `input_cost_per_token`；③ 流式 & 非流式路径从 `response->usage` 提取 `cache_read_input_tokens`/`prompt_tokens_details.cached_tokens` 和 `cache_creation_input_tokens`/`cache_write_tokens`，Anthropic 归一化（`prompt_tokens += cache_read + cache_creation`）；④ `DailySpendLog` struct 补全缓存字段 + daily_spend_queue 写入；⑤ 10 UT + 2 BDD spec。 | 后端+测试 | 10h |
+
+**依赖关系**: 无前向依赖（独立改动 chat.rs / v1_messages.rs / deployment.rs / calc_spend）。与 Phase 35（Stage 88-89）修改文件无交集，可完全并行。
+
+**Phase 36 合计**: 10h，1 Stage。
+
+**关键决策**:
+- **三级计费 fallback 用 input_cost 而非 0**：对齐 litellm `_cost_per_token_custom_pricing_helper`（缓存价格缺失时回退到常规 `input_cost_per_token`），不溢出也不欠费。
+- **Anthropic 归一化在调用侧做**：`calc_spend` 签名保持纯粹——传入的 `prompt_tokens` 是已归一的，不做 provider-type 分支。
+- **不在 spend_logs 加缓存 token 列**：litellm 也没有，数据已在 `response` JSONB + `daily_*_spend` 汇总表中。
+- **daily_*_spend 列已建**（015 migration），本 Stage 仅补 Rust struct 和写入逻辑，无需新 migration。
+
+**设计文档**:
+- `docs/stages/stage-90.md`（后端全链路）
+- `docs/research/2026-07-28-upstream-prompt-cache-detection-and-billing.md`（调研报告）
+
+---
+
+### Phase 35：Core Entity Soft-Delete ⏳
+
+**背景**: 仅 `virtual_keys` 有软删除（`deleted_keys` 归档表 + tombstone-then-delete），`teams`/`users`/`organizations`/`proxy_models` 四表全部硬删除，无审计追溯能力。参考 litellm `LiteLLM_DeletedTeamTable` / `LiteLLM_DeletedVerificationToken` 独立归档表模式，扩展 aigw 现有 `deleted_keys` 实现到全部核心实体。
+
+**拆分**：后端全链路 1 Stage（Stage 88 — 迁移 + DB 层 + API + 测试，12h）+ 前端 1 Stage（Stage 89 — 删除确认 + 已删除视图 + E2E，6h）。
+
+| Stage | 状态 | 目标 | 类型 | 预估 |
+|-------|------|------|------|------|
+| Stage 88 | ⏳ 待开始 | **后端** — `024_deleted_tables.sql` 三方言迁移（4 归档表自增 id PK + 源 ID 索引 + `deleted_at`）；DB 层 4 个 Store trait × 3 方言 tombstone-then-delete 改造（SELECT→INSERT archive→DELETE）+ `list_deleted_*` 方法；4 新增 API 端点（`GET /{entity}/deleted`）；UT + BDD 测试覆盖。 | 后端+测试 | 12h |
+| Stage 89 | ⏳ 待开始 | **前端** — 5 管理页面（keys/teams/users/orgs/models）统一删除确认增强 + "已删除"Tab（Tabs 切换 + 归档表格 + `deleted_at` 列）；Playwright BDD E2E。 | 前端+测试 | 6h |
+
+**依赖关系**: Stage 88 → Stage 89（后端 API 先就绪，前端按接口契约独立开发）。
+
+**Phase 35 合计**: 18h，2 Stages。
+
+**关键决策**:
+- **独立归档表而非源表加列**：物理隔离活跃数据与归档数据，查询无需额外 `WHERE deleted_at IS NULL`，对齐 litellm 和现有 `deleted_keys` 模式。
+- **归档表 PK 用自增 `id` 而非源 ID**：team_id/user_id 可能被删后重建再删，源 ID 做主键会冲突（`deleted_keys` 的 token hash 天然唯一，其他实体不成立）。litellm 的 `DeletedTeamTable` 正是 `id String @id @default(uuid())`。
+- **幂等不报 404**：行不存在时返回 Ok，与 `delete_key` 一致。
+- **恢复功能留到后续 Phase**：需冲突处理（源 ID 已存在）、UI 交互、权限考量，独立交付。
+- **`deleted_by` 审计列延后**：需 auth middleware 注入用户信息，本 Phase 先建表不加此列。
+
+**设计文档**:
+- `docs/stages/stage-88.md`（后端全链路）
+- `docs/stages/stage-89.md`（前端 + E2E）
+- `docs/plans/2026-07-28-soft-delete-archive-tables.md`（总体规划）
+
+### Phase 34：售后对账链路收尾 ✅ 已完成
 
 **背景**: Stage 85 把 `spend_logs.request_id`（PK）改名 `call_id` + 新增可空 `request_id`（上游 provider id）后，三个实测缺口：(1) 历史迁移行 `request_id` 为 NULL，对账断链——需回填成功行；(2) 列表 `call_id` 在第 8 列不易定位，要放最左；(3) 抽屉只显示 `call_id`，`request_id` 未渲染，两者混淆；(4) 搜索 `?request_id=` 走精确等值，不支持模糊匹配。
 
@@ -59,7 +114,7 @@ Phase 34:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 | Stage | 状态 | 目标 | 类型 | 预估 |
 |-------|------|------|------|------|
-| Stage 87 | ⏳ 待开始 | **Spend Logs UI 双 id + 双列模糊搜索** — ① 前端列重排（`call_id`/`Upstream ID` 移到 `Time` 之前成最左两列）；② 抽屉双 id Badge 显著区分（call_id 用 `variant=default`、request_id 用 `variant=secondary` + 文字标签，NULL 显灰 `—`）；③ 后端 db.rs 5 处 `=`→`LIKE '%X%'` 模糊匹配（SQLite query/count :1521/:1551、PG 内存 :1828、PG count :1854、PG status_filter :4243，含 LIKE 通配符转义 `ESCAPE '\'`）；④ BDD 3 新场景（call_id 最左列、抽屉双 id、模糊搜索）+ mock 按 query param 过滤。TDD 红绿 + 三后端 real BDD。 | 全栈+测试 | 5h |
+| Stage 87 | ✅ 完成 | **Spend Logs UI 双 id + 双列模糊搜索** — ① 前端列重排（`call_id`/`Upstream ID` 移到 `Time` 之前成最左两列）；② 抽屉双 id Badge 显著区分（call_id 用 `variant=default`、request_id 用 `variant=secondary` + 文字标签，NULL 显灰 `—`）；③ 后端 db.rs 5 处 `=`→`LIKE '%X%'` 模糊匹配（SQLite query/count :1521/:1551、PG 内存 :1828、PG count :1854、PG status_filter :4243，含 LIKE 通配符转义 `ESCAPE '\'`）；④ BDD 3 新场景（call_id 最左列、抽屉双 id、模糊搜索）+ mock 按 query param 过滤。TDD 红绿 + 三后端 real BDD。 | 全栈+测试 | 5h |
 
 **依赖关系**: Stage 87 基于 Stage 85 schema 已落地。回填 SOP 与 Stage 87 解耦，运维可独立执行。
 
@@ -605,4 +660,5 @@ Phase 34:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 | v33.0 | 2026-07-28 | **Stage 85 完成（Phase 32 ✅）**：Gate-2 多模型评审（lead 独立 + 3 路 subagent：migration / migrate-frontend-tracing-tests / extraction-protocol）发现 v5 设计 3 Critical + 3 High + 4 Medium 缺陷，全部修正至 v6.1。**关键修正**：① 迁移号 022→023（Stage 82 占用 022_next_retry_at）；② migrate import override 方向写反→`overrides["call_id"]="request_id"`（key=target, value=source）；③ **失败路径 upstream_id 走 INSERT 非 UPDATE**（v5 COALESCE-UPDATE 不覆盖失败行，核心预期静默失败）；④ export override 被 direct-match 抢占→源行剥离 request_id；⑤ Anthropic 流式提取位置（choices 分支前 borrow）；⑥ 响应头预提取 request-id；⑦ MySQL 索引前缀长度 128；⑧ body_archive 归档过滤 `request_id IS NOT NULL`（失败请求跳过归档）。实现 023 迁移（pg/mysql/sqlite）+ models/db/body_archive/daily_spend_queue 全链路改名 + 路由层 4 路径上游 id 提取 + migrate override + 前端 3 interface。验证：aigw-core lib 247/247 + aigw-server lib 100/100 + mock BDD 163/163（15 @skip，含新增核心预期 2 场景：双列返回 + 双列搜索）+ aigw-migrate 27/27（含 import override PK 非空断言 + export reverse-override 击败 direct-match 断言）+ frontend build green；PG/MySQL 023 迁移应用通过。总进度 81/85。|
 | v34.0 | 2026-07-28 | **Phase 33 规划**：新增 Phase 33（Stage 86，`aigw-migrate sync` 子命令 — aigw↔aigw 多表只读增量同步，8h）。用户诉求：在 aigw 内部不同 DB 实例间（PG↔SQLite 任意组合）同步数据，参数范式参考现有 `remote-import`/`remote-export`，支持全表同步或 `--tables` 选子集；`spend_logs` 按"最近 N 天"增量，其他表全量幂等追加；只读、一次性 CLI。现有 `aigw-migrate` 是 litellm↔aigw 异构迁移，覆盖不了 aigw↔aigw 同构同步；但底层 `SourcePool`/`CursorRange`/`insert_rows_batch`/`migrate_plain_table` 抽象与 litellm 假设解耦可复用。新增 `build_aigw_cursor_sql`（锚点 `start_time`，不改 litellm 的 `build_cursor_sql`）+ `sync.rs::run_sync`（空 overrides 同 schema direct-match）+ CLI `--tables`（默认全 11 张业务表，config 默认排除）+ `--days N`（chrono UTC）。`credentials`/`proxy_models` 直接复制密文（同 master_key）。只读追加（`INSERT OR IGNORE`/`ON CONFLICT DO NOTHING`），非常驻/非 CDC。TDD 7 UT。设计文档：`stage-86.md`。总进度 81/86。|
 | v35.0 | 2026-07-28 | **Stage 86 完成（Phase 33 ✅）**：实现 `aigw-migrate sync` 子命令——aigw↔aigw 同构只读增量同步。native.rs 新增 `build_aigw_cursor_sql`（锚点 `start_time`，不改 litellm `build_cursor_sql` 保零回归）+ `stream_rows_with_cursor_aigw` dispatch + `stream_pg_rows_keyset_aigw`（PG keyset 用 `(start_time, call_id)` 而非 `(startTime, request_id)`）。sync.rs 新增 `run_sync` + `SyncStats`/`TableSyncStats` + `ALL_AIGW_TABLES`/`DEFAULT_TABLES`/`SPEND_LOGS_BODY_COLUMNS` 常量 + `parse_tables`/`resolve_tables`/`resolve_cursor`（表名校验、`--days` UTC 转 CursorRange、与显式 `--resume-after`/`--end-before` 取更严边界）。main.rs `Sync` 子命令 + short alias（-s/-t/-T/-d/-r/-e/-B/-b）+ env 回退（`AIGW_SYNC_SOURCE_URL`/`AIGW_SYNC_TARGET_URL`）。空 overrides direct-match（aigw↔aigw 同 schema，不做 `call_id←request_id` 重定向）；`credentials`/`proxy_models` 当 plain 复制密文不调 migrate_credentials；config 默认排除。TDD 8 UT 红绿（`tests/sync.rs`：全表同步/`--tables` 子集/`--days 7` 过滤/幂等重跑/`--skip-body`/非法表名报错/config 默认排除+显式 INSERT OR IGNORE 不覆盖/DEFAULT_TABLES 契约）。验证：`cargo test -p aigw-migrate` 全量通过（27+27+8+1，无回归）+ `aigw-migrate sync --help` 输出表清单。总进度 82/86。|
-| v36.0 | 2026-07-28 | **Phase 34 规划**：新增 Phase 34（售后对账链路收尾）。用户实测反馈 Stage 85 后三个缺口 + 回填需求：(1) 历史迁移行 `request_id` 为 NULL 对账断链；(2) 列表 `call_id` 在第 8 列不易定位；(3) 抽屉只显示 `call_id`、`request_id` 未渲染且混淆；(4) 搜索精确等值不支持模糊。**回填用 SQL SOP 文档不占 Stage**：原 v1 计划写 `aigw-migrate backfill-request-id` CLI 子命令，经讨论否决——一行 SQL `UPDATE spend_logs SET request_id=call_id WHERE request_id IS NULL AND status='success'` 三方言通用，crate 代码+UT 过度工程，改为 `docs/request-id-backfill-sop.md` 手册（含 PG/SQLite/MySQL 三方言命令 + 大表分批 + 回滚）。**Stage 87 UI 双 id + 模糊搜索（5h，全栈）**：前端列重排（call_id/Upstream ID 移到 Time 之前）+ 抽屉双 id Badge（default vs secondary + 文字标签）+ 后端 db.rs 5 处 `=`→`LIKE '%X%'`（SQLite :1521/:1551、PG :1828/:1854/:4243，含 `ESCAPE '\'` 通配符转义）+ BDD 3 新场景 + mock 按 query param 过滤。Phase 34 合计 5h，1 Stage + 1 SOP 文档。设计文档：`stage-87.md`、`request-id-backfill-sop.md`。总进度 82/86。|
+| v37.0 | 2026-07-28 | **Stage 87 完成 + Phase 35 规划**：Stage 87 ✅（Spend Logs UI 双 id + 模糊搜索全部落地，Phase 34 ✅）。新增 Phase 35（Core Entity Soft-Delete，Stages 88-89，共 18h）：独立归档表模式扩展 teams/users/orgs/models 四表软删除。Stage 88=后端全链路（迁移+DB层+API+测试，12h）；Stage 89=前端（删除确认+已删除视图+E2E，6h）。设计文档：`stage-88.md`、`stage-89.md`、`docs/plans/2026-07-28-soft-delete-archive-tables.md`。总进度 85/88（Stage 87 ✅、Stage 88-89 待开始）。|
+| v38.0 | 2026-07-28 | **Phase 36 规划**：新增 Phase 36（Upstream Prompt Cache Detection & Differentiated Billing，Stage 90，10h）。基于 `docs/research/2026-07-28-upstream-prompt-cache-detection-and-billing.md` 调研结果——上游 provider 缓存 token 解析 + calc_spend 三级差异化计费 + Deployment 缓存定价字段 + daily_*_spend 缓存列写入。单 Stage 纯后端，与 Phase 35 并行。设计文档：`stage-90.md`。总进度 83/89（Stage 90 待开始）。|

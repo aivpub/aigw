@@ -1,13 +1,26 @@
 # aigw -- 下一步行动
 
 **上次更新**: 2026-07-28
-**当前阶段**: Phase 34 ⏳ 售后对账链路收尾（Spend Logs UI 双 id 区分 + 双列模糊搜索，Stage 87 待开始）
+**当前阶段**: Phase 36 ⏳ Upstream Prompt Cache Detection & Differentiated Billing（Stage 90 待开始），Phase 35 ⏳ Core Entity Soft-Delete（Stage 88-89 待开始，两 Phase 可并行）
 
 ---
 
-## 当前状态：83/87 Stages（Stage 87 ✅，Phase 34 完成）
+## 当前状态：83/89 Stages（Stage 87 ✅，Phase 34 完成；Stage 88-90 待开始）
 
-**下一项工作 — Phase 34（Stage 87）**：用户实测反馈 Stage 85（request_id→call_id 改名）后的三个缺口 + 一个回填需求。回填用 SQL SOP 文档（`docs/request-id-backfill-sop.md`，**不占 Stage**——一行 SQL `UPDATE spend_logs SET request_id=call_id WHERE request_id IS NULL AND status='success'` 三方言通用，crate 代码过度工程；含 PG/SQLite/MySQL 三方言命令 + 大表分批 + 回滚）。**Stage 87（UI 双 id + 模糊搜索，5h，全栈）已于 2026-07-28 完成**：Spend Logs 列表 `call_id` 移到最左列（日期列之前）+ 抽屉双 id Badge 显著区分（call_id `variant=default` / request_id `variant=secondary` + 文字标签）+ 后端 db.rs 5 处 `=`→`LIKE '%X%'` 模糊匹配（SQLite :1521/:1551、PG :1828/:1854/:4243，含 `ESCAPE '\'` 通配符转义）+ BDD 3 新场景 + mock 按 query param 过滤。UT 254 全过，前端 BDD 45/45 场景全绿。设计文档：`docs/stages/stage-87.md`、`docs/request-id-backfill-sop.md`。**待办**：① Phase 30（Stage 78-81）代码已落地 + Phase 31 修复完成，待一并回写为 ✅；② TD-006 客户端 call_id 响应头回写；③ 长期路线 LT-BodyMetrics/LT-BodyCompact/LT-BodyLifecycle 视数据量触发。
+**并行工作项**：
+
+### Phase 35（Stage 88-89）：Core Entity Soft-Delete
+扩展到 teams/users/orgs/models 四表独立归档表软删除。后端 1 Stage（88，12h）+ 前端 1 Stage（89，6h）。
+
+### Phase 36（Stage 90）：Upstream Prompt Cache Detection & Differentiated Billing
+基于调研报告 `docs/research/2026-07-28-upstream-prompt-cache-detection-and-billing.md`：
+- calc_spend 三级缓存差异化计费（regular / cache_read / cache_creation 不同单价）
+- Deployment 扩展缓存定价字段（model_info → litellm_params fallback）
+- upstream response 缓存 token 解析（Anthropic + OpenAI 两套格式归一化）
+- daily_*_spend 缓存列写入补全
+纯后端 1 Stage（90，10h），与 Phase 35 文件无交集可完全并行。
+
+**待办**：① Phase 30（Stage 78-81）代码已落地 + Phase 31 修复完成，待一并回写为 ✅；② TD-006 客户端 call_id 响应头回写；③ 长期路线 LT-BodyMetrics/LT-BodyCompact/LT-BodyLifecycle 视数据量触发。
 
 ---
 
