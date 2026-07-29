@@ -224,10 +224,9 @@ pub async fn run_sync_test(
     cursor: &CursorRange,
     lo: usize,
     hi: usize,
-    batch_size: usize,
+    _batch_size: usize,
     debug: bool,
 ) -> anyhow::Result<SyncStats> {
-    let batch_size = if batch_size == 0 { 10 } else { batch_size };
     let source = SourcePool::connect(source_url).await?;
     let target = SourcePool::connect(target_url).await?;
 

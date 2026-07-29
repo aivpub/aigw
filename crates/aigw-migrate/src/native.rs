@@ -921,28 +921,6 @@ fn stream_pg_rows_keyset_aigw<'a>(
     .boxed()
 }
 
-/// Stream rows from a PG source.  The SQL already carries a LIMIT
-/// injected by `build_aigw_cursor_sql(…, Some(batch_size), …)`.
-fn stream_pg_rows_simple<'a>(
-    pool: &'a PgPool,
-    sql: String,
-) -> BoxStream<'a, anyhow::Result<UnifiedRow>> {
-    async_stream::try_stream! {
-        let mut stream = sqlx::query(&sql).fetch(pool);
-        while let Some(row_res) = stream.next().await {
-            let row = row_res?;
-            let cols = row.columns();
-            let mut unified = Vec::with_capacity(cols.len());
-            for col in cols {
-                let name = col.name().to_string();
-                let val = try_pg_get(&row, &name);
-                unified.push((name, val));
-            }
-            yield unified;
-        }
-    }
-    .boxed()
-}
 
 /// Stream rows from a SQLite source one at a time.
 fn stream_sqlite_rows<'a>(
