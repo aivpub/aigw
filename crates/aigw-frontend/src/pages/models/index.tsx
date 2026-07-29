@@ -79,14 +79,20 @@ function renderJsonValue(value: unknown): ReactNode {
   return String(value);
 }
 
-function extractCost(info: Record<string, unknown>): { input: number | null; output: number | null } {
+function extractCost(info: Record<string, unknown>): { input: number | null; output: number | null; cacheRead: number | null; cacheCreate: number | null } {
   const input = typeof info.input_cost_per_token === "number"
     ? info.input_cost_per_token * 1_000_000
     : null;
   const output = typeof info.output_cost_per_token === "number"
     ? info.output_cost_per_token * 1_000_000
     : null;
-  return { input, output };
+  const cacheRead = typeof info.cache_read_input_token_cost === "number"
+    ? info.cache_read_input_token_cost * 1_000_000
+    : null;
+  const cacheCreate = typeof info.cache_creation_input_token_cost === "number"
+    ? info.cache_creation_input_token_cost * 1_000_000
+    : null;
+  return { input, output, cacheRead, cacheCreate };
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -428,6 +434,20 @@ export function ModelsPage() {
                                       <span className="text-muted-foreground">$</span>
                                       {cost.output.toFixed(4)}{" "}
                                       <span className="text-muted-foreground">Output</span>
+                                    </div>
+                                  )}
+                                  {cost.cacheRead !== null && (
+                                    <div>
+                                      <span className="text-muted-foreground">$</span>
+                                      {cost.cacheRead.toFixed(4)}{" "}
+                                      <span className="text-muted-foreground">Cache Read</span>
+                                    </div>
+                                  )}
+                                  {cost.cacheCreate !== null && (
+                                    <div>
+                                      <span className="text-muted-foreground">$</span>
+                                      {cost.cacheCreate.toFixed(4)}{" "}
+                                      <span className="text-muted-foreground">Cache Write</span>
                                     </div>
                                   )}
                                 </div>

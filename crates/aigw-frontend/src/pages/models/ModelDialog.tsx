@@ -46,6 +46,8 @@ interface ModelFormData {
   tpm: string;
   input_price_per_million: string;
   output_price_per_million: string;
+  cache_read_price_per_million: string;
+  cache_create_price_per_million: string;
   chat_template_compat: string;
 }
 
@@ -74,6 +76,8 @@ const emptyForm = (): ModelFormData => ({
   tpm: "",
   input_price_per_million: "",
   output_price_per_million: "",
+  cache_read_price_per_million: "",
+  cache_create_price_per_million: "",
   chat_template_compat: "",
 });
 
@@ -82,6 +86,8 @@ function populateForm(model: ModelItem): ModelFormData {
   const info = (model.model_info ?? {}) as Record<string, unknown>;
   const rawInput = (info.input_cost_per_token as number) ?? (p.input_cost_per_token as number);
   const rawOutput = (info.output_cost_per_token as number) ?? (p.output_cost_per_token as number);
+  const rawCacheRead = (info.cache_read_input_token_cost as number) ?? (p.cache_read_input_token_cost as number);
+  const rawCacheCreate = (info.cache_creation_input_token_cost as number) ?? (p.cache_creation_input_token_cost as number);
   const hasCredential = !!(p.litellm_credential_name as string);
 
   return {
@@ -96,6 +102,8 @@ function populateForm(model: ModelItem): ModelFormData {
     tpm: p.tpm != null ? String(p.tpm) : "",
     input_price_per_million: rawInput != null ? String(rawInput * 1_000_000) : "",
     output_price_per_million: rawOutput != null ? String(rawOutput * 1_000_000) : "",
+    cache_read_price_per_million: rawCacheRead != null ? String(rawCacheRead * 1_000_000) : "",
+    cache_create_price_per_million: rawCacheCreate != null ? String(rawCacheCreate * 1_000_000) : "",
     chat_template_compat: (info.chat_template_compat as string) || "",
   };
 }
@@ -107,6 +115,12 @@ function buildBody(form: ModelFormData, _original?: ModelItem): Record<string, u
   const outputCostPerToken = form.output_price_per_million !== ""
     ? parseFloat((parseFloat(form.output_price_per_million) / 1_000_000).toFixed(10))
     : undefined;
+  const cacheReadCost = form.cache_read_price_per_million !== ""
+    ? parseFloat((parseFloat(form.cache_read_price_per_million) / 1_000_000).toFixed(10))
+    : undefined;
+  const cacheCreateCost = form.cache_create_price_per_million !== ""
+    ? parseFloat((parseFloat(form.cache_create_price_per_million) / 1_000_000).toFixed(10))
+    : undefined;
 
   const litellm_params: Record<string, unknown> = {
     model: form.upstream_model || form.model_name,
@@ -116,6 +130,12 @@ function buildBody(form: ModelFormData, _original?: ModelItem): Record<string, u
     input_cost_per_token: inputCostPerToken,
     output_cost_per_token: outputCostPerToken,
   };
+  if (cacheReadCost !== undefined) {
+    litellm_params.cache_read_input_token_cost = cacheReadCost;
+  }
+  if (cacheCreateCost !== undefined) {
+    litellm_params.cache_creation_input_token_cost = cacheCreateCost;
+  }
 
   if (form.auth_mode === "api_key") {
     if (form.api_base) litellm_params.api_base = form.api_base;
@@ -132,6 +152,8 @@ function buildBody(form: ModelFormData, _original?: ModelItem): Record<string, u
   const model_info: Record<string, unknown> = {
     input_cost_per_token: inputCostPerToken,
     output_cost_per_token: outputCostPerToken,
+    cache_read_input_token_cost: cacheReadCost,
+    cache_creation_input_token_cost: cacheCreateCost,
   };
   // Only write chat_template_compat if explicitly set (non-empty)
   if (form.chat_template_compat) {
@@ -414,6 +436,26 @@ export function ModelDialog({ open, onOpenChange, model, onSaved, onError }: Mod
                   value={form.output_price_per_million}
                   onChange={(e) => update("output_price_per_million", e.target.value)}
                   placeholder="60.00"
+                />
+              </FormField>
+              <FormField label="Cache Read Price ($/1M)" description="Prompt caching read price; typically 10%-50% of Input">
+                <Input
+                  type="number"
+                  step="0.0001"
+                  min="0"
+                  value={form.cache_read_price_per_million}
+                  onChange={(e) => update("cache_read_price_per_million", e.target.value)}
+                  placeholder="3.00"
+                />
+              </FormField>
+              <FormField label="Cache Write Price ($/1M)" description="Prompt caching write price; typically ~125% of Input">
+                <Input
+                  type="number"
+                  step="0.0001"
+                  min="0"
+                  value={form.cache_create_price_per_million}
+                  onChange={(e) => update("cache_create_price_per_million", e.target.value)}
+                  placeholder="37.50"
                 />
               </FormField>
             </div>

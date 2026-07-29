@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -164,6 +165,8 @@ export function CredentialsTab() {
         <Button size="sm" onClick={openNew}><Plus className="mr-1 h-4 w-4" /> New</Button>
       </div>
 
+      <Card>
+        <CardContent className="p-0">
       <Table>
         <TableHeader>
           <TableRow>
@@ -193,6 +196,8 @@ export function CredentialsTab() {
           ))}
         </TableBody>
       </Table>
+        </CardContent>
+      </Card>
 
       {/* Create/Edit Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
