@@ -700,6 +700,118 @@ pub struct DeleteModelRequest {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Deleted entities — archive tables for soft-delete (tombstone-then-delete)
+// Each mirrors the source table columns plus an auto-increment `id` PK
+// and a `deleted_at` timestamp.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Archived organization — mirror of organizations with id + deleted_at
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct DeletedOrganization {
+    pub id: i64,
+    pub organization_id: String,
+    pub organization_alias: String,
+    pub budget_id: String,
+    pub metadata: serde_json::Value,
+    pub models: serde_json::Value,
+    pub spend: f64,
+    pub model_spend: serde_json::Value,
+    pub object_permission_id: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub created_by: String,
+    pub updated_at: DateTime<Utc>,
+    pub updated_by: String,
+    pub deleted_at: DateTime<Utc>,
+}
+
+/// Archived team — mirror of teams with id + deleted_at
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct DeletedTeam {
+    pub id: i64,
+    pub team_id: String,
+    pub team_alias: Option<String>,
+    pub organization_id: Option<String>,
+    pub object_permission_id: Option<String>,
+    pub admins: serde_json::Value,
+    pub members: serde_json::Value,
+    pub members_with_roles: serde_json::Value,
+    pub metadata: serde_json::Value,
+    #[sqlx(default)]
+    pub max_budget: Option<String>,
+    #[sqlx(default)]
+    pub soft_budget: Option<String>,
+    pub spend: f64,
+    pub models: serde_json::Value,
+    pub max_parallel_requests: Option<String>,
+    pub tpm_limit: Option<String>,
+    pub rpm_limit: Option<String>,
+    pub budget_duration: Option<String>,
+    pub budget_reset_at: Option<DateTime<Utc>>,
+    pub blocked: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub model_spend: serde_json::Value,
+    pub model_max_budget: serde_json::Value,
+    pub router_settings: Option<serde_json::Value>,
+    pub team_member_permissions: serde_json::Value,
+    pub access_group_ids: serde_json::Value,
+    pub policies: serde_json::Value,
+    pub default_team_member_models: serde_json::Value,
+    pub budget_limits: Option<serde_json::Value>,
+    pub model_id: Option<i32>,
+    pub allow_team_guardrail_config: bool,
+    pub deleted_at: DateTime<Utc>,
+}
+
+/// Archived user — mirror of users with id + deleted_at
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct DeletedUser {
+    pub id: i64,
+    pub user_id: String,
+    pub user_alias: Option<String>,
+    pub team_id: Option<String>,
+    pub sso_user_id: Option<String>,
+    pub organization_id: Option<String>,
+    pub object_permission_id: Option<String>,
+    pub password: Option<String>,
+    pub teams: serde_json::Value,
+    pub user_role: Option<String>,
+    #[sqlx(default)]
+    pub max_budget: Option<String>,
+    pub spend: f64,
+    pub user_email: Option<String>,
+    pub models: serde_json::Value,
+    pub metadata: serde_json::Value,
+    pub max_parallel_requests: Option<String>,
+    pub tpm_limit: Option<String>,
+    pub rpm_limit: Option<String>,
+    pub budget_duration: Option<String>,
+    pub budget_reset_at: Option<DateTime<Utc>>,
+    pub allowed_cache_controls: serde_json::Value,
+    pub policies: serde_json::Value,
+    pub model_spend: serde_json::Value,
+    pub model_max_budget: serde_json::Value,
+    pub created_at: Option<DateTime<Utc>>,
+    pub updated_at: Option<DateTime<Utc>>,
+    pub deleted_at: DateTime<Utc>,
+}
+
+/// Archived model — mirror of proxy_models with id + deleted_at
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct DeletedModel {
+    pub id: i64,
+    pub model_id: String,
+    pub model_name: String,
+    pub litellm_params: serde_json::Value,
+    pub model_info: serde_json::Value,
+    pub created_at: String,
+    pub created_by: Option<String>,
+    pub updated_at: String,
+    pub updated_by: Option<String>,
+    pub deleted_at: DateTime<Utc>,
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // credentials — credential storage (litellm LiteLLM_CredentialsTable)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

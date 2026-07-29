@@ -9,6 +9,7 @@
 
 use aigw_core::crypto::{decrypt_json_fields, decrypt_litellm_value};
 use aigw_core::models::ProxyModel;
+use aigw_core::models::DeletedModel;
 use axum::{
     extract::{Query, State},
     http::StatusCode,
@@ -273,6 +274,21 @@ pub async fn model_update(
 
     let resp = ModelResponse::from_model(model, state.aigw_master_key.as_deref());
     Ok(Json(serde_json::to_value(resp).unwrap_or(json!({}))))
+}
+
+/// GET /model/deleted — list deleted models (admin)
+pub async fn model_deleted_list(
+    State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
+) -> Result<Json<Vec<DeletedModel>>, (StatusCode, Json<Value>)> {
+    require_admin(&auth)?;
+    let deleted = state.db.list_deleted_models().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {"message": format!("{}", e)}})),
+        )
+    })?;
+    Ok(Json(deleted))
 }
 
 /// DELETE /model/delete?model_id=... — delete a model (admin)

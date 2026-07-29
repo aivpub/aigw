@@ -6,8 +6,10 @@
 //! - GET    /team/list   — List teams (optional ?organization_id= filter)
 //! - PUT    /team/update — Update a team
 //! - DELETE /team/delete — Delete a team
+//! - GET    /team/deleted — List deleted teams
 
 use aigw_core::models::Team;
+use aigw_core::models::DeletedTeam;
 use axum::{extract::State, http::StatusCode, Json};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -248,4 +250,19 @@ pub async fn team_delete(
     })?;
 
     Ok(Json(json!({"message": "Team deleted"})))
+}
+
+/// GET /team/deleted — list deleted teams (admin)
+pub async fn team_deleted_list(
+    State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
+) -> Result<Json<Vec<DeletedTeam>>, (StatusCode, Json<Value>)> {
+    require_admin(&auth)?;
+    let deleted = state.db.list_deleted_teams().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {"message": format!("{}", e), "type": "internal"}})),
+        )
+    })?;
+    Ok(Json(deleted))
 }

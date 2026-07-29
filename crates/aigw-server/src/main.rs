@@ -371,6 +371,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/model/list", get(models::model_list))
         .route("/model/update", axum::routing::put(models::model_update))
         .route("/model/delete", axum::routing::delete(models::model_delete))
+        .route("/model/deleted", get(models::model_deleted_list))
         // Credential management routes
         .route(
             "/credential/new",
@@ -392,18 +393,21 @@ async fn main() -> anyhow::Result<()> {
         .route("/org/list", get(org::org_list))
         .route("/org/update", axum::routing::put(org::org_update))
         .route("/org/delete", axum::routing::delete(org::org_delete))
+        .route("/org/deleted", get(org::org_deleted_list))
         // Team management routes
         .route("/team/new", axum::routing::post(team::team_new))
         .route("/team/info", get(team::team_info))
         .route("/team/list", get(team::team_list))
         .route("/team/update", axum::routing::put(team::team_update))
         .route("/team/delete", axum::routing::delete(team::team_delete))
+        .route("/team/deleted", get(team::team_deleted_list))
         // User management routes
         .route("/user/new", axum::routing::post(user::user_new))
         .route("/user/info", get(user::user_info))
         .route("/user/list", get(user::user_list))
         .route("/user/update", axum::routing::put(user::user_update))
         .route("/user/delete", axum::routing::delete(user::user_delete))
+        .route("/user/deleted", get(user::user_deleted_list))
         // Router settings endpoints (Phase 23)
         .route("/router/settings", get(router_settings::get_global).put(router_settings::put_global))
         .route("/key/{token}/router/settings", axum::routing::patch(router_settings::patch_key))

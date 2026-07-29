@@ -6,8 +6,10 @@
 //! - GET    /user/list   — List users (optional ?organization_id= filter)
 //! - PUT    /user/update — Update a user
 //! - DELETE /user/delete — Delete a user
+//! - GET    /user/deleted — List deleted users
 
 use aigw_core::models::User;
+use aigw_core::models::DeletedUser;
 use axum::{extract::State, http::StatusCode, Json};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -282,6 +284,21 @@ pub async fn user_update(
     })?;
 
     Ok(Json(serde_json::to_value(&existing).unwrap_or(json!({}))))
+}
+
+/// GET /user/deleted — list deleted users (admin)
+pub async fn user_deleted_list(
+    State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
+) -> Result<Json<Vec<DeletedUser>>, (StatusCode, Json<Value>)> {
+    require_admin(&auth)?;
+    let deleted = state.db.list_deleted_users().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {"message": format!("{}", e), "type": "internal"}})),
+        )
+    })?;
+    Ok(Json(deleted))
 }
 
 /// DELETE /user/delete

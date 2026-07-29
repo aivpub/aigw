@@ -6,8 +6,10 @@
 //! - GET    /org/list   — List all organizations
 //! - PUT    /org/update — Update an organization
 //! - DELETE /org/delete — Delete an organization
+//! - GET    /org/deleted — List deleted organizations
 
 use aigw_core::models::Organization;
+use aigw_core::models::DeletedOrganization;
 use axum::{extract::State, http::StatusCode, Json};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -198,6 +200,21 @@ pub async fn org_update(
         })?;
 
     Ok(Json(serde_json::to_value(&existing).unwrap_or(json!({}))))
+}
+
+/// GET /org/deleted — list deleted organizations (admin)
+pub async fn org_deleted_list(
+    State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
+) -> Result<Json<Vec<DeletedOrganization>>, (StatusCode, Json<Value>)> {
+    require_admin(&auth)?;
+    let deleted = state.db.list_deleted_organizations().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {"message": format!("{}", e), "type": "internal"}})),
+        )
+    })?;
+    Ok(Json(deleted))
 }
 
 /// DELETE /org/delete
