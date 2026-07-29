@@ -22,6 +22,7 @@
 //!   rows, never overwrites an existing master_key.
 
 use crate::native::{self, CursorRange, SourcePool, UnifiedRow};
+use chrono::Timelike;
 use futures::StreamExt;
 use std::collections::HashMap;
 
@@ -183,6 +184,180 @@ fn parse_iso8601(s: &str) -> anyhow::Result<chrono::DateTime<chrono::Utc>> {
     chrono::DateTime::parse_from_rfc3339(s)
         .map(|dt| dt.with_timezone(&chrono::Utc))
         .map_err(|e| anyhow::anyhow!("invalid ISO 8601 datetime '{}': {}", s, e))
+}
+
+/// Parse a `--test-range=min,max` string into a (lo, hi) pair.
+pub fn parse_test_range(raw: &str) -> anyhow::Result<(usize, usize)> {
+    let mut parts = raw.splitn(2, ',');
+    let lo: usize = parts
+        .next()
+        .unwrap_or("")
+        .trim()
+        .parse()
+        .map_err(|_| anyhow::anyhow!("invalid --test-range min: '{}'", raw))?;
+    let hi: usize = parts
+        .next()
+        .unwrap_or("")
+        .trim()
+        .parse()
+        .map_err(|_| anyhow::anyhow!("invalid --test-range max: '{}'", raw))?;
+    if lo == 0 || hi == 0 {
+        anyhow::bail!("--test-range min and max must be >= 1, got {}-{}", lo, hi);
+    }
+    if lo > hi {
+        anyhow::bail!("--test-range min ({}) must be <= max ({})", lo, hi);
+    }
+    Ok((lo, hi))
+}
+
+/// Test-mode sync: sample spend_logs per hour with `ORDER BY random()`.
+///
+/// Iterates each full clock-hour in the cursor window.  For each hour:
+/// 1. Pick a random limit N in `[lo ..= hi]`.
+/// 2. `SELECT … FROM spend_logs WHERE start_time >= hour AND start_time < next_hour ORDER BY random() LIMIT N`
+/// 3. Batch-INSERT into the target (idempotent).
+///
+/// Progress is printed every 10 hours or after each batch if `debug`.
+pub async fn run_sync_test(
+    source_url: &str,
+    target_url: &str,
+    cursor: &CursorRange,
+    lo: usize,
+    hi: usize,
+    batch_size: usize,
+    debug: bool,
+) -> anyhow::Result<SyncStats> {
+    let batch_size = if batch_size == 0 { 10 } else { batch_size };
+    let source = SourcePool::connect(source_url).await?;
+    let target = SourcePool::connect(target_url).await?;
+
+    // Build column lists (same as sync_spend_logs).
+    let (id_column, overrides) = spend_logs_id_mapping(&source).await?;
+    let tgt_cols_all = target.column_types("spend_logs").await?;
+    let filtered_cols: Vec<(String, String, bool)> = tgt_cols_all;
+    let select_columns: Vec<String> = filtered_cols
+        .iter()
+        .map(|(n, _, _)| {
+            if n == "call_id" {
+                id_column.clone()
+            } else {
+                n.clone()
+            }
+        })
+        .collect();
+    let col_list = select_columns
+        .iter()
+        .map(|c| source.quote_ident(c))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    // Parse the time window.
+    let after = cursor
+        .resume_after
+        .clone()
+        .unwrap_or_else(|| "1970-01-01T00:00:00Z".into());
+    let before = cursor
+        .end_before
+        .clone()
+        .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+    let start_dt = parse_iso8601(&after)?;
+    let end_dt = parse_iso8601(&before)?;
+
+    // Round start down to the hour.
+    let hour_start = start_dt
+        .date_naive()
+        .and_hms_opt(start_dt.time().hour(), 0, 0)
+        .map(|dt| chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc))
+        .unwrap_or(start_dt);
+
+    let total_hours = ((end_dt - hour_start).num_hours().max(0) + 1) as usize;
+    eprintln!(
+        "  [TEST] spend_logs sampling: {} hours, {}-{} rows/hour (random), window={}..{}",
+        total_hours, lo, hi, after, before
+    );
+
+    let _now = chrono::Utc::now();
+    let t_start = std::time::Instant::now();
+    let mut inserted_total = 0usize;
+    let mut ignored_total = 0usize;
+
+    for h in 0..total_hours {
+        let hour_start_dt = hour_start + chrono::Duration::hours(h as i64);
+        let hour_end_dt = hour_start_dt + chrono::Duration::hours(1);
+
+        // Clamp to the actual window.
+        let w_start = if hour_start_dt < start_dt {
+            start_dt
+        } else {
+            hour_start_dt
+        };
+        let w_end = if hour_end_dt > end_dt {
+            end_dt
+        } else {
+            hour_end_dt
+        };
+        if w_start >= w_end {
+            continue;
+        }
+
+        // Simple deterministic per-hour "random" using hour index.
+        let limit = if lo == hi {
+            lo
+        } else {
+            lo + (h % (hi - lo + 1))
+        };
+
+        let lit_start = source.time_literal(&w_start.to_rfc3339());
+        let lit_end = source.time_literal(&w_end.to_rfc3339());
+        let sql = format!(
+            "SELECT {} FROM {} WHERE {} >= {} AND {} < {} ORDER BY random() LIMIT {}",
+            col_list,
+            source.quote_ident("spend_logs"),
+            source.quote_ident("start_time"),
+            lit_start,
+            source.quote_ident("start_time"),
+            lit_end,
+            limit,
+        );
+
+        let rows = source.read_rows_sql(&sql).await?;
+        if !rows.is_empty() {
+            let (ins, ign) =
+                native::insert_rows_batch(&target, "spend_logs", &filtered_cols, &rows, &overrides)
+                    .await?;
+            inserted_total += ins;
+            ignored_total += ign;
+        }
+
+        if h % 10 == 0 || (debug && !rows.is_empty()) {
+            let rate = inserted_total as f64 / t_start.elapsed().as_secs_f64().max(0.001);
+            eprintln!(
+                "  [PROGRESS] test hour {}/{}: inserted={} ignored={} ({:.0} rows/s)",
+                h + 1,
+                total_hours,
+                inserted_total,
+                ignored_total,
+                rate
+            );
+        }
+    }
+
+    let elapsed = t_start.elapsed();
+    let rate = inserted_total as f64 / elapsed.as_secs_f64().max(0.001);
+    eprintln!(
+        "  [TIMING] spend_logs test-sync: {:?} ({} inserted, {} ignored, {:.0} rows/s)",
+        elapsed, inserted_total, ignored_total, rate
+    );
+
+    let mut stats = SyncStats::default();
+    stats.per_table.insert(
+        "spend_logs".into(),
+        TableSyncStats {
+            inserted: inserted_total,
+            ignored: ignored_total,
+        },
+    );
+    Ok(stats)
 }
 
 /// Run an aigw to aigw sync.

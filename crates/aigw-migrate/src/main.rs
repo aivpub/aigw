@@ -253,6 +253,14 @@ enum Commands {
         /// Print SQL queries and per-batch read/write timing to stderr.
         #[arg(long, default_value_t = false)]
         debug: bool,
+        /// Test mode: sample spend_logs rows per hour with random() ordering.
+        /// Only spend_logs is synced; --days controls the window width.
+        /// Uses --test-range to control how many rows per hour.
+        #[arg(long, default_value_t = false)]
+        test: bool,
+        /// Per-hour random sample range: min,max (default 1,10).  Only used with --test.
+        #[arg(long = "test-range", default_value = "1,10")]
+        test_range: String,
     },
 }
 
@@ -419,6 +427,8 @@ async fn main() -> anyhow::Result<()> {
             skip_body,
             batch_size,
             debug,
+            test,
+            test_range,
         } => {
             let source_url = resolve_sync_source_url(source_url)?;
             let target_url = resolve_sync_target_url(target_url)?;
@@ -440,6 +450,13 @@ async fn main() -> anyhow::Result<()> {
             if debug {
                 println!("  --debug: showing SQL and per-batch timing");
             }
+            if test {
+                let (lo, hi) = sync::parse_test_range(&test_range)?;
+                println!(
+                    "  --test: sampling spend_logs per hour, {}-{} rows/hour",
+                    lo, hi
+                );
+            }
             println!(
                 "Sync: aigw ({}) -> aigw ({}) [{} tables{}]",
                 source_url,
@@ -449,16 +466,30 @@ async fn main() -> anyhow::Result<()> {
             );
             println!("  tables: {:?}", tables);
 
-            let stats = sync::run_sync(
-                &source_url,
-                &target_url,
-                &tables,
-                &cursor,
-                skip_body,
-                batch_size,
-                debug,
-            )
-            .await?;
+            let stats = if test {
+                let (lo, hi) = sync::parse_test_range(&test_range)?;
+                sync::run_sync_test(
+                    &source_url,
+                    &target_url,
+                    &cursor,
+                    lo,
+                    hi,
+                    batch_size,
+                    debug,
+                )
+                .await?
+            } else {
+                sync::run_sync(
+                    &source_url,
+                    &target_url,
+                    &tables,
+                    &cursor,
+                    skip_body,
+                    batch_size,
+                    debug,
+                )
+                .await?
+            };
             println!(
                 "Sync complete: inserted={} ignored={}",
                 stats.total_inserted(),

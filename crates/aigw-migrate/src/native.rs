@@ -462,6 +462,16 @@ impl SourcePool {
         }
     }
 
+    /// Execute a raw SELECT on the source pool and return decoded rows.
+    /// Used for ad-hoc queries (e.g. test-sampling with ORDER BY random()).
+    pub async fn read_rows_sql(&self, sql: &str) -> anyhow::Result<Vec<UnifiedRow>> {
+        match self {
+            SourcePool::Postgres(p) => read_pg_rows(p, sql).await,
+            SourcePool::Sqlite(p) => read_sqlite_rows(p, sql).await,
+            SourcePool::Mysql(p) => read_mysql_rows(p, sql).await,
+        }
+    }
+
     /// Get target column names and types for INSERT generation.
     pub async fn column_types(&self, table: &str) -> anyhow::Result<Vec<(String, String, bool)>> {
         match self {
