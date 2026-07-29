@@ -931,6 +931,20 @@ pub async fn messages_handler(
             // Phase 2: UPDATE the pre-inserted SpendLog row
             let duration_ms = now.signed_duration_since(start_time).num_milliseconds() as i32;
             let cst = first_chunk_time.unwrap_or(now);
+            let cache_metadata = if last_cache_read > 0 || last_cache_creation > 0 {
+                let mut m = serde_json::Map::new();
+                m.insert("cache_read_tokens".to_string(), json!(last_cache_read));
+                m.insert("cache_creation_tokens".to_string(), json!(last_cache_creation));
+                let cache_read_spend = last_cache_read as f64 * cache_read_cost.unwrap_or(input_cost.unwrap_or(0.0));
+                let cache_create_spend = last_cache_creation as f64 * cache_create_cost.unwrap_or(input_cost.unwrap_or(0.0));
+                if cache_read_spend > 0.0 || cache_create_spend > 0.0 {
+                    m.insert("cache_read_spend".to_string(), json!((cache_read_spend * 10000.0).round() / 10000.0));
+                    m.insert("cache_create_spend".to_string(), json!((cache_create_spend * 10000.0).round() / 10000.0));
+                }
+                Some(serde_json::Value::Object(m))
+            } else {
+                None
+            };
             let _ = state_clone.db.update_spend_log(
                 &sr_id,
                 upstream_id.as_deref(),
@@ -943,6 +957,7 @@ pub async fn messages_handler(
                 cst,
                 assembled_response,
                 "success",
+                cache_metadata,
             ).await;
 
             // Record streaming metrics

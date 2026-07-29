@@ -1386,7 +1386,8 @@ pub async fn chat_completions(
 
             // Build a completion-style response JSON from collected chunks
             let assembled_response = if chunk_jsons.is_empty() {
-                json!({"streaming": true, "prompt_tokens": stream_prompt_tokens, "completion_tokens": stream_completion_tokens, "total_tokens": stream_total_tokens})
+                json!({"streaming": true, "prompt_tokens": stream_prompt_tokens, "completion_tokens": stream_completion_tokens, "total_tokens": stream_total_tokens,
+                    "cache_read_input_tokens": stream_cache_read, "cache_creation_input_tokens": stream_cache_creation})
             } else {
                 // Merge choice contents from chunks into a single choices array
                 let mut merged_content = String::new();
@@ -1463,6 +1464,7 @@ pub async fn chat_completions(
                         now, duration_ms, cst,
                         json!({"error": err, "status_code": status_code}),
                         &format!("failure:{}", status_code),
+                        None,
                     ).await;
                     if let Some(ref m) = stream_metrics {
                         m.record_request(&RequestSummary {
@@ -1484,9 +1486,23 @@ pub async fn chat_completions(
                     }
                 }
                 None => {
+                    let cache_metadata = if stream_cache_read > 0 || stream_cache_creation > 0 {
+                        let mut m = serde_json::Map::new();
+                        m.insert("cache_read_tokens".to_string(), json!(stream_cache_read));
+                        m.insert("cache_creation_tokens".to_string(), json!(stream_cache_creation));
+                        let cache_read_spend = stream_cache_read as f64 * deployment.cache_read_input_token_cost.unwrap_or(deployment.input_cost_per_token.unwrap_or(0.0));
+                        let cache_create_spend = stream_cache_creation as f64 * deployment.cache_creation_input_token_cost.unwrap_or(deployment.input_cost_per_token.unwrap_or(0.0));
+                        if cache_read_spend > 0.0 || cache_create_spend > 0.0 {
+                            m.insert("cache_read_spend".to_string(), json!((cache_read_spend * 10000.0).round() / 10000.0));
+                            m.insert("cache_create_spend".to_string(), json!((cache_create_spend * 10000.0).round() / 10000.0));
+                        }
+                        Some(serde_json::Value::Object(m))
+                    } else {
+                        None
+                    };
                     let _ = state_clone.db.update_spend_log(
                         &request_id, upstream_id.as_deref(), streaming_spend, stream_total_tokens, stream_prompt_tokens, stream_completion_tokens,
-                        now, duration_ms, cst, assembled_response, "success",
+                        now, duration_ms, cst, assembled_response, "success", cache_metadata,
                     ).await;
                     if let Some(ref m) = stream_metrics {
                         let ttft = first_chunk_time
@@ -1689,7 +1705,23 @@ pub async fn chat_completions(
             custom_llm_provider: deployment.custom_llm_provider.clone(),
             api_base: Some(deployment.api_base.clone()),
             user: auth.user_id.clone(),
-            metadata: None,
+            metadata: {
+                if cache_read > 0 || cache_create > 0 {
+                    let mut m = serde_json::Map::new();
+                    m.insert("cache_read_tokens".to_string(), json!(cache_read));
+                    m.insert("cache_creation_tokens".to_string(), json!(cache_create));
+                    // Effective cache spend (excludes regular token portion)
+                    let cache_read_spend = cache_read as f64 * deployment.cache_read_input_token_cost.unwrap_or(deployment.input_cost_per_token.unwrap_or(0.0));
+                    let cache_create_spend = cache_create as f64 * deployment.cache_creation_input_token_cost.unwrap_or(deployment.input_cost_per_token.unwrap_or(0.0));
+                    if cache_read_spend > 0.0 || cache_create_spend > 0.0 {
+                        m.insert("cache_read_spend".to_string(), json!((cache_read_spend * 10000.0).round() / 10000.0));
+                        m.insert("cache_create_spend".to_string(), json!((cache_create_spend * 10000.0).round() / 10000.0));
+                    }
+                    Some(Value::Object(m))
+                } else {
+                    None
+                }
+            },
             cache_hit: None,
             cache_key: None,
             request_tags: None,

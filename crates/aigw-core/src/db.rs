@@ -1243,6 +1243,7 @@ pub trait SpendLogStore {
         completion_start_time: chrono::DateTime<chrono::Utc>,
         response: serde_json::Value,
         status: &str,
+        metadata: Option<serde_json::Value>,
     ) -> Result<()>;
     async fn query_spend_logs(
         &self,
@@ -1394,26 +1395,31 @@ impl SpendLogStore for SqlitePool {
         completion_start_time: chrono::DateTime<chrono::Utc>,
         response: serde_json::Value,
         status: &str,
+        metadata: Option<serde_json::Value>,
     ) -> Result<()> {
         // COALESCE keeps an already-extracted upstream id when the caller
         // passes None (e.g. streaming where the id was extracted at chunk
         // time but the Phase 2 UPDATE doesn't re-supply it).
-        sqlx::query(
+        let sql = if metadata.is_some() {
+            "UPDATE spend_logs SET spend=?, total_tokens=?, prompt_tokens=?, completion_tokens=?, end_time=?, request_duration_ms=?, completion_start_time=?, response=?, status=?, request_id=COALESCE(?, request_id), metadata=? WHERE call_id=?"
+        } else {
             "UPDATE spend_logs SET spend=?, total_tokens=?, prompt_tokens=?, completion_tokens=?, end_time=?, request_duration_ms=?, completion_start_time=?, response=?, status=?, request_id=COALESCE(?, request_id) WHERE call_id=?"
-        )
-        .bind(spend)
-        .bind(total_tokens)
-        .bind(prompt_tokens)
-        .bind(completion_tokens)
-        .bind(end_time)
-        .bind(request_duration_ms)
-        .bind(completion_start_time)
-        .bind(response)
-        .bind(status)
-        .bind(upstream_request_id)
-        .bind(call_id)
-        .execute(self)
-        .await?;
+        };
+        let mut q = sqlx::query(sql)
+            .bind(spend)
+            .bind(total_tokens)
+            .bind(prompt_tokens)
+            .bind(completion_tokens)
+            .bind(end_time)
+            .bind(request_duration_ms)
+            .bind(completion_start_time)
+            .bind(response)
+            .bind(status)
+            .bind(upstream_request_id);
+        if let Some(m) = metadata {
+            q = q.bind(m);
+        }
+        q.bind(call_id).execute(self).await?;
         Ok(())
     }
 
@@ -1700,23 +1706,28 @@ impl SpendLogStore for MySqlPool {
         completion_start_time: chrono::DateTime<chrono::Utc>,
         response: serde_json::Value,
         status: &str,
+        metadata: Option<serde_json::Value>,
     ) -> Result<()> {
-        sqlx::query(
+        let sql = if metadata.is_some() {
+            "UPDATE spend_logs SET spend=?, total_tokens=?, prompt_tokens=?, completion_tokens=?, end_time=?, request_duration_ms=?, completion_start_time=?, response=?, status=?, request_id=COALESCE(?, request_id), metadata=? WHERE call_id=?"
+        } else {
             "UPDATE spend_logs SET spend=?, total_tokens=?, prompt_tokens=?, completion_tokens=?, end_time=?, request_duration_ms=?, completion_start_time=?, response=?, status=?, request_id=COALESCE(?, request_id) WHERE call_id=?"
-        )
-        .bind(spend)
-        .bind(total_tokens)
-        .bind(prompt_tokens)
-        .bind(completion_tokens)
-        .bind(end_time)
-        .bind(request_duration_ms)
-        .bind(completion_start_time)
-        .bind(response)
-        .bind(status)
-        .bind(upstream_request_id)
-        .bind(call_id)
-        .execute(self)
-        .await?;
+        };
+        let mut q = sqlx::query(sql)
+            .bind(spend)
+            .bind(total_tokens)
+            .bind(prompt_tokens)
+            .bind(completion_tokens)
+            .bind(end_time)
+            .bind(request_duration_ms)
+            .bind(completion_start_time)
+            .bind(response)
+            .bind(status)
+            .bind(upstream_request_id);
+        if let Some(m) = metadata {
+            q = q.bind(m);
+        }
+        q.bind(call_id).execute(self).await?;
         Ok(())
     }
 
@@ -1985,21 +1996,28 @@ impl SpendLogStore for PgPool {
         completion_start_time: chrono::DateTime<chrono::Utc>,
         response: serde_json::Value,
         status: &str,
+        metadata: Option<serde_json::Value>,
     ) -> Result<()> {
-        sqlx::query(
+        let sql = if metadata.is_some() {
+            "UPDATE spend_logs SET spend=$1, total_tokens=$2, prompt_tokens=$3, completion_tokens=$4, end_time=$5, request_duration_ms=$6, completion_start_time=$7, response=$8, status=$9, request_id=COALESCE($10, request_id), metadata=$11 WHERE call_id=$12"
+        } else {
             "UPDATE spend_logs SET spend=$1, total_tokens=$2, prompt_tokens=$3, completion_tokens=$4, end_time=$5, request_duration_ms=$6, completion_start_time=$7, response=$8, status=$9, request_id=COALESCE($10, request_id) WHERE call_id=$11"
-        )
-        .bind(spend)
-        .bind(total_tokens)
-        .bind(prompt_tokens)
-        .bind(completion_tokens)
-        .bind(end_time)
-        .bind(request_duration_ms)
-        .bind(completion_start_time)
-        .bind(response)
-        .bind(status)
-        .bind(upstream_request_id)
-        .bind(call_id)
+        };
+        let mut q = sqlx::query(sql)
+            .bind(spend)
+            .bind(total_tokens)
+            .bind(prompt_tokens)
+            .bind(completion_tokens)
+            .bind(end_time)
+            .bind(request_duration_ms)
+            .bind(completion_start_time)
+            .bind(response)
+            .bind(status)
+            .bind(upstream_request_id);
+        if let Some(m) = metadata {
+            q = q.bind(m);
+        }
+        q.bind(call_id)
         .execute(self)
         .await?;
         Ok(())
@@ -2255,11 +2273,12 @@ impl Database {
         completion_start_time: chrono::DateTime<chrono::Utc>,
         response: serde_json::Value,
         status: &str,
+        metadata: Option<serde_json::Value>,
     ) -> Result<()> {
         match self {
-            Database::Sqlite(pool) => pool.update_spend_log(call_id, upstream_request_id, spend, total_tokens, prompt_tokens, completion_tokens, end_time, request_duration_ms, completion_start_time, response, status).await,
-            Database::Mysql(pool) => pool.update_spend_log(call_id, upstream_request_id, spend, total_tokens, prompt_tokens, completion_tokens, end_time, request_duration_ms, completion_start_time, response, status).await,
-            Database::Postgres(pool) => pool.update_spend_log(call_id, upstream_request_id, spend, total_tokens, prompt_tokens, completion_tokens, end_time, request_duration_ms, completion_start_time, response, status).await,
+            Database::Sqlite(pool) => pool.update_spend_log(call_id, upstream_request_id, spend, total_tokens, prompt_tokens, completion_tokens, end_time, request_duration_ms, completion_start_time, response, status, metadata).await,
+            Database::Mysql(pool) => pool.update_spend_log(call_id, upstream_request_id, spend, total_tokens, prompt_tokens, completion_tokens, end_time, request_duration_ms, completion_start_time, response, status, metadata).await,
+            Database::Postgres(pool) => pool.update_spend_log(call_id, upstream_request_id, spend, total_tokens, prompt_tokens, completion_tokens, end_time, request_duration_ms, completion_start_time, response, status, metadata).await,
         }
     }
 

@@ -111,6 +111,17 @@ function fmtDuration(ms: number | null) {
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
 }
 function truncate8(s: string) { return s ? (s.length > 8 ? s.slice(0, 8) + "…" : s) : "—"; }
+function extractCacheTokens(metadata: unknown): { cache_read_tokens?: number; cache_creation_tokens?: number; cache_read_spend?: number; cache_create_spend?: number } | null {
+  if (!metadata || typeof metadata !== "object") return null;
+  const m = metadata as Record<string, unknown>;
+  if (!m.cache_read_tokens && !m.cache_creation_tokens) return null;
+  return {
+    cache_read_tokens: typeof m.cache_read_tokens === "number" ? m.cache_read_tokens as number : undefined,
+    cache_creation_tokens: typeof m.cache_creation_tokens === "number" ? m.cache_creation_tokens as number : undefined,
+    cache_read_spend: typeof m.cache_read_spend === "number" ? m.cache_read_spend as number : undefined,
+    cache_create_spend: typeof m.cache_create_spend === "number" ? m.cache_create_spend as number : undefined,
+  };
+}
 function truncateEndUser(s: string): string {
   if (!s) return "—";
   return s.length > 30 ? s.slice(0, 30) + "…" : s;
@@ -398,6 +409,9 @@ function DetailDrawer({ log, open, onClose, isDetailLoading, detailError, onRetr
               </span>
             ) : null}
             {log.session_id ? <span>Session: <code className="text-[10px] text-foreground">{log.session_id}</code></span> : null}
+            {(() => { const c = extractCacheTokens(log.metadata); return c ? (
+              <span className="text-amber-600">Cache: {fmtTokens(c.cache_read_tokens ?? 0)} read / {fmtTokens(c.cache_creation_tokens ?? 0)} write{c.cache_read_spend ? ` ($${c.cache_read_spend.toFixed(4)} + $${(c.cache_create_spend ?? 0).toFixed(4)})` : ""}</span>
+            ) : null; })()}
             {log.team_id ? <span>Team: <span className="text-foreground">{log.team_id}</span></span> : null}
             {log.organization_id ? <span>Org: <span className="text-foreground">{log.organization_id}</span></span> : null}
             {log.cache_hit != null ? <span>Cache: <span className="text-foreground">{String(log.cache_hit)}</span></span> : null}
@@ -681,7 +695,11 @@ export function SpendLogsPage() {
                         <TableCell><Badge variant={log.status==="success"?"default":"destructive"} className="text-[10px] px-1.5 py-0">{log.status || "—"}</Badge></TableCell>
                         <TableCell className="text-xs font-mono text-right">{fmtTtft(log.ttft_ms)}</TableCell>
                         <TableCell className="text-xs font-mono text-right">{fmtDuration(log.request_duration_ms)}</TableCell>
-                        <TableCell className="text-xs text-right"><span className="text-muted-foreground">{fmtTokens(log.prompt_tokens)}</span>{" / "}<span>{fmtTokens(log.completion_tokens)}</span></TableCell>
+                        <TableCell className="text-xs text-right"><span className="text-muted-foreground">{fmtTokens(log.prompt_tokens)}</span>{" / "}<span>{fmtTokens(log.completion_tokens)}</span>
+                          {(() => { const c = extractCacheTokens(log.metadata); return c ? (
+                            <span className="text-[10px] block text-muted-foreground/70">cache: {fmtTokens(c.cache_read_tokens ?? 0)}R / {fmtTokens(c.cache_creation_tokens ?? 0)}W</span>
+                          ) : null; })()}
+                        </TableCell>
                         <TableCell className="text-xs font-mono text-right font-medium">{fmtSpend(log.spend)}</TableCell>
                       </TableRow>
                     ))}
