@@ -35,6 +35,7 @@ import {
   Eye,
   EyeOff,
 } from "lucide-react";
+import { format } from "date-fns";
 
 interface KeyItem {
   token: string;
@@ -52,6 +53,16 @@ interface KeyItem {
   metadata: Record<string, unknown>;
   created_at: string | null;
   key?: string; // raw key, only present on generate response
+}
+
+interface DeletedKeyItem {
+  token: string;
+  key_alias: string | null;
+  user_id: string | null;
+  spend: number;
+  key_name: string | null;
+  blocked: boolean | null;
+  updated_at: string | null;
 }
 
 interface KeyListResponse {
@@ -72,6 +83,7 @@ export function KeysPage() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [selectedKey, setSelectedKey] = useState<KeyItem | null>(null);
   const [generatedToken, setGeneratedToken] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"active" | "deleted">("active");
 
   // Form state
   const [formAlias, setFormAlias] = useState("");
@@ -84,6 +96,15 @@ export function KeysPage() {
   const { data, isLoading, error } = useQuery<KeyListResponse>({
     queryKey: ["virtual-keys"],
     queryFn: () => apiGet("/key/list"),
+  });
+
+  const { data: deletedKeys = [], isLoading: deletedLoading } = useQuery<DeletedKeyItem[]>({
+    queryKey: ["virtual-keys-deleted"],
+    queryFn: async () => {
+      const resp = await apiGet<{ keys: DeletedKeyItem[] }>("/key/deleted");
+      return resp.keys ?? [];
+    },
+    enabled: viewMode === "deleted",
   });
 
   const keys = data?.keys ?? [];
@@ -203,6 +224,10 @@ export function KeysPage() {
     setDeleteOpen(true);
   }
 
+  function formatDate(d: string) {
+    try { return format(new Date(d), "yyyy-MM-dd HH:mm"); } catch { return d; }
+  }
+
   function buildCreateBody(): Record<string, unknown> {
     const body: Record<string, unknown> = {};
     if (formAlias.trim()) body.key_alias = formAlias.trim();
@@ -244,27 +269,118 @@ export function KeysPage() {
             Manage virtual keys for LLM access
           </p>
         </div>
-        <Button onClick={openCreate}>
-          <Plus className="h-4 w-4" />
-          New Key
-        </Button>
+        {viewMode === "active" && (
+          <Button onClick={openCreate}>
+            <Plus className="h-4 w-4" />
+            New Key
+          </Button>
+        )}
       </div>
 
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          placeholder="Search by alias, name, or user..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="pl-9 max-w-sm"
-        />
+      <div className="flex items-center gap-2">
+        {viewMode === "active" && (
+          <div className="relative flex-1 max-w-sm">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Search by alias, name, or user..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-9"
+            />
+          </div>
+        )}
+        <div className="flex-1" />
+        <div className="flex items-center rounded-md border p-0.5">
+          <button
+            type="button"
+            onClick={() => setViewMode("active")}
+            className={`px-3 py-1 text-sm rounded-sm font-medium transition-colors ${
+              viewMode === "active" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Active
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode("deleted")}
+            className={`px-3 py-1 text-sm rounded-sm font-medium transition-colors ${
+              viewMode === "deleted" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Deleted
+          </button>
+        </div>
       </div>
 
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle>All Keys ({filteredKeys.length})</CardTitle>
-        </CardHeader>
-        <CardContent>
+      {/* Deleted Keys View */}
+      {viewMode === "deleted" && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle>Deleted Keys ({deletedKeys.length})</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {deletedLoading ? (
+              Array.from({ length: 3 }).map((_, i) => (
+                <div key={i} className="py-2"><Skeleton className="h-4 w-full" /></div>
+              ))
+            ) : deletedKeys.length === 0 ? (
+              <div className="text-center text-muted-foreground py-8">No deleted records</div>
+            ) : (
+              <>
+                <div className="hidden md:block">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Alias</TableHead>
+                        <TableHead>Token</TableHead>
+                        <TableHead>User</TableHead>
+                        <TableHead className="text-right">Spend</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead className="text-right">Deleted At</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {deletedKeys.map((k) => (
+                        <TableRow key={k.token}>
+                          <TableCell className="font-medium">{k.key_alias ?? k.key_name ?? "—"}</TableCell>
+                          <TableCell className="font-mono text-xs">{maskToken(k.token)}</TableCell>
+                          <TableCell className="text-sm">{k.user_id ?? "—"}</TableCell>
+                          <TableCell className="text-right text-sm">${k.spend.toFixed(4)}</TableCell>
+                          <TableCell>{k.blocked ? <Badge variant="destructive">blocked</Badge> : <Badge variant="secondary">active</Badge>}</TableCell>
+                          <TableCell className="text-right text-sm text-muted-foreground">{k.updated_at ? formatDate(k.updated_at) : "—"}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+                <div className="md:hidden space-y-3">
+                  {deletedKeys.map((k) => (
+                    <Card key={k.token}>
+                      <CardContent className="p-4 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium text-sm">{k.key_alias ?? k.key_name ?? "—"}</span>
+                          <span className="text-xs text-muted-foreground">${k.spend.toFixed(4)}</span>
+                        </div>
+                        <div className="text-xs font-mono text-muted-foreground">{maskToken(k.token)}</div>
+                        <div className="text-xs text-muted-foreground">User: {k.user_id ?? "—"} | Deleted: {k.updated_at ? formatDate(k.updated_at) : "—"}</div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Active Keys View */}
+      {viewMode === "active" && (
+        <>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle>All Keys ({filteredKeys.length})</CardTitle>
+            </CardHeader>
+            <CardContent>
           {error ? (
             <p className="text-sm text-destructive">
               {(error as Error).message}
@@ -715,7 +831,7 @@ export function KeysPage() {
               <strong>
                 {selectedKey?.key_alias ?? selectedKey?.token.slice(0, 8)}
               </strong>
-              ? This action cannot be undone.
+              ? This key will be archived and viewable in the Deleted tab.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -735,6 +851,9 @@ export function KeysPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+        </>
+      )}
     </div>
   );
 }

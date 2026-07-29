@@ -16,12 +16,21 @@ import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { toast } from "sonner";
 import { Plus, Search, Pencil, Trash2, Building2 } from "lucide-react";
+import { format } from "date-fns";
 
 interface OrgItem {
   organization_id: string;
   organization_alias: string;
   budget_id: string | null;
   spend: number;
+}
+
+interface DeletedOrgItem {
+  id: number;
+  organization_id: string;
+  organization_alias: string;
+  spend: number;
+  deleted_at: string;
 }
 
 interface OrgListResponse {
@@ -31,6 +40,7 @@ interface OrgListResponse {
 export function OrgsPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
+  const [viewMode, setViewMode] = useState<"active" | "deleted">("active");
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -42,7 +52,14 @@ export function OrgsPage() {
     queryFn: () => apiGet("/org/list"),
   });
 
+  const { data: deletedOrgs = [], isLoading: deletedLoading } = useQuery<DeletedOrgItem[]>({
+    queryKey: ["deleted-orgs"],
+    queryFn: () => apiGet("/org/deleted"),
+    enabled: viewMode === "deleted",
+  });
+
   const orgs = data?.data ?? [];
+  const canEdit = viewMode === "active";
 
   const filtered = useMemo(() => {
     if (!search.trim()) return orgs;
@@ -86,6 +103,10 @@ export function OrgsPage() {
   function openEdit(o: OrgItem) { setSelected(o); setFormAlias(o.organization_alias); setEditOpen(true); }
   function openDelete(o: OrgItem) { setSelected(o); setDeleteOpen(true); }
 
+  function formatDate(d: string) {
+    try { return format(new Date(d), "yyyy-MM-dd HH:mm"); } catch { return d; }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -93,15 +114,78 @@ export function OrgsPage() {
           <h1 className="text-2xl font-bold tracking-tight">Organizations</h1>
           <p className="text-sm text-muted-foreground">Manage organizations</p>
         </div>
-        <Button onClick={openCreate}>
-          <Plus className="h-4 w-4" /> New Org
-        </Button>
+        {canEdit && (
+          <Button onClick={openCreate}>
+            <Plus className="h-4 w-4" /> New Org
+          </Button>
+        )}
       </div>
 
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input placeholder="Search by name..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9 max-w-sm" />
+      <div className="flex items-center gap-2">
+        {viewMode === "active" && (
+          <div className="relative flex-1 max-w-sm">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input placeholder="Search by name..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
+          </div>
+        )}
+        <div className="flex-1" />
+        <div className="flex items-center rounded-md border p-0.5">
+          <button type="button" onClick={() => setViewMode("active")}
+            className={`px-3 py-1 text-sm rounded-sm font-medium transition-colors ${viewMode === "active" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>Active</button>
+          <button type="button" onClick={() => setViewMode("deleted")}
+            className={`px-3 py-1 text-sm rounded-sm font-medium transition-colors ${viewMode === "deleted" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>Deleted</button>
+        </div>
       </div>
+
+      {viewMode === "deleted" && (
+        <Card>
+          <CardHeader className="pb-2"><CardTitle>Deleted Organizations ({deletedOrgs.length})</CardTitle></CardHeader>
+          <CardContent>
+            {deletedLoading ? (
+              Array.from({ length: 3 }).map((_, i) => <div key={i} className="py-2"><Skeleton className="h-4 w-full" /></div>)
+            ) : deletedOrgs.length === 0 ? (
+              <div className="text-center text-muted-foreground py-8">No deleted records</div>
+            ) : (
+              <>
+                <div className="hidden md:block">
+                  <Table>
+                    <TableHeader><TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Organization ID</TableHead>
+                      <TableHead className="text-right">Spend</TableHead>
+                      <TableHead className="text-right">Deleted At</TableHead>
+                    </TableRow></TableHeader>
+                    <TableBody>
+                      {deletedOrgs.map((o) => (
+                        <TableRow key={o.id}>
+                          <TableCell className="font-medium">{o.organization_alias}</TableCell>
+                          <TableCell className="text-sm font-mono">{o.organization_id}</TableCell>
+                          <TableCell className="text-right text-sm">${o.spend.toFixed(4)}</TableCell>
+                          <TableCell className="text-right text-sm text-muted-foreground">{formatDate(o.deleted_at)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+                <div className="md:hidden space-y-3">
+                  {deletedOrgs.map((o) => (
+                    <Card key={o.id}><CardContent className="p-4 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium text-sm">{o.organization_alias}</span>
+                        <span className="text-xs text-muted-foreground">${o.spend.toFixed(4)}</span>
+                      </div>
+                      <div className="text-xs text-muted-foreground">ID: {o.organization_id}</div>
+                      <div className="text-xs text-muted-foreground">Deleted: {formatDate(o.deleted_at)}</div>
+                    </CardContent></Card>
+                  ))}
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {viewMode === "active" && (<>
 
       <Card>
         <CardHeader className="pb-2"><CardTitle>All Organizations ({filtered.length})</CardTitle></CardHeader>
@@ -213,7 +297,7 @@ export function OrgsPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Delete Organization</DialogTitle>
-            <DialogDescription>Delete <strong>{selected?.organization_alias}</strong>? This cannot be undone.</DialogDescription>
+            <DialogDescription>Delete <strong>{selected?.organization_alias}</strong>? It will be archived and viewable in the Deleted tab.</DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteOpen(false)}>Cancel</Button>
@@ -224,5 +308,7 @@ export function OrgsPage() {
         </DialogContent>
       </Dialog>
     </div>
+    </>
+    )}
   );
 }

@@ -610,6 +610,21 @@ pub async fn key_delete(
     ))
 }
 
+/// GET /key/deleted — list archived (soft-deleted) keys
+pub async fn key_deleted_list(
+    State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    require_admin(&auth)?;
+    let deleted = state.db.list_deleted_keys().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": format!("{}", e)})),
+        )
+    })?;
+    Ok(Json(serde_json::to_value(&deleted).unwrap_or(json!([]))))
+}
+
 /// POST /key/regenerate — Regenerate a key (new token, copy config) (admin only)
 pub async fn key_regenerate(
     State(state): State<SharedState>,

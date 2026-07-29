@@ -17,6 +17,7 @@ import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { toast } from "sonner";
 import { Plus, Search, Pencil, Trash2, Users2 } from "lucide-react";
+import { format } from "date-fns";
 
 interface TeamItem {
   team_id: string;
@@ -29,6 +30,15 @@ interface TeamItem {
   blocked: boolean;
 }
 
+interface DeletedTeamItem {
+  id: number;
+  team_id: string;
+  team_alias: string | null;
+  organization_id: string | null;
+  spend: number;
+  deleted_at: string;
+}
+
 interface TeamListResponse {
   data: TeamItem[];
 }
@@ -36,6 +46,7 @@ interface TeamListResponse {
 export function TeamsPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
+  const [viewMode, setViewMode] = useState<"active" | "deleted">("active");
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -50,7 +61,14 @@ export function TeamsPage() {
     queryFn: () => apiGet("/team/list"),
   });
 
+  const { data: deletedTeams = [], isLoading: deletedLoading } = useQuery<DeletedTeamItem[]>({
+    queryKey: ["deleted-teams"],
+    queryFn: () => apiGet("/team/deleted"),
+    enabled: viewMode === "deleted",
+  });
+
   const teams = data?.data ?? [];
+  const canEdit = viewMode === "active";
 
   const filtered = useMemo(() => {
     if (!search.trim()) return teams;
@@ -94,6 +112,69 @@ export function TeamsPage() {
   function openEdit(t: TeamItem) { setSelected(t); setFormAlias(t.team_alias); setFormOrgId(t.organization_id ?? ""); setFormBudget(t.max_budget?.toString() ?? ""); setEditOpen(true); }
   function openDelete(t: TeamItem) { setSelected(t); setDeleteOpen(true); }
 
+  function formatDate(d: string) {
+    try { return format(new Date(d), "yyyy-MM-dd HH:mm"); } catch { return d; }
+  }
+
+  if (viewMode === "deleted") {
+
+    return (
+      <Card>
+        <CardHeader className="pb-2"><CardTitle>Deleted Teams ({deletedTeams.length})</CardTitle></CardHeader>
+        <CardContent>
+          {deletedLoading ? (
+            Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="py-2"><Skeleton className="h-4 w-full" /></div>
+            ))
+          ) : deletedTeams.length === 0 ? (
+            <div className="text-center text-muted-foreground py-8">No deleted records</div>
+          ) : (
+            <>
+              <div className="hidden md:block">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Team ID</TableHead>
+                      <TableHead>Org</TableHead>
+                      <TableHead className="text-right">Spend</TableHead>
+                      <TableHead className="text-right">Deleted At</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {deletedTeams.map((t) => (
+                      <TableRow key={t.id}>
+                        <TableCell className="font-medium">{t.team_alias ?? "—"}</TableCell>
+                        <TableCell className="text-sm font-mono">{t.team_id}</TableCell>
+                        <TableCell className="text-sm">{t.organization_id ?? "—"}</TableCell>
+                        <TableCell className="text-right text-sm">${t.spend.toFixed(4)}</TableCell>
+                        <TableCell className="text-right text-sm text-muted-foreground">{formatDate(t.deleted_at)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+              <div className="md:hidden space-y-3">
+                {deletedTeams.map((t) => (
+                  <Card key={t.id}>
+                    <CardContent className="p-4 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium text-sm">{t.team_alias ?? "—"}</span>
+                        <span className="text-xs text-muted-foreground">${t.spend.toFixed(4)}</span>
+                      </div>
+                      <div className="text-xs text-muted-foreground">ID: {t.team_id} | Org: {t.organization_id ?? "—"}</div>
+                      <div className="text-xs text-muted-foreground">Deleted: {formatDate(t.deleted_at)}</div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -101,14 +182,41 @@ export function TeamsPage() {
           <h1 className="text-2xl font-bold tracking-tight">Teams</h1>
           <p className="text-sm text-muted-foreground">Manage teams and members</p>
         </div>
-        <Button onClick={openCreate}>
-          <Plus className="h-4 w-4" /> New Team
-        </Button>
+        {canEdit && (
+          <Button onClick={openCreate}>
+            <Plus className="h-4 w-4" /> New Team
+          </Button>
+        )}
       </div>
 
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input placeholder="Search by name..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9 max-w-sm" />
+      <div className="flex items-center gap-2">
+        {viewMode === "active" && (
+          <div className="relative flex-1 max-w-sm">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input placeholder="Search by name..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
+          </div>
+        )}
+        <div className="flex-1" />
+        <div className="flex items-center rounded-md border p-0.5">
+          <button
+            type="button"
+            onClick={() => setViewMode("active")}
+            className={`px-3 py-1 text-sm rounded-sm font-medium transition-colors ${
+              viewMode === "active" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Active
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode("deleted")}
+            className={`px-3 py-1 text-sm rounded-sm font-medium transition-colors ${
+              viewMode === "deleted" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            Deleted
+          </button>
+        </div>
       </div>
 
       <Card>
@@ -233,7 +341,7 @@ export function TeamsPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Delete Team</DialogTitle>
-            <DialogDescription>Delete <strong>{selected?.team_alias}</strong>? This cannot be undone.</DialogDescription>
+            <DialogDescription>Delete <strong>{selected?.team_alias}</strong>? It will be archived and viewable in the Deleted tab.</DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteOpen(false)}>Cancel</Button>

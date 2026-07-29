@@ -364,6 +364,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/key/list", get(keys::key_list))
         .route("/key/update", axum::routing::put(keys::key_update))
         .route("/key/delete", axum::routing::delete(keys::key_delete))
+        .route("/key/deleted", get(keys::key_deleted_list))
         .route("/key/regenerate", axum::routing::post(keys::key_regenerate))
         // Model management routes
         .route("/model/new", axum::routing::post(models::model_new))

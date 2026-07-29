@@ -24,7 +24,8 @@ export function DeleteConfirm({ open, onOpenChange, modelName, onConfirm, loadin
           <DialogTitle>Delete Model</DialogTitle>
           <DialogDescription>
             Delete proxy model <strong>"{modelName}"</strong>?
-            This action cannot be undone. Existing API keys that reference
+            It will be archived and viewable in the Deleted view.
+            Existing API keys that reference
             this model will no longer have access.
           </DialogDescription>
         </DialogHeader>

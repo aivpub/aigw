@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { format } from "date-fns";
 import { apiGet, apiPost, apiPut, apiDelete } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -47,6 +48,16 @@ interface UserListResponse {
   total_pages: number;
 }
 
+interface DeletedUserItem {
+  id: number;
+  user_id: string;
+  user_alias: string | null;
+  user_email: string | null;
+  user_role: string | null;
+  spend: number;
+  deleted_at: string;
+}
+
 export function UsersPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
@@ -56,6 +67,8 @@ export function UsersPage() {
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [selected, setSelected] = useState<UserItem | null>(null);
+
+  const [viewMode, setViewMode] = useState<"active" | "deleted">("active");
 
   const [formEmail, setFormEmail] = useState("");
   const [formPassword, setFormPassword] = useState("");
@@ -73,6 +86,12 @@ export function UsersPage() {
   const users = data?.data ?? [];
   const totalCount = data?.total_count ?? 0;
   const totalPages = data?.total_pages ?? 0;
+
+  const { data: deletedUsers = [], isLoading: deletedLoading } = useQuery<DeletedUserItem[]>({
+    queryKey: ["deleted-users"],
+    queryFn: () => apiGet("/user/deleted"),
+    enabled: viewMode === "deleted",
+  });
 
   const filtered = useMemo(() => {
     if (!search.trim()) return users;
@@ -140,6 +159,14 @@ export function UsersPage() {
     setDeleteOpen(true);
   }
 
+  function formatDate(iso: string) {
+    try {
+      return format(new Date(iso), "yyyy-MM-dd HH:mm");
+    } catch {
+      return iso;
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -147,22 +174,84 @@ export function UsersPage() {
           <h1 className="text-2xl font-bold tracking-tight">Users</h1>
           <p className="text-sm text-muted-foreground">Manage user accounts and roles</p>
         </div>
-        <Button onClick={openCreate}>
+        {viewMode === "active" && (<Button onClick={openCreate}>
           <Plus className="h-4 w-4" /> New User
-        </Button>
+        </Button>)}
       </div>
 
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          placeholder="Search by alias, email, or role..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="pl-9 max-w-sm"
-        />
+      <div className="flex items-center gap-2">
+        {viewMode === "active" && (
+          <div className="relative flex-1 max-w-sm">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Search by alias, email, or role..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-9"
+            />
+          </div>
+        )}
+        <div className="flex-1" />
+        <div className="flex items-center rounded-md border p-0.5">
+          <button type="button" onClick={() => setViewMode("active")}
+            className={`px-3 py-1 text-sm rounded-sm font-medium transition-colors ${viewMode === "active" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>Active</button>
+          <button type="button" onClick={() => setViewMode("deleted")}
+            className={`px-3 py-1 text-sm rounded-sm font-medium transition-colors ${viewMode === "deleted" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>Deleted</button>
+        </div>
       </div>
 
-      <Card>
+      {viewMode === "deleted" && (
+        <Card>
+          <CardHeader className="pb-2"><CardTitle>Deleted Users ({deletedUsers.length})</CardTitle></CardHeader>
+          <CardContent>
+            {deletedLoading ? Array.from({ length: 3 }).map((_, i) => <div key={i} className="py-2"><Skeleton className="h-4 w-full" /></div>)
+            : deletedUsers.length === 0 ? <div className="text-center text-muted-foreground py-8">No deleted records</div>
+            : (
+              <>
+                <div className="hidden md:block">
+                  <Table>
+                    <TableHeader><TableRow>
+                      <TableHead>Alias</TableHead>
+                      <TableHead>User ID</TableHead>
+                      <TableHead>Email</TableHead>
+                      <TableHead>Role</TableHead>
+                      <TableHead className="text-right">Spend</TableHead>
+                      <TableHead className="text-right">Deleted At</TableHead>
+                    </TableRow></TableHeader>
+                    <TableBody>
+                      {deletedUsers.map((u) => (
+                        <TableRow key={u.id}>
+                          <TableCell className="font-medium">{u.user_alias ?? "—"}</TableCell>
+                          <TableCell className="text-sm font-mono">{u.user_id}</TableCell>
+                          <TableCell className="text-sm">{u.user_email ?? "—"}</TableCell>
+                          <TableCell><Badge variant={u.user_role === "proxy_admin" ? "default" : "secondary"}>{u.user_role ?? "—"}</Badge></TableCell>
+                          <TableCell className="text-right text-sm">${u.spend.toFixed(4)}</TableCell>
+                          <TableCell className="text-right text-sm text-muted-foreground">{formatDate(u.deleted_at)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+                <div className="md:hidden space-y-3">
+                  {deletedUsers.map((u) => (
+                    <Card key={u.id}><CardContent className="p-4 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium text-sm">{u.user_alias ?? u.user_email ?? "—"}</span>
+                        <Badge variant={u.user_role === "proxy_admin" ? "default" : "secondary"} className="text-xs">{u.user_role ?? "—"}</Badge>
+                      </div>
+                      <div className="text-xs text-muted-foreground">ID: {u.user_id}</div>
+                      <div className="text-xs text-muted-foreground">Deleted: {formatDate(u.deleted_at)}</div>
+                    </CardContent></Card>
+                  ))}
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {viewMode === "active" && (<>
+        <Card>
         <CardHeader className="pb-2">
           <CardTitle>All Users ({totalCount})</CardTitle>
         </CardHeader>
@@ -463,7 +552,7 @@ export function UsersPage() {
           <DialogHeader>
             <DialogTitle>Delete User</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete <strong>{selected?.user_alias ?? selected?.user_id?.slice(0, 8)}</strong>? This cannot be undone.
+              Are you sure you want to delete <strong>{selected?.user_alias ?? selected?.user_id?.slice(0, 8)}</strong>? It will be archived and viewable in the Deleted tab.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -474,6 +563,7 @@ export function UsersPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      </>)}
     </div>
   );
 }

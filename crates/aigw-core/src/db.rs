@@ -326,6 +326,9 @@ pub trait KeyStore {
     /// Soft-delete a key: move to deleted_keys table, then remove from virtual_keys.
     async fn delete_key(&self, token_hash: &str) -> Result<()>;
 
+    /// List all archived (soft-deleted) keys from deleted_keys.
+    async fn list_deleted_keys(&self) -> Result<Vec<VirtualKey>>;
+
     /// Update specific fields on a key (spend, models, max_budget, tpm_limit, rpm_limit, blocked, metadata, tags).
     async fn update_key(&self, token_hash: &str, key: &VirtualKey) -> Result<()>;
 }
@@ -434,6 +437,20 @@ INSERT INTO deleted_keys (
     last_active, rotation_count, auto_rotate, rotation_interval,
     last_rotation_at, key_rotation_at, budget_limits
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+"#;
+
+const LIST_DELETED_KEYS_SQLITE: &str = r#"
+SELECT
+    token, key_name, key_alias, soft_budget_cooldown, spend, expires,
+    models, aliases, config, router_settings,
+    user_id, team_id, agent_id, project_id, permissions, max_parallel_requests,
+    metadata, blocked, tpm_limit, rpm_limit, max_budget, budget_duration, budget_reset_at,
+    allowed_cache_controls, allowed_routes, policies, access_group_ids,
+    model_spend, model_max_budget, budget_id, organization_id, object_permission_id,
+    created_at, created_by, updated_at, updated_by,
+    last_active, rotation_count, auto_rotate, rotation_interval,
+    last_rotation_at, key_rotation_at, budget_limits
+FROM deleted_keys ORDER BY updated_at DESC
 "#;
 
 const UPDATE_KEY_SQLITE: &str = r#"
@@ -560,6 +577,10 @@ impl KeyStore for SqlitePool {
             (None, None) => sqlx::query_as(LIST_KEYS_SQLITE).fetch_all(self).await?,
         };
         Ok(keys)
+    }
+
+    async fn list_deleted_keys(&self) -> Result<Vec<VirtualKey>> {
+        sqlx::query_as(LIST_DELETED_KEYS_SQLITE).fetch_all(self).await.map_err(DbError::from)
     }
 
     async fn delete_key(&self, token_hash: &str) -> Result<()> {
@@ -793,6 +814,11 @@ impl KeyStore for MySqlPool {
             (None, None) => sqlx::query_as(LIST_KEYS_SQLITE).fetch_all(self).await?,
         };
         Ok(keys)
+    }
+
+    async fn list_deleted_keys(&self) -> Result<Vec<VirtualKey>> {
+        sqlx::query_as("SELECT token, key_name, key_alias, soft_budget_cooldown, spend, expires, models, aliases, config, router_settings, user_id, team_id, agent_id, project_id, permissions, max_parallel_requests, metadata, blocked, tpm_limit, rpm_limit, max_budget, budget_duration, budget_reset_at, allowed_cache_controls, allowed_routes, policies, access_group_ids, model_spend, model_max_budget, budget_id, organization_id, object_permission_id, created_at, created_by, updated_at, updated_by, last_active, rotation_count, auto_rotate, rotation_interval, last_rotation_at, key_rotation_at, budget_limits FROM deleted_keys ORDER BY updated_at DESC")
+            .fetch_all(self).await.map_err(DbError::from)
     }
 
     async fn delete_key(&self, token_hash: &str) -> Result<()> {
@@ -1040,6 +1066,11 @@ impl KeyStore for PgPool {
         Ok(keys)
     }
 
+    async fn list_deleted_keys(&self) -> Result<Vec<VirtualKey>> {
+        sqlx::query_as("SELECT token, key_name, key_alias, soft_budget_cooldown, spend, expires, models, aliases, config, router_settings, user_id, team_id, agent_id, project_id, permissions, max_parallel_requests, metadata, blocked, tpm_limit, rpm_limit, max_budget, budget_duration, budget_reset_at, allowed_cache_controls, allowed_routes, policies, access_group_ids, model_spend, model_max_budget, budget_id, organization_id, object_permission_id, created_at, created_by, updated_at, updated_by, last_active, rotation_count, auto_rotate, rotation_interval, last_rotation_at, key_rotation_at, budget_limits FROM deleted_keys ORDER BY updated_at DESC")
+            .fetch_all(self).await.map_err(DbError::from)
+    }
+
     async fn delete_key(&self, token_hash: &str) -> Result<()> {
         let key = self.get_key_by_token(token_hash).await?;
         if let Some(k) = key {
@@ -1159,6 +1190,14 @@ impl Database {
             Database::Sqlite(pool) => pool.list_keys(team_id, user_id).await,
             Database::Mysql(pool) => pool.list_keys(team_id, user_id).await,
             Database::Postgres(pool) => pool.list_keys(team_id, user_id).await,
+        }
+    }
+
+    pub async fn list_deleted_keys(&self) -> Result<Vec<VirtualKey>> {
+        match self {
+            Database::Sqlite(pool) => pool.list_deleted_keys().await,
+            Database::Mysql(pool) => pool.list_deleted_keys().await,
+            Database::Postgres(pool) => pool.list_deleted_keys().await,
         }
     }
 

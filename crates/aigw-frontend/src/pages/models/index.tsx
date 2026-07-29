@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
+import { format } from "date-fns";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiPut, apiDelete } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -107,6 +108,7 @@ export function ModelsPage() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deletingModel, setDeletingModel] = useState<ModelItem | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [viewMode, setViewMode] = useState<"active" | "deleted">("active");
 
   // Error toast
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -128,6 +130,24 @@ export function ModelsPage() {
         extractProvider(m.litellm_params).toLowerCase().includes(q),
     );
   }, [models, search]);
+
+  interface DeletedModelItem {
+    id: number;
+    model_id: string;
+    model_name: string;
+    litellm_params: Record<string, unknown>;
+    deleted_at: string;
+  }
+
+  const { data: deletedModels = [], isLoading: deletedLoading } = useQuery<DeletedModelItem[]>({
+    queryKey: ["deleted-models"],
+    queryFn: () => apiGet("/model/deleted"),
+    enabled: viewMode === "deleted",
+  });
+
+  function formatDate(d: string) {
+    try { return format(new Date(d), "yyyy-MM-dd HH:mm"); } catch { return d; }
+  }
 
   function toggleExpand(id: string) {
     setExpanded((prev) => {
@@ -161,6 +181,7 @@ export function ModelsPage() {
     try {
       await apiDelete(`/model/delete?model_id=${encodeURIComponent(deletingModel.model_id)}`);
       queryClient.invalidateQueries({ queryKey: ["proxy-models"] });
+      queryClient.invalidateQueries({ queryKey: ["deleted-models"] });
       setDeleteOpen(false);
       setDeletingModel(null);
     } catch (err) {
@@ -225,21 +246,89 @@ export function ModelsPage() {
       )}
 
       <div className="flex items-center gap-2">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            placeholder="Search by name, provider..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-9"
-          />
+        {viewMode === "active" && (
+          <div className="relative flex-1 max-w-sm">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Search by name, provider..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-9"
+            />
+          </div>
+        )}
+        <div className="flex-1" />
+        <div className="flex items-center rounded-md border p-0.5">
+          <button type="button" onClick={() => setViewMode("active")}
+            className={`px-3 py-1 text-sm rounded-sm font-medium transition-colors ${viewMode === "active" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>Active</button>
+          <button type="button" onClick={() => setViewMode("deleted")}
+            className={`px-3 py-1 text-sm rounded-sm font-medium transition-colors ${viewMode === "deleted" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>Deleted</button>
         </div>
-        <Button size="sm" onClick={handleAdd}>
-          <Plus className="h-4 w-4" />
-          Add Model
-        </Button>
+        {viewMode === "active" && (
+          <Button size="sm" onClick={handleAdd}>
+            <Plus className="h-4 w-4" />
+            Add Model
+          </Button>
+        )}
       </div>
 
+      {/* Deleted view */}
+      {viewMode === "deleted" && (
+        <Card>
+          <CardHeader className="pb-2"><CardTitle>Deleted Models ({deletedModels.length})</CardTitle></CardHeader>
+          <CardContent>
+            {deletedLoading ? (
+              Array.from({ length: 3 }).map((_, i) => <div key={i} className="py-2"><Skeleton className="h-4 w-full" /></div>)
+            ) : deletedModels.length === 0 ? (
+              <div className="text-center text-muted-foreground py-8">No deleted records</div>
+            ) : (
+              <>
+                <div className="hidden md:block">
+                  <Table>
+                    <TableHeader><TableRow>
+                      <TableHead>Model Name</TableHead>
+                      <TableHead>Model ID</TableHead>
+                      <TableHead>Provider</TableHead>
+                      <TableHead className="text-right">Deleted At</TableHead>
+                    </TableRow></TableHeader>
+                    <TableBody>
+                      {deletedModels.map((m) => {
+                        const provider = typeof m.litellm_params?.custom_llm_provider === "string"
+                          ? m.litellm_params.custom_llm_provider : typeof m.litellm_params?.model === "string"
+                          ? m.litellm_params.model.split("/")[0] || "—" : "—";
+                        return (
+                          <TableRow key={m.id}>
+                            <TableCell className="font-medium">{m.model_name}</TableCell>
+                            <TableCell className="text-sm font-mono">{m.model_id}</TableCell>
+                            <TableCell className="text-sm">{provider}</TableCell>
+                            <TableCell className="text-right text-sm text-muted-foreground">{formatDate(m.deleted_at)}</TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+                <div className="md:hidden space-y-3">
+                  {deletedModels.map((m) => {
+                    const provider = typeof m.litellm_params?.custom_llm_provider === "string"
+                      ? m.litellm_params.custom_llm_provider : typeof m.litellm_params?.model === "string"
+                      ? m.litellm_params.model.split("/")[0] || "—" : "—";
+                    return (
+                      <Card key={m.id}><CardContent className="p-4 space-y-2">
+                        <div className="font-medium text-sm">{m.model_name}</div>
+                        <div className="text-xs text-muted-foreground">ID: {m.model_id} | Provider: {provider}</div>
+                        <div className="text-xs text-muted-foreground">Deleted: {formatDate(m.deleted_at)}</div>
+                      </CardContent></Card>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {viewMode === "active" && (
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center gap-2">
@@ -588,6 +677,7 @@ export function ModelsPage() {
           </div>
         </CardContent>
       </Card>
+      )}
 
       {/* Model Dialog (Add/Edit) */}
       <ModelDialog
