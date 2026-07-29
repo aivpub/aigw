@@ -234,8 +234,13 @@ enum Commands {
         tables: Option<String>,
         /// spend_logs only: sync rows with `start_time` within the last N days (UTC).
         /// Other tables are full-table copies and ignore this flag.
+        /// Mutually exclusive with --hours.
         #[arg(long, short = 'd')]
         days: Option<i64>,
+        /// spend_logs only: sync rows within the last N hours.
+        /// Mutually exclusive with --days.
+        #[arg(long, short = 'H')]
+        hours: Option<i64>,
         /// spend_logs only: precise lower bound `start_time >= value` (ISO 8601).
         /// Combined with --days by taking the stricter (later) bound.
         #[arg(long = "resume-after", short = 'r')]
@@ -422,6 +427,7 @@ async fn main() -> anyhow::Result<()> {
             target_url,
             tables,
             days,
+            hours,
             resume_after,
             end_before,
             skip_body,
@@ -433,7 +439,7 @@ async fn main() -> anyhow::Result<()> {
             let source_url = resolve_sync_source_url(source_url)?;
             let target_url = resolve_sync_target_url(target_url)?;
             let tables = sync::resolve_tables(tables.as_deref())?;
-            let cursor = sync::resolve_cursor(days, resume_after, end_before)?;
+            let cursor = sync::resolve_cursor(days, hours, resume_after, end_before)?;
 
             if skip_body {
                 println!("  --skip-body: will null messages/response/proxy_server_request in spend_logs");
@@ -446,6 +452,9 @@ async fn main() -> anyhow::Result<()> {
             }
             if let Some(n) = days {
                 println!("  --days: {} (spend_logs only, UTC)", n);
+            }
+            if let Some(n) = hours {
+                println!("  --hours: {} (spend_logs only)", n);
             }
             if debug {
                 println!("  --debug: showing SQL and per-batch timing");

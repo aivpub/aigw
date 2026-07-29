@@ -125,15 +125,17 @@ pub fn resolve_tables(explicit: Option<&str>) -> anyhow::Result<Vec<String>> {
     }
 }
 
-/// Resolve the effective spend_logs cursor from `--days` and explicit bounds.
+/// Resolve the effective spend_logs cursor from `--days`, `--hours` and
+/// explicit bounds.  `--days` and `--hours` are mutually exclusive.
 ///
-/// `--days N` means `start_time` within the last N days (UTC):
-/// `resume_after = now - N days`, `end_before = now`.  If explicit
-/// `--resume-after` / `--end-before` are also given, the stricter bound wins
-/// (max resume_after, min end_before) instead of erroring — the caller asked
-/// for the intersection of both windows.
+/// `--days N`: resume_after = start of the day N days ago (00:00:00Z).
+/// `--hours N`: resume_after = now - N hours.
+///
+/// If explicit `--resume-after` / `--end-before` are also given, the stricter
+/// bound wins (max resume_after, min end_before).
 pub fn resolve_cursor(
     days: Option<i64>,
+    hours: Option<i64>,
     explicit_resume_after: Option<String>,
     explicit_end_before: Option<String>,
 ) -> anyhow::Result<CursorRange> {
@@ -141,43 +143,62 @@ pub fn resolve_cursor(
         resume_after: explicit_resume_after,
         end_before: explicit_end_before,
     };
+    if days.is_some() && hours.is_some() {
+        anyhow::bail!("--days and --hours are mutually exclusive");
+    }
+    let now = chrono::Utc::now();
+
+    // --days handle
     if let Some(n) = days {
         if n < 0 {
             anyhow::bail!("--days must be >= 0, got {}", n);
         }
-        let now = chrono::Utc::now();
-        // resume = start of the day N days ago (00:00:00Z), so the SQL `>=`
-        // includes all rows from that day onwards.
         let resume = (now - chrono::Duration::days(n))
             .date_naive()
             .and_hms_opt(0, 0, 0)
             .map(|dt| chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc))
             .unwrap_or(now - chrono::Duration::days(n));
-        cursor.resume_after = Some(match cursor.resume_after {
-            Some(existing) => {
-                // Stricter (later) lower bound wins.
-                let existing_dt = parse_iso8601(&existing)?;
-                if resume > existing_dt {
-                    resume.to_rfc3339()
-                } else {
-                    existing
-                }
-            }
-            None => resume.to_rfc3339(),
-        });
-        cursor.end_before = Some(match cursor.end_before {
-            Some(existing) => {
-                let existing_dt = parse_iso8601(&existing)?;
-                if now < existing_dt {
-                    now.to_rfc3339()
-                } else {
-                    existing
-                }
-            }
-            None => now.to_rfc3339(),
-        });
+        cursor.resume_after = Some(merge_resume(cursor.resume_after, resume)?);
+        cursor.end_before = Some(merge_end_before(cursor.end_before, now)?);
     }
+
+    // --hours handle
+    if let Some(n) = hours {
+        if n < 0 {
+            anyhow::bail!("--hours must be >= 0, got {}", n);
+        }
+        let resume = now - chrono::Duration::hours(n);
+        cursor.resume_after = Some(merge_resume(cursor.resume_after, resume)?);
+        cursor.end_before = Some(merge_end_before(cursor.end_before, now)?);
+    }
+
     Ok(cursor)
+}
+
+fn merge_resume(
+    existing: Option<String>,
+    candidate: chrono::DateTime<chrono::Utc>,
+) -> anyhow::Result<String> {
+    match existing {
+        Some(ref s) => {
+            let existing_dt = parse_iso8601(s)?;
+            Ok(if candidate > existing_dt { candidate.to_rfc3339() } else { s.clone() })
+        }
+        None => Ok(candidate.to_rfc3339()),
+    }
+}
+
+fn merge_end_before(
+    existing: Option<String>,
+    candidate: chrono::DateTime<chrono::Utc>,
+) -> anyhow::Result<String> {
+    match existing {
+        Some(ref s) => {
+            let existing_dt = parse_iso8601(s)?;
+            Ok(if candidate < existing_dt { candidate.to_rfc3339() } else { s.clone() })
+        }
+        None => Ok(candidate.to_rfc3339()),
+    }
 }
 
 fn parse_iso8601(s: &str) -> anyhow::Result<chrono::DateTime<chrono::Utc>> {

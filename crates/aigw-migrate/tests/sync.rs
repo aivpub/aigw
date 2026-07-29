@@ -245,7 +245,7 @@ async fn test_days_filter_spend_logs_only() {
     .unwrap();
     drop(src);
 
-    let cursor = resolve_cursor(Some(7), None, None).unwrap();
+    let cursor = resolve_cursor(Some(7), None, None, None).unwrap();
     run_sync(
         &source_url,
         &target_url,
