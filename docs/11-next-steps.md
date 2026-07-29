@@ -1,23 +1,47 @@
 # aigw -- 下一步行动
 
-**上次更新**: 2026-07-28
-**当前阶段**: Phase 36 ⏳ Upstream Prompt Cache Detection & Differentiated Billing（Stage 90 待开始），Phase 35 ⏳ Core Entity Soft-Delete（Stage 88-89 待开始，两 Phase 可并行）
+**上次更新**: 2026-07-29
+**当前阶段**: Phase 35 ✅ + Phase 36 ✅（Stage 88-90 全部完成）
 
 ---
 
-## 当前状态：83/89 Stages（Stage 87 ✅，Phase 34 完成；Stage 88-90 待开始）
+## 当前状态：85/89 Stages（Stage 88-90 ✅）
 
-**并行工作项**：
+**待办**: ① Phase 30（Stage 78-81）代码已落地 + Phase 31 修复完成，待一并回写为 ✅；② TD-006 客户端 call_id 响应头回写；③ 长期路线 LT-BodyMetrics/LT-BodyCompact/LT-BodyLifecycle 视数据量触发。
 
-### Phase 35（Stage 88-89）：Core Entity Soft-Delete
-扩展到 teams/users/orgs/models 四表独立归档表软删除。后端 1 Stage（88，12h）+ 前端 1 Stage（89，6h）。
+---
 
-### Phase 36（Stage 90）：Upstream Prompt Cache Detection & Differentiated Billing
-基于调研报告 `docs/research/2026-07-28-upstream-prompt-cache-detection-and-billing.md`：
-- calc_spend 三级缓存差异化计费（regular / cache_read / cache_creation 不同单价）
-- Deployment 扩展缓存定价字段（model_info → litellm_params fallback）
-- upstream response 缓存 token 解析（Anthropic + OpenAI 两套格式归一化）
-- daily_*_spend 缓存列写入补全
+## Stage 88-90 交付汇总（2026-07-29）
+
+### Stage 88：核心实体软删除后端
+后端全链路 — `024_deleted_tables.sql` ×3 方言创建 4 张归档表（deleted_teams/users/organizations/models，自增 id PK + deleted_at）。四表 Store trait ×3 方言 delete 改为 tombstone-then-delete。新增 `list_deleted_*` 方法 + Database dispatch + 4 个 `GET /{entity}/deleted` 端点 + 4 个 Deleted* structs + data_cleanse blocked_tables 更新。11 UT 全绿。
+
+### Stage 89：软删除前端 + /key/deleted
+5 个管理页面统一 Active/Deleted 切换按钮 + 已删除只读表格 + 删除确认文案"可追溯"更新。新增 `list_deleted_keys` (3 方言 + dispatch) + `GET /key/deleted` 端点。TypeScript noEmit 零错误。
+
+### Stage 90：上游缓存检测 + 三级差异化计费
+缓存 token 提取（Anthropic `cache_read_input_tokens` / OpenAI `prompt_tokens_details.cached_tokens` 双格式归一化）。calc_spend 三级计费（regular/cache_read/cache_creation × 不同单价，fallback 为 input_cost）。Deployment/ResolvedUpstream/DailySpendLog 新增缓存字段。daily_spend_queue INSERT/UPSERT 缓存列补全。ProviderType::is_anthropic_style() + Anthropic token 归一化。10 UT + real BDD 三后端全绿。
+
+### 门禁结果
+
+| 层 | 通过数 |
+|---|--------|
+| aigw-core lib | 264 passed |
+| aigw-server lib | 110 passed |
+| mock BDD | 178 scenarios (163 passed, 15 skipped) |
+| real BDD SQLite | 36 scenarios (36 passed) |
+| real BDD PG | 36 scenarios (36 passed) |
+| real BDD MySQL | 36 scenarios (36 passed) |
+
+### 相关 commits
+
+```
+21ab2f3 fix(stage-90): add cache cost fields to anthropic_native BDD step Deployment
+6a37247 feat(stage-90): upstream prompt cache detection + three-tier differentiated billing
+52bcaca feat(stage-89): soft-delete frontend — Active/Deleted toggle + 5 page deleted views + /key/deleted route
+2544de8 test(stage-88): add UT for 4 entities soft-delete + idempotent + list deleted
+eebf644 feat(stage-88): core entity soft-delete — migrations + DB layer + 4 archive endpoints
+```
 纯后端 1 Stage（90，10h），与 Phase 35 文件无交集可完全并行。
 
 **待办**：① Phase 30（Stage 78-81）代码已落地 + Phase 31 修复完成，待一并回写为 ✅；② TD-006 客户端 call_id 响应头回写；③ 长期路线 LT-BodyMetrics/LT-BodyCompact/LT-BodyLifecycle 视数据量触发。
