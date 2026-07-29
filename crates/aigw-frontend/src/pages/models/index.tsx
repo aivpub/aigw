@@ -265,10 +265,11 @@ export function ModelsPage() {
             className={`px-3 py-1 text-sm rounded-sm font-medium transition-colors ${viewMode === "deleted" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>Deleted</button>
         </div>
         {viewMode === "active" && (
-          <Button size="sm" onClick={handleAdd}>
-            <Plus className="h-4 w-4" />
-            Add Model
-          </Button>
+          <div className="flex items-center gap-1 ml-2">
+            <Button size="sm" onClick={handleAdd}>
+              <Plus className="h-4 w-4" /> Add Model
+            </Button>
+          </div>
         )}
       </div>
 
