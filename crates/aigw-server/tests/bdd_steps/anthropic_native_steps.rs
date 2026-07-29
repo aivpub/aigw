@@ -95,13 +95,15 @@ async fn given_passthrough_adapter(_world: &mut TestWorld) {
 async fn given_anthropic_deployment(_world: &mut TestWorld, model: String) {
     ADAPTER_STATE.with(|s| {
         let mut state = s.borrow_mut();
-        state.deployment = Some(Deployment {
+               state.deployment = Some(Deployment {
             api_base: "https://api.anthropic.com/v1".into(),
             api_key: Some("sk-ant-test-key".into()),
             upstream_model: model,
             provider_type: ProviderType::AnthropicNative,
             input_cost_per_token: None,
             output_cost_per_token: None,
+            cache_read_input_token_cost: None,
+            cache_creation_input_token_cost: None,
             raw_params: json!({"custom_llm_provider": "anthropic"}),
             model_id: None,
             model_group: None,
