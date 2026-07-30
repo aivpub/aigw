@@ -672,7 +672,7 @@ export function SpendLogsPage() {
                         <TableCell><Badge variant={log.status==="success"?"default":"destructive"} className="text-[10px] px-1.5 py-0">{log.status || "—"}</Badge></TableCell>
                         <TableCell className="text-xs font-mono text-right">{fmtTtft(log.ttft_ms)}</TableCell>
                         <TableCell className="text-xs font-mono text-right">{fmtDuration(log.request_duration_ms)}</TableCell>
-                        <TableCell className="text-xs text-right"><span className="text-muted-foreground">{fmtTokens(log.prompt_tokens)}</span>{" / "}<span>{fmtTokens(log.completion_tokens)}</span>
+                        <TableCell className="text-xs text-right whitespace-nowrap"><span className="text-muted-foreground">{fmtTokens(log.prompt_tokens)}</span>{" / "}<span>{fmtTokens(log.completion_tokens)}</span>
                           {(() => { const c = extractCacheTokens(log.metadata); return c ? (
                             <span className="text-[10px] block text-muted-foreground/70">cache: {fmtTokens(c.cache_read_tokens ?? 0)}R / {fmtTokens(c.cache_creation_tokens ?? 0)}W</span>
                           ) : null; })()}

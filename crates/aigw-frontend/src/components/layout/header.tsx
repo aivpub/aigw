@@ -1,12 +1,14 @@
-import { Menu, LogOut } from "lucide-react";
+import { Menu, LogOut, PanelLeftOpen, PanelLeftClose } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/use-auth";
 
 interface HeaderProps {
   onMenuClick: () => void;
+  collapsed: boolean;
+  onToggleCollapse: () => void;
 }
 
-export function Header({ onMenuClick }: HeaderProps) {
+export function Header({ onMenuClick, collapsed, onToggleCollapse }: HeaderProps) {
   const { logout } = useAuth();
 
   return (
@@ -19,6 +21,18 @@ export function Header({ onMenuClick }: HeaderProps) {
       >
         <Menu className="h-5 w-5" />
       </Button>
+
+      {/* Desktop sidebar toggle */}
+      <Button
+        variant="ghost"
+        size="icon"
+        className="hidden lg:flex"
+        onClick={onToggleCollapse}
+        title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+      >
+        {collapsed ? <PanelLeftOpen className="h-5 w-5" /> : <PanelLeftClose className="h-5 w-5" />}
+      </Button>
+
       <div className="flex-1" />
       <Button variant="ghost" size="sm" onClick={logout}>
         <LogOut className="h-4 w-4 mr-2" />

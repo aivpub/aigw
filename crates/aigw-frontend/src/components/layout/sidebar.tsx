@@ -1,6 +1,7 @@
 import { NavLink } from "react-router-dom";
-import { Key, Box, Gamepad2, BarChart3, ScrollText, Users, Users2, Building2, Settings, Activity } from "lucide-react";
+import { Key, Box, Gamepad2, BarChart3, ScrollText, Users, Users2, Building2, Settings, Activity, ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 
 interface NavGroup {
   title: string;
@@ -43,9 +44,11 @@ const navGroups: NavGroup[] = [
 interface SidebarProps {
   open: boolean;
   onClose: () => void;
+  collapsed: boolean;
+  onToggleCollapse: () => void;
 }
 
-export function Sidebar({ open, onClose }: SidebarProps) {
+export function Sidebar({ open, onClose, collapsed, onToggleCollapse }: SidebarProps) {
   return (
     <>
       {/* Mobile overlay */}
@@ -58,30 +61,50 @@ export function Sidebar({ open, onClose }: SidebarProps) {
 
       <aside
         className={cn(
-          "fixed left-0 top-0 z-50 h-screen w-56 border-r bg-card transition-transform duration-200 flex flex-col",
+          "fixed left-0 top-0 z-50 h-screen border-r bg-card transition-all duration-200 flex flex-col",
+          collapsed ? "w-14" : "w-56",
           "lg:translate-x-0",
           open ? "translate-x-0" : "-translate-x-full",
         )}
       >
-        <div className="flex h-14 items-center border-b px-4 shrink-0">
-          <span className="text-lg font-bold tracking-tight">aigw</span>
-          <span className="ml-2 text-xs text-muted-foreground">Admin</span>
+        {/* Brand area */}
+        <div className={cn(
+          "flex h-14 items-center border-b shrink-0 overflow-hidden",
+          collapsed ? "justify-center px-2" : "px-4",
+        )}>
+          <span className={cn(
+            "text-lg font-bold tracking-tight transition-opacity",
+            collapsed ? "opacity-0 w-0" : "",
+          )}>
+            aigw
+          </span>
+          <span className={cn(
+            "text-xs text-muted-foreground transition-opacity",
+            collapsed ? "opacity-0 w-0" : "ml-2",
+          )}>
+            Admin
+          </span>
         </div>
-        <nav className="flex-1 overflow-y-auto p-3 space-y-4">
+
+        <nav className="flex-1 overflow-y-auto overflow-x-hidden p-2 space-y-4">
           {navGroups.map((group) => (
             <div key={group.title}>
-              <h3 className="mb-1 px-3 text-[10px] font-medium uppercase tracking-[0.05em] text-[#6b7280]">
-                {group.title}
-              </h3>
+              {!collapsed && (
+                <h3 className="mb-1 px-3 text-[10px] font-medium uppercase tracking-[0.05em] text-[#6b7280]">
+                  {group.title}
+                </h3>
+              )}
               <div className="flex flex-col gap-0.5">
                 {group.items.map((item) => (
                   <NavLink
                     key={item.to}
                     to={item.to}
                     onClick={onClose}
+                    title={collapsed ? item.label : undefined}
                     className={({ isActive }) =>
                       cn(
-                        "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                        "flex items-center gap-3 rounded-md text-sm font-medium transition-colors",
+                        collapsed ? "justify-center px-0 py-2" : "px-3 py-2",
                         isActive
                           ? "bg-primary text-primary-foreground"
                           : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
@@ -89,13 +112,26 @@ export function Sidebar({ open, onClose }: SidebarProps) {
                     }
                   >
                     <item.icon className="h-4 w-4 shrink-0" />
-                    {item.label}
+                    {!collapsed && item.label}
                   </NavLink>
                 ))}
               </div>
             </div>
           ))}
         </nav>
+
+        {/* Collapse toggle button — desktop only */}
+        <div className="hidden lg:flex border-t p-1.5 shrink-0">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-full flex items-center justify-center hover:bg-accent"
+            onClick={onToggleCollapse}
+            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          >
+            {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+          </Button>
+        </div>
       </aside>
     </>
   );
