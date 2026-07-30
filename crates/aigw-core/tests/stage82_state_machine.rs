@@ -575,13 +575,20 @@ async fn test_writer_start_time_is_timestamp_millisecond_and_cache_hit_boolean()
         messages: Some("{}".into()),
         response: Some("{}".into()),
         proxy_server_request: Some("{}".into()),
+        request_id: None,
+        spend: 0.01,
+        total_tokens: 10,
+        prompt_tokens: 3,
+        completion_tokens: 7,
+        end_time: "2026-07-22T14:31:00+00:00".into(),
+        model_group: None,
     }];
 
     // Write to a temp file, then load the parquet metadata from the file
     // (ArrowReaderMetadata::load requires a ChunkReader: File or Bytes).
     let dir = std::env::temp_dir();
     let path = dir.join(format!("aigw_stage82_{}.parquet", std::process::id()));
-    aigw_core::body_archive::writer::write_parquet_to_file(&path, &rows, 5000)
+    aigw_core::body_archive::writer::write_parquet_to_file(&path, &rows, 5000, 10)
         .expect("write parquet");
 
     use parquet::arrow::arrow_reader::ArrowReaderMetadata;

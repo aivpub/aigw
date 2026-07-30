@@ -274,6 +274,13 @@ mod tests {
                 messages: Some(r#"{"role":"user","content":"hello"}"#.into()),
                 response: Some(r#"{"choices":[{"text":"hi"}]}"#.into()),
                 proxy_server_request: Some(r#"{"url":"/v1/chat"}"#.into()),
+                request_id: Some("chatcmpl-001".into()),
+                spend: 0.01,
+                total_tokens: 100,
+                prompt_tokens: 30,
+                completion_tokens: 70,
+                end_time: "2026-07-22T14:01:00+00:00".into(),
+                model_group: None,
             },
             BodyRow {
                 call_id: "req-002".into(),
@@ -285,10 +292,17 @@ mod tests {
                 messages: Some(r#"{"role":"user","content":"test"}"#.into()),
                 response: Some(r#"{"content":[{"text":"r"}]}"#.into()),
                 proxy_server_request: None,
+                request_id: None,
+                spend: 0.02,
+                total_tokens: 200,
+                prompt_tokens: 50,
+                completion_tokens: 150,
+                end_time: "2026-07-22T14:02:00+00:00".into(),
+                model_group: Some("claude-group".into()),
             },
         ];
 
-        let data = write_parquet_to_buffer(&rows, 5000).expect("write parquet");
+        let data = write_parquet_to_buffer(&rows, 5000, 10).expect("write parquet");
 
         let body = decode_body_from_parquet(&data, "req-001")
             .expect("decode")
@@ -315,9 +329,16 @@ mod tests {
             messages: Some(r#"{}"#.into()),
             response: None,
             proxy_server_request: None,
+            request_id: None,
+            spend: 0.0,
+            total_tokens: 0,
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            end_time: "2026-07-22T14:00:00+00:00".into(),
+            model_group: None,
         }];
 
-        let data = write_parquet_to_buffer(&rows, 5000).expect("write");
+        let data = write_parquet_to_buffer(&rows, 5000, 10).expect("write");
         let result = decode_body_from_parquet(&data, "nonexistent").expect("decode");
         assert!(result.is_none(), "should return None for missing call_id");
     }
@@ -340,9 +361,16 @@ mod tests {
             messages: None, // null messages
             response: None,  // null response
             proxy_server_request: None,
+            request_id: None,
+            spend: 0.0,
+            total_tokens: 0,
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            end_time: "2026-07-22T14:00:00+00:00".into(),
+            model_group: None,
         }];
 
-        let data = write_parquet_to_buffer(&rows, 5000).expect("write");
+        let data = write_parquet_to_buffer(&rows, 5000, 10).expect("write");
         let body = decode_body_from_parquet(&data, "req-null")
             .expect("decode")
             .expect("found");

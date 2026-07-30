@@ -191,6 +191,7 @@ impl AsyncTask for BodyArchiver {
             &storage_path,
             &rows,
             self.config.archive.row_group_size,
+            self.config.archive.bloom_min_rows,
         )
         .await
         .map_err(|e| DbError::Other(format!("parquet write: {}", e)))?;
@@ -402,6 +403,7 @@ impl BodyArchiver {
             &storage_path,
             rows,
             self.config.archive.row_group_size,
+            self.config.archive.bloom_min_rows,
         )
         .await
         .map_err(|e| DbError::Other(format!("parquet write: {}", e)))?;
@@ -484,6 +486,13 @@ pub struct BodyRow {
     pub messages: Option<String>,
     pub response: Option<String>,
     pub proxy_server_request: Option<String>,
+    pub request_id: Option<String>,
+    pub spend: f64,
+    pub total_tokens: i32,
+    pub prompt_tokens: i32,
+    pub completion_tokens: i32,
+    pub end_time: String,
+    pub model_group: Option<String>,
 }
 
 /// Build the object-store key for a given hour. The key is always relative
@@ -522,7 +531,9 @@ async fn query_unarchived_rows(
 ) -> Result<Vec<BodyRow>> {
     let query_base = r#"
         SELECT call_id, start_time, model, status, cache_hit, session_id,
-               messages, response, proxy_server_request
+               messages, response, proxy_server_request,
+               request_id, spend, total_tokens, prompt_tokens,
+               completion_tokens, end_time, model_group
         FROM spend_logs
         WHERE body_archived = FALSE
           AND messages IS NOT NULL
@@ -533,12 +544,20 @@ async fn query_unarchived_rows(
 
     match db {
         Database::Sqlite(pool) => {
-            let rows = sqlx::query_as::<_, (String, String, String, Option<String>, Option<String>, Option<String>, Option<serde_json::Value>, Option<serde_json::Value>, Option<serde_json::Value>)>(query_base)
+            let rows = sqlx::query_as::<_, (
+                String, String, String,
+                Option<String>, Option<String>, Option<String>,
+                Option<serde_json::Value>, Option<serde_json::Value>, Option<serde_json::Value>,
+                Option<String>, f64, i32, i32, i32, String, Option<String>,
+            )>(query_base)
                 .bind(hour)
                 .bind(limit as i32)
                 .fetch_all(pool)
                 .await?;
-            Ok(rows.into_iter().map(|(rid, st, m, s, ch, sid, msg, resp, psr)| BodyRow {
+            Ok(rows.into_iter().map(|(
+                rid, st, m, s, ch, sid, msg, resp, psr,
+                req_id, sp, tt, pt, ct, et, mg,
+            )| BodyRow {
                 call_id: rid,
                 start_time: st,
                 model: m,
@@ -548,12 +567,21 @@ async fn query_unarchived_rows(
                 messages: msg.map(|v| v.to_string()),
                 response: resp.map(|v| v.to_string()),
                 proxy_server_request: psr.map(|v| v.to_string()),
+                request_id: req_id,
+                spend: sp,
+                total_tokens: tt,
+                prompt_tokens: pt,
+                completion_tokens: ct,
+                end_time: et,
+                model_group: mg,
             }).collect())
         }
         Database::Mysql(pool) => {
             let mysql_query = r#"
                 SELECT call_id, start_time, model, status, cache_hit, session_id,
-                       messages, response, proxy_server_request
+                       messages, response, proxy_server_request,
+                       request_id, spend, total_tokens, prompt_tokens,
+                       completion_tokens, end_time, model_group
                 FROM spend_logs
                 WHERE body_archived = FALSE
                   AND messages IS NOT NULL
@@ -561,12 +589,20 @@ async fn query_unarchived_rows(
                 ORDER BY call_id
                 LIMIT ?
             "#;
-            let rows = sqlx::query_as::<_, (String, chrono::NaiveDateTime, String, Option<String>, Option<String>, Option<String>, Option<serde_json::Value>, Option<serde_json::Value>, Option<serde_json::Value>)>(mysql_query)
+            let rows = sqlx::query_as::<_, (
+                String, chrono::NaiveDateTime, String,
+                Option<String>, Option<String>, Option<String>,
+                Option<serde_json::Value>, Option<serde_json::Value>, Option<serde_json::Value>,
+                Option<String>, f64, i32, i32, i32, chrono::NaiveDateTime, Option<String>,
+            )>(mysql_query)
                 .bind(hour)
                 .bind(limit as i32)
                 .fetch_all(pool)
                 .await?;
-            Ok(rows.into_iter().map(|(rid, st, m, s, ch, sid, msg, resp, psr)| BodyRow {
+            Ok(rows.into_iter().map(|(
+                rid, st, m, s, ch, sid, msg, resp, psr,
+                req_id, sp, tt, pt, ct, et, mg,
+            )| BodyRow {
                 call_id: rid,
                 start_time: st.to_string(),
                 model: m,
@@ -576,6 +612,13 @@ async fn query_unarchived_rows(
                 messages: msg.map(|v| v.to_string()),
                 response: resp.map(|v| v.to_string()),
                 proxy_server_request: psr.map(|v| v.to_string()),
+                request_id: req_id,
+                spend: sp,
+                total_tokens: tt,
+                prompt_tokens: pt,
+                completion_tokens: ct,
+                end_time: et.to_string(),
+                model_group: mg,
             }).collect())
         }
         Database::Postgres(pool) => {
@@ -583,7 +626,11 @@ async fn query_unarchived_rows(
                 SELECT call_id,
                        to_char(start_time, 'YYYY-MM-DD"T"HH24:MI:SS') as start_time,
                        model, status, cache_hit, session_id,
-                       messages::text, response::text, proxy_server_request::text
+                       messages::text, response::text, proxy_server_request::text,
+                       request_id, spend, total_tokens, prompt_tokens,
+                       completion_tokens,
+                       to_char(end_time, 'YYYY-MM-DD"T"HH24:MI:SS') as end_time,
+                       model_group
                 FROM spend_logs
                 WHERE body_archived = FALSE
                   AND messages IS NOT NULL
@@ -591,12 +638,20 @@ async fn query_unarchived_rows(
                   ORDER BY call_id
                   LIMIT $2
             "#;
-            let rows = sqlx::query_as::<_, (String, String, String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>)>(pg_query)
+            let rows = sqlx::query_as::<_, (
+                String, String, String,
+                Option<String>, Option<String>, Option<String>,
+                Option<String>, Option<String>, Option<String>,
+                Option<String>, f64, i32, i32, i32, String, Option<String>,
+            )>(pg_query)
                 .bind(hour)
                 .bind(limit as i64)
                 .fetch_all(pool)
                 .await?;
-            Ok(rows.into_iter().map(|(rid, st, m, s, ch, sid, msg, resp, psr)| BodyRow {
+            Ok(rows.into_iter().map(|(
+                rid, st, m, s, ch, sid, msg, resp, psr,
+                req_id, sp, tt, pt, ct, et, mg,
+            )| BodyRow {
                 call_id: rid,
                 start_time: st,
                 model: m,
@@ -606,6 +661,13 @@ async fn query_unarchived_rows(
                 messages: msg,
                 response: resp,
                 proxy_server_request: psr,
+                request_id: req_id,
+                spend: sp,
+                total_tokens: tt,
+                prompt_tokens: pt,
+                completion_tokens: ct,
+                end_time: et,
+                model_group: mg,
             }).collect())
         }
     }

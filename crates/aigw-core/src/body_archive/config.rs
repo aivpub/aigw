@@ -136,6 +136,9 @@ pub struct ArchivePolicy {
     /// Whether to VACUUM after nulling (SQLite only). Default: true.
     #[serde(default = "default_true")]
     pub vacuum_after_null: bool,
+    /// Skip Bloom filter when fewer than this many rows. Default: 10.
+    #[serde(default = "default_bloom_min_rows")]
+    pub bloom_min_rows: usize,
 }
 
 fn default_archive_after_hours() -> u32 {
@@ -153,6 +156,9 @@ fn default_row_group_size() -> usize {
 fn default_check_interval() -> u64 {
     300
 }
+fn default_bloom_min_rows() -> usize {
+    10
+}
 
 impl Default for ArchivePolicy {
     fn default() -> Self {
@@ -164,6 +170,7 @@ impl Default for ArchivePolicy {
             check_interval_secs: default_check_interval(),
             null_body_after_archive: true,
             vacuum_after_null: true,
+            bloom_min_rows: default_bloom_min_rows(),
         }
     }
 }
@@ -323,6 +330,7 @@ archive:
   check_interval_secs: 300
   null_body_after_archive: true
   vacuum_after_null: true
+  bloom_min_rows: 10
 footer_cache:
   mode: "mem"
   max_capacity: 10000
