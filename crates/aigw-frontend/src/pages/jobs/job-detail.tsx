@@ -343,7 +343,15 @@ export function JobDetailPage() {
           <CardTitle className="text-base">Steps</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="border rounded overflow-hidden">
+          <StepsPagination
+            page={stepsPage}
+            pageSize={stepsPageSize}
+            totalCount={steps.length}
+            totalPages={stepsTotalPages}
+            onPage={(p) => setStepsPage(p)}
+            onPageSize={(s) => { setStepsPageSize(s); setStepsPage(1); }}
+          />
+          <div className="border rounded overflow-hidden mt-2">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-muted">

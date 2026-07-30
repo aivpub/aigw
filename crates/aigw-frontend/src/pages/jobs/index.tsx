@@ -22,6 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { TriggerDialog } from "./components/trigger-dialog";
 import { toast } from "sonner";
 
@@ -46,51 +47,47 @@ function StatusBadge({ status, className }: { status: string; className?: string
   );
 }
 
-// ── Inline Pagination ──
-function ListPagination({
+// ── PaginationBar (SpendLogs-style: prev/next + page size + showing X-Y of Z) ──
+function PaginationBar({
   page,
+  pageSize,
+  totalCount,
   totalPages,
-  onPageChange,
+  onPage,
+  onPageSize,
 }: {
   page: number;
+  pageSize: number;
+  totalCount: number;
   totalPages: number;
-  onPageChange: (p: number) => void;
+  onPage: (p: number) => void;
+  onPageSize: (s: number) => void;
 }) {
-  const pages = Array.from({ length: Math.max(1, totalPages) }, (_, i) => i + 1);
-
+  const from = totalCount === 0 ? 0 : (page - 1) * pageSize + 1;
+  const to = Math.min(page * pageSize, totalCount);
   return (
-    <nav role="navigation" aria-label="pagination" className="flex items-center gap-1">
-      <Button
-        variant="ghost"
-        size="sm"
-        disabled={page <= 1}
-        onClick={() => onPageChange(page - 1)}
-        aria-label="Previous page"
-      >
-        ←
-      </Button>
-      {pages.map((p) => (
-        <Button
-          key={p}
-          variant={p === page ? "default" : "ghost"}
-          size="sm"
-          onClick={() => onPageChange(p)}
-          aria-label={`Page ${p}`}
-          aria-current={p === page ? "page" : undefined}
-        >
-          {p}
+    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+      <div className="flex items-center gap-3">
+        <span className="text-xs text-muted-foreground">Showing {from}–{to} of {totalCount}</span>
+        <span className="text-xs text-muted-foreground">Page {page} of {Math.max(totalPages, 1)}</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <Select value={String(pageSize)} onValueChange={(v) => onPageSize(Number(v))}>
+          <SelectTrigger className="h-7 w-[70px] text-xs"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="30">30</SelectItem>
+            <SelectItem value="50">50</SelectItem>
+            <SelectItem value="100">100</SelectItem>
+          </SelectContent>
+        </Select>
+        <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => onPage(page - 1)} className="h-7 px-2">
+          <ChevronLeft className="h-3.5 w-3.5" />
         </Button>
-      ))}
-      <Button
-        variant="ghost"
-        size="sm"
-        disabled={page >= totalPages}
-        onClick={() => onPageChange(page + 1)}
-        aria-label="Next page"
-      >
-        →
-      </Button>
-    </nav>
+        <Button variant="outline" size="sm" disabled={page >= totalPages || totalPages === 0} onClick={() => onPage(page + 1)} className="h-7 px-2">
+          <ChevronRight className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -101,7 +98,8 @@ function JobListTable({
   total,
   page,
   limit,
-  onPageChange,
+  onPage,
+  onPageSize,
   onJobClick,
 }: {
   jobs: JobItem[];
@@ -109,7 +107,8 @@ function JobListTable({
   total: number;
   page: number;
   limit: number;
-  onPageChange: (p: number) => void;
+  onPage: (p: number) => void;
+  onPageSize: (s: number) => void;
   onJobClick: (id: string) => void;
 }) {
   const totalPages = Math.max(1, Math.ceil(total / limit));
@@ -118,6 +117,14 @@ function JobListTable({
 
   return (
     <div className="space-y-2">
+      <PaginationBar
+        page={page}
+        pageSize={limit}
+        totalCount={total}
+        totalPages={totalPages}
+        onPage={onPage}
+        onPageSize={onPageSize}
+      />
       {jobs.length === 0 ? (
         <p className="text-muted-foreground text-center py-4">No jobs found.</p>
       ) : (
@@ -173,10 +180,14 @@ function JobListTable({
           </table>
         </div>
       )}
-      <div className="flex items-center justify-between text-xs text-muted-foreground">
-        <span>{total} jobs total</span>
-        <ListPagination page={page} totalPages={totalPages} onPageChange={onPageChange} />
-      </div>
+      <PaginationBar
+        page={page}
+        pageSize={limit}
+        totalCount={total}
+        totalPages={totalPages}
+        onPage={onPage}
+        onPageSize={onPageSize}
+      />
     </div>
   );
 }
@@ -431,7 +442,7 @@ export function JobsPage() {
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
-                <CardTitle className="text-base">Recent Jobs</CardTitle>
+                <CardTitle className="text-base">All Jobs</CardTitle>
                 <Select value={statusFilter} onValueChange={(v) => setUrlParam({ status: v === "all" ? null : v, page: null })}>
                   <SelectTrigger className="w-32">
                     <SelectValue placeholder="Status" />
@@ -454,7 +465,8 @@ export function JobsPage() {
                 total={totalJobs}
                 page={page}
                 limit={limit}
-                onPageChange={(p) => setUrlParam({ page: p > 1 ? String(p) : null })}
+                onPage={(p) => setUrlParam({ page: p > 1 ? String(p) : null })}
+                onPageSize={() => {}}
                 onJobClick={goToDetail}
               />
             </CardContent>
@@ -499,7 +511,8 @@ export function JobsPage() {
                   total={totalJobs}
                   page={page}
                   limit={limit}
-                  onPageChange={(p) => setUrlParam({ page: p > 1 ? String(p) : null })}
+                  onPage={(p) => setUrlParam({ page: p > 1 ? String(p) : null })}
+                  onPageSize={() => {}}
                   onJobClick={goToDetail}
                 />
               </CardContent>
