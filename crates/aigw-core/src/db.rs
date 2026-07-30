@@ -2809,6 +2809,7 @@ impl Database {
                 // Postgres: metadata is JSONB. Cache tokens via
                 // (metadata->'key')::bigint; cache spend via (metadata->>'key')::double precision.
                 // COALESCE guards NULL. regular_input uses GREATEST to clamp (pg has no scalar MAX).
+                // NOTE: SUM(bigint) → NUMERIC in Postgres, so outer ::bigint cast is required.
                 let sql_pg = r#"SELECT
                     COALESCE(SUM(spend), 0),
                     COALESCE(SUM(total_tokens), 0),
@@ -2817,11 +2818,11 @@ impl Database {
                     COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END),
                     COALESCE(SUM(prompt_tokens), 0),
                     COALESCE(SUM(completion_tokens), 0),
-                    COALESCE(SUM(COALESCE((metadata->'cache_read_tokens')::bigint, 0)), 0),
-                    COALESCE(SUM(COALESCE((metadata->'cache_creation_tokens')::bigint, 0)), 0),
+                    COALESCE(SUM(COALESCE((metadata->'cache_read_tokens')::bigint, 0))::bigint, 0),
+                    COALESCE(SUM(COALESCE((metadata->'cache_creation_tokens')::bigint, 0))::bigint, 0),
                     COALESCE(SUM(CASE WHEN (custom_llm_provider = 'anthropic' OR (custom_llm_provider IS NULL AND api_base LIKE '%anthropic%'))
                                       THEN prompt_tokens
-                                      ELSE GREATEST(0, prompt_tokens - COALESCE((metadata->'cache_read_tokens')::bigint, 0) - COALESCE((metadata->'cache_creation_tokens')::bigint, 0)) END), 0),
+                                      ELSE GREATEST(0, prompt_tokens - COALESCE((metadata->'cache_read_tokens')::bigint, 0) - COALESCE((metadata->'cache_creation_tokens')::bigint, 0)) END)::bigint, 0),
                     COALESCE(SUM(COALESCE((metadata->'cache_read_spend')::double precision, 0.0)), 0),
                     COALESCE(SUM(COALESCE((metadata->'cache_create_spend')::double precision, 0.0)), 0)
                 FROM spend_logs
@@ -2892,15 +2893,16 @@ impl Database {
             }
             Database::Postgres(pool) => {
                 // PostgreSQL: DATE(…)::TEXT converts DATE → TEXT.
-                let sql = "SELECT DATE(start_time)::TEXT, COALESCE(SUM(spend), 0), COALESCE(SUM(total_tokens), 0), COUNT(call_id), \
-                    COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), \
-                    COUNT(CASE WHEN status = 'success' THEN 1 END), \
-                    COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END), \
-                    COALESCE(SUM(COALESCE((metadata->'cache_read_tokens')::bigint, 0)), 0), \
-                    COALESCE(SUM(COALESCE((metadata->'cache_creation_tokens')::bigint, 0)), 0), \
+                // SUM(bigint) → NUMERIC in Postgres, outer ::bigint cast needed for i64 decoding.
+                let sql = "SELECT DATE(start_time)::TEXT, COALESCE(SUM(spend), 0), COALESCE(SUM(total_tokens)::bigint, 0), COUNT(call_id)::bigint, \
+                    COALESCE(SUM(prompt_tokens)::bigint, 0), COALESCE(SUM(completion_tokens)::bigint, 0), \
+                    COUNT(CASE WHEN status = 'success' THEN 1 END)::bigint, \
+                    COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END)::bigint, \
+                    COALESCE(SUM(COALESCE((metadata->'cache_read_tokens')::bigint, 0))::bigint, 0), \
+                    COALESCE(SUM(COALESCE((metadata->'cache_creation_tokens')::bigint, 0))::bigint, 0), \
                     COALESCE(SUM(CASE WHEN (custom_llm_provider = 'anthropic' OR (custom_llm_provider IS NULL AND api_base LIKE '%anthropic%')) \
                                       THEN prompt_tokens \
-                                      ELSE GREATEST(0, prompt_tokens - COALESCE((metadata->'cache_read_tokens')::bigint, 0) - COALESCE((metadata->'cache_creation_tokens')::bigint, 0)) END), 0), \
+                                      ELSE GREATEST(0, prompt_tokens - COALESCE((metadata->'cache_read_tokens')::bigint, 0) - COALESCE((metadata->'cache_creation_tokens')::bigint, 0)) END)::bigint, 0), \
                     COALESCE(SUM(COALESCE((metadata->'cache_read_spend')::double precision, 0.0)), 0), \
                     COALESCE(SUM(COALESCE((metadata->'cache_create_spend')::double precision, 0.0)), 0) \
                     FROM spend_logs WHERE date(start_time) >= date($1) AND date(start_time) <= date($2) {filter} \
@@ -2972,15 +2974,15 @@ impl Database {
                 q.fetch_all(pool).await.map_err(DbError::from)
             }
             Database::Postgres(pool) => {
-                let sql = "SELECT to_char(start_time, 'YYYY-MM-DD\"T\"HH24:00:00'), COALESCE(SUM(spend), 0), COALESCE(SUM(total_tokens), 0), COUNT(call_id), \
-                    COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), \
-                    COUNT(CASE WHEN status = 'success' THEN 1 END), \
-                    COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END), \
-                    COALESCE(SUM(COALESCE((metadata->'cache_read_tokens')::bigint, 0)), 0), \
-                    COALESCE(SUM(COALESCE((metadata->'cache_creation_tokens')::bigint, 0)), 0), \
+                let sql = "SELECT to_char(start_time, 'YYYY-MM-DD\"T\"HH24:00:00'), COALESCE(SUM(spend), 0), COALESCE(SUM(total_tokens)::bigint, 0), COUNT(call_id)::bigint, \
+                    COALESCE(SUM(prompt_tokens)::bigint, 0), COALESCE(SUM(completion_tokens)::bigint, 0), \
+                    COUNT(CASE WHEN status = 'success' THEN 1 END)::bigint, \
+                    COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END)::bigint, \
+                    COALESCE(SUM(COALESCE((metadata->'cache_read_tokens')::bigint, 0))::bigint, 0), \
+                    COALESCE(SUM(COALESCE((metadata->'cache_creation_tokens')::bigint, 0))::bigint, 0), \
                     COALESCE(SUM(CASE WHEN (custom_llm_provider = 'anthropic' OR (custom_llm_provider IS NULL AND api_base LIKE '%anthropic%')) \
                                       THEN prompt_tokens \
-                                      ELSE GREATEST(0, prompt_tokens - COALESCE((metadata->'cache_read_tokens')::bigint, 0) - COALESCE((metadata->'cache_creation_tokens')::bigint, 0)) END), 0), \
+                                      ELSE GREATEST(0, prompt_tokens - COALESCE((metadata->'cache_read_tokens')::bigint, 0) - COALESCE((metadata->'cache_creation_tokens')::bigint, 0)) END)::bigint, 0), \
                     COALESCE(SUM(COALESCE((metadata->'cache_read_spend')::double precision, 0.0)), 0), \
                     COALESCE(SUM(COALESCE((metadata->'cache_create_spend')::double precision, 0.0)), 0) \
                     FROM spend_logs WHERE start_time >= $1::TIMESTAMPTZ AND start_time <= $2::TIMESTAMPTZ {filter} \
