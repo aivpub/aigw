@@ -137,7 +137,7 @@ pub async fn user_list(
     require_admin(&auth)?;
 
     let page = query.page.unwrap_or(1).max(1);
-    let page_size = query.page_size.unwrap_or(10).max(1).min(100);
+    let page_size = query.page_size.unwrap_or(30).max(1).min(100);
 
     let all_users = state.db.list_users(query.organization_id.as_deref()).await.map_err(|e| {
         (

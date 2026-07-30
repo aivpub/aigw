@@ -115,6 +115,8 @@ pub struct KeyInfoQuery {
 pub struct KeyListQuery {
     pub team_id: Option<String>,
     pub user_id: Option<String>,
+    pub page: Option<i32>,
+    pub page_size: Option<i32>,
 }
 
 /// Query parameters for /key/delete
@@ -361,26 +363,36 @@ pub async fn key_info(
 }
 
 /// GET /key/list — List all keys with optional filters (admin only)
+/// Server-side paginated (page/page_size), mirrors /global/spend/logs.
 pub async fn key_list(
     State(state): State<SharedState>,
     SpendAuth(auth): SpendAuth,
     Query(query): Query<KeyListQuery>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&auth)?;
-    let keys = state
-        .db
-        .list_keys(query.team_id.as_deref(), query.user_id.as_deref())
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
-            )
-        })?;
+    let page = query.page.unwrap_or(1).max(1);
+    let page_size = query.page_size.unwrap_or(30).max(1).min(100);
+    let offset = ((page - 1) * page_size) as i64;
+    let limit = page_size as i64;
+
+    let (keys, total_count) = tokio::try_join!(
+        state.db.list_keys_paged(
+            query.team_id.as_deref(),
+            query.user_id.as_deref(),
+            limit,
+            offset,
+        ),
+        state.db.count_keys(query.team_id.as_deref(), query.user_id.as_deref()),
+    )
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
+        )
+    })?;
 
     let data: Vec<Value> = keys
         .iter()
-        .filter(|k| k.team_id.as_deref() != Some("litellm-dashboard"))
         .map(|k| {
             json!({
                 "token": k.token,
@@ -402,7 +414,21 @@ pub async fn key_list(
         })
         .collect();
 
-    Ok(Json(json!({ "keys": data })))
+    let total_pages = if total_count > 0 {
+        ((total_count as f64) / (page_size as f64)).ceil() as i64
+    } else {
+        0
+    };
+
+    Ok(Json(json!({
+        "keys": data,
+        "data": data,
+        "count": data.len(),
+        "total_count": total_count,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+    })))
 }
 
 /// PUT /key/update — Update a key (admin only)
@@ -610,19 +636,46 @@ pub async fn key_delete(
     ))
 }
 
-/// GET /key/deleted — list archived (soft-deleted) keys
+/// GET /key/deleted — list archived (soft-deleted) keys (paginated)
 pub async fn key_deleted_list(
     State(state): State<SharedState>,
     SpendAuth(auth): SpendAuth,
+    Query(query): Query<KeyListQuery>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&auth)?;
-    let deleted = state.db.list_deleted_keys().await.map_err(|e| {
+    let page = query.page.unwrap_or(1).max(1);
+    let page_size = query.page_size.unwrap_or(30).max(1).min(100);
+    let offset = ((page - 1) * page_size) as i64;
+    let limit = page_size as i64;
+
+    let (keys, total_count) = tokio::try_join!(
+        state.db.list_deleted_keys_paged(limit, offset),
+        state.db.count_deleted_keys(),
+    )
+    .map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": format!("{}", e)})),
         )
     })?;
-    Ok(Json(serde_json::to_value(&deleted).unwrap_or(json!([]))))
+
+    let data: Vec<Value> = serde_json::to_value(&keys).unwrap_or(json!([]))
+        .as_array().cloned().unwrap_or_default();
+    let total_pages = if total_count > 0 {
+        ((total_count as f64) / (page_size as f64)).ceil() as i64
+    } else {
+        0
+    };
+
+    Ok(Json(json!({
+        "keys": data,
+        "data": data,
+        "count": data.len(),
+        "total_count": total_count,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+    })))
 }
 
 /// POST /key/regenerate — Regenerate a key (new token, copy config) (admin only)

@@ -9,7 +9,6 @@
 //! - GET    /org/deleted — List deleted organizations
 
 use aigw_core::models::Organization;
-use aigw_core::models::DeletedOrganization;
 use axum::{extract::State, http::StatusCode, Json};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -21,6 +20,12 @@ use super::spend::{require_admin, SpendAuth};
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Request types
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[derive(Debug, Deserialize)]
+pub struct OrgListQuery {
+    pub page: Option<i32>,
+    pub page_size: Option<i32>,
+}
 
 #[derive(Debug, Deserialize)]
 pub struct OrgInfoQuery {
@@ -119,21 +124,43 @@ pub async fn org_info(
     Ok(Json(serde_json::to_value(&org).unwrap_or(json!({}))))
 }
 
-/// GET /org/list
+/// GET /org/list (paginated)
 pub async fn org_list(
     State(state): State<SharedState>,
     SpendAuth(auth): SpendAuth,
+    axum::extract::Query(query): axum::extract::Query<OrgListQuery>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&auth)?;
+    let page = query.page.unwrap_or(1).max(1);
+    let page_size = query.page_size.unwrap_or(30).max(1).min(100);
+    let offset = ((page - 1) * page_size) as i64;
+    let limit = page_size as i64;
 
-    let orgs = state.db.list_organizations().await.map_err(|e| {
+    let (orgs, total_count) = tokio::try_join!(
+        state.db.list_organizations_paged(limit, offset),
+        state.db.count_organizations_store(),
+    )
+    .map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": {"message": format!("{}", e), "type": "internal"}})),
         )
     })?;
 
-    Ok(Json(json!({ "data": serde_json::to_value(&orgs).unwrap_or(json!([])) })))
+    let data = serde_json::to_value(&orgs).unwrap_or(json!([]));
+    let total_pages = if total_count > 0 {
+        ((total_count as f64) / (page_size as f64)).ceil() as i64
+    } else {
+        0
+    };
+    Ok(Json(json!({
+        "data": data,
+        "count": orgs.len(),
+        "total_count": total_count,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+    })))
 }
 
 /// PUT /org/update
@@ -202,19 +229,46 @@ pub async fn org_update(
     Ok(Json(serde_json::to_value(&existing).unwrap_or(json!({}))))
 }
 
-/// GET /org/deleted — list deleted organizations (admin)
+/// GET /org/deleted — list deleted organizations (admin, paginated)
 pub async fn org_deleted_list(
     State(state): State<SharedState>,
     SpendAuth(auth): SpendAuth,
-) -> Result<Json<Vec<DeletedOrganization>>, (StatusCode, Json<Value>)> {
+    axum::extract::Query(query): axum::extract::Query<OrgListQuery>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&auth)?;
-    let deleted = state.db.list_deleted_organizations().await.map_err(|e| {
+    let page = query.page.unwrap_or(1).max(1);
+    let page_size = query.page_size.unwrap_or(30).max(1).min(100);
+    let offset = ((page - 1) * page_size) as i64;
+    let limit = page_size as i64;
+
+    let (deleted, total_count) = tokio::try_join!(
+        state.db.list_deleted_organizations_paged(limit, offset),
+        state.db.count_deleted_organizations(),
+    )
+    .map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": {"message": format!("{}", e), "type": "internal"}})),
         )
     })?;
-    Ok(Json(deleted))
+
+    let data: Vec<Value> = deleted
+        .into_iter()
+        .map(|o| serde_json::to_value(o).unwrap_or(json!({})))
+        .collect();
+    let total_pages = if total_count > 0 {
+        ((total_count as f64) / (page_size as f64)).ceil() as i64
+    } else {
+        0
+    };
+    Ok(Json(json!({
+        "data": data,
+        "count": data.len(),
+        "total_count": total_count,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+    })))
 }
 
 /// DELETE /org/delete

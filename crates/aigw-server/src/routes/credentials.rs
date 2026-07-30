@@ -26,6 +26,12 @@ use super::spend::{require_admin, SpendAuth};
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 #[derive(Debug, Deserialize)]
+pub struct CredentialListQuery {
+    pub page: Option<i32>,
+    pub page_size: Option<i32>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct CredentialInfoQuery {
     pub credential_name: String,
 }
@@ -199,13 +205,23 @@ pub async fn credential_info(
     }
 }
 
-/// GET /credential/list — list all credentials (admin)
+/// GET /credential/list — list all credentials (admin, paginated)
 pub async fn credential_list(
     State(state): State<SharedState>,
     SpendAuth(auth): SpendAuth,
+    Query(query): Query<CredentialListQuery>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&auth)?;
-    let credentials = state.db.list_credentials().await.map_err(|e| {
+    let page = query.page.unwrap_or(1).max(1);
+    let page_size = query.page_size.unwrap_or(30).max(1).min(100);
+    let offset = ((page - 1) * page_size) as i64;
+    let limit = page_size as i64;
+
+    let (credentials, total_count) = tokio::try_join!(
+        state.db.list_credentials_paged(limit, offset),
+        state.db.count_credentials(),
+    )
+    .map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": {"message": format!("{}", e)}})),
@@ -218,7 +234,21 @@ pub async fn credential_list(
         .map(|c| serde_json::to_value(CredentialResponse::from_credential(c, master_key)).unwrap_or(json!({})))
         .collect();
 
-    Ok(Json(json!({"object": "list", "data": data})))
+    let total_pages = if total_count > 0 {
+        ((total_count as f64) / (page_size as f64)).ceil() as i64
+    } else {
+        0
+    };
+
+    Ok(Json(json!({
+        "object": "list",
+        "data": data,
+        "count": data.len(),
+        "total_count": total_count,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+    })))
 }
 
 /// PUT /credential/update — update an existing credential (admin)

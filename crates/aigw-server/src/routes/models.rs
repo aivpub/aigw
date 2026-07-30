@@ -9,7 +9,6 @@
 
 use aigw_core::crypto::{decrypt_json_fields, decrypt_litellm_value};
 use aigw_core::models::ProxyModel;
-use aigw_core::models::DeletedModel;
 use axum::{
     extract::{Query, State},
     http::StatusCode,
@@ -25,6 +24,12 @@ use super::spend::{require_admin, SpendAuth};
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Request/Response types
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[derive(Debug, Deserialize)]
+pub struct ModelListQuery {
+    pub page: Option<i32>,
+    pub page_size: Option<i32>,
+}
 
 #[derive(Debug, Deserialize)]
 pub struct ModelInfoQuery {
@@ -197,13 +202,23 @@ pub async fn model_info(
     }
 }
 
-/// GET /model/list — list all proxy models (admin)
+/// GET /model/list — list all proxy models (admin, paginated)
 pub async fn model_list(
     State(state): State<SharedState>,
     SpendAuth(auth): SpendAuth,
+    Query(query): Query<ModelListQuery>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&auth)?;
-    let models = state.db.list_models().await.map_err(|e| {
+    let page = query.page.unwrap_or(1).max(1);
+    let page_size = query.page_size.unwrap_or(30).max(1).min(100);
+    let offset = ((page - 1) * page_size) as i64;
+    let limit = page_size as i64;
+
+    let (models, total_count) = tokio::try_join!(
+        state.db.list_models_paged(limit, offset),
+        state.db.count_models(),
+    )
+    .map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": {"message": format!("{}", e)}})),
@@ -216,7 +231,21 @@ pub async fn model_list(
         .map(|m| serde_json::to_value(ModelResponse::from_model(m, mk)).unwrap_or(json!({})))
         .collect();
 
-    Ok(Json(json!({"object": "list", "data": data})))
+    let total_pages = if total_count > 0 {
+        ((total_count as f64) / (page_size as f64)).ceil() as i64
+    } else {
+        0
+    };
+
+    Ok(Json(json!({
+        "object": "list",
+        "data": data,
+        "count": data.len(),
+        "total_count": total_count,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+    })))
 }
 
 /// PUT /model/update — update an existing model (admin)
@@ -276,19 +305,47 @@ pub async fn model_update(
     Ok(Json(serde_json::to_value(resp).unwrap_or(json!({}))))
 }
 
-/// GET /model/deleted — list deleted models (admin)
+/// GET /model/deleted — list deleted models (admin, paginated)
 pub async fn model_deleted_list(
     State(state): State<SharedState>,
     SpendAuth(auth): SpendAuth,
-) -> Result<Json<Vec<DeletedModel>>, (StatusCode, Json<Value>)> {
+    Query(query): Query<ModelListQuery>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&auth)?;
-    let deleted = state.db.list_deleted_models().await.map_err(|e| {
+    let page = query.page.unwrap_or(1).max(1);
+    let page_size = query.page_size.unwrap_or(30).max(1).min(100);
+    let offset = ((page - 1) * page_size) as i64;
+    let limit = page_size as i64;
+
+    let (deleted, total_count) = tokio::try_join!(
+        state.db.list_deleted_models_paged(limit, offset),
+        state.db.count_deleted_models(),
+    )
+    .map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": {"message": format!("{}", e)}})),
         )
     })?;
-    Ok(Json(deleted))
+
+    let data: Vec<Value> = deleted
+        .into_iter()
+        .map(|m| serde_json::to_value(m).unwrap_or(json!({})))
+        .collect();
+    let total_pages = if total_count > 0 {
+        ((total_count as f64) / (page_size as f64)).ceil() as i64
+    } else {
+        0
+    };
+
+    Ok(Json(json!({
+        "data": data,
+        "count": data.len(),
+        "total_count": total_count,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+    })))
 }
 
 /// DELETE /model/delete?model_id=... — delete a model (admin)

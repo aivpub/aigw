@@ -323,11 +323,30 @@ pub trait KeyStore {
         user_id: Option<&str>,
     ) -> Result<Vec<VirtualKey>>;
 
+    /// Paginated list of virtual_keys (excludes team_id="litellm-dashboard",
+    /// matching the handler filter so total_count and visible rows stay in sync).
+    async fn list_keys_paged(
+        &self,
+        team_id: Option<&str>,
+        user_id: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<VirtualKey>>;
+
+    /// Count of virtual_keys (excludes team_id="litellm-dashboard").
+    async fn count_keys(&self, team_id: Option<&str>, user_id: Option<&str>) -> Result<i64>;
+
     /// Soft-delete a key: move to deleted_keys table, then remove from virtual_keys.
     async fn delete_key(&self, token_hash: &str) -> Result<()>;
 
     /// List all archived (soft-deleted) keys from deleted_keys.
     async fn list_deleted_keys(&self) -> Result<Vec<VirtualKey>>;
+
+    /// Paginated list of archived (soft-deleted) keys.
+    async fn list_deleted_keys_paged(&self, limit: i64, offset: i64) -> Result<Vec<VirtualKey>>;
+
+    /// Count of archived (soft-deleted) keys.
+    async fn count_deleted_keys(&self) -> Result<i64>;
 
     /// Update specific fields on a key (spend, models, max_budget, tpm_limit, rpm_limit, blocked, metadata, tags).
     async fn update_key(&self, token_hash: &str, key: &VirtualKey) -> Result<()>;
@@ -425,6 +444,22 @@ FROM virtual_keys
 WHERE team_id = ? AND user_id = ?
 "#;
 
+const COUNT_KEYS_SQLITE: &str = r#"
+SELECT COUNT(*) FROM virtual_keys WHERE (team_id IS NULL OR team_id != 'litellm-dashboard')
+"#;
+
+const COUNT_KEYS_TEAM_SQLITE: &str = r#"
+SELECT COUNT(*) FROM virtual_keys WHERE team_id = ? AND team_id != 'litellm-dashboard'
+"#;
+
+const COUNT_KEYS_USER_SQLITE: &str = r#"
+SELECT COUNT(*) FROM virtual_keys WHERE user_id = ? AND (team_id IS NULL OR team_id != 'litellm-dashboard')
+"#;
+
+const COUNT_KEYS_TEAM_USER_SQLITE: &str = r#"
+SELECT COUNT(*) FROM virtual_keys WHERE team_id = ? AND user_id = ?
+"#;
+
 const INSERT_DELETED_KEY_SQLITE: &str = r#"
 INSERT INTO deleted_keys (
     token, key_name, key_alias, soft_budget_cooldown, spend, expires,
@@ -451,6 +486,85 @@ SELECT
     last_active, rotation_count, auto_rotate, rotation_interval,
     last_rotation_at, key_rotation_at, budget_limits
 FROM deleted_keys ORDER BY updated_at DESC
+"#;
+
+const LIST_DELETED_KEYS_PAGED_SQLITE: &str = r#"
+SELECT
+    token, key_name, key_alias, soft_budget_cooldown, spend, expires,
+    models, aliases, config, router_settings,
+    user_id, team_id, agent_id, project_id, permissions, max_parallel_requests,
+    metadata, blocked, tpm_limit, rpm_limit, max_budget, budget_duration, budget_reset_at,
+    allowed_cache_controls, allowed_routes, policies, access_group_ids,
+    model_spend, model_max_budget, budget_id, organization_id, object_permission_id,
+    created_at, created_by, updated_at, updated_by,
+    last_active, rotation_count, auto_rotate, rotation_interval,
+    last_rotation_at, key_rotation_at, budget_limits
+FROM deleted_keys ORDER BY updated_at DESC
+LIMIT ? OFFSET ?
+"#;
+
+const LIST_KEYS_PAGED_SQLITE: &str = r#"
+SELECT
+    token, key_name, key_alias, soft_budget_cooldown, spend, expires,
+    models, aliases, config, router_settings,
+    user_id, team_id, agent_id, project_id, permissions, max_parallel_requests,
+    metadata, blocked, tpm_limit, rpm_limit, max_budget, budget_duration, budget_reset_at,
+    allowed_cache_controls, allowed_routes, policies, access_group_ids,
+    model_spend, model_max_budget, budget_id, organization_id, object_permission_id,
+    created_at, created_by, updated_at, updated_by,
+    last_active, rotation_count, auto_rotate, rotation_interval,
+    last_rotation_at, key_rotation_at, budget_limits
+FROM virtual_keys
+WHERE (team_id IS NULL OR team_id != 'litellm-dashboard')
+LIMIT ? OFFSET ?
+"#;
+
+const LIST_KEYS_PAGED_TEAM_SQLITE: &str = r#"
+SELECT
+    token, key_name, key_alias, soft_budget_cooldown, spend, expires,
+    models, aliases, config, router_settings,
+    user_id, team_id, agent_id, project_id, permissions, max_parallel_requests,
+    metadata, blocked, tpm_limit, rpm_limit, max_budget, budget_duration, budget_reset_at,
+    allowed_cache_controls, allowed_routes, policies, access_group_ids,
+    model_spend, model_max_budget, budget_id, organization_id, object_permission_id,
+    created_at, created_by, updated_at, updated_by,
+    last_active, rotation_count, auto_rotate, rotation_interval,
+    last_rotation_at, key_rotation_at, budget_limits
+FROM virtual_keys
+WHERE team_id = ? AND team_id != 'litellm-dashboard'
+LIMIT ? OFFSET ?
+"#;
+
+const LIST_KEYS_PAGED_USER_SQLITE: &str = r#"
+SELECT
+    token, key_name, key_alias, soft_budget_cooldown, spend, expires,
+    models, aliases, config, router_settings,
+    user_id, team_id, agent_id, project_id, permissions, max_parallel_requests,
+    metadata, blocked, tpm_limit, rpm_limit, max_budget, budget_duration, budget_reset_at,
+    allowed_cache_controls, allowed_routes, policies, access_group_ids,
+    model_spend, model_max_budget, budget_id, organization_id, object_permission_id,
+    created_at, created_by, updated_at, updated_by,
+    last_active, rotation_count, auto_rotate, rotation_interval,
+    last_rotation_at, key_rotation_at, budget_limits
+FROM virtual_keys
+WHERE user_id = ? AND (team_id IS NULL OR team_id != 'litellm-dashboard')
+LIMIT ? OFFSET ?
+"#;
+
+const LIST_KEYS_PAGED_TEAM_USER_SQLITE: &str = r#"
+SELECT
+    token, key_name, key_alias, soft_budget_cooldown, spend, expires,
+    models, aliases, config, router_settings,
+    user_id, team_id, agent_id, project_id, permissions, max_parallel_requests,
+    metadata, blocked, tpm_limit, rpm_limit, max_budget, budget_duration, budget_reset_at,
+    allowed_cache_controls, allowed_routes, policies, access_group_ids,
+    model_spend, model_max_budget, budget_id, organization_id, object_permission_id,
+    created_at, created_by, updated_at, updated_by,
+    last_active, rotation_count, auto_rotate, rotation_interval,
+    last_rotation_at, key_rotation_at, budget_limits
+FROM virtual_keys
+WHERE team_id = ? AND user_id = ?
+LIMIT ? OFFSET ?
 "#;
 
 const UPDATE_KEY_SQLITE: &str = r#"
@@ -581,6 +695,51 @@ impl KeyStore for SqlitePool {
 
     async fn list_deleted_keys(&self) -> Result<Vec<VirtualKey>> {
         sqlx::query_as(LIST_DELETED_KEYS_SQLITE).fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn list_deleted_keys_paged(&self, limit: i64, offset: i64) -> Result<Vec<VirtualKey>> {
+        sqlx::query_as(LIST_DELETED_KEYS_PAGED_SQLITE)
+            .bind(limit).bind(offset)
+            .fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn count_deleted_keys(&self) -> Result<i64> {
+        sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM deleted_keys")
+            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+    }
+
+    async fn list_keys_paged(
+        &self,
+        team_id: Option<&str>,
+        user_id: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<VirtualKey>> {
+        let keys = match (team_id, user_id) {
+            (Some(tid), Some(uid)) => sqlx::query_as(LIST_KEYS_PAGED_TEAM_USER_SQLITE)
+                .bind(tid).bind(uid).bind(limit).bind(offset).fetch_all(self).await?,
+            (Some(tid), None) => sqlx::query_as(LIST_KEYS_PAGED_TEAM_SQLITE)
+                .bind(tid).bind(limit).bind(offset).fetch_all(self).await?,
+            (None, Some(uid)) => sqlx::query_as(LIST_KEYS_PAGED_USER_SQLITE)
+                .bind(uid).bind(limit).bind(offset).fetch_all(self).await?,
+            (None, None) => sqlx::query_as(LIST_KEYS_PAGED_SQLITE)
+                .bind(limit).bind(offset).fetch_all(self).await?,
+        };
+        Ok(keys)
+    }
+
+    async fn count_keys(&self, team_id: Option<&str>, user_id: Option<&str>) -> Result<i64> {
+        let row: (i64,) = match (team_id, user_id) {
+            (Some(tid), Some(uid)) => sqlx::query_as::<_, (i64,)>(COUNT_KEYS_TEAM_USER_SQLITE)
+                .bind(tid).bind(uid).fetch_one(self).await?,
+            (Some(tid), None) => sqlx::query_as::<_, (i64,)>(COUNT_KEYS_TEAM_SQLITE)
+                .bind(tid).fetch_one(self).await?,
+            (None, Some(uid)) => sqlx::query_as::<_, (i64,)>(COUNT_KEYS_USER_SQLITE)
+                .bind(uid).fetch_one(self).await?,
+            (None, None) => sqlx::query_as::<_, (i64,)>(COUNT_KEYS_SQLITE)
+                .fetch_one(self).await?,
+        };
+        Ok(row.0)
     }
 
     async fn delete_key(&self, token_hash: &str) -> Result<()> {
@@ -819,6 +978,51 @@ impl KeyStore for MySqlPool {
     async fn list_deleted_keys(&self) -> Result<Vec<VirtualKey>> {
         sqlx::query_as("SELECT token, key_name, key_alias, soft_budget_cooldown, spend, expires, models, aliases, config, router_settings, user_id, team_id, agent_id, project_id, permissions, max_parallel_requests, metadata, blocked, tpm_limit, rpm_limit, max_budget, budget_duration, budget_reset_at, allowed_cache_controls, allowed_routes, policies, access_group_ids, model_spend, model_max_budget, budget_id, organization_id, object_permission_id, created_at, created_by, updated_at, updated_by, last_active, rotation_count, auto_rotate, rotation_interval, last_rotation_at, key_rotation_at, budget_limits FROM deleted_keys ORDER BY updated_at DESC")
             .fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn list_deleted_keys_paged(&self, limit: i64, offset: i64) -> Result<Vec<VirtualKey>> {
+        sqlx::query_as("SELECT token, key_name, key_alias, soft_budget_cooldown, spend, expires, models, aliases, config, router_settings, user_id, team_id, agent_id, project_id, permissions, max_parallel_requests, metadata, blocked, tpm_limit, rpm_limit, max_budget, budget_duration, budget_reset_at, allowed_cache_controls, allowed_routes, policies, access_group_ids, model_spend, model_max_budget, budget_id, organization_id, object_permission_id, created_at, created_by, updated_at, updated_by, last_active, rotation_count, auto_rotate, rotation_interval, last_rotation_at, key_rotation_at, budget_limits FROM deleted_keys ORDER BY updated_at DESC LIMIT ? OFFSET ?")
+                    .bind(limit).bind(offset)
+            .bind(limit).bind(offset).fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn count_deleted_keys(&self) -> Result<i64> {
+        sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM deleted_keys")
+            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+    }
+
+    async fn list_keys_paged(
+        &self,
+        team_id: Option<&str>,
+        user_id: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<VirtualKey>> {
+        let keys = match (team_id, user_id) {
+            (Some(tid), Some(uid)) => sqlx::query_as(LIST_KEYS_PAGED_TEAM_USER_SQLITE)
+                .bind(tid).bind(uid).bind(limit).bind(offset).fetch_all(self).await?,
+            (Some(tid), None) => sqlx::query_as(LIST_KEYS_PAGED_TEAM_SQLITE)
+                .bind(tid).bind(limit).bind(offset).fetch_all(self).await?,
+            (None, Some(uid)) => sqlx::query_as(LIST_KEYS_PAGED_USER_SQLITE)
+                .bind(uid).bind(limit).bind(offset).fetch_all(self).await?,
+            (None, None) => sqlx::query_as(LIST_KEYS_PAGED_SQLITE)
+                .bind(limit).bind(offset).fetch_all(self).await?,
+        };
+        Ok(keys)
+    }
+
+    async fn count_keys(&self, team_id: Option<&str>, user_id: Option<&str>) -> Result<i64> {
+        let row: (i64,) = match (team_id, user_id) {
+            (Some(tid), Some(uid)) => sqlx::query_as::<_, (i64,)>(COUNT_KEYS_TEAM_USER_SQLITE)
+                .bind(tid).bind(uid).fetch_one(self).await?,
+            (Some(tid), None) => sqlx::query_as::<_, (i64,)>(COUNT_KEYS_TEAM_SQLITE)
+                .bind(tid).fetch_one(self).await?,
+            (None, Some(uid)) => sqlx::query_as::<_, (i64,)>(COUNT_KEYS_USER_SQLITE)
+                .bind(uid).fetch_one(self).await?,
+            (None, None) => sqlx::query_as::<_, (i64,)>(COUNT_KEYS_SQLITE)
+                .fetch_one(self).await?,
+        };
+        Ok(row.0)
     }
 
     async fn delete_key(&self, token_hash: &str) -> Result<()> {
@@ -1071,6 +1275,59 @@ impl KeyStore for PgPool {
             .fetch_all(self).await.map_err(DbError::from)
     }
 
+    async fn list_deleted_keys_paged(&self, limit: i64, offset: i64) -> Result<Vec<VirtualKey>> {
+        sqlx::query_as("SELECT token, key_name, key_alias, soft_budget_cooldown, spend, expires, models, aliases, config, router_settings, user_id, team_id, agent_id, project_id, permissions, max_parallel_requests, metadata, blocked, tpm_limit, rpm_limit, max_budget, budget_duration, budget_reset_at, allowed_cache_controls, allowed_routes, policies, access_group_ids, model_spend, model_max_budget, budget_id, organization_id, object_permission_id, created_at, created_by, updated_at, updated_by, last_active, rotation_count, auto_rotate, rotation_interval, last_rotation_at, key_rotation_at, budget_limits FROM deleted_keys ORDER BY updated_at DESC LIMIT $1 OFFSET $2")
+                    .bind(limit).bind(offset)
+            .bind(limit).bind(offset).fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn count_deleted_keys(&self) -> Result<i64> {
+        sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM deleted_keys")
+            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+    }
+
+    async fn list_keys_paged(
+        &self,
+        team_id: Option<&str>,
+        user_id: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<VirtualKey>> {
+        let keys = match (team_id, user_id) {
+            (Some(tid), Some(uid)) => sqlx::query_as(
+                "SELECT token, key_name, key_alias, soft_budget_cooldown, spend, expires, models, aliases, config, router_settings, user_id, team_id, agent_id, project_id, permissions, max_parallel_requests, metadata, blocked, tpm_limit, rpm_limit, max_budget, budget_duration, budget_reset_at, allowed_cache_controls, allowed_routes, policies, access_group_ids, model_spend, model_max_budget, budget_id, organization_id, object_permission_id, created_at, created_by, updated_at, updated_by, last_active, rotation_count, auto_rotate, rotation_interval, last_rotation_at, key_rotation_at, budget_limits FROM virtual_keys WHERE team_id = $1 AND user_id = $2 LIMIT $3 OFFSET $4")
+                .bind(tid).bind(uid).bind(limit).bind(offset).fetch_all(self).await?,
+            (Some(tid), None) => sqlx::query_as(
+                "SELECT token, key_name, key_alias, soft_budget_cooldown, spend, expires, models, aliases, config, router_settings, user_id, team_id, agent_id, project_id, permissions, max_parallel_requests, metadata, blocked, tpm_limit, rpm_limit, max_budget, budget_duration, budget_reset_at, allowed_cache_controls, allowed_routes, policies, access_group_ids, model_spend, model_max_budget, budget_id, organization_id, object_permission_id, created_at, created_by, updated_at, updated_by, last_active, rotation_count, auto_rotate, rotation_interval, last_rotation_at, key_rotation_at, budget_limits FROM virtual_keys WHERE team_id = $1 AND team_id <> 'litellm-dashboard' LIMIT $2 OFFSET $3")
+                .bind(tid).bind(limit).bind(offset).fetch_all(self).await?,
+            (None, Some(uid)) => sqlx::query_as(
+                "SELECT token, key_name, key_alias, soft_budget_cooldown, spend, expires, models, aliases, config, router_settings, user_id, team_id, agent_id, project_id, permissions, max_parallel_requests, metadata, blocked, tpm_limit, rpm_limit, max_budget, budget_duration, budget_reset_at, allowed_cache_controls, allowed_routes, policies, access_group_ids, model_spend, model_max_budget, budget_id, organization_id, object_permission_id, created_at, created_by, updated_at, updated_by, last_active, rotation_count, auto_rotate, rotation_interval, last_rotation_at, key_rotation_at, budget_limits FROM virtual_keys WHERE user_id = $1 AND (team_id IS NULL OR team_id <> 'litellm-dashboard') LIMIT $2 OFFSET $3")
+                .bind(uid).bind(limit).bind(offset).fetch_all(self).await?,
+            (None, None) => sqlx::query_as(
+                "SELECT token, key_name, key_alias, soft_budget_cooldown, spend, expires, models, aliases, config, router_settings, user_id, team_id, agent_id, project_id, permissions, max_parallel_requests, metadata, blocked, tpm_limit, rpm_limit, max_budget, budget_duration, budget_reset_at, allowed_cache_controls, allowed_routes, policies, access_group_ids, model_spend, model_max_budget, budget_id, organization_id, object_permission_id, created_at, created_by, updated_at, updated_by, last_active, rotation_count, auto_rotate, rotation_interval, last_rotation_at, key_rotation_at, budget_limits FROM virtual_keys WHERE (team_id IS NULL OR team_id <> 'litellm-dashboard') LIMIT $1 OFFSET $2")
+                .bind(limit).bind(offset).fetch_all(self).await?,
+        };
+        Ok(keys)
+    }
+
+    async fn count_keys(&self, team_id: Option<&str>, user_id: Option<&str>) -> Result<i64> {
+        let row: (i64,) = match (team_id, user_id) {
+            (Some(tid), Some(uid)) => sqlx::query_as::<_, (i64,)>(
+                "SELECT COUNT(*) FROM virtual_keys WHERE team_id = $1 AND user_id = $2")
+                .bind(tid).bind(uid).fetch_one(self).await?,
+            (Some(tid), None) => sqlx::query_as::<_, (i64,)>(
+                "SELECT COUNT(*) FROM virtual_keys WHERE team_id = $1 AND team_id <> 'litellm-dashboard'")
+                .bind(tid).fetch_one(self).await?,
+            (None, Some(uid)) => sqlx::query_as::<_, (i64,)>(
+                "SELECT COUNT(*) FROM virtual_keys WHERE user_id = $1 AND (team_id IS NULL OR team_id <> 'litellm-dashboard')")
+                .bind(uid).fetch_one(self).await?,
+            (None, None) => sqlx::query_as::<_, (i64,)>(
+                "SELECT COUNT(*) FROM virtual_keys WHERE (team_id IS NULL OR team_id <> 'litellm-dashboard')")
+                .fetch_one(self).await?,
+        };
+        Ok(row.0)
+    }
+
     async fn delete_key(&self, token_hash: &str) -> Result<()> {
         let key = self.get_key_by_token(token_hash).await?;
         if let Some(k) = key {
@@ -1193,11 +1450,49 @@ impl Database {
         }
     }
 
+    pub async fn list_keys_paged(
+        &self,
+        team_id: Option<&str>,
+        user_id: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<VirtualKey>> {
+        match self {
+            Database::Sqlite(pool) => pool.list_keys_paged(team_id, user_id, limit, offset).await,
+            Database::Mysql(pool) => pool.list_keys_paged(team_id, user_id, limit, offset).await,
+            Database::Postgres(pool) => pool.list_keys_paged(team_id, user_id, limit, offset).await,
+        }
+    }
+
+    pub async fn count_keys(&self, team_id: Option<&str>, user_id: Option<&str>) -> Result<i64> {
+        match self {
+            Database::Sqlite(pool) => pool.count_keys(team_id, user_id).await,
+            Database::Mysql(pool) => pool.count_keys(team_id, user_id).await,
+            Database::Postgres(pool) => pool.count_keys(team_id, user_id).await,
+        }
+    }
+
     pub async fn list_deleted_keys(&self) -> Result<Vec<VirtualKey>> {
         match self {
             Database::Sqlite(pool) => pool.list_deleted_keys().await,
             Database::Mysql(pool) => pool.list_deleted_keys().await,
             Database::Postgres(pool) => pool.list_deleted_keys().await,
+        }
+    }
+
+    pub async fn list_deleted_keys_paged(&self, limit: i64, offset: i64) -> Result<Vec<VirtualKey>> {
+        match self {
+            Database::Sqlite(pool) => pool.list_deleted_keys_paged(limit, offset).await,
+            Database::Mysql(pool) => pool.list_deleted_keys_paged(limit, offset).await,
+            Database::Postgres(pool) => pool.list_deleted_keys_paged(limit, offset).await,
+        }
+    }
+
+    pub async fn count_deleted_keys(&self) -> Result<i64> {
+        match self {
+            Database::Sqlite(pool) => pool.count_deleted_keys().await,
+            Database::Mysql(pool) => pool.count_deleted_keys().await,
+            Database::Postgres(pool) => pool.count_deleted_keys().await,
         }
     }
 
@@ -2447,10 +2742,16 @@ impl Database {
         user_id: Option<&str>,
         team_id: Option<&str>,
         organization_id: Option<&str>,
-    ) -> Result<(f64, i64, i64, i64, i64, i64, i64)> {
+    ) -> Result<(f64, i64, i64, i64, i64, i64, i64, i64, i64, i64, f64, f64)> {
         // Column order (must be identical across all three backends):
         //   spend, total_tokens, requests, successful_requests, failed_requests,
-        //   prompt_tokens, completion_tokens
+        //   prompt_tokens, completion_tokens,
+        //   cache_read_tokens, cache_creation_tokens, regular_input,
+        //   cache_read_spend, cache_create_spend
+        // Cache columns are extracted from spend_logs.metadata JSON (Stage 90).
+        // regular_input is provider-aware: OpenAI-style prompt_tokens already
+        // includes cached tokens (subtract), Anthropic-style input_tokens does
+        // not (keep as regular). MAX() clamps against negative edge cases.
         let sql_base = r#"SELECT
                 COALESCE(SUM(spend), 0),
                 COALESCE(SUM(total_tokens), 0),
@@ -2458,7 +2759,14 @@ impl Database {
                 COUNT(CASE WHEN status = 'success' THEN 1 END),
                 COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END),
                 COALESCE(SUM(prompt_tokens), 0),
-                COALESCE(SUM(completion_tokens), 0)
+                COALESCE(SUM(completion_tokens), 0),
+                COALESCE(SUM(COALESCE(json_extract(metadata, '$.cache_read_tokens'), 0)), 0),
+                COALESCE(SUM(COALESCE(json_extract(metadata, '$.cache_creation_tokens'), 0)), 0),
+                COALESCE(SUM(CASE WHEN (custom_llm_provider = 'anthropic' OR (custom_llm_provider IS NULL AND api_base LIKE '%anthropic%'))
+                                  THEN prompt_tokens
+                                  ELSE MAX(0, prompt_tokens - COALESCE(json_extract(metadata, '$.cache_read_tokens'), 0) - COALESCE(json_extract(metadata, '$.cache_creation_tokens'), 0)) END), 0),
+                COALESCE(SUM(COALESCE(json_extract(metadata, '$.cache_read_spend'), 0)), 0),
+                COALESCE(SUM(COALESCE(json_extract(metadata, '$.cache_create_spend'), 0)), 0)
             FROM spend_logs
             WHERE date(start_time) >= date({p1}) AND date(start_time) <= date({p2}) {filter}"#;
         match self {
@@ -2480,7 +2788,14 @@ impl Database {
                     CAST(COUNT(CASE WHEN status = 'success' THEN 1 END) AS SIGNED),
                     CAST(COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END) AS SIGNED),
                     CAST(COALESCE(SUM(prompt_tokens), 0) AS SIGNED),
-                    CAST(COALESCE(SUM(completion_tokens), 0) AS SIGNED)
+                    CAST(COALESCE(SUM(completion_tokens), 0) AS SIGNED),
+                    CAST(COALESCE(SUM(COALESCE(JSON_EXTRACT(metadata, '$.cache_read_tokens'), 0)), 0) AS SIGNED),
+                    CAST(COALESCE(SUM(COALESCE(JSON_EXTRACT(metadata, '$.cache_creation_tokens'), 0)), 0) AS SIGNED),
+                    CAST(COALESCE(SUM(CASE WHEN (custom_llm_provider = 'anthropic' OR (custom_llm_provider IS NULL AND api_base LIKE '%anthropic%'))
+                                          THEN prompt_tokens
+                                          ELSE GREATEST(0, prompt_tokens - COALESCE(JSON_EXTRACT(metadata, '$.cache_read_tokens'), 0) - COALESCE(JSON_EXTRACT(metadata, '$.cache_creation_tokens'), 0)) END), 0) AS SIGNED),
+                    COALESCE(SUM(COALESCE(JSON_EXTRACT(metadata, '$.cache_read_spend'), 0)), 0),
+                    COALESCE(SUM(COALESCE(JSON_EXTRACT(metadata, '$.cache_create_spend'), 0)), 0)
                 FROM spend_logs
                 WHERE date(start_time) >= date(?) AND date(start_time) <= date(?) {filter}"#;
                 let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false, true);
@@ -2491,8 +2806,28 @@ impl Database {
                 q.fetch_one(pool).await.map_err(DbError::from)
             }
             Database::Postgres(pool) => {
+                // Postgres: metadata is JSONB. Cache tokens via
+                // (metadata->'key')::bigint; cache spend via (metadata->>'key')::double precision.
+                // COALESCE guards NULL. regular_input uses GREATEST to clamp (pg has no scalar MAX).
+                let sql_pg = r#"SELECT
+                    COALESCE(SUM(spend), 0),
+                    COALESCE(SUM(total_tokens), 0),
+                    COUNT(call_id),
+                    COUNT(CASE WHEN status = 'success' THEN 1 END),
+                    COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END),
+                    COALESCE(SUM(prompt_tokens), 0),
+                    COALESCE(SUM(completion_tokens), 0),
+                    COALESCE(SUM(COALESCE((metadata->'cache_read_tokens')::bigint, 0)), 0),
+                    COALESCE(SUM(COALESCE((metadata->'cache_creation_tokens')::bigint, 0)), 0),
+                    COALESCE(SUM(CASE WHEN (custom_llm_provider = 'anthropic' OR (custom_llm_provider IS NULL AND api_base LIKE '%anthropic%'))
+                                      THEN prompt_tokens
+                                      ELSE GREATEST(0, prompt_tokens - COALESCE((metadata->'cache_read_tokens')::bigint, 0) - COALESCE((metadata->'cache_creation_tokens')::bigint, 0)) END), 0),
+                    COALESCE(SUM(COALESCE((metadata->'cache_read_spend')::double precision, 0)), 0),
+                    COALESCE(SUM(COALESCE((metadata->'cache_create_spend')::double precision, 0)), 0)
+                FROM spend_logs
+                WHERE date(start_time) >= date($1) AND date(start_time) <= date($2) {filter}"#;
                 let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 3, true, false);
-                let sql = sql_base.replace("{p1}", "$1").replace("{p2}", "$2").replace("{filter}", &filter_clause);
+                let sql = sql_pg.replace("{filter}", &filter_clause);
                 let mut q = sqlx::query_as(&sql)
                     .bind(start_date).bind(end_date);
                 for p in &params { q = q.bind(p); }
@@ -2509,14 +2844,21 @@ impl Database {
         user_id: Option<&str>,
         team_id: Option<&str>,
         organization_id: Option<&str>,
-    ) -> Result<Vec<(String, f64, i64, i64, i64, i64, i64, i64)>> {
+    ) -> Result<Vec<(String, f64, i64, i64, i64, i64, i64, i64, i64, i64, i64, f64, f64)>> {
         match self {
             Database::Sqlite(pool) => {
                 // SQLite: DATE() already returns TEXT — no cast needed.
                 let sql = "SELECT DATE(start_time), COALESCE(SUM(spend), 0), COALESCE(SUM(total_tokens), 0), COUNT(call_id), \
                     COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), \
                     COUNT(CASE WHEN status = 'success' THEN 1 END), \
-                    COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END) \
+                    COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END), \
+                    COALESCE(SUM(COALESCE(json_extract(metadata, '$.cache_read_tokens'), 0)), 0), \
+                    COALESCE(SUM(COALESCE(json_extract(metadata, '$.cache_creation_tokens'), 0)), 0), \
+                    COALESCE(SUM(CASE WHEN (custom_llm_provider = 'anthropic' OR (custom_llm_provider IS NULL AND api_base LIKE '%anthropic%')) \
+                                      THEN prompt_tokens \
+                                      ELSE MAX(0, prompt_tokens - COALESCE(json_extract(metadata, '$.cache_read_tokens'), 0) - COALESCE(json_extract(metadata, '$.cache_creation_tokens'), 0)) END), 0), \
+                    COALESCE(SUM(COALESCE(json_extract(metadata, '$.cache_read_spend'), 0)), 0), \
+                    COALESCE(SUM(COALESCE(json_extract(metadata, '$.cache_create_spend'), 0)), 0) \
                     FROM spend_logs WHERE date(start_time) >= date(?) AND date(start_time) <= date(?) {filter} \
                     GROUP BY 1 ORDER BY 1 ASC";
                 let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false, false);
@@ -2531,7 +2873,14 @@ impl Database {
                 let sql = "SELECT CAST(DATE(start_time) AS CHAR), COALESCE(SUM(spend), 0), CAST(COALESCE(SUM(total_tokens), 0) AS SIGNED), CAST(COUNT(call_id) AS SIGNED), \
                     CAST(COALESCE(SUM(prompt_tokens), 0) AS SIGNED), CAST(COALESCE(SUM(completion_tokens), 0) AS SIGNED), \
                     CAST(COUNT(CASE WHEN status = 'success' THEN 1 END) AS SIGNED), \
-                    CAST(COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END) AS SIGNED) \
+                    CAST(COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END) AS SIGNED), \
+                    CAST(COALESCE(SUM(COALESCE(JSON_EXTRACT(metadata, '$.cache_read_tokens'), 0)), 0) AS SIGNED), \
+                    CAST(COALESCE(SUM(COALESCE(JSON_EXTRACT(metadata, '$.cache_creation_tokens'), 0)), 0) AS SIGNED), \
+                    CAST(COALESCE(SUM(CASE WHEN (custom_llm_provider = 'anthropic' OR (custom_llm_provider IS NULL AND api_base LIKE '%anthropic%')) \
+                                          THEN prompt_tokens \
+                                          ELSE GREATEST(0, prompt_tokens - COALESCE(JSON_EXTRACT(metadata, '$.cache_read_tokens'), 0) - COALESCE(JSON_EXTRACT(metadata, '$.cache_creation_tokens'), 0)) END), 0) AS SIGNED), \
+                    COALESCE(SUM(COALESCE(JSON_EXTRACT(metadata, '$.cache_read_spend'), 0)), 0), \
+                    COALESCE(SUM(COALESCE(JSON_EXTRACT(metadata, '$.cache_create_spend'), 0)), 0) \
                     FROM spend_logs WHERE date(start_time) >= date(?) AND date(start_time) <= date(?) {filter} \
                     GROUP BY 1 ORDER BY 1 ASC";
                 let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false, true);
@@ -2546,7 +2895,14 @@ impl Database {
                 let sql = "SELECT DATE(start_time)::TEXT, COALESCE(SUM(spend), 0), COALESCE(SUM(total_tokens), 0), COUNT(call_id), \
                     COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), \
                     COUNT(CASE WHEN status = 'success' THEN 1 END), \
-                    COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END) \
+                    COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END), \
+                    COALESCE(SUM(COALESCE((metadata->'cache_read_tokens')::bigint, 0)), 0), \
+                    COALESCE(SUM(COALESCE((metadata->'cache_creation_tokens')::bigint, 0)), 0), \
+                    COALESCE(SUM(CASE WHEN (custom_llm_provider = 'anthropic' OR (custom_llm_provider IS NULL AND api_base LIKE '%anthropic%')) \
+                                      THEN prompt_tokens \
+                                      ELSE GREATEST(0, prompt_tokens - COALESCE((metadata->'cache_read_tokens')::bigint, 0) - COALESCE((metadata->'cache_creation_tokens')::bigint, 0)) END), 0), \
+                    COALESCE(SUM(COALESCE((metadata->'cache_read_spend')::double precision, 0)), 0), \
+                    COALESCE(SUM(COALESCE((metadata->'cache_create_spend')::double precision, 0)), 0) \
                     FROM spend_logs WHERE date(start_time) >= date($1) AND date(start_time) <= date($2) {filter} \
                     GROUP BY 1 ORDER BY 1 ASC";
                 let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 3, true, false);
@@ -2568,7 +2924,7 @@ impl Database {
         user_id: Option<&str>,
         team_id: Option<&str>,
         organization_id: Option<&str>,
-    ) -> Result<Vec<(String, f64, i64, i64, i64, i64, i64, i64)>> {
+    ) -> Result<Vec<(String, f64, i64, i64, i64, i64, i64, i64, i64, i64, i64, f64, f64)>> {
         // Use full datetime bounds for hourly queries (start of start_date, end of end_date)
         let start_ts = format!("{}T00:00:00", start_date);
         let end_ts = format!("{}T23:59:59", end_date);
@@ -2577,7 +2933,14 @@ impl Database {
                 let sql = "SELECT strftime('%Y-%m-%dT%H:00:00', start_time), COALESCE(SUM(spend), 0), COALESCE(SUM(total_tokens), 0), COUNT(call_id), \
                     COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), \
                     COUNT(CASE WHEN status = 'success' THEN 1 END), \
-                    COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END) \
+                    COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END), \
+                    COALESCE(SUM(COALESCE(json_extract(metadata, '$.cache_read_tokens'), 0)), 0), \
+                    COALESCE(SUM(COALESCE(json_extract(metadata, '$.cache_creation_tokens'), 0)), 0), \
+                    COALESCE(SUM(CASE WHEN (custom_llm_provider = 'anthropic' OR (custom_llm_provider IS NULL AND api_base LIKE '%anthropic%')) \
+                                      THEN prompt_tokens \
+                                      ELSE MAX(0, prompt_tokens - COALESCE(json_extract(metadata, '$.cache_read_tokens'), 0) - COALESCE(json_extract(metadata, '$.cache_creation_tokens'), 0)) END), 0), \
+                    COALESCE(SUM(COALESCE(json_extract(metadata, '$.cache_read_spend'), 0)), 0), \
+                    COALESCE(SUM(COALESCE(json_extract(metadata, '$.cache_create_spend'), 0)), 0) \
                     FROM spend_logs WHERE start_time >= ? AND start_time <= ? {filter} \
                     GROUP BY 1 ORDER BY 1 ASC";
                 let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false, false);
@@ -2591,7 +2954,14 @@ impl Database {
                 let sql = "SELECT DATE_FORMAT(start_time, '%Y-%m-%dT%H:00:00'), COALESCE(SUM(spend), 0), CAST(COALESCE(SUM(total_tokens), 0) AS SIGNED), CAST(COUNT(call_id) AS SIGNED), \
                     CAST(COALESCE(SUM(prompt_tokens), 0) AS SIGNED), CAST(COALESCE(SUM(completion_tokens), 0) AS SIGNED), \
                     CAST(COUNT(CASE WHEN status = 'success' THEN 1 END) AS SIGNED), \
-                    CAST(COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END) AS SIGNED) \
+                    CAST(COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END) AS SIGNED), \
+                    CAST(COALESCE(SUM(COALESCE(JSON_EXTRACT(metadata, '$.cache_read_tokens'), 0)), 0) AS SIGNED), \
+                    CAST(COALESCE(SUM(COALESCE(JSON_EXTRACT(metadata, '$.cache_creation_tokens'), 0)), 0) AS SIGNED), \
+                    CAST(COALESCE(SUM(CASE WHEN (custom_llm_provider = 'anthropic' OR (custom_llm_provider IS NULL AND api_base LIKE '%anthropic%')) \
+                                          THEN prompt_tokens \
+                                          ELSE GREATEST(0, prompt_tokens - COALESCE(JSON_EXTRACT(metadata, '$.cache_read_tokens'), 0) - COALESCE(JSON_EXTRACT(metadata, '$.cache_creation_tokens'), 0)) END), 0) AS SIGNED), \
+                    COALESCE(SUM(COALESCE(JSON_EXTRACT(metadata, '$.cache_read_spend'), 0)), 0), \
+                    COALESCE(SUM(COALESCE(JSON_EXTRACT(metadata, '$.cache_create_spend'), 0)), 0) \
                     FROM spend_logs WHERE start_time >= ? AND start_time <= ? {filter} \
                     GROUP BY 1 ORDER BY 1 ASC";
                 let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false, true);
@@ -2605,7 +2975,14 @@ impl Database {
                 let sql = "SELECT to_char(start_time, 'YYYY-MM-DD\"T\"HH24:00:00'), COALESCE(SUM(spend), 0), COALESCE(SUM(total_tokens), 0), COUNT(call_id), \
                     COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), \
                     COUNT(CASE WHEN status = 'success' THEN 1 END), \
-                    COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END) \
+                    COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END), \
+                    COALESCE(SUM(COALESCE((metadata->'cache_read_tokens')::bigint, 0)), 0), \
+                    COALESCE(SUM(COALESCE((metadata->'cache_creation_tokens')::bigint, 0)), 0), \
+                    COALESCE(SUM(CASE WHEN (custom_llm_provider = 'anthropic' OR (custom_llm_provider IS NULL AND api_base LIKE '%anthropic%')) \
+                                      THEN prompt_tokens \
+                                      ELSE GREATEST(0, prompt_tokens - COALESCE((metadata->'cache_read_tokens')::bigint, 0) - COALESCE((metadata->'cache_creation_tokens')::bigint, 0)) END), 0), \
+                    COALESCE(SUM(COALESCE((metadata->'cache_read_spend')::double precision, 0)), 0), \
+                    COALESCE(SUM(COALESCE((metadata->'cache_create_spend')::double precision, 0)), 0) \
                     FROM spend_logs WHERE start_time >= $1::TIMESTAMPTZ AND start_time <= $2::TIMESTAMPTZ {filter} \
                     GROUP BY 1 ORDER BY 1 ASC";
                 let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 3, true, false);
@@ -2726,9 +3103,13 @@ pub trait ProxyModelStore {
     async fn get_model_by_name(&self, model_name: &str) -> Result<Option<ProxyModel>>;
     async fn list_models_by_name(&self, model_name: &str) -> Result<Vec<ProxyModel>>;
     async fn list_models(&self) -> Result<Vec<ProxyModel>>;
+    async fn list_models_paged(&self, limit: i64, offset: i64) -> Result<Vec<ProxyModel>>;
+    async fn count_models(&self) -> Result<i64>;
     async fn update_model(&self, m: &ProxyModel) -> Result<()>;
     async fn delete_model(&self, model_id: &str) -> Result<()>;
     async fn list_deleted_models(&self) -> Result<Vec<DeletedModel>>;
+    async fn list_deleted_models_paged(&self, limit: i64, offset: i64) -> Result<Vec<DeletedModel>>;
+    async fn count_deleted_models(&self) -> Result<i64>;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2854,6 +3235,28 @@ impl ProxyModelStore for SqlitePool {
     async fn list_deleted_models(&self) -> Result<Vec<DeletedModel>> {
         sqlx::query_as(LIST_DELETED_MODELS_SQLITE).fetch_all(self).await.map_err(DbError::from)
     }
+
+    async fn list_models_paged(&self, limit: i64, offset: i64) -> Result<Vec<ProxyModel>> {
+        sqlx::query_as("SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by FROM proxy_models ORDER BY model_name LIMIT ? OFFSET ?")
+                    .bind(limit).bind(offset)
+            .fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn count_models(&self) -> Result<i64> {
+        sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM proxy_models")
+            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+    }
+
+    async fn list_deleted_models_paged(&self, limit: i64, offset: i64) -> Result<Vec<DeletedModel>> {
+        sqlx::query_as("SELECT id, model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, deleted_at FROM deleted_models ORDER BY deleted_at DESC LIMIT ? OFFSET ?")
+                    .bind(limit).bind(offset)
+            .fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn count_deleted_models(&self) -> Result<i64> {
+        sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM deleted_models")
+            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+    }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2917,6 +3320,28 @@ impl ProxyModelStore for MySqlPool {
     async fn list_deleted_models(&self) -> Result<Vec<DeletedModel>> {
         sqlx::query_as("SELECT id, model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, deleted_at FROM deleted_models ORDER BY deleted_at DESC")
             .fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn list_models_paged(&self, limit: i64, offset: i64) -> Result<Vec<ProxyModel>> {
+        sqlx::query_as("SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by FROM proxy_models ORDER BY model_name LIMIT ? OFFSET ?")
+                    .bind(limit).bind(offset)
+            .fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn count_models(&self) -> Result<i64> {
+        sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM proxy_models")
+            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+    }
+
+    async fn list_deleted_models_paged(&self, limit: i64, offset: i64) -> Result<Vec<DeletedModel>> {
+        sqlx::query_as("SELECT id, model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, deleted_at FROM deleted_models ORDER BY deleted_at DESC LIMIT ? OFFSET ?")
+                    .bind(limit).bind(offset)
+            .fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn count_deleted_models(&self) -> Result<i64> {
+        sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM deleted_models")
+            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
     }
 }
 
@@ -2982,6 +3407,28 @@ impl ProxyModelStore for PgPool {
         sqlx::query_as("SELECT id, model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, deleted_at FROM deleted_models ORDER BY deleted_at DESC")
             .fetch_all(self).await.map_err(DbError::from)
     }
+
+    async fn list_models_paged(&self, limit: i64, offset: i64) -> Result<Vec<ProxyModel>> {
+        sqlx::query_as("SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by FROM proxy_models ORDER BY model_name LIMIT $1 OFFSET $2")
+                    .bind(limit).bind(offset)
+            .fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn count_models(&self) -> Result<i64> {
+        sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM proxy_models")
+            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+    }
+
+    async fn list_deleted_models_paged(&self, limit: i64, offset: i64) -> Result<Vec<DeletedModel>> {
+        sqlx::query_as("SELECT id, model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, deleted_at FROM deleted_models ORDER BY deleted_at DESC LIMIT $1 OFFSET $2")
+                    .bind(limit).bind(offset)
+            .fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn count_deleted_models(&self) -> Result<i64> {
+        sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM deleted_models")
+            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+    }
 }
 
 impl Database {
@@ -3025,6 +3472,22 @@ impl Database {
         }
     }
 
+    pub async fn list_models_paged(&self, limit: i64, offset: i64) -> Result<Vec<ProxyModel>> {
+        match self {
+            Database::Sqlite(pool) => pool.list_models_paged(limit, offset).await,
+            Database::Mysql(pool) => pool.list_models_paged(limit, offset).await,
+            Database::Postgres(pool) => pool.list_models_paged(limit, offset).await,
+        }
+    }
+
+    pub async fn count_models(&self) -> Result<i64> {
+        match self {
+            Database::Sqlite(pool) => pool.count_models().await,
+            Database::Mysql(pool) => pool.count_models().await,
+            Database::Postgres(pool) => pool.count_models().await,
+        }
+    }
+
     pub async fn update_model(&self, m: &ProxyModel) -> Result<()> {
         match self {
             Database::Sqlite(pool) => pool.update_model(m).await,
@@ -3048,6 +3511,22 @@ impl Database {
             Database::Postgres(pool) => pool.list_deleted_models().await,
         }
     }
+
+    pub async fn list_deleted_models_paged(&self, limit: i64, offset: i64) -> Result<Vec<DeletedModel>> {
+        match self {
+            Database::Sqlite(pool) => pool.list_deleted_models_paged(limit, offset).await,
+            Database::Mysql(pool) => pool.list_deleted_models_paged(limit, offset).await,
+            Database::Postgres(pool) => pool.list_deleted_models_paged(limit, offset).await,
+        }
+    }
+
+    pub async fn count_deleted_models(&self) -> Result<i64> {
+        match self {
+            Database::Sqlite(pool) => pool.count_deleted_models().await,
+            Database::Mysql(pool) => pool.count_deleted_models().await,
+            Database::Postgres(pool) => pool.count_deleted_models().await,
+        }
+    }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -3060,6 +3539,8 @@ pub trait CredentialsStore {
     async fn insert_credential(&self, c: &Credential) -> Result<()>;
     async fn get_credential_by_name(&self, name: &str) -> Result<Option<Credential>>;
     async fn list_credentials(&self) -> Result<Vec<Credential>>;
+    async fn list_credentials_paged(&self, limit: i64, offset: i64) -> Result<Vec<Credential>>;
+    async fn count_credentials(&self) -> Result<i64>;
     async fn update_credential(&self, c: &Credential) -> Result<()>;
     async fn delete_credential(&self, name: &str) -> Result<()>;
 }
@@ -3120,6 +3601,17 @@ impl CredentialsStore for SqlitePool {
             .map_err(DbError::from)
     }
 
+    async fn list_credentials_paged(&self, limit: i64, offset: i64) -> Result<Vec<Credential>> {
+        sqlx::query_as("SELECT credential_id, credential_name, credential_values, credential_info, created_at, created_by, updated_at, updated_by FROM credentials ORDER BY credential_name LIMIT ? OFFSET ?")
+                    .bind(limit).bind(offset)
+            .fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn count_credentials(&self) -> Result<i64> {
+        sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM credentials")
+            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+    }
+
     async fn update_credential(&self, c: &Credential) -> Result<()> {
         sqlx::query(UPDATE_CREDENTIAL_SQLITE)
             .bind(&c.credential_values)
@@ -3167,6 +3659,17 @@ impl CredentialsStore for MySqlPool {
             .fetch_all(self).await.map_err(DbError::from)
     }
 
+    async fn list_credentials_paged(&self, limit: i64, offset: i64) -> Result<Vec<Credential>> {
+        sqlx::query_as("SELECT credential_id, credential_name, credential_values, credential_info, created_at, created_by, updated_at, updated_by FROM credentials ORDER BY credential_name LIMIT ? OFFSET ?")
+                    .bind(limit).bind(offset)
+            .fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn count_credentials(&self) -> Result<i64> {
+        sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM credentials")
+            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+    }
+
     async fn update_credential(&self, c: &Credential) -> Result<()> {
         sqlx::query("UPDATE credentials SET credential_values = ?, credential_info = ?, updated_at = ?, updated_by = ? WHERE credential_name = ?")
             .bind(&c.credential_values).bind(&c.credential_info).bind(&c.updated_at).bind(&c.updated_by).bind(&c.credential_name)
@@ -3205,6 +3708,17 @@ impl CredentialsStore for PgPool {
     async fn list_credentials(&self) -> Result<Vec<Credential>> {
         sqlx::query_as("SELECT credential_id, credential_name, credential_values, credential_info, created_at, created_by, updated_at, updated_by FROM credentials ORDER BY credential_name")
             .fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn list_credentials_paged(&self, limit: i64, offset: i64) -> Result<Vec<Credential>> {
+        sqlx::query_as("SELECT credential_id, credential_name, credential_values, credential_info, created_at, created_by, updated_at, updated_by FROM credentials ORDER BY credential_name LIMIT $1 OFFSET $2")
+                    .bind(limit).bind(offset)
+            .fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn count_credentials(&self) -> Result<i64> {
+        sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM credentials")
+            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
     }
 
     async fn update_credential(&self, c: &Credential) -> Result<()> {
@@ -3250,6 +3764,22 @@ impl Database {
         }
     }
 
+    pub async fn list_credentials_paged(&self, limit: i64, offset: i64) -> Result<Vec<Credential>> {
+        match self {
+            Database::Sqlite(pool) => pool.list_credentials_paged(limit, offset).await,
+            Database::Mysql(pool) => pool.list_credentials_paged(limit, offset).await,
+            Database::Postgres(pool) => pool.list_credentials_paged(limit, offset).await,
+        }
+    }
+
+    pub async fn count_credentials(&self) -> Result<i64> {
+        match self {
+            Database::Sqlite(pool) => pool.count_credentials().await,
+            Database::Mysql(pool) => pool.count_credentials().await,
+            Database::Postgres(pool) => pool.count_credentials().await,
+        }
+    }
+
     pub async fn update_credential(&self, c: &Credential) -> Result<()> {
         match self {
             Database::Sqlite(pool) => pool.update_credential(c).await,
@@ -3276,7 +3806,11 @@ pub trait OrganizationStore {
     async fn insert_organization(&self, o: &Organization) -> Result<()>;
     async fn get_organization_by_id(&self, org_id: &str) -> Result<Option<Organization>>;
     async fn list_organizations(&self) -> Result<Vec<Organization>>;
+    async fn list_organizations_paged(&self, limit: i64, offset: i64) -> Result<Vec<Organization>>;
+    async fn count_organizations(&self) -> Result<i64>;
     async fn list_deleted_organizations(&self) -> Result<Vec<DeletedOrganization>>;
+    async fn list_deleted_organizations_paged(&self, limit: i64, offset: i64) -> Result<Vec<DeletedOrganization>>;
+    async fn count_deleted_organizations(&self) -> Result<i64>;
     async fn update_organization(&self, o: &Organization) -> Result<()>;
     async fn delete_organization(&self, org_id: &str) -> Result<()>;
 }
@@ -3342,6 +3876,28 @@ impl OrganizationStore for SqlitePool {
         sqlx::query_as(LIST_DELETED_ORGS_SQLITE).fetch_all(self).await.map_err(DbError::from)
     }
 
+    async fn list_organizations_paged(&self, limit: i64, offset: i64) -> Result<Vec<Organization>> {
+        sqlx::query_as("SELECT organization_id, organization_alias, budget_id, metadata, models, spend, model_spend, object_permission_id, created_at, created_by, updated_at, updated_by FROM organizations ORDER BY organization_alias LIMIT ? OFFSET ?")
+                    .bind(limit).bind(offset)
+            .fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn count_organizations(&self) -> Result<i64> {
+        sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM organizations")
+            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+    }
+
+    async fn list_deleted_organizations_paged(&self, limit: i64, offset: i64) -> Result<Vec<DeletedOrganization>> {
+        sqlx::query_as("SELECT id, organization_id, organization_alias, budget_id, metadata, models, spend, model_spend, object_permission_id, created_at, created_by, updated_at, updated_by, deleted_at FROM deleted_organizations ORDER BY deleted_at DESC LIMIT ? OFFSET ?")
+                    .bind(limit).bind(offset)
+            .fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn count_deleted_organizations(&self) -> Result<i64> {
+        sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM deleted_organizations")
+            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+    }
+
     async fn update_organization(&self, o: &Organization) -> Result<()> {
         sqlx::query(UPDATE_ORG_SQLITE)
             .bind(&o.organization_alias).bind(&o.budget_id).bind(&o.metadata).bind(&o.models)
@@ -3397,6 +3953,28 @@ impl OrganizationStore for MySqlPool {
     async fn list_deleted_organizations(&self) -> Result<Vec<DeletedOrganization>> {
         sqlx::query_as("SELECT id, organization_id, organization_alias, budget_id, metadata, models, spend, model_spend, object_permission_id, created_at, created_by, updated_at, updated_by, deleted_at FROM deleted_organizations ORDER BY deleted_at DESC")
             .fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn list_organizations_paged(&self, limit: i64, offset: i64) -> Result<Vec<Organization>> {
+        sqlx::query_as("SELECT organization_id, organization_alias, budget_id, metadata, models, spend, model_spend, object_permission_id, created_at, created_by, updated_at, updated_by FROM organizations ORDER BY organization_alias LIMIT ? OFFSET ?")
+                    .bind(limit).bind(offset)
+            .fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn count_organizations(&self) -> Result<i64> {
+        sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM organizations")
+            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+    }
+
+    async fn list_deleted_organizations_paged(&self, limit: i64, offset: i64) -> Result<Vec<DeletedOrganization>> {
+        sqlx::query_as("SELECT id, organization_id, organization_alias, budget_id, metadata, models, spend, model_spend, object_permission_id, created_at, created_by, updated_at, updated_by, deleted_at FROM deleted_organizations ORDER BY deleted_at DESC LIMIT ? OFFSET ?")
+                    .bind(limit).bind(offset)
+            .fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn count_deleted_organizations(&self) -> Result<i64> {
+        sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM deleted_organizations")
+            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
     }
 
     async fn update_organization(&self, o: &Organization) -> Result<()> {
@@ -3456,6 +4034,28 @@ impl OrganizationStore for PgPool {
             .fetch_all(self).await.map_err(DbError::from)
     }
 
+    async fn list_organizations_paged(&self, limit: i64, offset: i64) -> Result<Vec<Organization>> {
+        sqlx::query_as("SELECT organization_id, organization_alias, budget_id, metadata, models, spend, model_spend, object_permission_id, created_at, created_by, updated_at, updated_by FROM organizations ORDER BY organization_alias LIMIT $1 OFFSET $2")
+                    .bind(limit).bind(offset)
+            .fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn count_organizations(&self) -> Result<i64> {
+        sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM organizations")
+            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+    }
+
+    async fn list_deleted_organizations_paged(&self, limit: i64, offset: i64) -> Result<Vec<DeletedOrganization>> {
+        sqlx::query_as("SELECT id, organization_id, organization_alias, budget_id, metadata, models, spend, model_spend, object_permission_id, created_at, created_by, updated_at, updated_by, deleted_at FROM deleted_organizations ORDER BY deleted_at DESC LIMIT $1 OFFSET $2")
+                    .bind(limit).bind(offset)
+            .fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn count_deleted_organizations(&self) -> Result<i64> {
+        sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM deleted_organizations")
+            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+    }
+
     async fn update_organization(&self, o: &Organization) -> Result<()> {
         sqlx::query("UPDATE organizations SET organization_alias = $1, budget_id = $2, metadata = $3, models = $4, spend = $5, model_spend = $6, object_permission_id = $7, updated_at = $8, updated_by = $9 WHERE organization_id = $10")
             .bind(&o.organization_alias).bind(&o.budget_id).bind(&o.metadata).bind(&o.models)
@@ -3491,7 +4091,11 @@ pub trait TeamStore {
     async fn insert_team(&self, t: &Team) -> Result<()>;
     async fn get_team_by_id(&self, team_id: &str) -> Result<Option<Team>>;
     async fn list_teams(&self, org_id: Option<&str>) -> Result<Vec<Team>>;
+    async fn list_teams_paged(&self, org_id: Option<&str>, limit: i64, offset: i64) -> Result<Vec<Team>>;
+    async fn count_teams_store(&self, org_id: Option<&str>) -> Result<i64>;
     async fn list_deleted_teams(&self) -> Result<Vec<DeletedTeam>>;
+    async fn list_deleted_teams_paged(&self, limit: i64, offset: i64) -> Result<Vec<DeletedTeam>>;
+    async fn count_deleted_teams(&self) -> Result<i64>;
     async fn update_team(&self, t: &Team) -> Result<()>;
     async fn delete_team(&self, team_id: &str) -> Result<()>;
 }
@@ -3566,6 +4170,35 @@ impl TeamStore for SqlitePool {
 
     async fn list_deleted_teams(&self) -> Result<Vec<DeletedTeam>> {
         sqlx::query_as(LIST_DELETED_TEAMS_SQLITE).fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn list_teams_paged(&self, org_id: Option<&str>, limit: i64, offset: i64) -> Result<Vec<Team>> {
+        match org_id {
+            Some(_) => sqlx::query_as("SELECT team_id, team_alias, organization_id, object_permission_id, admins, members, members_with_roles, metadata, max_budget, soft_budget, spend, models, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, blocked, created_at, updated_at, model_spend, model_max_budget, router_settings, team_member_permissions, access_group_ids, policies, default_team_member_models, budget_limits, model_id, allow_team_guardrail_config FROM teams WHERE organization_id = ? ORDER BY team_alias LIMIT ? OFFSET ?")
+                        .bind(limit).bind(offset)
+                .bind(org_id).bind(limit).bind(offset).fetch_all(self).await.map_err(DbError::from),
+            None => sqlx::query_as("SELECT team_id, team_alias, organization_id, object_permission_id, admins, members, members_with_roles, metadata, max_budget, soft_budget, spend, models, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, blocked, created_at, updated_at, model_spend, model_max_budget, router_settings, team_member_permissions, access_group_ids, policies, default_team_member_models, budget_limits, model_id, allow_team_guardrail_config FROM teams ORDER BY team_alias LIMIT ? OFFSET ?")
+                        .bind(limit).bind(offset)
+                .bind(limit).bind(offset).fetch_all(self).await.map_err(DbError::from),
+        }
+    }
+
+    async fn count_teams_store(&self, org_id: Option<&str>) -> Result<i64> {
+        match org_id {
+            Some(_) => sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM teams WHERE organization_id = ?").bind(org_id).fetch_one(self).await.map(|r| r.0).map_err(DbError::from),
+            None => sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM teams").fetch_one(self).await.map(|r| r.0).map_err(DbError::from),
+        }
+    }
+
+    async fn list_deleted_teams_paged(&self, limit: i64, offset: i64) -> Result<Vec<DeletedTeam>> {
+        sqlx::query_as("SELECT id, team_id, team_alias, organization_id, object_permission_id, admins, members, members_with_roles, metadata, max_budget, soft_budget, spend, models, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, blocked, created_at, updated_at, model_spend, model_max_budget, router_settings, team_member_permissions, access_group_ids, policies, default_team_member_models, budget_limits, model_id, allow_team_guardrail_config, deleted_at FROM deleted_teams ORDER BY deleted_at DESC LIMIT ? OFFSET ?")
+                    .bind(limit).bind(offset)
+            .bind(limit).bind(offset).fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn count_deleted_teams(&self) -> Result<i64> {
+        sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM deleted_teams")
+            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
     }
 
     async fn update_team(&self, t: &Team) -> Result<()> {
@@ -3651,6 +4284,35 @@ impl TeamStore for MySqlPool {
             .fetch_all(self).await.map_err(DbError::from)
     }
 
+    async fn list_teams_paged(&self, org_id: Option<&str>, limit: i64, offset: i64) -> Result<Vec<Team>> {
+        match org_id {
+            Some(_) => sqlx::query_as("SELECT team_id, team_alias, organization_id, object_permission_id, admins, members, members_with_roles, metadata, max_budget, soft_budget, spend, models, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, blocked, created_at, updated_at, model_spend, model_max_budget, router_settings, team_member_permissions, access_group_ids, policies, default_team_member_models, budget_limits, model_id, allow_team_guardrail_config FROM teams WHERE organization_id = ? ORDER BY team_alias LIMIT ? OFFSET ?")
+                        .bind(limit).bind(offset)
+                .bind(org_id).bind(limit).bind(offset).fetch_all(self).await.map_err(DbError::from),
+            None => sqlx::query_as("SELECT team_id, team_alias, organization_id, object_permission_id, admins, members, members_with_roles, metadata, max_budget, soft_budget, spend, models, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, blocked, created_at, updated_at, model_spend, model_max_budget, router_settings, team_member_permissions, access_group_ids, policies, default_team_member_models, budget_limits, model_id, allow_team_guardrail_config FROM teams ORDER BY team_alias LIMIT ? OFFSET ?")
+                        .bind(limit).bind(offset)
+                .bind(limit).bind(offset).fetch_all(self).await.map_err(DbError::from),
+        }
+    }
+
+    async fn count_teams_store(&self, org_id: Option<&str>) -> Result<i64> {
+        match org_id {
+            Some(_) => sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM teams WHERE organization_id = ?").bind(org_id).fetch_one(self).await.map(|r| r.0).map_err(DbError::from),
+            None => sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM teams").fetch_one(self).await.map(|r| r.0).map_err(DbError::from),
+        }
+    }
+
+    async fn list_deleted_teams_paged(&self, limit: i64, offset: i64) -> Result<Vec<DeletedTeam>> {
+        sqlx::query_as("SELECT id, team_id, team_alias, organization_id, object_permission_id, admins, members, members_with_roles, metadata, max_budget, soft_budget, spend, models, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, blocked, created_at, updated_at, model_spend, model_max_budget, router_settings, team_member_permissions, access_group_ids, policies, default_team_member_models, budget_limits, model_id, allow_team_guardrail_config, deleted_at FROM deleted_teams ORDER BY deleted_at DESC LIMIT ? OFFSET ?")
+                    .bind(limit).bind(offset)
+            .bind(limit).bind(offset).fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn count_deleted_teams(&self) -> Result<i64> {
+        sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM deleted_teams")
+            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+    }
+
     async fn update_team(&self, t: &Team) -> Result<()> {
         sqlx::query("UPDATE teams SET team_alias = ?, organization_id = ?, object_permission_id = ?, admins = ?, members = ?, members_with_roles = ?, metadata = ?, max_budget = ?, soft_budget = ?, spend = ?, models = ?, max_parallel_requests = ?, tpm_limit = ?, rpm_limit = ?, budget_duration = ?, budget_reset_at = ?, blocked = ?, updated_at = ?, model_spend = ?, model_max_budget = ?, router_settings = ?, team_member_permissions = ?, access_group_ids = ?, policies = ?, default_team_member_models = ?, budget_limits = ?, model_id = ?, allow_team_guardrail_config = ? WHERE team_id = ?")
             .bind(&t.team_alias).bind(&t.organization_id).bind(&t.object_permission_id)
@@ -3732,6 +4394,34 @@ impl TeamStore for PgPool {
     async fn list_deleted_teams(&self) -> Result<Vec<DeletedTeam>> {
         sqlx::query_as("SELECT id, team_id, team_alias, organization_id, object_permission_id, admins, members, members_with_roles, metadata, max_budget, soft_budget, spend, models, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, blocked, created_at, updated_at, model_spend, model_max_budget, router_settings, team_member_permissions, access_group_ids, policies, default_team_member_models, budget_limits, model_id, allow_team_guardrail_config, deleted_at FROM deleted_teams ORDER BY deleted_at DESC")
             .fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn list_teams_paged(&self, org_id: Option<&str>, limit: i64, offset: i64) -> Result<Vec<Team>> {
+        match org_id {
+            Some(_) => sqlx::query_as("SELECT team_id, team_alias, organization_id, object_permission_id, admins, members, members_with_roles, metadata, max_budget, soft_budget, spend, models, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, blocked, created_at, updated_at, model_spend, model_max_budget, router_settings, team_member_permissions, access_group_ids, policies, default_team_member_models, budget_limits, model_id, allow_team_guardrail_config FROM teams WHERE organization_id = $1 ORDER BY team_alias LIMIT $2 OFFSET $3")
+                .bind(org_id).bind(limit).bind(offset).fetch_all(self).await.map_err(DbError::from),
+            None => sqlx::query_as("SELECT team_id, team_alias, organization_id, object_permission_id, admins, members, members_with_roles, metadata, max_budget, soft_budget, spend, models, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, blocked, created_at, updated_at, model_spend, model_max_budget, router_settings, team_member_permissions, access_group_ids, policies, default_team_member_models, budget_limits, model_id, allow_team_guardrail_config FROM teams ORDER BY team_alias LIMIT $1 OFFSET $2")
+                        .bind(limit).bind(offset)
+                .bind(limit).bind(offset).fetch_all(self).await.map_err(DbError::from),
+        }
+    }
+
+    async fn count_teams_store(&self, org_id: Option<&str>) -> Result<i64> {
+        match org_id {
+            Some(_) => sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM teams WHERE organization_id = $1").bind(org_id).fetch_one(self).await.map(|r| r.0).map_err(DbError::from),
+            None => sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM teams").fetch_one(self).await.map(|r| r.0).map_err(DbError::from),
+        }
+    }
+
+    async fn list_deleted_teams_paged(&self, limit: i64, offset: i64) -> Result<Vec<DeletedTeam>> {
+        sqlx::query_as("SELECT id, team_id, team_alias, organization_id, object_permission_id, admins, members, members_with_roles, metadata, max_budget, soft_budget, spend, models, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, blocked, created_at, updated_at, model_spend, model_max_budget, router_settings, team_member_permissions, access_group_ids, policies, default_team_member_models, budget_limits, model_id, allow_team_guardrail_config, deleted_at FROM deleted_teams ORDER BY deleted_at DESC LIMIT $1 OFFSET $2")
+                    .bind(limit).bind(offset)
+            .bind(limit).bind(offset).fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn count_deleted_teams(&self) -> Result<i64> {
+        sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM deleted_teams")
+            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
     }
 
     async fn update_team(&self, t: &Team) -> Result<()> {
@@ -4112,11 +4802,43 @@ impl Database {
         }
     }
 
+    pub async fn list_organizations_paged(&self, limit: i64, offset: i64) -> Result<Vec<Organization>> {
+        match self {
+            Database::Sqlite(pool) => pool.list_organizations_paged(limit, offset).await,
+            Database::Mysql(pool) => pool.list_organizations_paged(limit, offset).await,
+            Database::Postgres(pool) => pool.list_organizations_paged(limit, offset).await,
+        }
+    }
+
+    pub async fn count_organizations_store(&self) -> Result<i64> {
+        match self {
+            Database::Sqlite(pool) => pool.count_organizations().await,
+            Database::Mysql(pool) => pool.count_organizations().await,
+            Database::Postgres(pool) => pool.count_organizations().await,
+        }
+    }
+
     pub async fn list_deleted_organizations(&self) -> Result<Vec<DeletedOrganization>> {
         match self {
             Database::Sqlite(pool) => pool.list_deleted_organizations().await,
             Database::Mysql(pool) => pool.list_deleted_organizations().await,
             Database::Postgres(pool) => pool.list_deleted_organizations().await,
+        }
+    }
+
+    pub async fn list_deleted_organizations_paged(&self, limit: i64, offset: i64) -> Result<Vec<DeletedOrganization>> {
+        match self {
+            Database::Sqlite(pool) => pool.list_deleted_organizations_paged(limit, offset).await,
+            Database::Mysql(pool) => pool.list_deleted_organizations_paged(limit, offset).await,
+            Database::Postgres(pool) => pool.list_deleted_organizations_paged(limit, offset).await,
+        }
+    }
+
+    pub async fn count_deleted_organizations(&self) -> Result<i64> {
+        match self {
+            Database::Sqlite(pool) => pool.count_deleted_organizations().await,
+            Database::Mysql(pool) => pool.count_deleted_organizations().await,
+            Database::Postgres(pool) => pool.count_deleted_organizations().await,
         }
     }
 
@@ -4161,11 +4883,43 @@ impl Database {
         }
     }
 
+    pub async fn list_teams_paged(&self, org_id: Option<&str>, limit: i64, offset: i64) -> Result<Vec<Team>> {
+        match self {
+            Database::Sqlite(pool) => pool.list_teams_paged(org_id, limit, offset).await,
+            Database::Mysql(pool) => pool.list_teams_paged(org_id, limit, offset).await,
+            Database::Postgres(pool) => pool.list_teams_paged(org_id, limit, offset).await,
+        }
+    }
+
+    pub async fn count_teams_store(&self, org_id: Option<&str>) -> Result<i64> {
+        match self {
+            Database::Sqlite(pool) => pool.count_teams_store(org_id).await,
+            Database::Mysql(pool) => pool.count_teams_store(org_id).await,
+            Database::Postgres(pool) => pool.count_teams_store(org_id).await,
+        }
+    }
+
     pub async fn list_deleted_teams(&self) -> Result<Vec<DeletedTeam>> {
         match self {
             Database::Sqlite(pool) => pool.list_deleted_teams().await,
             Database::Mysql(pool) => pool.list_deleted_teams().await,
             Database::Postgres(pool) => pool.list_deleted_teams().await,
+        }
+    }
+
+    pub async fn list_deleted_teams_paged(&self, limit: i64, offset: i64) -> Result<Vec<DeletedTeam>> {
+        match self {
+            Database::Sqlite(pool) => pool.list_deleted_teams_paged(limit, offset).await,
+            Database::Mysql(pool) => pool.list_deleted_teams_paged(limit, offset).await,
+            Database::Postgres(pool) => pool.list_deleted_teams_paged(limit, offset).await,
+        }
+    }
+
+    pub async fn count_deleted_teams(&self) -> Result<i64> {
+        match self {
+            Database::Sqlite(pool) => pool.count_deleted_teams().await,
+            Database::Mysql(pool) => pool.count_deleted_teams().await,
+            Database::Postgres(pool) => pool.count_deleted_teams().await,
         }
     }
 

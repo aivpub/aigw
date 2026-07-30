@@ -9,7 +9,6 @@
 //! - GET    /team/deleted — List deleted teams
 
 use aigw_core::models::Team;
-use aigw_core::models::DeletedTeam;
 use axum::{extract::State, http::StatusCode, Json};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -30,6 +29,8 @@ pub struct TeamInfoQuery {
 #[derive(Debug, Deserialize)]
 pub struct TeamListQuery {
     pub organization_id: Option<String>,
+    pub page: Option<i32>,
+    pub page_size: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -130,15 +131,23 @@ pub async fn team_info(
     Ok(Json(serde_json::to_value(&team).unwrap_or(json!({}))))
 }
 
-/// GET /team/list?organization_id=...
+/// GET /team/list?organization_id=... (paginated)
 pub async fn team_list(
     State(state): State<SharedState>,
     SpendAuth(auth): SpendAuth,
     axum::extract::Query(query): axum::extract::Query<TeamListQuery>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&auth)?;
+    let page = query.page.unwrap_or(1).max(1);
+    let page_size = query.page_size.unwrap_or(30).max(1).min(100);
+    let offset = ((page - 1) * page_size) as i64;
+    let limit = page_size as i64;
 
-    let teams = state.db.list_teams(query.organization_id.as_deref()).await.map_err(|e| {
+    let (teams, total_count) = tokio::try_join!(
+        state.db.list_teams_paged(query.organization_id.as_deref(), limit, offset),
+        state.db.count_teams_store(query.organization_id.as_deref()),
+    )
+    .map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": {"message": format!("{}", e), "type": "internal"}})),
@@ -158,7 +167,19 @@ pub async fn team_list(
             v
         })
         .collect();
-    Ok(Json(json!({ "data": teams })))
+    let total_pages = if total_count > 0 {
+        ((total_count as f64) / (page_size as f64)).ceil() as i64
+    } else {
+        0
+    };
+    Ok(Json(json!({
+        "data": teams,
+        "count": teams.len(),
+        "total_count": total_count,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+    })))
 }
 
 /// PUT /team/update
@@ -252,17 +273,44 @@ pub async fn team_delete(
     Ok(Json(json!({"message": "Team deleted"})))
 }
 
-/// GET /team/deleted — list deleted teams (admin)
+/// GET /team/deleted — list deleted teams (admin, paginated)
 pub async fn team_deleted_list(
     State(state): State<SharedState>,
     SpendAuth(auth): SpendAuth,
-) -> Result<Json<Vec<DeletedTeam>>, (StatusCode, Json<Value>)> {
+    axum::extract::Query(query): axum::extract::Query<TeamListQuery>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&auth)?;
-    let deleted = state.db.list_deleted_teams().await.map_err(|e| {
+    let page = query.page.unwrap_or(1).max(1);
+    let page_size = query.page_size.unwrap_or(30).max(1).min(100);
+    let offset = ((page - 1) * page_size) as i64;
+    let limit = page_size as i64;
+
+    let (deleted, total_count) = tokio::try_join!(
+        state.db.list_deleted_teams_paged(limit, offset),
+        state.db.count_deleted_teams(),
+    )
+    .map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": {"message": format!("{}", e), "type": "internal"}})),
         )
     })?;
-    Ok(Json(deleted))
+
+    let data: Vec<Value> = deleted
+        .into_iter()
+        .map(|t| serde_json::to_value(t).unwrap_or(json!({})))
+        .collect();
+    let total_pages = if total_count > 0 {
+        ((total_count as f64) / (page_size as f64)).ceil() as i64
+    } else {
+        0
+    };
+    Ok(Json(json!({
+        "data": data,
+        "count": data.len(),
+        "total_count": total_count,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+    })))
 }
