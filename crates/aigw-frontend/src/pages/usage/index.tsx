@@ -43,6 +43,11 @@ interface ActivityMetadata {
   total_tokens: number;
   prompt_tokens: number;
   completion_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  regular_input_tokens: number;
+  cache_read_spend: number;
+  cache_create_spend: number;
 }
 
 interface DailyRow {
@@ -54,6 +59,11 @@ interface DailyRow {
   completion_tokens: number;
   successful_requests: number;
   failed_requests: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  regular_input_tokens: number;
+  cache_read_spend: number;
+  cache_create_spend: number;
 }
 
 interface ActivityResponse {
@@ -275,6 +285,11 @@ export function UsagePage() {
     completion_tokens: d.completion_tokens,
     successful_requests: d.successful_requests,
     failed_requests: d.failed_requests,
+    cache_read_tokens: d.cache_read_tokens,
+    cache_creation_tokens: d.cache_creation_tokens,
+    regular_input_tokens: d.regular_input_tokens,
+    cache_read_spend: d.cache_read_spend,
+    cache_create_spend: d.cache_create_spend,
   }));
 
   const isLoading = activityLoading || modelLoading || providerLoading || groupLoading;
@@ -346,6 +361,11 @@ export function UsagePage() {
             ) : (
               <div className="text-lg font-bold">{fmtSpend(metadata?.total_spend ?? 0)}</div>
             )}
+            {((metadata?.cache_read_spend ?? 0) + (metadata?.cache_create_spend ?? 0)) > 0 && (
+              <p className="text-[10px] text-amber-600 mt-0.5">
+                cache ${((metadata?.cache_read_spend ?? 0) + (metadata?.cache_create_spend ?? 0)).toFixed(4)}
+              </p>
+            )}
           </CardContent>
         </Card>
 
@@ -408,6 +428,8 @@ export function UsagePage() {
             )}
             <p className="text-[10px] text-muted-foreground mt-0.5">
               p {fmtTokens(metadata?.prompt_tokens ?? 0)} / c {fmtTokens(metadata?.completion_tokens ?? 0)}
+              {((metadata?.cache_read_tokens ?? 0) + (metadata?.cache_creation_tokens ?? 0)) > 0 &&
+                `  ·  cache ${fmtTokens(metadata!.cache_read_tokens)}R / ${fmtTokens(metadata!.cache_creation_tokens)}W`}
             </p>
           </CardContent>
         </Card>
@@ -495,14 +517,16 @@ export function UsagePage() {
                   )}
                   {globalChartMode === "tokens" && (
                     <>
-                      <Bar dataKey="prompt_tokens" name="Prompt" fill="#94a3b8" stackId="tokens" radius={[0, 0, 0, 0]} />
-                      <Bar dataKey="completion_tokens" name="Completion" fill="#3b82f6" stackId="tokens" radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="completion_tokens" name="Output" fill="#3b82f6" stackId="tokens" />
+                      <Bar dataKey="cache_creation_tokens" name="Cache Write" fill="#f59e0b" stackId="tokens" />
+                      <Bar dataKey="cache_read_tokens" name="Cache Read" fill="#22c55e" stackId="tokens" />
+                      <Bar dataKey="regular_input_tokens" name="Input" fill="#94a3b8" stackId="tokens" radius={[4, 4, 0, 0]} />
                     </>
                   )}
                   {globalChartMode === "requests" && (
                     <>
-                      <Bar dataKey="successful_requests" name="Success" fill="#22c55e" stackId="requests" radius={[0, 0, 0, 0]} />
-                      <Bar dataKey="failed_requests" name="Failed" fill="#ef4444" stackId="requests" radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="failed_requests" name="Failed" fill="#ef4444" stackId="requests" />
+                      <Bar dataKey="successful_requests" name="Success" fill="#22c55e" stackId="requests" radius={[4, 4, 0, 0]} />
                     </>
                   )}
                   <Legend />

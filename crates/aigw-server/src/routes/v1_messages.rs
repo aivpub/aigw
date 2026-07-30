@@ -1052,6 +1052,23 @@ pub async fn messages_handler(
         let spend_amount =
             super::chat::calc_spend(prompt_tokens, completion_tokens, input_cost, output_cost,
                 non_stream_cache_read, non_stream_cache_create, cache_read_cost, cache_create_cost);
+        // Build cache metadata JSON so cache tokens persist in spend_logs.metadata.
+        // Mirrors the streaming path (above) and chat.rs non-streaming path.
+        // Keys must match the Spend-Logs drawer extractCacheTokens + the activity SQL.
+        let non_stream_cache_metadata = if non_stream_cache_read > 0 || non_stream_cache_create > 0 {
+            let mut m = serde_json::Map::new();
+            m.insert("cache_read_tokens".to_string(), json!(non_stream_cache_read));
+            m.insert("cache_creation_tokens".to_string(), json!(non_stream_cache_create));
+            let cache_read_spend = non_stream_cache_read as f64 * cache_read_cost.unwrap_or(input_cost.unwrap_or(0.0));
+            let cache_create_spend = non_stream_cache_create as f64 * cache_create_cost.unwrap_or(input_cost.unwrap_or(0.0));
+            if cache_read_spend > 0.0 || cache_create_spend > 0.0 {
+                m.insert("cache_read_spend".to_string(), json!((cache_read_spend * 10000.0).round() / 10000.0));
+                m.insert("cache_create_spend".to_string(), json!((cache_create_spend * 10000.0).round() / 10000.0));
+            }
+            Some(serde_json::Value::Object(m))
+        } else {
+            None
+        };
         let spend_log = aigw_core::models::SpendLog {
             call_id: request_id.clone(),
             // v6.1 §4.3: non-streaming success — upstream id at INSERT from resp_body.
@@ -1075,7 +1092,7 @@ pub async fn messages_handler(
             custom_llm_provider: upstream_custom_llm_provider.clone(),
             api_base: Some(upstream_base_url),
             user: auth_user_id.clone(),
-            metadata: None,
+            metadata: non_stream_cache_metadata,
             cache_hit: None,
             cache_key: None,
             request_tags: None,
@@ -1147,8 +1164,8 @@ pub async fn messages_handler(
                 endpoint: "/v1/messages".to_string(),
                 prompt_tokens: spend_log.prompt_tokens as i64,
                 completion_tokens: spend_log.completion_tokens as i64,
-                cache_read_input_tokens: 0,
-                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: non_stream_cache_read as i64,
+                cache_creation_input_tokens: non_stream_cache_create as i64,
                 spend: spend_log.spend,
                 api_requests: 1,
                 successful_requests: if is_success { 1 } else { 0 },

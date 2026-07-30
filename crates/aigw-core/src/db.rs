@@ -2765,8 +2765,8 @@ impl Database {
                 COALESCE(SUM(CASE WHEN (custom_llm_provider = 'anthropic' OR (custom_llm_provider IS NULL AND api_base LIKE '%anthropic%'))
                                   THEN prompt_tokens
                                   ELSE MAX(0, prompt_tokens - COALESCE(json_extract(metadata, '$.cache_read_tokens'), 0) - COALESCE(json_extract(metadata, '$.cache_creation_tokens'), 0)) END), 0),
-                COALESCE(SUM(COALESCE(json_extract(metadata, '$.cache_read_spend'), 0)), 0),
-                COALESCE(SUM(COALESCE(json_extract(metadata, '$.cache_create_spend'), 0)), 0)
+                COALESCE(SUM(COALESCE(json_extract(metadata, '$.cache_read_spend'), 0.0)), 0),
+                COALESCE(SUM(COALESCE(json_extract(metadata, '$.cache_create_spend'), 0.0)), 0)
             FROM spend_logs
             WHERE date(start_time) >= date({p1}) AND date(start_time) <= date({p2}) {filter}"#;
         match self {
@@ -2794,8 +2794,8 @@ impl Database {
                     CAST(COALESCE(SUM(CASE WHEN (custom_llm_provider = 'anthropic' OR (custom_llm_provider IS NULL AND api_base LIKE '%anthropic%'))
                                           THEN prompt_tokens
                                           ELSE GREATEST(0, prompt_tokens - COALESCE(JSON_EXTRACT(metadata, '$.cache_read_tokens'), 0) - COALESCE(JSON_EXTRACT(metadata, '$.cache_creation_tokens'), 0)) END), 0) AS SIGNED),
-                    COALESCE(SUM(COALESCE(JSON_EXTRACT(metadata, '$.cache_read_spend'), 0)), 0),
-                    COALESCE(SUM(COALESCE(JSON_EXTRACT(metadata, '$.cache_create_spend'), 0)), 0)
+                    COALESCE(SUM(COALESCE(JSON_EXTRACT(metadata, '$.cache_read_spend'), 0.0)), 0),
+                    COALESCE(SUM(COALESCE(JSON_EXTRACT(metadata, '$.cache_create_spend'), 0.0)), 0)
                 FROM spend_logs
                 WHERE date(start_time) >= date(?) AND date(start_time) <= date(?) {filter}"#;
                 let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false, true);
@@ -2822,8 +2822,8 @@ impl Database {
                     COALESCE(SUM(CASE WHEN (custom_llm_provider = 'anthropic' OR (custom_llm_provider IS NULL AND api_base LIKE '%anthropic%'))
                                       THEN prompt_tokens
                                       ELSE GREATEST(0, prompt_tokens - COALESCE((metadata->'cache_read_tokens')::bigint, 0) - COALESCE((metadata->'cache_creation_tokens')::bigint, 0)) END), 0),
-                    COALESCE(SUM(COALESCE((metadata->'cache_read_spend')::double precision, 0)), 0),
-                    COALESCE(SUM(COALESCE((metadata->'cache_create_spend')::double precision, 0)), 0)
+                    COALESCE(SUM(COALESCE((metadata->'cache_read_spend')::double precision, 0.0)), 0),
+                    COALESCE(SUM(COALESCE((metadata->'cache_create_spend')::double precision, 0.0)), 0)
                 FROM spend_logs
                 WHERE date(start_time) >= date($1) AND date(start_time) <= date($2) {filter}"#;
                 let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 3, true, false);
@@ -2857,8 +2857,8 @@ impl Database {
                     COALESCE(SUM(CASE WHEN (custom_llm_provider = 'anthropic' OR (custom_llm_provider IS NULL AND api_base LIKE '%anthropic%')) \
                                       THEN prompt_tokens \
                                       ELSE MAX(0, prompt_tokens - COALESCE(json_extract(metadata, '$.cache_read_tokens'), 0) - COALESCE(json_extract(metadata, '$.cache_creation_tokens'), 0)) END), 0), \
-                    COALESCE(SUM(COALESCE(json_extract(metadata, '$.cache_read_spend'), 0)), 0), \
-                    COALESCE(SUM(COALESCE(json_extract(metadata, '$.cache_create_spend'), 0)), 0) \
+                    COALESCE(SUM(COALESCE(json_extract(metadata, '$.cache_read_spend'), 0.0)), 0), \
+                    COALESCE(SUM(COALESCE(json_extract(metadata, '$.cache_create_spend'), 0.0)), 0) \
                     FROM spend_logs WHERE date(start_time) >= date(?) AND date(start_time) <= date(?) {filter} \
                     GROUP BY 1 ORDER BY 1 ASC";
                 let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false, false);
@@ -2879,8 +2879,8 @@ impl Database {
                     CAST(COALESCE(SUM(CASE WHEN (custom_llm_provider = 'anthropic' OR (custom_llm_provider IS NULL AND api_base LIKE '%anthropic%')) \
                                           THEN prompt_tokens \
                                           ELSE GREATEST(0, prompt_tokens - COALESCE(JSON_EXTRACT(metadata, '$.cache_read_tokens'), 0) - COALESCE(JSON_EXTRACT(metadata, '$.cache_creation_tokens'), 0)) END), 0) AS SIGNED), \
-                    COALESCE(SUM(COALESCE(JSON_EXTRACT(metadata, '$.cache_read_spend'), 0)), 0), \
-                    COALESCE(SUM(COALESCE(JSON_EXTRACT(metadata, '$.cache_create_spend'), 0)), 0) \
+                    COALESCE(SUM(COALESCE(JSON_EXTRACT(metadata, '$.cache_read_spend'), 0.0)), 0), \
+                    COALESCE(SUM(COALESCE(JSON_EXTRACT(metadata, '$.cache_create_spend'), 0.0)), 0) \
                     FROM spend_logs WHERE date(start_time) >= date(?) AND date(start_time) <= date(?) {filter} \
                     GROUP BY 1 ORDER BY 1 ASC";
                 let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false, true);
@@ -2901,8 +2901,8 @@ impl Database {
                     COALESCE(SUM(CASE WHEN (custom_llm_provider = 'anthropic' OR (custom_llm_provider IS NULL AND api_base LIKE '%anthropic%')) \
                                       THEN prompt_tokens \
                                       ELSE GREATEST(0, prompt_tokens - COALESCE((metadata->'cache_read_tokens')::bigint, 0) - COALESCE((metadata->'cache_creation_tokens')::bigint, 0)) END), 0), \
-                    COALESCE(SUM(COALESCE((metadata->'cache_read_spend')::double precision, 0)), 0), \
-                    COALESCE(SUM(COALESCE((metadata->'cache_create_spend')::double precision, 0)), 0) \
+                    COALESCE(SUM(COALESCE((metadata->'cache_read_spend')::double precision, 0.0)), 0), \
+                    COALESCE(SUM(COALESCE((metadata->'cache_create_spend')::double precision, 0.0)), 0) \
                     FROM spend_logs WHERE date(start_time) >= date($1) AND date(start_time) <= date($2) {filter} \
                     GROUP BY 1 ORDER BY 1 ASC";
                 let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 3, true, false);
@@ -2939,8 +2939,8 @@ impl Database {
                     COALESCE(SUM(CASE WHEN (custom_llm_provider = 'anthropic' OR (custom_llm_provider IS NULL AND api_base LIKE '%anthropic%')) \
                                       THEN prompt_tokens \
                                       ELSE MAX(0, prompt_tokens - COALESCE(json_extract(metadata, '$.cache_read_tokens'), 0) - COALESCE(json_extract(metadata, '$.cache_creation_tokens'), 0)) END), 0), \
-                    COALESCE(SUM(COALESCE(json_extract(metadata, '$.cache_read_spend'), 0)), 0), \
-                    COALESCE(SUM(COALESCE(json_extract(metadata, '$.cache_create_spend'), 0)), 0) \
+                    COALESCE(SUM(COALESCE(json_extract(metadata, '$.cache_read_spend'), 0.0)), 0), \
+                    COALESCE(SUM(COALESCE(json_extract(metadata, '$.cache_create_spend'), 0.0)), 0) \
                     FROM spend_logs WHERE start_time >= ? AND start_time <= ? {filter} \
                     GROUP BY 1 ORDER BY 1 ASC";
                 let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false, false);
@@ -2960,8 +2960,8 @@ impl Database {
                     CAST(COALESCE(SUM(CASE WHEN (custom_llm_provider = 'anthropic' OR (custom_llm_provider IS NULL AND api_base LIKE '%anthropic%')) \
                                           THEN prompt_tokens \
                                           ELSE GREATEST(0, prompt_tokens - COALESCE(JSON_EXTRACT(metadata, '$.cache_read_tokens'), 0) - COALESCE(JSON_EXTRACT(metadata, '$.cache_creation_tokens'), 0)) END), 0) AS SIGNED), \
-                    COALESCE(SUM(COALESCE(JSON_EXTRACT(metadata, '$.cache_read_spend'), 0)), 0), \
-                    COALESCE(SUM(COALESCE(JSON_EXTRACT(metadata, '$.cache_create_spend'), 0)), 0) \
+                    COALESCE(SUM(COALESCE(JSON_EXTRACT(metadata, '$.cache_read_spend'), 0.0)), 0), \
+                    COALESCE(SUM(COALESCE(JSON_EXTRACT(metadata, '$.cache_create_spend'), 0.0)), 0) \
                     FROM spend_logs WHERE start_time >= ? AND start_time <= ? {filter} \
                     GROUP BY 1 ORDER BY 1 ASC";
                 let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false, true);
@@ -2981,8 +2981,8 @@ impl Database {
                     COALESCE(SUM(CASE WHEN (custom_llm_provider = 'anthropic' OR (custom_llm_provider IS NULL AND api_base LIKE '%anthropic%')) \
                                       THEN prompt_tokens \
                                       ELSE GREATEST(0, prompt_tokens - COALESCE((metadata->'cache_read_tokens')::bigint, 0) - COALESCE((metadata->'cache_creation_tokens')::bigint, 0)) END), 0), \
-                    COALESCE(SUM(COALESCE((metadata->'cache_read_spend')::double precision, 0)), 0), \
-                    COALESCE(SUM(COALESCE((metadata->'cache_create_spend')::double precision, 0)), 0) \
+                    COALESCE(SUM(COALESCE((metadata->'cache_read_spend')::double precision, 0.0)), 0), \
+                    COALESCE(SUM(COALESCE((metadata->'cache_create_spend')::double precision, 0.0)), 0) \
                     FROM spend_logs WHERE start_time >= $1::TIMESTAMPTZ AND start_time <= $2::TIMESTAMPTZ {filter} \
                     GROUP BY 1 ORDER BY 1 ASC";
                 let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 3, true, false);
@@ -5822,6 +5822,71 @@ mod tests {
             request_id: None,
         }
     }
+    /// Helper: create a SpendLog with cache tokens in metadata.
+    /// Sets custom_llm_provider and api to drive provider-aware aggregation.
+    fn make_test_spend_log_with_cache(
+        api_key: &str,
+        user: &str,
+        prompt_tokens: i32,
+        completion_tokens: i32,
+        cache_read_tokens: i32,
+        cache_creation_tokens: i32,
+        custom_llm_provider: Option<&str>,
+        api_base: Option<&str>,
+        spend: f64,
+    ) -> SpendLog {
+        let now = Utc::now();
+        let metadata = if cache_read_tokens > 0 || cache_creation_tokens > 0 {
+            let mut m = serde_json::Map::new();
+            m.insert("cache_read_tokens".to_string(), json!(cache_read_tokens));
+            m.insert("cache_creation_tokens".to_string(), json!(cache_creation_tokens));
+            let cache_read_spend: f64 = 0.0001;
+            let cache_create_spend: f64 = 0.0002;
+            m.insert("cache_read_spend".to_string(), json!(cache_read_spend));
+            m.insert("cache_create_spend".to_string(), json!(cache_create_spend));
+            Some(serde_json::Value::Object(m))
+        } else {
+            None
+        };
+        let total = prompt_tokens + completion_tokens + cache_read_tokens + cache_creation_tokens;
+        SpendLog {
+            call_id: Uuid::new_v4().to_string(),
+            call_type: "completion".to_string(),
+            api_key: api_key.to_string(),
+            spend,
+            total_tokens: total,
+            prompt_tokens,
+            completion_tokens,
+            start_time: now,
+            end_time: now,
+            request_duration_ms: Some(500),
+            completion_start_time: None,
+            model: "gpt-4".to_string(),
+            model_id: None,
+            model_group: None,
+            custom_llm_provider: custom_llm_provider.map(|s| s.to_string()),
+            api_base: api_base.map(|s| s.to_string()),
+            user: Some(user.to_string()),
+            metadata,
+            cache_hit: None,
+            cache_key: None,
+            request_tags: None,
+            team_id: None,
+            organization_id: None,
+            end_user: None,
+            requester_ip_address: None,
+            messages: None,
+            response: None,
+            session_id: None,
+            status: Some("success".to_string()),
+            mcp_namespaced_tool_name: None,
+            agent_id: None,
+            proxy_server_request: None,
+            body_archived: false,
+            parquet_path: None,
+            request_id: None,
+        }
+    }
 
     #[tokio::test]
     async fn test_insert_and_query_spend_log() {
@@ -6284,6 +6349,121 @@ mod tests {
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // --------------------------------------------------
+    // Cache aggregation tests (provider-aware, from spend_logs.metadata JSON)
+    // --------------------------------------------------
+
+    #[tokio::test]
+    async fn test_activity_aggregates_cache_tokens_openai() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let key_hash = hash_token("sk-cache-openai");
+
+        // OpenAI-style: prompt_tokens=100 INCLUDES cached tokens.
+        // Cache read=20, create=10 => regular_input = 100-20-10 = 70.
+        let log = make_test_spend_log_with_cache(
+            &key_hash, "user-1", 100, 50,
+            20, 10,
+            Some("openai"), None,
+            0.5,
+        );
+        db.insert_spend_log(&log).await.expect("insert");
+
+        let rows = db.query_activity_daily("2020-01-01", "2030-12-31", None, None, None)
+            .await.expect("query activity daily");
+        assert!(!rows.is_empty());
+
+        let (_date, _spend, _tokens, _requests, _prompt, _completion, _ok, _fail,
+            cache_read, cache_creation, regular_input, cache_read_spend, cache_create_spend) = &rows[0];
+
+        assert_eq!(*cache_read, 20);
+        assert_eq!(*cache_creation, 10);
+        assert_eq!(*regular_input, 70, "OpenAI: regular = prompt - cache_read - cache_creation");
+        assert!(*cache_read_spend > 0.0);
+        assert!(*cache_create_spend > 0.0);
+    }
+
+    #[tokio::test]
+    async fn test_activity_aggregates_cache_tokens_anthropic() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let key_hash = hash_token("sk-cache-anthropic");
+
+        // Anthropic: prompt_tokens=50 does NOT include cache tokens.
+        // Cache read=20, create=10 => regular_input = 50 (unchanged).
+        let log = make_test_spend_log_with_cache(
+            &key_hash, "user-1", 50, 30,
+            20, 10,
+            Some("anthropic"), None,
+            0.5,
+        );
+        db.insert_spend_log(&log).await.expect("insert");
+
+        let rows = db.query_activity_daily("2020-01-01", "2030-12-31", None, None, None)
+            .await.expect("query activity daily");
+        assert!(!rows.is_empty());
+
+        let (_date, _spend, _tokens, _requests, _prompt, _completion, _ok, _fail,
+            cache_read, cache_creation, regular_input, _cr_spend, _cc_spend) = &rows[0];
+
+        assert_eq!(*cache_read, 20);
+        assert_eq!(*cache_creation, 10);
+        assert_eq!(*regular_input, 50, "Anthropic: regular = prompt (unchanged)");
+    }
+
+    #[tokio::test]
+    async fn test_activity_no_cache_metadata() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let key_hash = hash_token("sk-no-cache");
+
+        // Row with no cache metadata at all (metadata: None).
+        let log = make_test_spend_log_with_cache(
+            &key_hash, "user-1", 100, 50,
+            0, 0,
+            Some("openai"), None,
+            0.5,
+        );
+        db.insert_spend_log(&log).await.expect("insert");
+
+        let rows = db.query_activity_daily("2020-01-01", "2030-12-31", None, None, None)
+            .await.expect("query activity daily");
+        assert!(!rows.is_empty());
+
+        let (_date, _spend, _tokens, _requests, _prompt, _completion, _ok, _fail,
+            cache_read, cache_creation, regular_input, cache_read_spend, cache_create_spend) = &rows[0];
+
+        assert_eq!(*cache_read, 0);
+        assert_eq!(*cache_creation, 0);
+        assert_eq!(*regular_input, 100);
+        assert_eq!(*cache_read_spend, 0.0);
+        assert_eq!(*cache_create_spend, 0.0);
+    }
+
+    #[tokio::test]
+    async fn test_activity_cache_clamp_negative() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let key_hash = hash_token("sk-cache-clamp");
+
+        // OpenAI: cache_read + cache_creation greater than prompt_tokens (edge case).
+        // MAX(0, ...) must clamp regular_input to 0.
+        let log = make_test_spend_log_with_cache(
+            &key_hash, "user-1", 10, 50,
+            30, 20,
+            Some("openai"), None,
+            0.5,
+        );
+        assert!(log.metadata.is_some());
+        db.insert_spend_log(&log).await.expect("insert");
+
+        let rows = db.query_activity_daily("2020-01-01", "2030-12-31", None, None, None)
+            .await.expect("query activity daily");
+        assert!(!rows.is_empty());
+
+        let (_date, _spend, _tokens, _requests, _prompt, _completion, _ok, _fail,
+            _cache_read, _cache_creation, regular_input, _cr_spend, _cc_spend) = &rows[0];
+
+        assert_eq!(*regular_input, 0, "regular_input must be clamped to 0");
+    }
+
+
     // Stage 69: Daily trend 8-tuple decomposition
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -6308,7 +6488,8 @@ mod tests {
             .await.expect("query activity daily");
 
         assert!(!rows.is_empty(), "should have at least one row");
-        let (date, spend, _tokens, requests, prompt_tokens, completion_tokens, successful_requests, failed_requests) = &rows[0];
+        let (date, spend, _tokens, requests, prompt_tokens, completion_tokens, successful_requests, failed_requests,
+            _cache_read, _cache_creation, _regular_input, _cache_read_spend, _cache_create_spend) = &rows[0];
         assert!(!date.is_empty());
         assert!(*spend > 0.0 || true, "spend present");
         assert_eq!(*requests, 2, "should count both success and failure as requests");
@@ -6338,7 +6519,8 @@ mod tests {
             .await.expect("query activity hourly");
 
         assert!(!rows.is_empty(), "should have at least one row");
-        let (date, _spend, _tokens, requests, prompt_tokens, completion_tokens, successful_requests, failed_requests) = &rows[0];
+        let (date, _spend, _tokens, requests, prompt_tokens, completion_tokens, successful_requests, failed_requests,
+            _cache_read, _cache_creation, _regular_input, _cache_read_spend, _cache_create_spend) = &rows[0];
         // Hourly format: "YYYY-MM-DDTHH:00:00"
         assert!(date.contains('T'), "hourly date should contain T separator, got {}", date);
         assert!(date.ends_with(":00:00"), "hourly date should end with :00:00, got {}", date);

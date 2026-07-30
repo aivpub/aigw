@@ -1045,6 +1045,15 @@ struct ActivityMetadata {
     total_tokens: i64,
     prompt_tokens: i64,
     completion_tokens: i64,
+    // Cache breakdown (extracted from spend_logs.metadata JSON).
+    // regular_input is provider-aware: OpenAI-style prompt_tokens already
+    // includes cached tokens (so regular = prompt - cache_read - cache_create),
+    // Anthropic-style does not (so regular = prompt). See query_activity_* SQL.
+    cache_read_tokens: i64,
+    cache_creation_tokens: i64,
+    regular_input_tokens: i64,
+    cache_read_spend: f64,
+    cache_create_spend: f64,
 }
 
 #[derive(Debug, Serialize)]
@@ -1057,6 +1066,11 @@ struct DailyRow {
     completion_tokens: i64,
     successful_requests: i64,
     failed_requests: i64,
+    cache_read_tokens: i64,
+    cache_creation_tokens: i64,
+    regular_input_tokens: i64,
+    cache_read_spend: f64,
+    cache_create_spend: f64,
 }
 
 #[derive(Debug, Serialize)]
@@ -1088,7 +1102,10 @@ async fn query_activity(
 ) -> Result<Value, DbError> {
     let use_hourly = is_hourly_range(&query.start_date, &query.end_date);
 
-    let (metadata, rows): ((f64, i64, i64, i64, i64, i64, i64), Vec<(String, f64, i64, i64, i64, i64, i64, i64)>) = if use_hourly {
+    let (metadata, rows): (
+        (f64, i64, i64, i64, i64, i64, i64, i64, i64, i64, f64, f64),
+        Vec<(String, f64, i64, i64, i64, i64, i64, i64, i64, i64, i64, f64, f64)>,
+    ) = if use_hourly {
         tokio::try_join!(
             db.query_activity_metadata(
                 &query.start_date,
@@ -1126,7 +1143,9 @@ async fn query_activity(
 
     // SQL column order (see query_activity_metadata / sql_base):
     //   spend, total_tokens, requests, successful_requests, failed_requests,
-    //   prompt_tokens, completion_tokens
+    //   prompt_tokens, completion_tokens,
+    //   cache_read_tokens, cache_creation_tokens, regular_input_tokens,
+    //   cache_read_spend, cache_create_spend
     let metadata_val = ActivityMetadata {
         total_spend: metadata.0,
         total_tokens: metadata.1,
@@ -1135,11 +1154,16 @@ async fn query_activity(
         failed_requests: metadata.4,
         prompt_tokens: metadata.5,
         completion_tokens: metadata.6,
+        cache_read_tokens: metadata.7,
+        cache_creation_tokens: metadata.8,
+        regular_input_tokens: metadata.9,
+        cache_read_spend: metadata.10,
+        cache_create_spend: metadata.11,
     };
 
     let daily_vals: Vec<DailyRow> = rows
         .iter()
-        .map(|(date, spend, tokens, requests, prompt_tokens, completion_tokens, successful_requests, failed_requests)| DailyRow {
+        .map(|(date, spend, tokens, requests, prompt_tokens, completion_tokens, successful_requests, failed_requests, cache_read, cache_creation, regular_input, cache_read_spend, cache_create_spend)| DailyRow {
             date: date.clone(),
             spend: *spend,
             tokens: *tokens,
@@ -1148,6 +1172,11 @@ async fn query_activity(
             completion_tokens: *completion_tokens,
             successful_requests: *successful_requests,
             failed_requests: *failed_requests,
+            cache_read_tokens: *cache_read,
+            cache_creation_tokens: *cache_creation,
+            regular_input_tokens: *regular_input,
+            cache_read_spend: *cache_read_spend,
+            cache_create_spend: *cache_create_spend,
         })
         .collect();
 
