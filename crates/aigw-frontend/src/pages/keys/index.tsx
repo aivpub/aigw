@@ -27,6 +27,7 @@ import {
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { MultiModelSelect } from "@/components/ui/multi-model-select";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "sonner";
 import {
   Plus,
@@ -44,6 +45,8 @@ interface KeyItem {
   key_name: string | null;
   key_alias: string | null;
   user_id: string | null;
+  user_email: string | null;
+  user_alias: string | null;
   team_id: string | null;
   spend: number;
   max_budget: number | null;
@@ -143,7 +146,9 @@ export function KeysPage() {
       (k) =>
         (k.key_alias ?? "").toLowerCase().includes(q) ||
         (k.key_name ?? "").toLowerCase().includes(q) ||
-        (k.user_id ?? "").toLowerCase().includes(q),
+        (k.user_id ?? "").toLowerCase().includes(q) ||
+        (k.user_email ?? "").toLowerCase().includes(q) ||
+        (k.user_alias ?? "").toLowerCase().includes(q),
     );
   }, [keys, search]);
 
@@ -238,7 +243,11 @@ export function KeysPage() {
   function openEdit(key: KeyItem) {
     setSelectedKey(key);
     setFormAlias(key.key_alias ?? "");
-    setSelectedModels(Array.isArray(key.models) ? key.models : []);
+    if (Array.isArray(key.models) && key.models.length > 0) {
+      setSelectedModels(key.models);
+    } else {
+      setSelectedModels(["*"]);
+    }
     setFormBudget(key.max_budget?.toString() ?? "");
     setFormTPM(key.tpm_limit?.toString() ?? "");
     setFormRPM(key.rpm_limit?.toString() ?? "");
@@ -258,7 +267,9 @@ export function KeysPage() {
   function buildCreateBody(): Record<string, unknown> {
     const body: Record<string, unknown> = {};
     if (formAlias.trim()) body.key_alias = formAlias.trim();
-    if (selectedModels.length > 0) {
+    if (selectedModels.includes("*")) {
+      body.models = [];
+    } else if (selectedModels.length > 0) {
       body.models = selectedModels;
     }
     if (formBudget.trim()) body.max_budget = parseFloat(formBudget);
@@ -277,9 +288,9 @@ export function KeysPage() {
     editMutation.mutate({
       key: selectedKey.token,
       ...(formAlias.trim() && { key_alias: formAlias.trim() }),
-      ...(selectedModels.length > 0 && {
-        models: selectedModels,
-      }),
+      ...(selectedModels.includes("*")
+        ? { models: [] }
+        : selectedModels.length > 0 && { models: selectedModels }),
       ...(formBudget.trim() && { max_budget: parseFloat(formBudget) }),
       ...(formTPM.trim() && { tpm_limit: parseInt(formTPM) }),
       ...(formRPM.trim() && { rpm_limit: parseInt(formRPM) }),
@@ -309,7 +320,7 @@ export function KeysPage() {
           <div className="relative flex-1 max-w-sm">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
-              placeholder="Search by alias, name, or user..."
+              placeholder="Search by alias, name, user, or email..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="pl-9"
@@ -499,13 +510,71 @@ export function KeysPage() {
                               </span>
                             </TableCell>
                             <TableCell className="text-sm">
-                              {key.user_id ?? "—"}
+                              {key.user_id ? (
+                                <TooltipProvider>
+                                  <Tooltip delayDuration={300}>
+                                    <TooltipTrigger asChild>
+                                      <span className="cursor-default underline decoration-dotted underline-offset-2">
+                                        {key.user_email ?? key.user_alias ?? key.user_id}
+                                      </span>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="bottom" className="max-w-xs space-y-1.5 p-2.5 text-xs">
+                                      <div className="flex items-center justify-between gap-3">
+                                        <span className="text-muted-foreground whitespace-nowrap">User ID:</span>
+                                        <span className="flex items-center gap-1.5">
+                                          <code className="text-[11px]">{key.user_id}</code>
+                                          <button
+                                            type="button"
+                                            onClick={(e) => { e.stopPropagation(); copyToClipboard(key.user_id!); }}
+                                            className="text-muted-foreground hover:text-foreground"
+                                          >
+                                            <Copy className="h-3 w-3" />
+                                          </button>
+                                        </span>
+                                      </div>
+                                      {key.user_alias && (
+                                        <div className="flex items-center justify-between gap-3">
+                                          <span className="text-muted-foreground whitespace-nowrap">Alias:</span>
+                                          <span className="flex items-center gap-1.5">
+                                            <code className="text-[11px]">{key.user_alias}</code>
+                                            <button
+                                              type="button"
+                                              onClick={(e) => { e.stopPropagation(); copyToClipboard(key.user_alias!); }}
+                                              className="text-muted-foreground hover:text-foreground"
+                                            >
+                                              <Copy className="h-3 w-3" />
+                                            </button>
+                                          </span>
+                                        </div>
+                                      )}
+                                      {key.user_email && key.user_alias && (
+                                        <div className="flex items-center justify-between gap-3">
+                                          <span className="text-muted-foreground whitespace-nowrap">Email:</span>
+                                          <span className="flex items-center gap-1.5">
+                                            <code className="text-[11px]">{key.user_email}</code>
+                                            <button
+                                              type="button"
+                                              onClick={(e) => { e.stopPropagation(); copyToClipboard(key.user_email!); }}
+                                              className="text-muted-foreground hover:text-foreground"
+                                            >
+                                              <Copy className="h-3 w-3" />
+                                            </button>
+                                          </span>
+                                        </div>
+                                      )}
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              ) : (
+                                "—"
+                              )}
                             </TableCell>
                             <TableCell className="text-sm">
-                              {Array.isArray(key.models) && key.models.length > 0
-                                ? key.models.slice(0, 3).join(", ") +
-                                  (key.models.length > 3 ? " ..." : "")
-                                : "—"}
+                              {!Array.isArray(key.models) || key.models.length === 0
+                                ? "All Models"
+                                : key.models.length > 3
+                                  ? key.models.slice(0, 3).join(", ") + " ..."
+                                  : key.models.join(", ")}
                             </TableCell>
                             <TableCell className="text-right text-sm">
                               ${key.spend.toFixed(4)}
@@ -628,7 +697,7 @@ export function KeysPage() {
                             </button>
                           </div>
                           <div className="flex items-center justify-between text-xs text-muted-foreground">
-                            <span>{key.user_id ?? "—"}</span>
+                            <span>{key.user_email ?? key.user_alias ?? key.user_id ?? "—"}</span>
                             <span>
                               Spent ${key.spend.toFixed(4)}
                               {" / "}

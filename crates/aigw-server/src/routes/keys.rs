@@ -252,6 +252,8 @@ fn build_virtual_key(hash: &str, req: &GenerateKeyRequest) -> VirtualKey {
         last_rotation_at: None,
         key_rotation_at: None,
         budget_limits: None,
+        user_email: None,
+        user_alias: None,
     }
 }
 
@@ -399,6 +401,8 @@ pub async fn key_list(
                 "key_name": k.key_name,
                 "key_alias": k.key_alias,
                 "user_id": k.user_id,
+                "user_email": k.user_email,
+                "user_alias": k.user_alias,
                 "team_id": k.team_id,
                 "spend": k.spend,
                 "max_budget": k.max_budget_f64(),
@@ -575,6 +579,8 @@ pub async fn key_update(
         last_rotation_at: None,
         key_rotation_at: None,
         budget_limits: body.get("budget_limits").cloned(),
+        user_email: None,
+        user_alias: None,
     };
 
     state.db.update_key(&hash, &updated).await.map_err(|e| {

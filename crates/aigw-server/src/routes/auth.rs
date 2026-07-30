@@ -205,6 +205,8 @@ use aigw_core::resolver::ModelResolver;
             last_rotation_at: None,
             key_rotation_at: None,
             budget_limits: None,
+            user_email: None,
+            user_alias: None,
         }
     }
 

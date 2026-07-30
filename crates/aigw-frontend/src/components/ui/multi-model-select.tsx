@@ -51,7 +51,7 @@ export function MultiModelSelect({
   }, [allModels, search]);
 
   const unselectedModels = useMemo(
-    () => filteredModels.filter((m) => !selected.includes(m.model_name)),
+    () => (selected.includes("*") ? [] : filteredModels.filter((m) => !selected.includes(m.model_name))),
     [filteredModels, selected],
   );
 
@@ -70,9 +70,20 @@ export function MultiModelSelect({
   }, [open]);
 
   function addModel(name: string) {
-    onChange([...selected, name]);
+    // If adding a specific model, remove the "all" sentinel first
+    if (selected.includes("*")) {
+      onChange([name]);
+    } else {
+      onChange([...selected, name]);
+    }
     setSearch("");
     inputRef.current?.focus();
+  }
+
+  function selectAll() {
+    onChange(["*"]);
+    setSearch("");
+    setOpen(false);
   }
 
   function removeModel(name: string) {
@@ -102,7 +113,23 @@ export function MultiModelSelect({
           inputRef.current?.focus();
         }}
       >
-        {selected.map((model) => (
+      {selected.includes("*") ? (
+          <Badge variant="default" className="gap-1 pr-1 cursor-default">
+            All Models
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onChange([]);
+              }}
+              className="ml-0.5 rounded-full p-0.5 hover:bg-primary-foreground/20 transition-colors"
+              aria-label="Remove All Models"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </Badge>
+        ) : (
+          selected.map((model) => (
           <Badge
             key={model}
             variant="secondary"
@@ -121,7 +148,8 @@ export function MultiModelSelect({
               <X className="h-3 w-3" />
             </button>
           </Badge>
-        ))}
+          ))
+        )}
         <input
           ref={inputRef}
           type="text"
@@ -134,6 +162,7 @@ export function MultiModelSelect({
           onKeyDown={handleKeyDown}
           placeholder={selected.length === 0 ? "Search models..." : ""}
           className="flex-1 min-w-[120px] bg-transparent border-0 outline-none text-sm placeholder:text-muted-foreground p-0"
+          tabIndex={selected.includes("*") ? -1 : undefined}
         />
         <ChevronsUpDown className="h-4 w-4 shrink-0 text-muted-foreground ml-auto" />
       </div>
@@ -142,23 +171,17 @@ export function MultiModelSelect({
       {open && (
         <div className="absolute z-50 mt-1 w-full rounded-md border bg-popover text-popover-foreground shadow-md">
           <div className="max-h-48 overflow-y-auto p-1">
-            {allModels.length > 0 && (
+            {!selected.includes("*") && (
               <button
                 type="button"
-                onClick={() => {
-                  const allModelNames = filteredModels.map((m) => m.model_name);
-                  const addSet = new Set([...selected, ...allModelNames]);
-                  onChange(Array.from(addSet));
-                  setSearch("");
-                  inputRef.current?.focus();
-                }}
+                onClick={selectAll}
                 className={cn(
-                  "flex w-full items-center rounded-sm px-2 py-1.5 text-xs font-medium outline-none",
-                  "hover:bg-accent hover:text-accent-foreground text-primary/80",
+                  "flex w-full items-center rounded-sm px-2 py-1.5 text-sm font-medium outline-none",
+                  "hover:bg-accent hover:text-accent-foreground text-primary",
                   "border-b border-border mb-1 pb-2",
                 )}
               >
-                <span className="flex-1 text-left">Select All</span>
+                <span className="flex-1 text-left">All Models</span>
               </button>
             )}
             {unselectedModels.length === 0 ? (

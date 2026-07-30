@@ -505,65 +505,77 @@ LIMIT ? OFFSET ?
 
 const LIST_KEYS_PAGED_SQLITE: &str = r#"
 SELECT
-    token, key_name, key_alias, soft_budget_cooldown, spend, expires,
-    models, aliases, config, router_settings,
-    user_id, team_id, agent_id, project_id, permissions, max_parallel_requests,
-    metadata, blocked, tpm_limit, rpm_limit, max_budget, budget_duration, budget_reset_at,
-    allowed_cache_controls, allowed_routes, policies, access_group_ids,
-    model_spend, model_max_budget, budget_id, organization_id, object_permission_id,
-    created_at, created_by, updated_at, updated_by,
-    last_active, rotation_count, auto_rotate, rotation_interval,
-    last_rotation_at, key_rotation_at, budget_limits
-FROM virtual_keys
-WHERE (team_id IS NULL OR team_id != 'litellm-dashboard')
+    k.token, k.key_name, k.key_alias, k.soft_budget_cooldown, k.spend, k.expires,
+    k.models, k.aliases, k.config, k.router_settings,
+    k.user_id, k.team_id, k.agent_id, k.project_id, k.permissions, k.max_parallel_requests,
+    k.metadata, k.blocked, k.tpm_limit, k.rpm_limit, k.max_budget, k.budget_duration, k.budget_reset_at,
+    k.allowed_cache_controls, k.allowed_routes, k.policies, k.access_group_ids,
+    k.model_spend, k.model_max_budget, k.budget_id, k.organization_id, k.object_permission_id,
+    k.created_at, k.created_by, k.updated_at, k.updated_by,
+    k.last_active, k.rotation_count, k.auto_rotate, k.rotation_interval,
+    k.last_rotation_at, k.key_rotation_at, k.budget_limits,
+    u.user_email, u.user_alias
+FROM virtual_keys k
+LEFT JOIN users u ON k.user_id = u.user_id
+WHERE (k.team_id IS NULL OR k.team_id != 'litellm-dashboard')
+ORDER BY k.created_at DESC
 LIMIT ? OFFSET ?
 "#;
 
 const LIST_KEYS_PAGED_TEAM_SQLITE: &str = r#"
 SELECT
-    token, key_name, key_alias, soft_budget_cooldown, spend, expires,
-    models, aliases, config, router_settings,
-    user_id, team_id, agent_id, project_id, permissions, max_parallel_requests,
-    metadata, blocked, tpm_limit, rpm_limit, max_budget, budget_duration, budget_reset_at,
-    allowed_cache_controls, allowed_routes, policies, access_group_ids,
-    model_spend, model_max_budget, budget_id, organization_id, object_permission_id,
-    created_at, created_by, updated_at, updated_by,
-    last_active, rotation_count, auto_rotate, rotation_interval,
-    last_rotation_at, key_rotation_at, budget_limits
-FROM virtual_keys
-WHERE team_id = ? AND team_id != 'litellm-dashboard'
+    k.token, k.key_name, k.key_alias, k.soft_budget_cooldown, k.spend, k.expires,
+    k.models, k.aliases, k.config, k.router_settings,
+    k.user_id, k.team_id, k.agent_id, k.project_id, k.permissions, k.max_parallel_requests,
+    k.metadata, k.blocked, k.tpm_limit, k.rpm_limit, k.max_budget, k.budget_duration, k.budget_reset_at,
+    k.allowed_cache_controls, k.allowed_routes, k.policies, k.access_group_ids,
+    k.model_spend, k.model_max_budget, k.budget_id, k.organization_id, k.object_permission_id,
+    k.created_at, k.created_by, k.updated_at, k.updated_by,
+    k.last_active, k.rotation_count, k.auto_rotate, k.rotation_interval,
+    k.last_rotation_at, k.key_rotation_at, k.budget_limits,
+    u.user_email, u.user_alias
+FROM virtual_keys k
+LEFT JOIN users u ON k.user_id = u.user_id
+WHERE k.team_id = ? AND k.team_id != 'litellm-dashboard'
+ORDER BY k.created_at DESC
 LIMIT ? OFFSET ?
 "#;
 
 const LIST_KEYS_PAGED_USER_SQLITE: &str = r#"
 SELECT
-    token, key_name, key_alias, soft_budget_cooldown, spend, expires,
-    models, aliases, config, router_settings,
-    user_id, team_id, agent_id, project_id, permissions, max_parallel_requests,
-    metadata, blocked, tpm_limit, rpm_limit, max_budget, budget_duration, budget_reset_at,
-    allowed_cache_controls, allowed_routes, policies, access_group_ids,
-    model_spend, model_max_budget, budget_id, organization_id, object_permission_id,
-    created_at, created_by, updated_at, updated_by,
-    last_active, rotation_count, auto_rotate, rotation_interval,
-    last_rotation_at, key_rotation_at, budget_limits
-FROM virtual_keys
-WHERE user_id = ? AND (team_id IS NULL OR team_id != 'litellm-dashboard')
+    k.token, k.key_name, k.key_alias, k.soft_budget_cooldown, k.spend, k.expires,
+    k.models, k.aliases, k.config, k.router_settings,
+    k.user_id, k.team_id, k.agent_id, k.project_id, k.permissions, k.max_parallel_requests,
+    k.metadata, k.blocked, k.tpm_limit, k.rpm_limit, k.max_budget, k.budget_duration, k.budget_reset_at,
+    k.allowed_cache_controls, k.allowed_routes, k.policies, k.access_group_ids,
+    k.model_spend, k.model_max_budget, k.budget_id, k.organization_id, k.object_permission_id,
+    k.created_at, k.created_by, k.updated_at, k.updated_by,
+    k.last_active, k.rotation_count, k.auto_rotate, k.rotation_interval,
+    k.last_rotation_at, k.key_rotation_at, k.budget_limits,
+    u.user_email, u.user_alias
+FROM virtual_keys k
+LEFT JOIN users u ON k.user_id = u.user_id
+WHERE k.user_id = ? AND (k.team_id IS NULL OR k.team_id != 'litellm-dashboard')
+ORDER BY k.created_at DESC
 LIMIT ? OFFSET ?
 "#;
 
 const LIST_KEYS_PAGED_TEAM_USER_SQLITE: &str = r#"
 SELECT
-    token, key_name, key_alias, soft_budget_cooldown, spend, expires,
-    models, aliases, config, router_settings,
-    user_id, team_id, agent_id, project_id, permissions, max_parallel_requests,
-    metadata, blocked, tpm_limit, rpm_limit, max_budget, budget_duration, budget_reset_at,
-    allowed_cache_controls, allowed_routes, policies, access_group_ids,
-    model_spend, model_max_budget, budget_id, organization_id, object_permission_id,
-    created_at, created_by, updated_at, updated_by,
-    last_active, rotation_count, auto_rotate, rotation_interval,
-    last_rotation_at, key_rotation_at, budget_limits
-FROM virtual_keys
-WHERE team_id = ? AND user_id = ?
+    k.token, k.key_name, k.key_alias, k.soft_budget_cooldown, k.spend, k.expires,
+    k.models, k.aliases, k.config, k.router_settings,
+    k.user_id, k.team_id, k.agent_id, k.project_id, k.permissions, k.max_parallel_requests,
+    k.metadata, k.blocked, k.tpm_limit, k.rpm_limit, k.max_budget, k.budget_duration, k.budget_reset_at,
+    k.allowed_cache_controls, k.allowed_routes, k.policies, k.access_group_ids,
+    k.model_spend, k.model_max_budget, k.budget_id, k.organization_id, k.object_permission_id,
+    k.created_at, k.created_by, k.updated_at, k.updated_by,
+    k.last_active, k.rotation_count, k.auto_rotate, k.rotation_interval,
+    k.last_rotation_at, k.key_rotation_at, k.budget_limits,
+    u.user_email, u.user_alias
+FROM virtual_keys k
+LEFT JOIN users u ON k.user_id = u.user_id
+WHERE k.team_id = ? AND k.user_id = ?
+ORDER BY k.created_at DESC
 LIMIT ? OFFSET ?
 "#;
 
@@ -1252,15 +1264,15 @@ impl KeyStore for PgPool {
     ) -> Result<Vec<VirtualKey>> {
         let keys = match (team_id, user_id) {
             (Some(tid), Some(uid)) => {
-                sqlx::query_as("SELECT token, key_name, key_alias, soft_budget_cooldown, spend, expires, models, aliases, config, router_settings, user_id, team_id, agent_id, project_id, permissions, max_parallel_requests, metadata, blocked, tpm_limit, rpm_limit, max_budget, budget_duration, budget_reset_at, allowed_cache_controls, allowed_routes, policies, access_group_ids, model_spend, model_max_budget, budget_id, organization_id, object_permission_id, created_at, created_by, updated_at, updated_by, last_active, rotation_count, auto_rotate, rotation_interval, last_rotation_at, key_rotation_at, budget_limits FROM virtual_keys WHERE team_id = $1 AND user_id = $2")
+                sqlx::query_as("SELECT k.token, k.key_name, k.key_alias, k.soft_budget_cooldown, k.spend, k.expires, k.models, k.aliases, k.config, k.router_settings, k.user_id, k.team_id, k.agent_id, k.project_id, k.permissions, k.max_parallel_requests, k.metadata, k.blocked, k.tpm_limit, k.rpm_limit, k.max_budget, k.budget_duration, k.budget_reset_at, k.allowed_cache_controls, k.allowed_routes, k.policies, k.access_group_ids, k.model_spend, k.model_max_budget, k.budget_id, k.organization_id, k.object_permission_id, k.created_at, k.created_by, k.updated_at, k.updated_by, k.last_active, k.rotation_count, k.auto_rotate, k.rotation_interval, k.last_rotation_at, k.key_rotation_at, k.budget_limits, u.user_email, u.user_alias FROM virtual_keys k LEFT JOIN users u ON k.user_id = u.user_id WHERE k.team_id = $1 AND k.user_id = $2")
                     .bind(tid).bind(uid).fetch_all(self).await?
             }
             (Some(tid), None) => {
-                sqlx::query_as("SELECT token, key_name, key_alias, soft_budget_cooldown, spend, expires, models, aliases, config, router_settings, user_id, team_id, agent_id, project_id, permissions, max_parallel_requests, metadata, blocked, tpm_limit, rpm_limit, max_budget, budget_duration, budget_reset_at, allowed_cache_controls, allowed_routes, policies, access_group_ids, model_spend, model_max_budget, budget_id, organization_id, object_permission_id, created_at, created_by, updated_at, updated_by, last_active, rotation_count, auto_rotate, rotation_interval, last_rotation_at, key_rotation_at, budget_limits FROM virtual_keys WHERE team_id = $1")
+                sqlx::query_as("SELECT k.token, k.key_name, k.key_alias, k.soft_budget_cooldown, k.spend, k.expires, k.models, k.aliases, k.config, k.router_settings, k.user_id, k.team_id, k.agent_id, k.project_id, k.permissions, k.max_parallel_requests, k.metadata, k.blocked, k.tpm_limit, k.rpm_limit, k.max_budget, k.budget_duration, k.budget_reset_at, k.allowed_cache_controls, k.allowed_routes, k.policies, k.access_group_ids, k.model_spend, k.model_max_budget, k.budget_id, k.organization_id, k.object_permission_id, k.created_at, k.created_by, k.updated_at, k.updated_by, k.last_active, k.rotation_count, k.auto_rotate, k.rotation_interval, k.last_rotation_at, k.key_rotation_at, k.budget_limits, u.user_email, u.user_alias FROM virtual_keys k LEFT JOIN users u ON k.user_id = u.user_id WHERE k.team_id = $1")
                     .bind(tid).fetch_all(self).await?
             }
             (None, Some(uid)) => {
-                sqlx::query_as("SELECT token, key_name, key_alias, soft_budget_cooldown, spend, expires, models, aliases, config, router_settings, user_id, team_id, agent_id, project_id, permissions, max_parallel_requests, metadata, blocked, tpm_limit, rpm_limit, max_budget, budget_duration, budget_reset_at, allowed_cache_controls, allowed_routes, policies, access_group_ids, model_spend, model_max_budget, budget_id, organization_id, object_permission_id, created_at, created_by, updated_at, updated_by, last_active, rotation_count, auto_rotate, rotation_interval, last_rotation_at, key_rotation_at, budget_limits FROM virtual_keys WHERE user_id = $1")
+                sqlx::query_as("SELECT k.token, k.key_name, k.key_alias, k.soft_budget_cooldown, k.spend, k.expires, k.models, k.aliases, k.config, k.router_settings, k.user_id, k.team_id, k.agent_id, k.project_id, k.permissions, k.max_parallel_requests, k.metadata, k.blocked, k.tpm_limit, k.rpm_limit, k.max_budget, k.budget_duration, k.budget_reset_at, k.allowed_cache_controls, k.allowed_routes, k.policies, k.access_group_ids, k.model_spend, k.model_max_budget, k.budget_id, k.organization_id, k.object_permission_id, k.created_at, k.created_by, k.updated_at, k.updated_by, k.last_active, k.rotation_count, k.auto_rotate, k.rotation_interval, k.last_rotation_at, k.key_rotation_at, k.budget_limits, u.user_email, u.user_alias FROM virtual_keys k LEFT JOIN users u ON k.user_id = u.user_id WHERE k.user_id = $1")
                     .bind(uid).fetch_all(self).await?
             }
             (None, None) => {
@@ -1295,16 +1307,16 @@ impl KeyStore for PgPool {
     ) -> Result<Vec<VirtualKey>> {
         let keys = match (team_id, user_id) {
             (Some(tid), Some(uid)) => sqlx::query_as(
-                "SELECT token, key_name, key_alias, soft_budget_cooldown, spend, expires, models, aliases, config, router_settings, user_id, team_id, agent_id, project_id, permissions, max_parallel_requests, metadata, blocked, tpm_limit, rpm_limit, max_budget, budget_duration, budget_reset_at, allowed_cache_controls, allowed_routes, policies, access_group_ids, model_spend, model_max_budget, budget_id, organization_id, object_permission_id, created_at, created_by, updated_at, updated_by, last_active, rotation_count, auto_rotate, rotation_interval, last_rotation_at, key_rotation_at, budget_limits FROM virtual_keys WHERE team_id = $1 AND user_id = $2 LIMIT $3 OFFSET $4")
+                "SELECT k.token, k.key_name, k.key_alias, k.soft_budget_cooldown, k.spend, k.expires, k.models, k.aliases, k.config, k.router_settings, k.user_id, k.team_id, k.agent_id, k.project_id, k.permissions, k.max_parallel_requests, k.metadata, k.blocked, k.tpm_limit, k.rpm_limit, k.max_budget, k.budget_duration, k.budget_reset_at, k.allowed_cache_controls, k.allowed_routes, k.policies, k.access_group_ids, k.model_spend, k.model_max_budget, k.budget_id, k.organization_id, k.object_permission_id, k.created_at, k.created_by, k.updated_at, k.updated_by, k.last_active, k.rotation_count, k.auto_rotate, k.rotation_interval, k.last_rotation_at, k.key_rotation_at, k.budget_limits, u.user_email, u.user_alias FROM virtual_keys k LEFT JOIN users u ON k.user_id = u.user_id WHERE k.team_id = $1 AND k.user_id = $2 ORDER BY k.created_at DESC LIMIT $3 OFFSET $4")
                 .bind(tid).bind(uid).bind(limit).bind(offset).fetch_all(self).await?,
             (Some(tid), None) => sqlx::query_as(
-                "SELECT token, key_name, key_alias, soft_budget_cooldown, spend, expires, models, aliases, config, router_settings, user_id, team_id, agent_id, project_id, permissions, max_parallel_requests, metadata, blocked, tpm_limit, rpm_limit, max_budget, budget_duration, budget_reset_at, allowed_cache_controls, allowed_routes, policies, access_group_ids, model_spend, model_max_budget, budget_id, organization_id, object_permission_id, created_at, created_by, updated_at, updated_by, last_active, rotation_count, auto_rotate, rotation_interval, last_rotation_at, key_rotation_at, budget_limits FROM virtual_keys WHERE team_id = $1 AND team_id <> 'litellm-dashboard' LIMIT $2 OFFSET $3")
+                "SELECT k.token, k.key_name, k.key_alias, k.soft_budget_cooldown, k.spend, k.expires, k.models, k.aliases, k.config, k.router_settings, k.user_id, k.team_id, k.agent_id, k.project_id, k.permissions, k.max_parallel_requests, k.metadata, k.blocked, k.tpm_limit, k.rpm_limit, k.max_budget, k.budget_duration, k.budget_reset_at, k.allowed_cache_controls, k.allowed_routes, k.policies, k.access_group_ids, k.model_spend, k.model_max_budget, k.budget_id, k.organization_id, k.object_permission_id, k.created_at, k.created_by, k.updated_at, k.updated_by, k.last_active, k.rotation_count, k.auto_rotate, k.rotation_interval, k.last_rotation_at, k.key_rotation_at, k.budget_limits, u.user_email, u.user_alias FROM virtual_keys k LEFT JOIN users u ON k.user_id = u.user_id WHERE k.team_id = $1 AND k.team_id <> 'litellm-dashboard' ORDER BY k.created_at DESC LIMIT $2 OFFSET $3")
                 .bind(tid).bind(limit).bind(offset).fetch_all(self).await?,
             (None, Some(uid)) => sqlx::query_as(
-                "SELECT token, key_name, key_alias, soft_budget_cooldown, spend, expires, models, aliases, config, router_settings, user_id, team_id, agent_id, project_id, permissions, max_parallel_requests, metadata, blocked, tpm_limit, rpm_limit, max_budget, budget_duration, budget_reset_at, allowed_cache_controls, allowed_routes, policies, access_group_ids, model_spend, model_max_budget, budget_id, organization_id, object_permission_id, created_at, created_by, updated_at, updated_by, last_active, rotation_count, auto_rotate, rotation_interval, last_rotation_at, key_rotation_at, budget_limits FROM virtual_keys WHERE user_id = $1 AND (team_id IS NULL OR team_id <> 'litellm-dashboard') LIMIT $2 OFFSET $3")
+                "SELECT k.token, k.key_name, k.key_alias, k.soft_budget_cooldown, k.spend, k.expires, k.models, k.aliases, k.config, k.router_settings, k.user_id, k.team_id, k.agent_id, k.project_id, k.permissions, k.max_parallel_requests, k.metadata, k.blocked, k.tpm_limit, k.rpm_limit, k.max_budget, k.budget_duration, k.budget_reset_at, k.allowed_cache_controls, k.allowed_routes, k.policies, k.access_group_ids, k.model_spend, k.model_max_budget, k.budget_id, k.organization_id, k.object_permission_id, k.created_at, k.created_by, k.updated_at, k.updated_by, k.last_active, k.rotation_count, k.auto_rotate, k.rotation_interval, k.last_rotation_at, k.key_rotation_at, k.budget_limits, u.user_email, u.user_alias FROM virtual_keys k LEFT JOIN users u ON k.user_id = u.user_id WHERE k.user_id = $1 AND (k.team_id IS NULL OR k.team_id <> 'litellm-dashboard') ORDER BY k.created_at DESC LIMIT $2 OFFSET $3")
                 .bind(uid).bind(limit).bind(offset).fetch_all(self).await?,
             (None, None) => sqlx::query_as(
-                "SELECT token, key_name, key_alias, soft_budget_cooldown, spend, expires, models, aliases, config, router_settings, user_id, team_id, agent_id, project_id, permissions, max_parallel_requests, metadata, blocked, tpm_limit, rpm_limit, max_budget, budget_duration, budget_reset_at, allowed_cache_controls, allowed_routes, policies, access_group_ids, model_spend, model_max_budget, budget_id, organization_id, object_permission_id, created_at, created_by, updated_at, updated_by, last_active, rotation_count, auto_rotate, rotation_interval, last_rotation_at, key_rotation_at, budget_limits FROM virtual_keys WHERE (team_id IS NULL OR team_id <> 'litellm-dashboard') LIMIT $1 OFFSET $2")
+                "SELECT k.token, k.key_name, k.key_alias, k.soft_budget_cooldown, k.spend, k.expires, k.models, k.aliases, k.config, k.router_settings, k.user_id, k.team_id, k.agent_id, k.project_id, k.permissions, k.max_parallel_requests, k.metadata, k.blocked, k.tpm_limit, k.rpm_limit, k.max_budget, k.budget_duration, k.budget_reset_at, k.allowed_cache_controls, k.allowed_routes, k.policies, k.access_group_ids, k.model_spend, k.model_max_budget, k.budget_id, k.organization_id, k.object_permission_id, k.created_at, k.created_by, k.updated_at, k.updated_by, k.last_active, k.rotation_count, k.auto_rotate, k.rotation_interval, k.last_rotation_at, k.key_rotation_at, k.budget_limits, u.user_email, u.user_alias FROM virtual_keys k LEFT JOIN users u ON k.user_id = u.user_id WHERE (k.team_id IS NULL OR k.team_id <> 'litellm-dashboard') ORDER BY k.created_at DESC LIMIT $1 OFFSET $2")
                 .bind(limit).bind(offset).fetch_all(self).await?,
         };
         Ok(keys)
@@ -5495,6 +5507,8 @@ mod tests {
             last_rotation_at: None,
             key_rotation_at: None,
             budget_limits: None,
+            user_email: None,
+            user_alias: None,
         }
     }
 

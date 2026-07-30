@@ -214,6 +214,8 @@ pub async fn login(
         last_rotation_at: None,
         key_rotation_at: None,
         budget_limits: None,
+        user_email: None,
+        user_alias: None,
     };
 
     state.db.insert_key(&session_key).await.map_err(|e| {

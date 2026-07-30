@@ -72,6 +72,14 @@ pub struct VirtualKey {
     pub last_rotation_at: Option<DateTime<Utc>>,
     pub key_rotation_at: Option<DateTime<Utc>>,
     pub budget_limits: Option<serde_json::Value>,
+    /// From LEFT JOIN with LiteLLM_UserTable — not stored on virtual_keys
+    #[sqlx(default)]
+    #[serde(default)]
+    pub user_email: Option<String>,
+    /// From LEFT JOIN with LiteLLM_UserTable — not stored on virtual_keys
+    #[sqlx(default)]
+    #[serde(default)]
+    pub user_alias: Option<String>,
 }
 
 impl VirtualKey {

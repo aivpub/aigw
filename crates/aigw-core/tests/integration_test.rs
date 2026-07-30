@@ -212,6 +212,8 @@ mod postgres_tests {
                 last_rotation_at: None,
                 key_rotation_at: None,
                 budget_limits: None,
+                user_email: None,
+                user_alias: None,
             };
             db.insert_key(&make_key(&key_a, "alias-a")).await.expect("insert key a");
             db.insert_key(&make_key(&key_b, "alias-b")).await.expect("insert key b");

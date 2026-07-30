@@ -2219,6 +2219,8 @@ mod tests {
             last_rotation_at: None,
             key_rotation_at: None,
             budget_limits: None,
+            user_email: None,
+            user_alias: None,
         };
 
         db.insert_key(&key).await.expect("insert key");
@@ -2331,6 +2333,8 @@ mod tests {
             last_rotation_at: None,
             key_rotation_at: None,
             budget_limits: None,
+            user_email: None,
+            user_alias: None,
         }
     }
 
