@@ -52,7 +52,7 @@ litellm_settings:
 
 # Body Archive — cold storage for spend_logs body fields (messages/response/proxy_server_request)
 # body_archive:
-#   enabled: false  # set to true to enable
+#   auto_archive: false  # set to true to enable cron-based automatic archiving
 #   storage:
 #     type: s3  # or fs for local filesystem
 #     bucket: ""

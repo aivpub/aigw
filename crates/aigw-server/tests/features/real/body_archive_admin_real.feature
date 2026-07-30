@@ -1,10 +1,10 @@
 @real_api
 Feature: Body Archive Admin API — Stage 82 生产化验收
 
-  # ━━━━ Stage 82: trigger enabled=false → 409 ━━━━
-  # 验证 P0-3/P0-6：配置失联或 disabled 时 trigger 端点必须拒绝，
+  # ━━━━ Stage 82: storage not configured → 409 ━━━━
+  # 验证 P0-3/P0-6：storage 未配置时 trigger 端点必须拒绝，
   # 而不是用 default config 创建 Job 导致假阳性执行。
-  # ServerGuard 启动时不传 body_archive config，enabled 默认 false。
+  # ServerGuard 启动时不传 body_archive config，storage 默认空。
 
   Background:
     Given AIGW_REAL_API=1 且 API keys 已配置

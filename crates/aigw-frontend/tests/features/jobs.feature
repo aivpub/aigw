@@ -174,13 +174,13 @@ Feature: Jobs 管理页面
     Then I should see a tab labeled "Body Archive"
     And I should NOT see a tab labeled "body_archive"
 
-  # ── Q4: Archive Disabled 时 Trigger 按钮禁用 ──
+  # ── Q4: Storage 未配置时 Trigger 按钮禁用 ──
 
-  Scenario: Archive Disabled 时 Trigger 按钮被禁用
-    Given archive stats return archive_enabled=false
+  Scenario: Storage 未配置时 Trigger 按钮被禁用
+    Given archive stats return storage_configured=false
     When I click the "Body Archive" Sub-Tab
     Then the Trigger button is disabled
-    And hovering over the button shows a tooltip "Archive is disabled"
+    And hovering over the button shows a tooltip "Storage not configured"
 
   # ── Q3: 矛盾检测 — completed + rows_archived=0 → no-op ──
 

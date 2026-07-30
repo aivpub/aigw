@@ -83,7 +83,8 @@ export async function defineMockRoutes(route: Route, request: Request) {
   const sampleArchiveStats = {
     total_archived_rows: 450000,
     pending_rows: 800,
-    archive_enabled: true,
+    auto_archive: true,
+    storage_configured: true,
   };
 
   if (url.pathname === "/admin/jobs/stats") {

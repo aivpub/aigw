@@ -129,7 +129,7 @@ Feature: Admin Jobs API
     Given spend_logs 中有 1000 条 body_archived=TRUE 的记录，总 messages 体积 75GB
     And spend_logs 中有 800 条 body_archived=FALSE 的记录
     When 发送 GET /admin/archive/stats
-    Then 响应包含 archive_enabled=true
+    Then 响应包含 auto_archive=true
     And total_archived_rows = 1000
     And pending_rows = 800
     And db_body_freed_bytes > 0

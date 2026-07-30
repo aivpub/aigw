@@ -943,11 +943,11 @@ use cucumber::gherkin::Step;
 
 /// When "使用 master-key 发送 POST /admin/jobs/trigger 请求" + docstring JSON body.
 /// ServerGuard starts aigw-server without a body_archive config, so
-/// body_archive.enabled defaults to false → trigger returns 409 Conflict.
+/// storage is not configured → trigger returns 409 Conflict.
 #[when(expr = "使用 master-key 发送 POST \\/admin\\/jobs\\/trigger 请求")]
 async fn when_post_admin_jobs_trigger_master(world: &mut TestWorld, step: &Step) {
     if !real_api_enabled() {
-        set_skip_pass(world, 409, serde_json::json!({"error": {"message": "body archive is disabled"}}));
+        set_skip_pass(world, 409, serde_json::json!({"error": {"message": "body archive storage not configured"}}));
         return;
     }
     let body = step.docstring.as_ref().expect("POST /admin/jobs/trigger docstring body").to_string();

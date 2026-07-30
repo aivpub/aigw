@@ -10,8 +10,8 @@ Feature: Body Archive 写链路
     And body_archive.archive_after_hours = 1
     And body_archive.null_body_after_days = 7
 
-  Scenario: enabled=false 时 tick 返回 None
-    Given body_archive.enabled = false
+  Scenario: auto_archive=false 时 tick 返回 None
+    Given body_archive.auto_archive = false
     When Engine 调用 BodyArchiver.tick()
     Then 返回 None
 

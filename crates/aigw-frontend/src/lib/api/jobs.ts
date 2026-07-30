@@ -43,7 +43,8 @@ export interface LogEntry {
 export interface ArchiveStats {
   total_archived_rows: number;
   pending_rows: number;
-  archive_enabled: boolean;
+  auto_archive: boolean;
+  storage_configured: boolean;
 }
 
 export interface JobListResponse {

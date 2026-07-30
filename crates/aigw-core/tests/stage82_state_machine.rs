@@ -192,7 +192,7 @@ async fn test_storage_configured_false_for_default_config() {
 #[tokio::test]
 async fn test_storage_configured_true_for_s3_with_bucket_and_key() {
     let cfg = BodyArchiveConfig {
-        enabled: true,
+        auto_archive: true,
         storage: StorageBackend::S3 {
             bucket: "my-bucket".into(),
             region: "us-east-1".into(),
@@ -214,7 +214,7 @@ async fn test_storage_configured_true_for_s3_with_bucket_and_key() {
 #[tokio::test]
 async fn test_storage_configured_false_when_bucket_empty_but_key_set() {
     let cfg = BodyArchiveConfig {
-        enabled: true,
+        auto_archive: true,
         storage: StorageBackend::S3 {
             bucket: String::new(),
             region: "us-east-1".into(),
@@ -236,7 +236,7 @@ async fn test_storage_configured_false_when_bucket_empty_but_key_set() {
 #[tokio::test]
 async fn test_storage_configured_true_for_fs_with_path() {
     let cfg = BodyArchiveConfig {
-        enabled: true,
+        auto_archive: true,
         storage: StorageBackend::FileSystem {
             path: std::path::PathBuf::from("/tmp/archive"),
         },
@@ -270,7 +270,7 @@ body_archive:
 "#;
     let cfg: AigwConfig = serde_yaml::from_str(yaml).expect("parse AigwConfig");
     let ba = cfg.body_archive.expect("body_archive section present");
-    assert!(ba.enabled, "body_archive.enabled parsed");
+    assert!(ba.auto_archive, "body_archive.auto_archive parsed (backward-compat via 'enabled' alias)");
     assert_eq!(ba.s3.bucket, "aigw-logs", "bucket parsed");
     assert_eq!(ba.archive.archive_after_hours, 1, "archive_after_hours parsed");
 }

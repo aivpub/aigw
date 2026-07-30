@@ -413,14 +413,14 @@ Then("I should NOT see a tab labeled {string}", async ({ page }, label: string) 
   await expect(page.getByRole("tab", { name: label })).not.toBeVisible();
 });
 
-// ── Q4: Archive Disabled ──
+// ── Q4: Archive Storage Not Configured ──
 
-Given("archive stats return archive_enabled=false", async ({ page }) => {
-  // Override the archive/stats mock so the Body Archive tab reports the feature as disabled.
+Given("archive stats return storage_configured=false", async ({ page }) => {
+  // Override the archive/stats mock so the Trigger button is disabled because storage is not configured.
   await page.route("**/admin/archive/stats", async (route) => {
     await route.fulfill({
       status: 200,
-      json: { total_archived_rows: 0, pending_rows: 0, archive_enabled: false },
+      json: { total_archived_rows: 0, pending_rows: 0, auto_archive: true, storage_configured: false },
     });
   });
 });

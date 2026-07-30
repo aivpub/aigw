@@ -178,7 +178,7 @@ tasks:
     desc: "start server (debug build, embeds frontend)"
     cmds:
       - task: fe-build
-      - cargo run -p aigw-server
+      - cargo run -p aigw-server -- --config config.yaml
 
   fmt:
     desc: "code format check"

@@ -386,7 +386,7 @@ async fn test_filesystem_archive_round_trip() {
     let _ = std::fs::create_dir_all(&dir);
 
     let cfg = BodyArchiveConfig {
-        enabled: true,
+        auto_archive: true,
         storage: StorageBackend::FileSystem { path: dir.clone() },
         ..Default::default()
     };
@@ -429,7 +429,7 @@ async fn test_filesystem_archive_partition_path_layout() {
     let _ = std::fs::create_dir_all(&dir);
 
     let cfg = BodyArchiveConfig {
-        enabled: true,
+        auto_archive: true,
         storage: StorageBackend::FileSystem { path: dir.clone() },
         ..Default::default()
     };

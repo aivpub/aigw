@@ -125,10 +125,10 @@ pub async fn trigger_job(
                     StatusCode::SERVICE_UNAVAILABLE,
                     Json(serde_json::json!({"error": "body archiver not configured"})),
                 ))?;
-            if !archiver.config().enabled {
+            if !archiver.storage_configured() {
                 return Err((
                     StatusCode::CONFLICT,
-                    Json(serde_json::json!({"error": "body archive is disabled"})),
+                    Json(serde_json::json!({"error": "body archive storage not configured"})),
                 ));
             }
             archiver.steps_from_payload(&req.payload).await.map_err(|e| {

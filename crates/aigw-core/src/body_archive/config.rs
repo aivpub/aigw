@@ -9,9 +9,9 @@ use std::path::PathBuf;
 /// Top-level configuration for the body archive system.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BodyArchiveConfig {
-    /// Whether the archive worker is enabled. Default: false.
-    #[serde(default)]
-    pub enabled: bool,
+    /// Whether automatic cron-driven archiving is enabled. Default: false.
+    #[serde(default, alias = "enabled")]
+    pub auto_archive: bool,
     /// Storage backend — S3 or local filesystem.
     #[serde(default)]
     pub storage: StorageBackend,
@@ -32,7 +32,7 @@ pub struct BodyArchiveConfig {
 impl Default for BodyArchiveConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            auto_archive: false,
             storage: StorageBackend::S3 {
                 bucket: String::new(),
                 region: String::new(),
@@ -293,7 +293,7 @@ mod tests {
     #[test]
     fn test_default_body_archive_config() {
         let cfg = BodyArchiveConfig::default();
-        assert!(!cfg.enabled);
+        assert!(!cfg.auto_archive);
         assert_eq!(cfg.archive.archive_after_hours, 1);
         assert_eq!(cfg.archive.null_body_after_days, 7);
         assert_eq!(cfg.archive.batch_size, 5000);
@@ -304,7 +304,7 @@ mod tests {
     #[test]
     fn test_deserialize_body_archive_config_full() {
         let yaml = r#"
-enabled: true
+auto_archive: true
 s3:
   endpoint: "cos.ap-guangzhou.myqcloud.com"
   region: "ap-guangzhou"
@@ -331,7 +331,7 @@ col_chunk_cache:
   mode: "none"
 "#;
         let cfg: BodyArchiveConfig = serde_yaml::from_str(yaml).expect("parse yaml");
-        assert!(cfg.enabled);
+        assert!(cfg.auto_archive);
         assert_eq!(cfg.s3.bucket, "aigw-logs");
         assert_eq!(cfg.s3.endpoint, "cos.ap-guangzhou.myqcloud.com");
         assert!(cfg.s3.compatibility_mode);
@@ -347,6 +347,19 @@ col_chunk_cache:
             ColChunkCacheConfig::None => {}
             _ => panic!("expected None col_chunk_cache"),
         }
+    }
+
+    #[test]
+    fn test_deserialize_backward_compat_enabled_field() {
+        // Old `enabled` field should map to `auto_archive` via #[serde(alias)].
+        let yaml = r#"
+enabled: true
+storage:
+  type: fs
+  path: /data/archive
+"#;
+        let cfg: BodyArchiveConfig = serde_yaml::from_str(yaml).expect("parse yaml");
+        assert!(cfg.auto_archive, "old 'enabled' should map to auto_archive");
     }
 
     #[test]

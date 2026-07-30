@@ -75,7 +75,7 @@ impl AsyncTask for BodyArchiver {
 
     /// Cron: discover hours with unarchived body data.
     async fn tick(&self, db: &Database) -> Result<Option<Vec<NewStep>>> {
-        if !self.config.enabled {
+        if !self.config.auto_archive {
             return Ok(None);
         }
 
@@ -462,7 +462,8 @@ impl BodyArchiver {
         Ok(serde_json::json!({
             "total_archived_rows": total_archived_rows,
             "pending_rows": pending_rows,
-            "archive_enabled": self.config.enabled,
+            "auto_archive": self.config.auto_archive,
+            "storage_configured": self.storage_configured(),
         }))
     }
 }

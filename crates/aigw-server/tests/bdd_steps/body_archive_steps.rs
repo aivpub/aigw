@@ -43,9 +43,9 @@ async fn given_archive_after_hours_1(_world: &mut TestWorld) {}
 #[given(expr = "body_archive.null_body_after_days = 7")]
 async fn given_null_body_after_days_7(_world: &mut TestWorld) {}
 
-#[given(expr = "body_archive.enabled = false")]
+#[given(expr = "body_archive.auto_archive = false")]
 async fn given_archive_disabled(world: &mut TestWorld) {
-    set_flag(world, "enabled", &serde_json::Value::Bool(false));
+    set_flag(world, "auto_archive", &serde_json::Value::Bool(false));
 }
 
 #[given(expr = "body_archive.null_body_after_archive = false")]
@@ -103,24 +103,24 @@ async fn given_three_hours_unarchived(world: &mut TestWorld) {
 
 #[when(expr = "Engine 调用 BodyArchiver.tick")]
 async fn when_engine_tick(world: &mut TestWorld) {
-    let enabled = get_flag(world, "enabled")
+    let auto_archive = get_flag(world, "auto_archive")
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
-    do_tick(world, enabled).await;
+    do_tick(world, auto_archive).await;
 }
 
 #[when(expr = "Engine tick loop 调用 BodyArchiver.tick")]
 async fn when_engine_tick_loop(world: &mut TestWorld) {
-    let enabled = get_flag(world, "enabled")
+    let auto_archive = get_flag(world, "auto_archive")
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
-    do_tick(world, enabled).await;
+    do_tick(world, auto_archive).await;
 }
 
-async fn do_tick(world: &mut TestWorld, enabled: bool) {
+async fn do_tick(world: &mut TestWorld, auto_archive: bool) {
     let state = world.ensure_state().await;
     let config = aigw_core::body_archive::config::BodyArchiveConfig {
-        enabled,
+        auto_archive,
         ..Default::default()
     };
     let archiver = Arc::new(aigw_core::body_archive::BodyArchiver::new(config));

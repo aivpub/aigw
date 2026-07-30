@@ -184,6 +184,8 @@ function JobListTable({
 
 // ── Archive Stats Card ──
 function ArchiveStatsCard({ archiveStats }: { archiveStats: ArchiveStats }) {
+  const auto = archiveStats.auto_archive;
+  const sc = archiveStats.storage_configured;
   return (
     <Card>
       <CardHeader>
@@ -192,10 +194,17 @@ function ArchiveStatsCard({ archiveStats }: { archiveStats: ArchiveStats }) {
       <CardContent>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
           <div>
-            <div className="text-muted-foreground">Status</div>
-            <Badge variant={archiveStats.archive_enabled ? "default" : "secondary"}>
-              <span className={`mr-1 inline-block w-2 h-2 rounded-full ${archiveStats.archive_enabled ? "bg-green-500" : "bg-gray-400"}`} />
-              {archiveStats.archive_enabled ? "Enabled" : "Disabled"}
+            <div className="text-muted-foreground">Auto Archive</div>
+            <Badge variant={auto ? "default" : "secondary"}>
+              <span className={`mr-1 inline-block w-2 h-2 rounded-full ${auto ? "bg-green-500" : "bg-gray-400"}`} />
+              {auto ? "On" : "Off"}
+            </Badge>
+          </div>
+          <div>
+            <div className="text-muted-foreground">Storage</div>
+            <Badge variant={sc ? "default" : "secondary"}>
+              <span className={`mr-1 inline-block w-2 h-2 rounded-full ${sc ? "bg-green-500" : "bg-yellow-500"}`} />
+              {sc ? "Configured" : "Not configured"}
             </Badge>
           </div>
           <div>
@@ -205,12 +214,6 @@ function ArchiveStatsCard({ archiveStats }: { archiveStats: ArchiveStats }) {
           <div>
             <div className="text-muted-foreground">Pending Rows</div>
             <div className="font-medium">{formatCount(archiveStats.pending_rows)}</div>
-          </div>
-          <div>
-            <div className="text-muted-foreground">Storage</div>
-            <div className="font-medium">
-              {archiveStats.archive_enabled ? "Configured" : "Not configured"}
-            </div>
           </div>
         </div>
       </CardContent>
@@ -413,8 +416,8 @@ export function JobsPage() {
           {tab === "body_archive" && (
             <Button
               onClick={() => setTriggerOpen(true)}
-              disabled={archiveStats !== null && !archiveStats.archive_enabled}
-              title={archiveStats && !archiveStats.archive_enabled ? "Archive is disabled" : "Trigger Archive"}
+              disabled={archiveStats !== null && !archiveStats.storage_configured}
+              title={archiveStats && !archiveStats.storage_configured ? "Storage not configured" : "Trigger Archive"}
               size="sm"
             >
               Trigger Archive
