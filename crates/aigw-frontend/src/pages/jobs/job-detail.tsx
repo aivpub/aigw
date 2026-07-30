@@ -8,7 +8,7 @@ import {
   displayJobStatus,
 } from "@/lib/api/jobs";
 import type { JobDetailResponse, JobItem, StepItem, LogEntry } from "@/lib/api/jobs";
-import { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
