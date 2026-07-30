@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
+import { MultiModelSelect } from "@/components/ui/multi-model-select";
 import { toast } from "sonner";
 import {
   Plus,
@@ -106,7 +107,7 @@ export function KeysPage() {
 
   // Form state
   const [formAlias, setFormAlias] = useState("");
-  const [formModels, setFormModels] = useState("");
+  const [selectedModels, setSelectedModels] = useState<string[]>([]);
   const [formBudget, setFormBudget] = useState("");
   const [formTPM, setFormTPM] = useState("");
   const [formRPM, setFormRPM] = useState("");
@@ -225,7 +226,7 @@ export function KeysPage() {
 
   function openCreate() {
     setFormAlias("");
-    setFormModels("");
+    setSelectedModels([]);
     setFormBudget("");
     setFormTPM("");
     setFormRPM("");
@@ -237,7 +238,7 @@ export function KeysPage() {
   function openEdit(key: KeyItem) {
     setSelectedKey(key);
     setFormAlias(key.key_alias ?? "");
-    setFormModels(Array.isArray(key.models) ? key.models.join(", ") : "");
+    setSelectedModels(Array.isArray(key.models) ? key.models : []);
     setFormBudget(key.max_budget?.toString() ?? "");
     setFormTPM(key.tpm_limit?.toString() ?? "");
     setFormRPM(key.rpm_limit?.toString() ?? "");
@@ -257,8 +258,8 @@ export function KeysPage() {
   function buildCreateBody(): Record<string, unknown> {
     const body: Record<string, unknown> = {};
     if (formAlias.trim()) body.key_alias = formAlias.trim();
-    if (formModels.trim()) {
-      body.models = formModels.split(",").map((s) => s.trim()).filter(Boolean);
+    if (selectedModels.length > 0) {
+      body.models = selectedModels;
     }
     if (formBudget.trim()) body.max_budget = parseFloat(formBudget);
     if (formTPM.trim()) body.tpm_limit = parseInt(formTPM);
@@ -276,8 +277,8 @@ export function KeysPage() {
     editMutation.mutate({
       key: selectedKey.token,
       ...(formAlias.trim() && { key_alias: formAlias.trim() }),
-      ...(formModels.trim() && {
-        models: formModels.split(",").map((s) => s.trim()).filter(Boolean),
+      ...(selectedModels.length > 0 && {
+        models: selectedModels,
       }),
       ...(formBudget.trim() && { max_budget: parseFloat(formBudget) }),
       ...(formTPM.trim() && { tpm_limit: parseInt(formTPM) }),
@@ -519,7 +520,7 @@ export function KeysPage() {
                                 ? new Date(key.expires).toLocaleDateString()
                                 : "∞"}
                             </TableCell>
-                            <TableCell className="text-xs text-muted-foreground">
+                            <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
                               {key.created_at ? formatDate(key.created_at) : "—"}
                             </TableCell>
                             <TableCell>
@@ -642,7 +643,7 @@ export function KeysPage() {
                               ? new Date(key.expires).toLocaleDateString()
                               : "∞"}
                           </div>
-                          <div className="text-xs text-muted-foreground">
+                          <div className="text-xs text-muted-foreground whitespace-nowrap">
                             Created: {key.created_at ? formatDate(key.created_at) : "—"}
                           </div>
                           <div className="flex justify-end gap-1 pt-1">
@@ -740,12 +741,10 @@ export function KeysPage() {
                   />
                 </div>
                 <div>
-                  <Label htmlFor="models">Models (comma-separated)</Label>
-                  <Input
-                    id="models"
-                    value={formModels}
-                    onChange={(e) => setFormModels(e.target.value)}
-                    placeholder="gpt-4, gpt-3.5-turbo"
+                  <Label>Models</Label>
+                  <MultiModelSelect
+                    selected={selectedModels}
+                    onChange={setSelectedModels}
                   />
                 </div>
                 <div className="grid grid-cols-3 gap-4">
@@ -831,11 +830,10 @@ export function KeysPage() {
               />
             </div>
             <div>
-              <Label htmlFor="edit-models">Models (comma-separated)</Label>
-              <Input
-                id="edit-models"
-                value={formModels}
-                onChange={(e) => setFormModels(e.target.value)}
+              <Label>Models</Label>
+              <MultiModelSelect
+                selected={selectedModels}
+                onChange={setSelectedModels}
               />
             </div>
             <div className="grid grid-cols-3 gap-4">
