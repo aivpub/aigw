@@ -138,6 +138,7 @@ function JobListTable({
                 <th className="text-left p-2">Status</th>
                 <th className="text-left p-2">Progress</th>
                 <th className="text-left p-2">Created</th>
+                <th className="text-left p-2">Ended</th>
               </tr>
             </thead>
             <tbody>
@@ -165,13 +166,18 @@ function JobListTable({
                     <td className="p-2">{job.trigger_type}</td>
                     <td className="p-2"><StatusBadge status={ds} /></td>
                     <td className="p-2 text-xs">
-                      {job.completed_steps}/{job.total_steps}
+                      {job.completed_steps + job.failed_steps}/{job.total_steps}
                       {job.failed_steps > 0 && (
                         <span className="text-red-500 ml-1">({job.failed_steps} failed)</span>
                       )}
                     </td>
                     <td className="p-2 text-xs text-muted-foreground">
                       {new Date(job.created_at).toLocaleString()}
+                    </td>
+                    <td className="p-2 text-xs text-muted-foreground">
+                      {["completed", "failed", "partially_failed"].includes(job.status)
+                        ? new Date(job.updated_at).toLocaleString()
+                        : "—"}
                     </td>
                   </tr>
                 );
