@@ -50,6 +50,18 @@ pub fn build_health_router(state: SharedState) -> Router {
             "/health/liveliness",
             axum::routing::get(aigw_server::routes::health::liveliness),
         )
+        .route(
+            "/health/latest",
+            axum::routing::get(aigw_server::routes::health::health_latest),
+        )
+        .route(
+            "/model/health-check",
+            axum::routing::post(aigw_server::routes::health::model_health_check),
+        )
+        .route(
+            "/model/health-check/all",
+            axum::routing::post(aigw_server::routes::health::model_health_check_all),
+        )
         .with_state(state)
 }
 

@@ -11,7 +11,8 @@
 //! - POST /model/health-check/all   — Ping all models
 
 use aigw_core::db::Database;
-use aigw_core::models::HealthCheck;
+use aigw_core::deployment::ProviderType;
+use aigw_core::models::{HealthCheck, SpendLog};
 use axum::{extract::State, http::StatusCode, Json};
 use prometheus::{Encoder, TextEncoder};
 use serde::Deserialize;
@@ -21,7 +22,15 @@ use uuid::Uuid;
 use chrono::Utc;
 
 use super::spend::{require_admin, SpendAuth};
+use super::chat::{calc_spend, extract_cache_creation_tokens, extract_cache_read_tokens};
 use crate::routes::keys::SharedState;
+
+/// Sentinel api_key recorded in spend_logs for model health-check probes.
+/// Real virtual keys are SHA256 hashes; this constant string is used so probes
+/// are easily filterable and never collide with a real key hash.
+const HEALTH_CHECK_API_KEY: &str = "health_check";
+/// call_type recorded in spend_logs for model health-check probes.
+const HEALTH_CHECK_CALL_TYPE: &str = "health_check";
 
 /// GET /health — simple health check
 pub async fn health() -> Json<Value> {
@@ -244,32 +253,79 @@ async fn run_and_save_health_check(
     model_name: &str,
     model_id: &str,
 ) {
-    // Use ModelResolver to get properly decrypted Deployment (handles encryption + credential refs)
-    let (base_url, api_key, upstream_model) = match resolver.resolve(model_name).await {
-        Ok(deployments) if !deployments.is_empty() => {
-            let d = &deployments[0];
-            (d.api_base.clone(), d.api_key.clone(), d.upstream_model.clone())
+    // Use ModelResolver to get the properly decrypted Deployment (handles
+    // encryption + credential references). Distinguish three resolve outcomes:
+    //   Ok(non-empty)  -> proceed with deployments[0]
+    //   Ok([])          -> model absent / env fallback unavailable -> record real reason
+    //   Err((code,j))   -> DB / decryption error -> record the resolver's error body
+    let deployment = match resolver.resolve(model_name).await {
+        Ok(deployments) if !deployments.is_empty() => deployments.into_iter().next().unwrap(),
+        Ok(_) => {
+            save_result(
+                db,
+                model_name,
+                model_id,
+                None,
+                false,
+                None,
+                Some("model not found in resolver (no deployment resolved)".into()),
+                None,
+            )
+            .await;
+            return;
         }
-        _ => {
-            save_result(db, model_name, model_id, false, None, Some("model not found in resolver".into())).await;
+        Err((code, body)) => {
+            let msg = body
+                .get("error")
+                .and_then(|e| e.get("message"))
+                .and_then(|m| m.as_str())
+                .map(|s| format!("resolver error (HTTP {}): {}", code, s))
+                .unwrap_or_else(|| format!("resolver error (HTTP {})", code));
+            save_result(db, model_name, model_id, None, false, None, Some(msg), None).await;
             return;
         }
     };
 
-    if base_url.is_empty() {
-        save_result(db, model_name, model_id, false, None, Some("no api_base configured after resolution".into())).await;
+    if deployment.api_base.is_empty() {
+        save_result(
+            db,
+            model_name,
+            model_id,
+            Some(&deployment),
+            false,
+            None,
+            Some("no api_base configured after resolution".into()),
+            None,
+        )
+        .await;
         return;
     }
 
-    let base = base_url.trim_end_matches('/').to_string();
-    let chat_url = if base.ends_with("/v1") || base.contains("/v1/") {
-        format!("{}/chat/completions", base)
-    } else {
-        format!("{}/v1/chat/completions", base)
+    // ── Build the probe URL + auth headers by provider_type, aligned with
+    // chat.rs (chat_completions): OpenAI-compatible -> /chat/completions (or
+    // /v1/chat/completions when api_base lacks /v1), Authorization: Bearer;
+    // AnthropicNative -> /v1/messages, x-api-key + anthropic-version. This
+    // fixes the bug where Anthropic-native models were probed on the wrong
+    // path with the wrong auth header and always reported unhealthy.
+    let base = deployment.api_base.trim_end_matches('/').to_string();
+    let (probe_path, is_anthropic) = match deployment.provider_type {
+        ProviderType::AnthropicNative => ("messages".to_string(), true),
+        ProviderType::OpenAICompatible => {
+            if base.ends_with("/v1") || base.contains("/v1/") {
+                ("chat/completions".to_string(), false)
+            } else {
+                ("v1/chat/completions".to_string(), false)
+            }
+        }
     };
+    let probe_url = format!("{}/{}", base, probe_path);
 
+    // Anthropic-native upstreams speak the /v1/messages schema; OpenAI-compatible
+    // upstreams speak /v1/chat/completions. Both accept the same ping body here
+    // (model + messages + max_tokens=1); the adapter divergence is in the URL
+    // and auth headers, not the body fields for a minimal probe.
     let test_body = json!({
-        "model": upstream_model,
+        "model": deployment.upstream_model,
         "messages": [{"role": "user", "content": "ping"}],
         "max_tokens": 1,
         "stream": false
@@ -277,56 +333,134 @@ async fn run_and_save_health_check(
 
     let start = std::time::Instant::now();
     let mut req = reqwest::Client::new()
-        .post(&chat_url)
+        .post(&probe_url)
         .header("Content-Type", "application/json")
         .json(&test_body)
         .timeout(std::time::Duration::from_secs(15));
 
-    if let Some(ref key) = api_key {
-        req = req.header("Authorization", format!("Bearer {}", key));
+    if let Some(ref key) = deployment.api_key {
+        if is_anthropic {
+            req = req.header("x-api-key", key);
+            req = req.header("anthropic-version", "2023-06-01");
+        } else {
+            req = req.header("Authorization", format!("Bearer {}", key));
+        }
     }
 
     match req.send().await {
         Ok(resp) => {
             let elapsed = start.elapsed().as_secs_f64() * 1000.0;
             let code = resp.status().as_u16();
-            let healthy = resp.status().is_success() || code == 400 || code == 401 || code == 403 || code == 429 || code == 422;
+            // Treat transport-level success + 2xx/4xx-auth-style codes as healthy
+            // (mirror litellm: a 401/429 still means the upstream is reachable).
+            let healthy = resp.status().is_success()
+                || code == 400
+                || code == 401
+                || code == 403
+                || code == 429
+                || code == 422;
             if healthy {
-                save_result(db, model_name, model_id, true, Some(elapsed), None).await;
+                // Read the body once; parse usage to record real spend/tokens.
+                let body_text = resp.text().await.unwrap_or_default();
+                let body_val: Value = serde_json::from_str(&body_text).unwrap_or(json!({}));
+                save_result(
+                    db,
+                    model_name,
+                    model_id,
+                    Some(&deployment),
+                    true,
+                    Some(elapsed),
+                    None,
+                    Some(body_val),
+                )
+                .await;
             } else {
-                let body = resp.text().await.unwrap_or_default();
-                save_result(db, model_name, model_id, false, Some(elapsed), Some(format!("HTTP {}: {}", code, body.chars().take(120).collect::<String>()))).await;
+                let body_text = resp.text().await.unwrap_or_default();
+                let snippet = body_text.chars().take(120).collect::<String>();
+                let err = format!("HTTP {}: {}", code, snippet);
+                let body_val: Value = serde_json::from_str(&body_text).unwrap_or(json!({}));
+                save_result(
+                    db,
+                    model_name,
+                    model_id,
+                    Some(&deployment),
+                    false,
+                    Some(elapsed),
+                    Some(err),
+                    Some(body_val),
+                )
+                .await;
             }
         }
         Err(e) => {
             let elapsed = start.elapsed().as_secs_f64() * 1000.0;
-            // Fallback: GET /
-            let mut fallback = reqwest::Client::new().get(&base).timeout(std::time::Duration::from_secs(10));
-            if let Some(ref key) = api_key {
-                fallback = fallback.header("Authorization", format!("Bearer {}", key));
+            // Fallback: GET base — if even that fails, the upstream is unreachable.
+            let mut fallback = reqwest::Client::new()
+                .get(&base)
+                .timeout(std::time::Duration::from_secs(10));
+            if let Some(ref key) = deployment.api_key {
+                if is_anthropic {
+                    fallback = fallback.header("x-api-key", key);
+                    fallback = fallback.header("anthropic-version", "2023-06-01");
+                } else {
+                    fallback = fallback.header("Authorization", format!("Bearer {}", key));
+                }
             }
             match fallback.send().await {
                 Ok(r2) => {
                     let ok = r2.status().is_success() || r2.status().as_u16() == 401;
-                    save_result(db, model_name, model_id, ok, Some(elapsed), if ok { None } else { Some(format!("{:?}", e)) }).await;
+                    save_result(
+                        db,
+                        model_name,
+                        model_id,
+                        Some(&deployment),
+                        ok,
+                        Some(elapsed),
+                        if ok { None } else { Some(format!("{:?}", e)) },
+                        None,
+                    )
+                    .await;
                 }
                 Err(_) => {
-                    save_result(db, model_name, model_id, false, Some(elapsed), Some(format!("{:?}", e))).await;
+                    save_result(
+                        db,
+                        model_name,
+                        model_id,
+                        Some(&deployment),
+                        false,
+                        Some(elapsed),
+                        Some(format!("{:?}", e)),
+                        None,
+                    )
+                    .await;
                 }
             }
         }
     }
 }
 
+/// Insert a health_checks row AND a spend_logs row for the probe.
+///
+/// `deployment` is Some when the probe actually reached the resolution stage
+/// (so pricing/model metadata is available for the spend_log); None when the
+/// probe failed at resolution (no spend_log is written — there was no upstream
+/// call to bill).
+///
+/// `response` is the parsed upstream response body (when available) — used to
+/// extract real usage tokens and compute spend via calc_spend, mirroring
+/// chat.rs's success/failure spend_log paths.
 async fn save_result(
     db: &Database,
     model_name: &str,
     model_id: &str,
+    deployment: Option<&aigw_core::deployment::Deployment>,
     healthy: bool,
     response_time_ms: Option<f64>,
     error: Option<String>,
+    response: Option<Value>,
 ) {
-    let now = Utc::now().to_rfc3339();
+    let now = Utc::now();
+    let now_rfc = now.to_rfc3339();
     let check = HealthCheck {
         health_check_id: Uuid::new_v4().to_string(),
         model_name: model_name.to_string(),
@@ -334,16 +468,105 @@ async fn save_result(
         status: if healthy { "healthy".into() } else { "unhealthy".into() },
         healthy_count: if healthy { 1 } else { 0 },
         unhealthy_count: if healthy { 0 } else { 1 },
-        error_message: error,
+        error_message: error.clone(),
         response_time_ms,
         details: "{}".to_string(),
         checked_by: Some("api".to_string()),
-        checked_at: now.clone(),
-        created_at: now.clone(),
-        updated_at: now,
+        checked_at: now_rfc.clone(),
+        created_at: now_rfc.clone(),
+        updated_at: now_rfc,
     };
     let _ = db.insert_health_check(&check).await;
+
+    // Only write a spend_log when we actually have a resolved deployment —
+    // resolution-stage failures (model not found, decryption error) made no
+    // upstream call, so there's nothing to bill.
+    let Some(d) = deployment else { return };
+
+    // Extract real usage from the upstream response (if any).
+    let usage = response
+        .as_ref()
+        .and_then(|r| r.get("usage"))
+        .cloned()
+        .unwrap_or(json!({}));
+    let prompt_tokens = usage
+        .get("prompt_tokens")
+        .or_else(|| usage.get("input_tokens"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0) as i32;
+    let completion_tokens = usage
+        .get("completion_tokens")
+        .or_else(|| usage.get("output_tokens"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0) as i32;
+    let cache_read = extract_cache_read_tokens(&usage);
+    let cache_create = extract_cache_creation_tokens(&usage);
+    let total_tokens = prompt_tokens + completion_tokens + cache_read + cache_create;
+
+    // Compute spend from the deployment's pricing fields (real upstream cost),
+    // mirroring chat.rs:1666. Probes use max_tokens=1 so spend is tiny but
+    // non-zero when the upstream returns usage.
+    let spend = calc_spend(
+        prompt_tokens,
+        completion_tokens,
+        d.input_cost_per_token,
+        d.output_cost_per_token,
+        cache_read,
+        cache_create,
+        d.cache_read_input_token_cost,
+        d.cache_creation_input_token_cost,
+    );
+
+    let start_time = now;
+    let end_time = now;
+    let sl = SpendLog {
+        call_id: Uuid::now_v7().to_string(),
+        request_id: response
+            .as_ref()
+            .and_then(|r| r.get("id"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
+        call_type: HEALTH_CHECK_CALL_TYPE.to_string(),
+        api_key: HEALTH_CHECK_API_KEY.to_string(),
+        spend,
+        total_tokens,
+        prompt_tokens,
+        completion_tokens,
+        start_time,
+        end_time,
+        request_duration_ms: response_time_ms.map(|ms| ms as i32),
+        completion_start_time: Some(end_time),
+        model: d.upstream_model.clone(),
+        model_id: d.model_id.clone(),
+        model_group: d.model_group.clone(),
+        custom_llm_provider: d.custom_llm_provider.clone(),
+        api_base: Some(d.api_base.clone()),
+        user: None,
+        metadata: None,
+        cache_hit: None,
+        cache_key: None,
+        request_tags: None,
+        team_id: None,
+        organization_id: None,
+        end_user: None,
+        requester_ip_address: None,
+        messages: None,
+        response: response.or_else(|| {
+            error
+                .as_ref()
+                .map(|e| json!({"error": e, "failure_reason": "health_check"}))
+        }),
+        session_id: None,
+        status: Some(if healthy { "success".to_string() } else { "failure:health_check".to_string() }),
+        mcp_namespaced_tool_name: None,
+        agent_id: None,
+        proxy_server_request: None,
+        body_archived: false,
+        parquet_path: None,
+    };
+    let _ = db.insert_spend_log(&sl).await;
 }
+
 /// GET /metrics — Prometheus metrics endpoint (Stage 67)
 pub async fn prometheus_metrics() -> axum::response::Response {
     let encoder = TextEncoder::new();
