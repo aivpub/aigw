@@ -56,8 +56,7 @@ function ListPagination({
   totalPages: number;
   onPageChange: (p: number) => void;
 }) {
-  if (totalPages <= 1) return null;
-  const pages = Array.from({ length: totalPages }, (_, i) => i + 1);
+  const pages = Array.from({ length: Math.max(1, totalPages) }, (_, i) => i + 1);
 
   return (
     <nav role="navigation" aria-label="pagination" className="flex items-center gap-1">
