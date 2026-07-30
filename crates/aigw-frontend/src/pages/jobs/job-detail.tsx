@@ -8,12 +8,20 @@ import {
   displayJobStatus,
 } from "@/lib/api/jobs";
 import type { JobDetailResponse, JobItem, StepItem, LogEntry } from "@/lib/api/jobs";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 
 // ── Status Badge ──
@@ -89,189 +97,86 @@ function formatStepResult(result: Record<string, unknown> | null): string {
   return parts.length > 0 ? parts.join(" · ") : JSON.stringify(result).slice(0, 60);
 }
 
-// ── Inline Steps Pagination ──
+// ── Steps Pagination (SpendLogs-style) ──
 function StepsPagination({
   page,
+  pageSize,
+  totalCount,
   totalPages,
-  onPageChange,
+  onPage,
+  onPageSize,
 }: {
   page: number;
+  pageSize: number;
+  totalCount: number;
   totalPages: number;
-  onPageChange: (p: number) => void;
+  onPage: (p: number) => void;
+  onPageSize: (s: number) => void;
 }) {
-  if (totalPages <= 1) return null;
-  const pages = Array.from({ length: totalPages }, (_, i) => i + 1);
-
+  const from = totalCount === 0 ? 0 : (page - 1) * pageSize + 1;
+  const to = Math.min(page * pageSize, totalCount);
   return (
-    <nav role="navigation" aria-label="steps pagination" className="flex items-center gap-1 mt-2">
-      <Button
-        variant="ghost"
-        size="sm"
-        disabled={page <= 1}
-        onClick={() => onPageChange(page - 1)}
-        aria-label="Previous page"
-      >
-        ←
-      </Button>
-      {pages.map((p) => (
-        <Button
-          key={p}
-          variant={p === page ? "default" : "ghost"}
-          size="sm"
-          onClick={() => onPageChange(p)}
-          aria-label={`Page ${p}`}
-          aria-current={p === page ? "page" : undefined}
-        >
-          {p}
+    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 mt-2">
+      <div className="flex items-center gap-3">
+        <span className="text-xs text-muted-foreground">Showing {from}–{to} of {totalCount}</span>
+        <span className="text-xs text-muted-foreground">Page {page} of {Math.max(totalPages, 1)}</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <Select value={String(pageSize)} onValueChange={(v) => onPageSize(Number(v))}>
+          <SelectTrigger className="h-7 w-[70px] text-xs"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="20">20</SelectItem>
+            <SelectItem value="50">50</SelectItem>
+            <SelectItem value="100">100</SelectItem>
+          </SelectContent>
+        </Select>
+        <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => onPage(page - 1)} className="h-7 px-2">
+          <ChevronLeft className="h-3.5 w-3.5" />
         </Button>
-      ))}
-      <Button
-        variant="ghost"
-        size="sm"
-        disabled={page >= totalPages}
-        onClick={() => onPageChange(page + 1)}
-        aria-label="Next page"
-      >
-        →
-      </Button>
-    </nav>
+        <Button variant="outline" size="sm" disabled={page >= totalPages || totalPages === 0} onClick={() => onPage(page + 1)} className="h-7 px-2">
+          <ChevronRight className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+    </div>
   );
 }
 
-// ── Logs by step ──
-function LogsByStep({
-  logs,
-  steps,
-  logFilter,
-  setLogFilter,
-}: {
-  logs: LogEntry[];
-  steps: StepItem[];
-  logFilter: string;
-  setLogFilter: (f: string) => void;
-}) {
-  const [expandedStep, setExpandedStep] = useState<string | null>(null);
-
-  // Group logs by step_key
-  const logsByStep = new Map<string | null, LogEntry[]>();
-  for (const log of logs) {
-    const key = log.step_key || "__global__";
-    if (!logsByStep.has(key)) logsByStep.set(key, []);
-    logsByStep.get(key)!.push(log);
+// ── Step Logs (inline expandable) ──
+function StepLogRows({ logs }: { logs: LogEntry[] }) {
+  if (logs.length === 0) {
+    return <p className="p-2 text-xs text-muted-foreground">No logs for this step.</p>;
   }
-
   return (
-    <div>
-      <div className="flex items-center justify-between mb-2">
-        <h3 className="text-sm font-medium">Logs</h3>
-        <div className="flex gap-2">
-          {["all", "info", "warn", "error"].map((l) => (
-            <Button
-              key={l}
-              variant={logFilter === l ? "default" : "outline"}
-              size="sm"
-              onClick={() => setLogFilter(l)}
-            >
-              {l}
-            </Button>
-          ))}
-        </div>
-      </div>
-
-      {steps.map((step) => {
-        const stepLogs = logsByStep.get(step.step_key) || [];
-        const isExpanded = expandedStep === step.step_key;
-
-        return (
-          <div key={step.step_key} className="border rounded mb-2">
-            <div
-              className="flex items-center justify-between p-2 cursor-pointer hover:bg-accent"
-              onClick={() => setExpandedStep(isExpanded ? null : step.step_key)}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  setExpandedStep(isExpanded ? null : step.step_key);
+    <table className="w-full text-sm">
+      <thead className="bg-muted">
+        <tr>
+          <th className="text-left p-2 w-16">Level</th>
+          <th className="text-left p-2">Message</th>
+          <th className="text-left p-2 w-32">Time</th>
+        </tr>
+      </thead>
+      <tbody>
+        {logs.map((log, i) => (
+          <tr key={i} className="border-t">
+            <td className="p-2">
+              <Badge
+                variant={
+                  log.level === "error" ? "destructive"
+                  : log.level === "warn" ? "secondary"
+                  : "outline"
                 }
-              }}
-              aria-expanded={isExpanded}
-              aria-label={`Logs for step ${step.step_key}`}
-            >
-              <span className="text-xs font-mono">{step.step_key}</span>
-              <span className="text-xs text-muted-foreground">
-                {stepLogs.length} logs {isExpanded ? "▲" : "▼"}
-              </span>
-            </div>
-            {isExpanded && (
-              <div className="border-t">
-                {stepLogs.length === 0 ? (
-                  <p className="p-2 text-xs text-muted-foreground">No logs for this step.</p>
-                ) : (
-                  <table className="w-full text-sm">
-                    <tbody>
-                      {stepLogs.map((log, i) => (
-                        <tr key={i} className="border-t">
-                          <td className="p-2 w-16">
-                            <Badge
-                              variant={
-                                log.level === "error"
-                                  ? "destructive"
-                                  : log.level === "warn"
-                                  ? "secondary"
-                                  : "outline"
-                              }
-                            >
-                              {log.level}
-                            </Badge>
-                          </td>
-                          <td className="p-2 font-mono text-xs">{log.message}</td>
-                          <td className="p-2 text-xs text-muted-foreground w-32">
-                            {new Date(log.created_at).toLocaleTimeString()}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-              </div>
-            )}
-          </div>
-        );
-      })}
-
-      {/* Global logs (no step_key) */}
-      {(logsByStep.get("__global__") || []).length > 0 && (
-        <div className="border rounded p-2">
-          <p className="text-xs text-muted-foreground mb-1">General Logs</p>
-          <table className="w-full text-sm">
-            <tbody>
-              {(logsByStep.get("__global__") || []).map((log, i) => (
-                <tr key={i} className="border-t">
-                  <td className="p-2 w-16">
-                    <Badge
-                      variant={
-                        log.level === "error"
-                          ? "destructive"
-                          : log.level === "warn"
-                          ? "secondary"
-                          : "outline"
-                      }
-                    >
-                      {log.level}
-                    </Badge>
-                  </td>
-                  <td className="p-2 font-mono text-xs">{log.message}</td>
-                  <td className="p-2 text-xs text-muted-foreground w-32">
-                    {new Date(log.created_at).toLocaleTimeString()}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
+              >
+                {log.level}
+              </Badge>
+            </td>
+            <td className="p-2 font-mono text-xs">{log.message}</td>
+            <td className="p-2 text-xs text-muted-foreground">
+              {new Date(log.created_at).toLocaleTimeString()}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
@@ -284,8 +189,9 @@ export function JobDetailPage() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [logFilter, setLogFilter] = useState("all");
   const [stepsPage, setStepsPage] = useState(1);
+  const [stepsPageSize, setStepsPageSize] = useState(20);
   const [expandedPayload, setExpandedPayload] = useState<string | null>(null);
-  const stepsPageSize = 20;
+  const [expandedLogStep, setExpandedLogStep] = useState<string | null>(null);
 
   const loadDetail = useCallback(async () => {
     if (!jobId) return;
@@ -302,14 +208,26 @@ export function JobDetailPage() {
     if (!jobId) return;
     try {
       const data = await fetchJobLogs(jobId, {
-        level: logFilter,
-        limit: 200,
+        limit: 10000, // fetch all logs in one request
       });
       setLogs(data.logs || []);
     } catch {
       // logs are optional
     }
-  }, [jobId, logFilter]);
+  }, [jobId]);
+
+  // Group logs by step_key (stable across re-renders)
+  const logsByStep = useMemo(() => {
+    const map = new Map<string, LogEntry[]>();
+    for (const log of logs) {
+      // Apply log level filter
+      if (logFilter !== "all" && log.level !== logFilter) continue;
+      const key = log.step_key || "__global__";
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(log);
+    }
+    return map;
+  }, [logs, logFilter]);
 
   useEffect(() => {
     loadDetail();
@@ -328,11 +246,6 @@ export function JobDetailPage() {
     return () => clearInterval(timer);
   }, [detail, loadDetail, loadLogs]);
 
-  // When log filter changes
-  useEffect(() => {
-    loadLogs();
-  }, [logFilter]);
-
   if (!detail) {
     return <Skeleton className="h-60 w-full" />;
   }
@@ -350,11 +263,14 @@ export function JobDetailPage() {
     stepsPage * stepsPageSize
   );
 
+  // Global logs
+  const globalLogs = logsByStep.get("__global__") || [];
+
   return (
     <div className="space-y-6">
       {/* Back button */}
-      <Button variant="ghost" size="sm" onClick={() => navigate("/dash/jobs")}>
-        ← Back to Jobs
+      <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>
+        ← Back
       </Button>
 
       {/* Title */}
@@ -397,23 +313,27 @@ export function JobDetailPage() {
             </div>
           </div>
           {/* Progress bar */}
-          {totalSteps > 0 && (
+          {totalSteps > 0 && (() => {
+            const done = summary.completed + summary.failed;
+            const pct = Math.round((done / totalSteps) * 100);
+            return (
             <div className="mt-4 space-y-1">
               <div className="flex justify-between text-xs text-muted-foreground">
                 <span>Progress</span>
                 <span>
-                  {job.completed_steps}/{totalSteps} ({summary.failed > 0 ? `${summary.failed} failed · ` : ""}
-                  {Math.round((job.completed_steps / totalSteps) * 100)}%)
+                  {done}/{totalSteps} ({summary.failed > 0 ? `${summary.failed} failed · ` : ""}
+                  {pct}%)
                 </span>
               </div>
               <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
                 <div
                   className="bg-green-500 h-2 transition-all"
-                  style={{ width: `${(job.completed_steps / Math.max(1, totalSteps)) * 100}%` }}
+                  style={{ width: `${Math.min(pct, 100)}%` }}
                 />
               </div>
             </div>
-          )}
+            );
+          })()}
         </CardContent>
       </Card>
 
@@ -440,9 +360,30 @@ export function JobDetailPage() {
                     const duration = step.started_at && step.completed_at
                       ? new Date(step.completed_at).getTime() - new Date(step.started_at).getTime()
                       : null;
+                    const stepLogs = logsByStep.get(step.step_key) || [];
+                    const isLogExpanded = expandedLogStep === step.step_key;
                     return (
-                      <tr key={step.id} className="border-t">
-                        <td className="p-2 font-mono text-xs">{step.step_key}</td>
+                      <React.Fragment key={step.id}>
+                      <tr
+                        className={`border-t cursor-pointer hover:bg-accent/50 ${isLogExpanded ? "bg-accent/30" : ""}`}
+                        onClick={() => setExpandedLogStep(isLogExpanded ? null : step.step_key)}
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            setExpandedLogStep(isLogExpanded ? null : step.step_key);
+                          }
+                        }}
+                        aria-expanded={isLogExpanded}
+                      >
+                        <td className="p-2 font-mono text-xs">
+                          {step.step_key}
+                          {stepLogs.length > 0 && (
+                            <span className="ml-1 text-muted-foreground">
+                              {isLogExpanded ? "▲" : "▼"}
+                            </span>
+                          )}
+                        </td>
                         <td className="p-2">
                           <StepStatus status={step.status} result={step.result} />
                         </td>
@@ -476,23 +417,29 @@ export function JobDetailPage() {
                           {duration !== null ? formatDuration(duration) : "-"}
                         </td>
                       </tr>
+                      {/* Expandable log rows */}
+                      {isLogExpanded && (
+                        <tr key={`${step.id}-logs`} className="border-t bg-muted/20">
+                          <td colSpan={5} className="p-0">
+                            <StepLogRows logs={stepLogs} />
+                          </td>
+                        </tr>
+                      )}
+                      </React.Fragment>
                     );
                   })}
                 </tbody>
               </table>
             </div>
           </div>
-          <StepsPagination page={stepsPage} totalPages={stepsTotalPages} onPageChange={setStepsPage} />
-        </CardContent>
-      </Card>
-
-      {/* Logs by Step */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Execution Logs</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <LogsByStep logs={logs} steps={steps} logFilter={logFilter} setLogFilter={setLogFilter} />
+          <StepsPagination
+            page={stepsPage}
+            pageSize={stepsPageSize}
+            totalCount={steps.length}
+            totalPages={stepsTotalPages}
+            onPage={(p) => setStepsPage(p)}
+            onPageSize={(s) => { setStepsPageSize(s); setStepsPage(1); }}
+          />
         </CardContent>
       </Card>
     </div>

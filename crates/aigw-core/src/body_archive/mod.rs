@@ -526,7 +526,6 @@ async fn query_unarchived_rows(
         FROM spend_logs
         WHERE body_archived = FALSE
           AND messages IS NOT NULL
-          AND request_id IS NOT NULL
           AND strftime('%Y-%m-%dT%H', start_time) = ?
         ORDER BY call_id
         LIMIT ?
@@ -558,7 +557,6 @@ async fn query_unarchived_rows(
                 FROM spend_logs
                 WHERE body_archived = FALSE
                   AND messages IS NOT NULL
-                  AND request_id IS NOT NULL
                   AND DATE_FORMAT(start_time, '%Y-%m-%dT%H') = ?
                 ORDER BY call_id
                 LIMIT ?
@@ -589,7 +587,6 @@ async fn query_unarchived_rows(
                 FROM spend_logs
                 WHERE body_archived = FALSE
                   AND messages IS NOT NULL
-                  AND request_id IS NOT NULL
                   AND to_char(start_time, 'YYYY-MM-DD"T"HH24') = $1
                   ORDER BY call_id
                   LIMIT $2
