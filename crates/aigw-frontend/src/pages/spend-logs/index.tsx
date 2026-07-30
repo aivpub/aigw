@@ -18,9 +18,10 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { PaginationBar } from "@/components/ui/pagination";
 import {
   ScrollText, Calendar, RefreshCw, Search, Copy, Check,
-  ChevronLeft, ChevronRight, X, Clock, AlertCircle, Download,
+  X, Clock, AlertCircle, Download,
 } from "lucide-react";
 import { format } from "date-fns";
 import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
@@ -225,30 +226,6 @@ function TimePresetBar({ preset, onPreset, startDate, endDate, onStartDate, onEn
           <Input type="datetime-local" value={toDatetimeLocalValue(endDate)} onChange={e => onEndDate(fromDatetimeLocalValue(e.target.value))} className="h-7 w-44 text-xs" />
         </div>
       )}
-    </div>
-  );
-}
-
-function PaginationBar({ page, pageSize, totalCount, totalPages, onPage, onPageSize }: {
-  page: number; pageSize: number; totalCount: number; totalPages: number;
-  onPage: (p: number) => void; onPageSize: (s: number) => void;
-}) {
-  const from = totalCount===0?0:(page-1)*pageSize+1;
-  const to = Math.min(page*pageSize,totalCount);
-  return (
-    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
-      <div className="flex items-center gap-3">
-        <span className="text-xs text-muted-foreground">Showing {from}–{to} of {totalCount}</span>
-        <span className="text-xs text-muted-foreground">Page {page} of {Math.max(totalPages,1)}</span>
-      </div>
-      <div className="flex items-center gap-2">
-        <Select value={String(pageSize)} onValueChange={v => onPageSize(Number(v))}>
-          <SelectTrigger className="h-7 w-[70px] text-xs"><SelectValue/></SelectTrigger>
-          <SelectContent><SelectItem value="30">30</SelectItem><SelectItem value="50">50</SelectItem><SelectItem value="100">100</SelectItem></SelectContent>
-        </Select>
-        <Button variant="outline" size="sm" disabled={page<=1} onClick={()=>onPage(page-1)} className="h-7 px-2"><ChevronLeft className="h-3.5 w-3.5"/></Button>
-        <Button variant="outline" size="sm" disabled={page>=totalPages||totalPages===0} onClick={()=>onPage(page+1)} className="h-7 px-2"><ChevronRight className="h-3.5 w-3.5"/></Button>
-      </div>
     </div>
   );
 }

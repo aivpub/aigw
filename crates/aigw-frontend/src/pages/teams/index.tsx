@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PaginationBar } from "@/components/ui/pagination";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter,
   DialogHeader, DialogTitle,
@@ -28,6 +29,7 @@ interface TeamItem {
   spend: number;
   max_budget: number | null;
   blocked: boolean;
+  created_at: string | null;
 }
 
 interface DeletedTeamItem {
@@ -41,6 +43,18 @@ interface DeletedTeamItem {
 
 interface TeamListResponse {
   data: TeamItem[];
+  total_count?: number;
+  page?: number;
+  page_size?: number;
+  total_pages?: number;
+}
+
+interface DeletedTeamListResponse {
+  data: DeletedTeamItem[];
+  total_count?: number;
+  page?: number;
+  page_size?: number;
+  total_pages?: number;
 }
 
 export function TeamsPage() {
@@ -55,19 +69,29 @@ export function TeamsPage() {
   const [formAlias, setFormAlias] = useState("");
   const [formOrgId, setFormOrgId] = useState("");
   const [formBudget, setFormBudget] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(30);
+  const [deletedPage, setDeletedPage] = useState(1);
+  const [deletedPageSize, setDeletedPageSize] = useState(30);
 
   const { data, isLoading, error } = useQuery<TeamListResponse>({
-    queryKey: ["teams"],
-    queryFn: () => apiGet("/team/list"),
+    queryKey: ["teams", page, pageSize],
+    queryFn: () => apiGet(`/team/list?page=${page}&page_size=${pageSize}`),
   });
 
-  const { data: deletedTeams = [], isLoading: deletedLoading } = useQuery<DeletedTeamItem[]>({
-    queryKey: ["deleted-teams"],
-    queryFn: () => apiGet("/team/deleted"),
+  const { data: deletedData, isLoading: deletedLoading } = useQuery<DeletedTeamListResponse>({
+    queryKey: ["deleted-teams", deletedPage, deletedPageSize],
+    queryFn: () => apiGet(`/team/deleted?page=${deletedPage}&page_size=${deletedPageSize}`),
     enabled: viewMode === "deleted",
   });
 
   const teams = data?.data ?? [];
+  const totalCount = data?.total_count ?? teams.length;
+  const totalPages = data?.total_pages ?? (teams.length === 0 ? 1 : Math.ceil(totalCount / pageSize));
+
+  const deletedTeams = deletedData?.data ?? [];
+  const deletedTotalCount = deletedData?.total_count ?? deletedTeams.length;
+  const deletedTotalPages = deletedData?.total_pages ?? (deletedTeams.length === 0 ? 1 : Math.ceil(deletedTotalCount / deletedPageSize));
 
   const filtered = useMemo(() => {
     if (!search.trim()) return teams;
@@ -150,7 +174,7 @@ export function TeamsPage() {
 
       {viewMode === "deleted" ? (
         <Card>
-          <CardHeader className="pb-2"><CardTitle>Deleted Teams ({deletedTeams.length})</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><CardTitle>Deleted Teams ({deletedTotalCount})</CardTitle></CardHeader>
           <CardContent>
             {deletedLoading ? (
               Array.from({ length: 3 }).map((_, i) => <div key={i} className="py-2"><Skeleton className="h-4 w-full" /></div>)
@@ -158,6 +182,14 @@ export function TeamsPage() {
               <div className="text-center text-muted-foreground py-8">No deleted records</div>
             ) : (
               <>
+                <PaginationBar
+                  page={deletedPage}
+                  pageSize={deletedPageSize}
+                  totalCount={deletedTotalCount}
+                  totalPages={deletedTotalPages}
+                  onPage={setDeletedPage}
+                  onPageSize={(s) => { setDeletedPageSize(s); setDeletedPage(1); }}
+                />
                 <div className="hidden md:block">
                   <Table>
                     <TableHeader><TableRow>
@@ -192,6 +224,16 @@ export function TeamsPage() {
                     </CardContent></Card>
                   ))}
                 </div>
+                <div className="mt-3">
+                  <PaginationBar
+                    page={deletedPage}
+                    pageSize={deletedPageSize}
+                    totalCount={deletedTotalCount}
+                    totalPages={deletedTotalPages}
+                    onPage={setDeletedPage}
+                    onPageSize={(s) => { setDeletedPageSize(s); setDeletedPage(1); }}
+                  />
+                </div>
               </>
             )}
           </CardContent>
@@ -199,12 +241,20 @@ export function TeamsPage() {
       ) : (
         <>
           <Card>
-            <CardHeader className="pb-2"><CardTitle>All Teams ({filtered.length})</CardTitle></CardHeader>
+            <CardHeader className="pb-2"><CardTitle>All Teams ({totalCount})</CardTitle></CardHeader>
             <CardContent>
               {error ? (
                 <p className="text-sm text-destructive">{(error as Error).message}</p>
               ) : (
                 <>
+                  <PaginationBar
+                    page={page}
+                    pageSize={pageSize}
+                    totalCount={totalCount}
+                    totalPages={totalPages}
+                    onPage={setPage}
+                    onPageSize={(s) => { setPageSize(s); setPage(1); }}
+                  />
                   <div className="hidden md:block">
                     <Table>
                       <TableHeader>
@@ -215,13 +265,14 @@ export function TeamsPage() {
                           <TableHead>Status</TableHead>
                           <TableHead className="text-right">Spend</TableHead>
                           <TableHead className="text-right">Budget</TableHead>
+                          <TableHead>Created</TableHead>
                           <TableHead className="text-right">Actions</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {isLoading
                           ? Array.from({ length: 3 }).map((_, i) => (
-                              <TableRow key={i}>{Array.from({ length: 7 }).map((_, j) => <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
+                              <TableRow key={i}>{Array.from({ length: 8 }).map((_, j) => <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
                             ))
                           : filtered.map((t) => (
                               <TableRow key={t.team_id}>
@@ -231,6 +282,7 @@ export function TeamsPage() {
                                 <TableCell>{t.blocked ? <Badge variant="destructive">blocked</Badge> : <Badge variant="default">active</Badge>}</TableCell>
                                 <TableCell className="text-right text-sm">${t.spend.toFixed(4)}</TableCell>
                                 <TableCell className="text-right text-sm">{t.max_budget != null ? `$${t.max_budget.toFixed(2)}` : "∞"}</TableCell>
+                                <TableCell className="text-xs text-muted-foreground">{t.created_at ? formatDate(t.created_at) : "—"}</TableCell>
                                 <TableCell className="text-right">
                                   <div className="flex justify-end gap-1">
                                     <Button variant="ghost" size="icon" onClick={() => openEdit(t)}><Pencil className="h-4 w-4" /></Button>
@@ -263,6 +315,7 @@ export function TeamsPage() {
                                 <span>Spent ${t.spend.toFixed(4)}</span>
                                 <span>{t.max_budget != null ? `Budget $${t.max_budget.toFixed(2)}` : "No budget"}</span>
                               </div>
+                              <div className="text-xs text-muted-foreground">Created: {t.created_at ? formatDate(t.created_at) : "—"}</div>
                               <div className="flex justify-end gap-1 pt-1">
                                 <Button variant="ghost" size="sm" onClick={() => openEdit(t)}><Pencil className="h-3.5 w-3.5 mr-1" /> Edit</Button>
                                 <Button variant="ghost" size="sm" onClick={() => openDelete(t)}><Trash2 className="h-3.5 w-3.5 mr-1 text-destructive" /> Delete</Button>
@@ -274,6 +327,18 @@ export function TeamsPage() {
                       <div className="text-center text-muted-foreground py-8">{search ? "No teams match" : "No teams yet"}</div>
                     )}
                   </div>
+                  {filtered.length > 0 ? (
+                    <div className="mt-3">
+                      <PaginationBar
+                        page={page}
+                        pageSize={pageSize}
+                        totalCount={totalCount}
+                        totalPages={totalPages}
+                        onPage={setPage}
+                        onPageSize={(s) => { setPageSize(s); setPage(1); }}
+                      />
+                    </div>
+                  ) : null}
                 </>
               )}
             </CardContent>

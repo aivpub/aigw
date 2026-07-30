@@ -15,6 +15,7 @@ import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PaginationBar } from "@/components/ui/pagination";
 import {
   Dialog,
   DialogContent,
@@ -66,7 +67,21 @@ interface DeletedKeyItem {
 }
 
 interface KeyListResponse {
-  keys: KeyItem[];
+  keys?: KeyItem[];
+  data?: KeyItem[];
+  total_count?: number;
+  page?: number;
+  page_size?: number;
+  total_pages?: number;
+}
+
+interface DeletedKeyListResponse {
+  keys?: DeletedKeyItem[];
+  data?: DeletedKeyItem[];
+  total_count?: number;
+  page?: number;
+  page_size?: number;
+  total_pages?: number;
 }
 
 function maskToken(token: string): string {
@@ -84,6 +99,10 @@ export function KeysPage() {
   const [selectedKey, setSelectedKey] = useState<KeyItem | null>(null);
   const [generatedToken, setGeneratedToken] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"active" | "deleted">("active");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(30);
+  const [deletedPage, setDeletedPage] = useState(1);
+  const [deletedPageSize, setDeletedPageSize] = useState(30);
 
   // Form state
   const [formAlias, setFormAlias] = useState("");
@@ -94,20 +113,27 @@ export function KeysPage() {
   const [formExpires, setFormExpires] = useState("");
 
   const { data, isLoading, error } = useQuery<KeyListResponse>({
-    queryKey: ["virtual-keys"],
-    queryFn: () => apiGet("/key/list"),
+    queryKey: ["virtual-keys", page, pageSize],
+    queryFn: () =>
+      apiGet(`/key/list?page=${page}&page_size=${pageSize}`),
   });
 
-  const { data: deletedKeys = [], isLoading: deletedLoading } = useQuery<DeletedKeyItem[]>({
-    queryKey: ["virtual-keys-deleted"],
-    queryFn: async () => {
-      const resp = await apiGet<{ keys: DeletedKeyItem[] }>("/key/deleted");
-      return resp.keys ?? [];
-    },
+  const {
+    data: deletedData,
+    isLoading: deletedLoading,
+  } = useQuery<DeletedKeyListResponse>({
+    queryKey: ["virtual-keys-deleted", deletedPage, deletedPageSize],
+    queryFn: () => apiGet(`/key/deleted?page=${deletedPage}&page_size=${deletedPageSize}`),
     enabled: viewMode === "deleted",
   });
 
-  const keys = data?.keys ?? [];
+  const keys = data?.keys ?? data?.data ?? [];
+  const totalCount = data?.total_count ?? keys.length;
+  const totalPages = data?.total_pages ?? (keys.length === 0 ? 1 : Math.ceil(totalCount / pageSize));
+
+  const deletedKeys = deletedData?.keys ?? deletedData?.data ?? [];
+  const deletedTotalCount = deletedData?.total_count ?? deletedKeys.length;
+  const deletedTotalPages = deletedData?.total_pages ?? (deletedKeys.length === 0 ? 1 : Math.ceil(deletedTotalCount / deletedPageSize));
 
   const filteredKeys = useMemo(() => {
     if (!search.trim()) return keys;
@@ -316,7 +342,7 @@ export function KeysPage() {
       {viewMode === "deleted" && (
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle>Deleted Keys ({deletedKeys.length})</CardTitle>
+            <CardTitle>Deleted Keys ({deletedTotalCount})</CardTitle>
           </CardHeader>
           <CardContent>
             {deletedLoading ? (
@@ -327,6 +353,14 @@ export function KeysPage() {
               <div className="text-center text-muted-foreground py-8">No deleted records</div>
             ) : (
               <>
+                <PaginationBar
+                  page={deletedPage}
+                  pageSize={deletedPageSize}
+                  totalCount={deletedTotalCount}
+                  totalPages={deletedTotalPages}
+                  onPage={setDeletedPage}
+                  onPageSize={(s) => { setDeletedPageSize(s); setDeletedPage(1); }}
+                />
                 <div className="hidden md:block">
                   <Table>
                     <TableHeader>
@@ -367,6 +401,16 @@ export function KeysPage() {
                     </Card>
                   ))}
                 </div>
+                <div className="mt-3">
+                  <PaginationBar
+                    page={deletedPage}
+                    pageSize={deletedPageSize}
+                    totalCount={deletedTotalCount}
+                    totalPages={deletedTotalPages}
+                    onPage={setDeletedPage}
+                    onPageSize={(s) => { setDeletedPageSize(s); setDeletedPage(1); }}
+                  />
+                </div>
               </>
             )}
           </CardContent>
@@ -378,7 +422,7 @@ export function KeysPage() {
         <>
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle>All Keys ({filteredKeys.length})</CardTitle>
+              <CardTitle>All Keys ({totalCount})</CardTitle>
             </CardHeader>
             <CardContent>
           {error ? (
@@ -387,6 +431,14 @@ export function KeysPage() {
             </p>
           ) : (
             <>
+              <PaginationBar
+                page={page}
+                pageSize={pageSize}
+                totalCount={totalCount}
+                totalPages={totalPages}
+                onPage={setPage}
+                onPageSize={(s) => { setPageSize(s); setPage(1); }}
+              />
               {/* Desktop table */}
               <div className="hidden md:block">
                 <Table>
@@ -399,6 +451,7 @@ export function KeysPage() {
                       <TableHead className="text-right">Spend</TableHead>
                       <TableHead className="text-right">Budget</TableHead>
                       <TableHead>Expires</TableHead>
+                      <TableHead>Created</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
@@ -407,7 +460,7 @@ export function KeysPage() {
                     {isLoading
                       ? Array.from({ length: 3 }).map((_, i) => (
                           <TableRow key={i}>
-                            {Array.from({ length: 9 }).map((_, j) => (
+                            {Array.from({ length: 10 }).map((_, j) => (
                               <TableCell key={j}>
                                 <Skeleton className="h-4 w-full" />
                               </TableCell>
@@ -465,6 +518,9 @@ export function KeysPage() {
                               {key.expires
                                 ? new Date(key.expires).toLocaleDateString()
                                 : "∞"}
+                            </TableCell>
+                            <TableCell className="text-xs text-muted-foreground">
+                              {key.created_at ? formatDate(key.created_at) : "—"}
                             </TableCell>
                             <TableCell>
                               <div className="flex items-center gap-2">
@@ -586,6 +642,9 @@ export function KeysPage() {
                               ? new Date(key.expires).toLocaleDateString()
                               : "∞"}
                           </div>
+                          <div className="text-xs text-muted-foreground">
+                            Created: {key.created_at ? formatDate(key.created_at) : "—"}
+                          </div>
                           <div className="flex justify-end gap-1 pt-1">
                             <Button
                               variant="ghost"
@@ -613,6 +672,18 @@ export function KeysPage() {
                   </div>
                 )}
               </div>
+              {filteredKeys.length > 0 ? (
+                <div className="mt-3">
+                  <PaginationBar
+                    page={page}
+                    pageSize={pageSize}
+                    totalCount={totalCount}
+                    totalPages={totalPages}
+                    onPage={setPage}
+                    onPageSize={(s) => { setPageSize(s); setPage(1); }}
+                  />
+                </div>
+              ) : null}
             </>
           )}
         </CardContent>

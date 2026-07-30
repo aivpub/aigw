@@ -18,6 +18,7 @@ import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { toast } from "sonner";
 import { Plus, Search, Pencil, Trash2, Users, ChevronLeft, ChevronRight, Copy } from "lucide-react";
+import { PaginationBar } from "@/components/ui/pagination";
 import {
   Select,
   SelectContent,
@@ -38,6 +39,7 @@ interface UserItem {
   organization_id: string | null;
   team_id: string | null;
   virtual_keys_count?: number;
+  created_at: string | null;
 }
 
 interface UserListResponse {
@@ -62,7 +64,7 @@ export function UsersPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize] = useState(30);
   const [createOpen, setCreateOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -262,6 +264,14 @@ export function UsersPage() {
             <>
               {/* Desktop table */}
               <div className="hidden md:block">
+                <PaginationBar
+                  page={page}
+                  pageSize={pageSize}
+                  totalCount={totalCount}
+                  totalPages={totalPages}
+                  onPage={setPage}
+                  onPageSize={(s) => { setPageSize(s); setPage(1); }}
+                />
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -272,6 +282,7 @@ export function UsersPage() {
                       <TableHead className="text-right">Spend</TableHead>
                       <TableHead className="text-right">Budget</TableHead>
                       <TableHead className="text-right">Keys</TableHead>
+                      <TableHead>Created</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -279,7 +290,7 @@ export function UsersPage() {
                     {isLoading
                       ? Array.from({ length: 3 }).map((_, i) => (
                           <TableRow key={i}>
-                            {Array.from({ length: 8 }).map((_, j) => (
+                            {Array.from({ length: 9 }).map((_, j) => (
                               <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
                             ))}
                           </TableRow>
@@ -318,6 +329,7 @@ export function UsersPage() {
                                 <span className="text-muted-foreground">0</span>
                               )}
                             </TableCell>
+                            <TableCell className="text-xs text-muted-foreground">{u.created_at ? formatDate(u.created_at) : "—"}</TableCell>
                             <TableCell className="text-right">
                               <div className="flex justify-end gap-1">
                                 <Button variant="ghost" size="icon" onClick={() => openEdit(u)}>
@@ -367,6 +379,7 @@ export function UsersPage() {
                             <span>Spent ${u.spend.toFixed(4)}</span>
                             <span>{u.max_budget != null ? `Budget $${u.max_budget.toFixed(2)}` : "No budget"}</span>
                           </div>
+                          <div className="text-xs text-muted-foreground">Created: {u.created_at ? formatDate(u.created_at) : "—"}</div>
                           <div className="flex justify-end gap-1 pt-1">
                             <Button variant="ghost" size="sm" onClick={() => openEdit(u)}>
                               <Pencil className="h-3.5 w-3.5 mr-1" /> Edit
@@ -386,33 +399,15 @@ export function UsersPage() {
               </div>
               {/* Pagination */}
               {totalCount > 0 && (
-                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 mt-4 pt-3 border-t">
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs text-muted-foreground">
-                      Showing {Math.min((page - 1) * pageSize + 1, totalCount)}–{Math.min(page * pageSize, totalCount)} of {totalCount}
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      Page {page} of {Math.max(totalPages, 1)}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setPage(1); }}>
-                      <SelectTrigger className="h-7 w-[70px] text-xs">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="10">10</SelectItem>
-                        <SelectItem value="25">25</SelectItem>
-                        <SelectItem value="50">50</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)} className="h-7 px-2">
-                      <ChevronLeft className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button variant="outline" size="sm" disabled={page >= totalPages || totalPages === 0} onClick={() => setPage(page + 1)} className="h-7 px-2">
-                      <ChevronRight className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
+                <div className="mt-3">
+                  <PaginationBar
+                    page={page}
+                    pageSize={pageSize}
+                    totalCount={totalCount}
+                    totalPages={totalPages}
+                    onPage={setPage}
+                    onPageSize={(s) => { setPageSize(s); setPage(1); }}
+                  />
                 </div>
               )}
             </>

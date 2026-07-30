@@ -18,6 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { PaginationBar } from "@/components/ui/pagination";
 import {
   Search,
   ChevronDown,
@@ -28,7 +29,7 @@ import {
   Trash2,
 } from "lucide-react";
 import type { ReactNode } from "react";
-import type { ModelItem, ModelListResponse } from "./types";
+import type { ModelItem, ModelListResponse, DeletedModelItem, DeletedModelListResponse } from "./types";
 import { ModelDialog } from "./ModelDialog";
 import { DeleteConfirm } from "./DeleteConfirm";
 import { CredentialsTab } from "./CredentialsTab";
@@ -115,16 +116,22 @@ export function ModelsPage() {
   const [deletingModel, setDeletingModel] = useState<ModelItem | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [viewMode, setViewMode] = useState<"active" | "deleted">("active");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(30);
+  const [deletedPage, setDeletedPage] = useState(1);
+  const [deletedPageSize, setDeletedPageSize] = useState(30);
 
   // Error toast
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const { data, isLoading, error } = useQuery<ModelListResponse>({
-    queryKey: ["proxy-models"],
-    queryFn: () => apiGet("/model/list"),
+    queryKey: ["proxy-models", page, pageSize],
+    queryFn: () => apiGet(`/model/list?page=${page}&page_size=${pageSize}`),
   });
 
   const models = data?.data ?? [];
+  const totalCount = data?.total_count ?? models.length;
+  const totalPages = data?.total_pages ?? (models.length === 0 ? 1 : Math.ceil(totalCount / pageSize));
 
   const filteredModels = useMemo(() => {
     if (!search.trim()) return models;
@@ -137,19 +144,15 @@ export function ModelsPage() {
     );
   }, [models, search]);
 
-  interface DeletedModelItem {
-    id: number;
-    model_id: string;
-    model_name: string;
-    litellm_params: Record<string, unknown>;
-    deleted_at: string;
-  }
-
-  const { data: deletedModels = [], isLoading: deletedLoading } = useQuery<DeletedModelItem[]>({
-    queryKey: ["deleted-models"],
-    queryFn: () => apiGet("/model/deleted"),
+  const { data: deletedData, isLoading: deletedLoading } = useQuery<DeletedModelListResponse>({
+    queryKey: ["deleted-models", deletedPage, deletedPageSize],
+    queryFn: () => apiGet(`/model/deleted?page=${deletedPage}&page_size=${deletedPageSize}`),
     enabled: viewMode === "deleted",
   });
+
+  const deletedModels = deletedData?.data ?? [];
+  const deletedTotalCount = deletedData?.total_count ?? deletedModels.length;
+  const deletedTotalPages = deletedData?.total_pages ?? (deletedModels.length === 0 ? 1 : Math.ceil(deletedTotalCount / deletedPageSize));
 
   function formatDate(d: string) {
     try { return format(new Date(d), "yyyy-MM-dd HH:mm"); } catch { return d; }
@@ -280,7 +283,7 @@ export function ModelsPage() {
       {/* Deleted view */}
       {viewMode === "deleted" && (
         <Card>
-          <CardHeader className="pb-2"><CardTitle>Deleted Models ({deletedModels.length})</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><CardTitle>Deleted Models ({deletedTotalCount})</CardTitle></CardHeader>
           <CardContent>
             {deletedLoading ? (
               Array.from({ length: 3 }).map((_, i) => <div key={i} className="py-2"><Skeleton className="h-4 w-full" /></div>)
@@ -288,6 +291,14 @@ export function ModelsPage() {
               <div className="text-center text-muted-foreground py-8">No deleted records</div>
             ) : (
               <>
+                <PaginationBar
+                  page={deletedPage}
+                  pageSize={deletedPageSize}
+                  totalCount={deletedTotalCount}
+                  totalPages={deletedTotalPages}
+                  onPage={setDeletedPage}
+                  onPageSize={(s) => { setDeletedPageSize(s); setDeletedPage(1); }}
+                />
                 <div className="hidden md:block">
                   <Table>
                     <TableHeader><TableRow>
@@ -327,6 +338,16 @@ export function ModelsPage() {
                     );
                   })}
                 </div>
+                <div className="mt-3">
+                  <PaginationBar
+                    page={deletedPage}
+                    pageSize={deletedPageSize}
+                    totalCount={deletedTotalCount}
+                    totalPages={deletedTotalPages}
+                    onPage={setDeletedPage}
+                    onPageSize={(s) => { setDeletedPageSize(s); setDeletedPage(1); }}
+                  />
+                </div>
               </>
             )}
           </CardContent>
@@ -338,10 +359,18 @@ export function ModelsPage() {
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center gap-2">
             <Box className="h-4 w-4" />
-            All Models ({filteredModels.length})
+            All Models ({totalCount})
           </CardTitle>
         </CardHeader>
         <CardContent>
+          <PaginationBar
+            page={page}
+            pageSize={pageSize}
+            totalCount={totalCount}
+            totalPages={totalPages}
+            onPage={setPage}
+            onPageSize={(s) => { setPageSize(s); setPage(1); }}
+          />
           {/* Desktop table */}
           <div className="hidden md:block">
             <Table>
@@ -694,6 +723,18 @@ export function ModelsPage() {
               </div>
             )}
           </div>
+          {filteredModels.length > 0 ? (
+            <div className="mt-3">
+              <PaginationBar
+                page={page}
+                pageSize={pageSize}
+                totalCount={totalCount}
+                totalPages={totalPages}
+                onPage={setPage}
+                onPageSize={(s) => { setPageSize(s); setPage(1); }}
+              />
+            </div>
+          ) : null}
         </CardContent>
       </Card>
       )}

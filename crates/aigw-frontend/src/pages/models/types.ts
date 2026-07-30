@@ -12,4 +12,24 @@ export interface ModelItem {
 export interface ModelListResponse {
   object: string;
   data: ModelItem[];
+  total_count?: number;
+  page?: number;
+  page_size?: number;
+  total_pages?: number;
+}
+
+export interface DeletedModelListResponse {
+  data: DeletedModelItem[];
+  total_count?: number;
+  page?: number;
+  page_size?: number;
+  total_pages?: number;
+}
+
+export interface DeletedModelItem {
+  id: number;
+  model_id: string;
+  model_name: string;
+  litellm_params: Record<string, unknown>;
+  deleted_at: string;
 }

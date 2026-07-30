@@ -22,6 +22,7 @@ export default defineConfig({
       "/user": "http://localhost:4000",
       "/health": "http://localhost:4000",
       "/model": "http://localhost:4000",
+      "/credential": "http://localhost:4000",
     },
   },
   base: "/dash/",

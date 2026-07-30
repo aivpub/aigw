@@ -8,7 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/dialog";
 import { Plus, Pencil, Trash2, Code } from "lucide-react";
 import { toast } from "sonner";
+import { PaginationBar } from "@/components/ui/pagination";
 
 interface CredentialItem {
   credential_id: string;
@@ -33,13 +34,17 @@ function maskApiKey(raw: string): string {
 
 export function CredentialsTab() {
   const queryClient = useQueryClient();
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(30);
 
   const { data, isLoading } = useQuery({
-    queryKey: ["credentials-list"],
-    queryFn: () => apiGet("/credential/list"),
+    queryKey: ["credentials-list", page, pageSize],
+    queryFn: () => apiGet(`/credential/list?page=${page}&page_size=${pageSize}`),
   });
 
   const credentials: CredentialItem[] = (data as { data?: CredentialItem[] })?.data ?? [];
+  const totalCount = (data as { total_count?: number })?.total_count ?? credentials.length;
+  const totalPages = (data as { total_pages?: number })?.total_pages ?? (credentials.length === 0 ? 1 : Math.ceil(totalCount / pageSize));
 
   // Dialog
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -166,7 +171,16 @@ export function CredentialsTab() {
       </div>
 
       <Card>
-        <CardContent className="p-0">
+        <CardHeader className="pb-2"><CardTitle>All Credentials ({totalCount})</CardTitle></CardHeader>
+        <CardContent>
+      <PaginationBar
+        page={page}
+        pageSize={pageSize}
+        totalCount={totalCount}
+        totalPages={totalPages}
+        onPage={setPage}
+        onPageSize={(s) => { setPageSize(s); setPage(1); }}
+      />
       <Table>
         <TableHeader>
           <TableRow>
@@ -196,6 +210,18 @@ export function CredentialsTab() {
           ))}
         </TableBody>
       </Table>
+      {credentials.length > 0 ? (
+        <div className="mt-3">
+          <PaginationBar
+            page={page}
+            pageSize={pageSize}
+            totalCount={totalCount}
+            totalPages={totalPages}
+            onPage={setPage}
+            onPageSize={(s) => { setPageSize(s); setPage(1); }}
+          />
+        </div>
+      ) : null}
         </CardContent>
       </Card>
 

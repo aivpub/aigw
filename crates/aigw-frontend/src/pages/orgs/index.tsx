@@ -8,6 +8,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PaginationBar } from "@/components/ui/pagination";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter,
   DialogHeader, DialogTitle,
@@ -23,6 +24,7 @@ interface OrgItem {
   organization_alias: string;
   budget_id: string | null;
   spend: number;
+  created_at: string | null;
 }
 
 interface DeletedOrgItem {
@@ -35,6 +37,18 @@ interface DeletedOrgItem {
 
 interface OrgListResponse {
   data: OrgItem[];
+  total_count?: number;
+  page?: number;
+  page_size?: number;
+  total_pages?: number;
+}
+
+interface DeletedOrgListResponse {
+  data: DeletedOrgItem[];
+  total_count?: number;
+  page?: number;
+  page_size?: number;
+  total_pages?: number;
 }
 
 export function OrgsPage() {
@@ -46,19 +60,29 @@ export function OrgsPage() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [selected, setSelected] = useState<OrgItem | null>(null);
   const [formAlias, setFormAlias] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(30);
+  const [deletedPage, setDeletedPage] = useState(1);
+  const [deletedPageSize, setDeletedPageSize] = useState(30);
 
   const { data, isLoading, error } = useQuery<OrgListResponse>({
-    queryKey: ["orgs"],
-    queryFn: () => apiGet("/org/list"),
+    queryKey: ["orgs", page, pageSize],
+    queryFn: () => apiGet(`/org/list?page=${page}&page_size=${pageSize}`),
   });
 
-  const { data: deletedOrgs = [], isLoading: deletedLoading } = useQuery<DeletedOrgItem[]>({
-    queryKey: ["deleted-orgs"],
-    queryFn: () => apiGet("/org/deleted"),
+  const { data: deletedData, isLoading: deletedLoading } = useQuery<DeletedOrgListResponse>({
+    queryKey: ["deleted-orgs", deletedPage, deletedPageSize],
+    queryFn: () => apiGet(`/org/deleted?page=${deletedPage}&page_size=${deletedPageSize}`),
     enabled: viewMode === "deleted",
   });
 
   const orgs = data?.data ?? [];
+  const totalCount = data?.total_count ?? orgs.length;
+  const totalPages = data?.total_pages ?? (orgs.length === 0 ? 1 : Math.ceil(totalCount / pageSize));
+
+  const deletedOrgs = deletedData?.data ?? [];
+  const deletedTotalCount = deletedData?.total_count ?? deletedOrgs.length;
+  const deletedTotalPages = deletedData?.total_pages ?? (deletedOrgs.length === 0 ? 1 : Math.ceil(deletedTotalCount / deletedPageSize));
   const canEdit = viewMode === "active";
 
   const filtered = useMemo(() => {
@@ -139,7 +163,7 @@ export function OrgsPage() {
 
       {viewMode === "deleted" && (
         <Card>
-          <CardHeader className="pb-2"><CardTitle>Deleted Organizations ({deletedOrgs.length})</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><CardTitle>Deleted Organizations ({deletedTotalCount})</CardTitle></CardHeader>
           <CardContent>
             {deletedLoading ? (
               Array.from({ length: 3 }).map((_, i) => <div key={i} className="py-2"><Skeleton className="h-4 w-full" /></div>)
@@ -147,6 +171,14 @@ export function OrgsPage() {
               <div className="text-center text-muted-foreground py-8">No deleted records</div>
             ) : (
               <>
+                <PaginationBar
+                  page={deletedPage}
+                  pageSize={deletedPageSize}
+                  totalCount={deletedTotalCount}
+                  totalPages={deletedTotalPages}
+                  onPage={setDeletedPage}
+                  onPageSize={(s) => { setDeletedPageSize(s); setDeletedPage(1); }}
+                />
                 <div className="hidden md:block">
                   <Table>
                     <TableHeader><TableRow>
@@ -179,6 +211,16 @@ export function OrgsPage() {
                     </CardContent></Card>
                   ))}
                 </div>
+                <div className="mt-3">
+                  <PaginationBar
+                    page={deletedPage}
+                    pageSize={deletedPageSize}
+                    totalCount={deletedTotalCount}
+                    totalPages={deletedTotalPages}
+                    onPage={setDeletedPage}
+                    onPageSize={(s) => { setDeletedPageSize(s); setDeletedPage(1); }}
+                  />
+                </div>
               </>
             )}
           </CardContent>
@@ -188,12 +230,20 @@ export function OrgsPage() {
       {viewMode === "active" && (<>
 
       <Card>
-        <CardHeader className="pb-2"><CardTitle>All Organizations ({filtered.length})</CardTitle></CardHeader>
+        <CardHeader className="pb-2"><CardTitle>All Organizations ({totalCount})</CardTitle></CardHeader>
         <CardContent>
           {error ? (
             <p className="text-sm text-destructive">{(error as Error).message}</p>
           ) : (
             <>
+              <PaginationBar
+                page={page}
+                pageSize={pageSize}
+                totalCount={totalCount}
+                totalPages={totalPages}
+                onPage={setPage}
+                onPageSize={(s) => { setPageSize(s); setPage(1); }}
+              />
               <div className="hidden md:block">
                 <Table>
                   <TableHeader>
@@ -201,19 +251,21 @@ export function OrgsPage() {
                       <TableHead>Name</TableHead>
                       <TableHead>Budget ID</TableHead>
                       <TableHead className="text-right">Spend</TableHead>
+                      <TableHead>Created</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {isLoading
                       ? Array.from({ length: 3 }).map((_, i) => (
-                          <TableRow key={i}>{Array.from({ length: 4 }).map((_, j) => <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
+                          <TableRow key={i}>{Array.from({ length: 5 }).map((_, j) => <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
                         ))
                       : filtered.map((o) => (
                           <TableRow key={o.organization_id}>
                             <TableCell className="font-medium">{o.organization_alias}</TableCell>
                             <TableCell className="text-sm font-mono">{o.budget_id ?? "—"}</TableCell>
                             <TableCell className="text-right text-sm">${o.spend.toFixed(4)}</TableCell>
+                            <TableCell className="text-xs text-muted-foreground">{o.created_at ? formatDate(o.created_at) : "—"}</TableCell>
                             <TableCell className="text-right">
                               <div className="flex justify-end gap-1">
                                 <Button variant="ghost" size="icon" onClick={() => openEdit(o)}><Pencil className="h-4 w-4" /></Button>
@@ -242,6 +294,7 @@ export function OrgsPage() {
                             <span className="text-xs text-muted-foreground">${o.spend.toFixed(4)}</span>
                           </div>
                           <div className="text-xs text-muted-foreground">Budget: {o.budget_id ?? "—"}</div>
+                          <div className="text-xs text-muted-foreground">Created: {o.created_at ? formatDate(o.created_at) : "—"}</div>
                           <div className="flex justify-end gap-1 pt-1">
                             <Button variant="ghost" size="sm" onClick={() => openEdit(o)}><Pencil className="h-3.5 w-3.5 mr-1" /> Edit</Button>
                             <Button variant="ghost" size="sm" onClick={() => openDelete(o)}><Trash2 className="h-3.5 w-3.5 mr-1 text-destructive" /> Delete</Button>
@@ -253,6 +306,18 @@ export function OrgsPage() {
                   <div className="text-center text-muted-foreground py-8">{search ? "No orgs match" : "No orgs yet"}</div>
                 )}
               </div>
+              {filtered.length > 0 ? (
+                <div className="mt-3">
+                  <PaginationBar
+                    page={page}
+                    pageSize={pageSize}
+                    totalCount={totalCount}
+                    totalPages={totalPages}
+                    onPage={setPage}
+                    onPageSize={(s) => { setPageSize(s); setPage(1); }}
+                  />
+                </div>
+              ) : null}
             </>
           )}
         </CardContent>
