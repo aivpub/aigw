@@ -588,7 +588,7 @@ async fn test_writer_start_time_is_timestamp_millisecond_and_cache_hit_boolean()
     // (ArrowReaderMetadata::load requires a ChunkReader: File or Bytes).
     let dir = std::env::temp_dir();
     let path = dir.join(format!("aigw_stage82_{}.parquet", std::process::id()));
-    aigw_core::body_archive::writer::write_parquet_to_file(&path, &rows, 5000, 10)
+    aigw_core::body_archive::writer::write_parquet_to_file(&path, &rows, 5000, 10, "zstd", 6)
         .expect("write parquet");
 
     use parquet::arrow::arrow_reader::ArrowReaderMetadata;

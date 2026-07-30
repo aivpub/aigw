@@ -136,7 +136,7 @@ impl ObjectStore for CountingStore {
 async fn seed_inmemory(rows: &[BodyRow]) -> (Arc<object_store::memory::InMemory>, ObjPath) {
     let store = Arc::new(object_store::memory::InMemory::new());
     let path = ObjPath::from("year=2026/month=07/day=25/hour=14/data.parquet");
-    let data = write_parquet_to_buffer(rows, 5000, 10).expect("write parquet");
+    let data = write_parquet_to_buffer(rows, 5000, 10, "zstd", 6).expect("write parquet");
     store
         .put(&path, data.into())
         .await
@@ -219,7 +219,7 @@ async fn test_query_parquet_with_cache_locates_target_row_group() {
     // groups. The target lives in the 2nd group. We assert the result is found
     // and correct (proving the locator scanned row groups, not just group 0).
     let rows = vec![make_row("rg1-req", 14), make_row("rg2-req", 14)];
-    let data = write_parquet_to_buffer(&rows, 1, 10).expect("write parquet with rg_size=1");
+    let data = write_parquet_to_buffer(&rows, 1, 10, "zstd", 6).expect("write parquet with rg_size=1");
     let store = Arc::new(object_store::memory::InMemory::new());
     let path = ObjPath::from("year=2026/month=07/day=25/hour=14/data.parquet");
     store.put(&path, data.into()).await.expect("put");
@@ -400,7 +400,7 @@ async fn test_filesystem_archive_round_trip() {
     let archiver = BodyArchiver::new(cfg);
 
     let rows = vec![make_row("rt-001", 14), make_row("rt-002", 14)];
-    let data = write_parquet_to_buffer(&rows, 5000, 10).expect("write");
+    let data = write_parquet_to_buffer(&rows, 5000, 10, "zstd", 6).expect("write");
     let path = "year=2026/month=07/day=25/hour=14/data.parquet";
 
     let store = build_object_store_for_backend(&StorageBackend::FileSystem { path: dir.clone() })
@@ -465,7 +465,7 @@ async fn test_filesystem_archive_partition_path_layout() {
 #[tokio::test]
 async fn test_decode_body_from_parquet_still_works() {
     let rows = vec![make_row("sanity-001", 14)];
-    let data = write_parquet_to_buffer(&rows, 5000, 10).expect("write");
+    let data = write_parquet_to_buffer(&rows, 5000, 10, "zstd", 6).expect("write");
     let body = aigw_core::body_archive::query::decode_body_from_parquet(&data, "sanity-001")
         .expect("decode")
         .expect("found");

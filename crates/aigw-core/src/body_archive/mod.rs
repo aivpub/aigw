@@ -192,6 +192,8 @@ impl AsyncTask for BodyArchiver {
             &rows,
             self.config.archive.row_group_size,
             self.config.archive.bloom_min_rows,
+            &self.config.archive.compression,
+            self.config.archive.compression_level,
         )
         .await
         .map_err(|e| DbError::Other(format!("parquet write: {}", e)))?;
@@ -404,6 +406,8 @@ impl BodyArchiver {
             rows,
             self.config.archive.row_group_size,
             self.config.archive.bloom_min_rows,
+            &self.config.archive.compression,
+            self.config.archive.compression_level,
         )
         .await
         .map_err(|e| DbError::Other(format!("parquet write: {}", e)))?;

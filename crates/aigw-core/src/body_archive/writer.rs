@@ -25,12 +25,14 @@ pub async fn write_parquet_to_store(
     rows: &[BodyRow],
     row_group_size: usize,
     bloom_min_rows: usize,
+    compression: &str,
+    compression_level: u32,
 ) -> Result<usize, String> {
     if rows.is_empty() {
         return Ok(0);
     }
 
-    let data = write_parquet_to_buffer(rows, row_group_size, bloom_min_rows)?;
+    let data = write_parquet_to_buffer(rows, row_group_size, bloom_min_rows, compression, compression_level)?;
     let bytes = data.len();
 
     let path_obj = object_store::path::Path::from(path);
@@ -48,9 +50,11 @@ pub fn write_parquet_to_file(
     rows: &[BodyRow],
     row_group_size: usize,
     bloom_min_rows: usize,
+    compression: &str,
+    compression_level: u32,
 ) -> Result<usize, String> {
     use std::io::Write;
-    let data = write_parquet_to_buffer(rows, row_group_size, bloom_min_rows)?;
+    let data = write_parquet_to_buffer(rows, row_group_size, bloom_min_rows, compression, compression_level)?;
 
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("mkdir: {}", e))?;
@@ -61,7 +65,13 @@ pub fn write_parquet_to_file(
 }
 
 /// Write Parquet to an in-memory buffer. Returns the bytes.
-pub fn write_parquet_to_buffer(rows: &[BodyRow], row_group_size: usize, bloom_min_rows: usize) -> Result<Vec<u8>, String> {
+pub fn write_parquet_to_buffer(
+    rows: &[BodyRow],
+    row_group_size: usize,
+    bloom_min_rows: usize,
+    compression: &str,
+    compression_level: u32,
+) -> Result<Vec<u8>, String> {
     if rows.is_empty() {
         return Ok(Vec::new());
     }
@@ -145,10 +155,18 @@ pub fn write_parquet_to_buffer(rows: &[BodyRow], row_group_size: usize, bloom_mi
     )
     .map_err(|e| format!("RecordBatch: {}", e))?;
 
+    let comp = match compression {
+        "snappy" => Compression::SNAPPY,
+        "gzip" => Compression::GZIP(parquet::basic::GzipLevel::try_new(compression_level)
+            .map_err(|e| format!("GzipLevel: {}", e))?),
+        "lz4" => Compression::LZ4,
+        "none" | "uncompressed" => Compression::UNCOMPRESSED,
+        // default to zstd
+        _ => Compression::ZSTD(ZstdLevel::try_new(compression_level as i32)
+            .map_err(|e| format!("ZstdLevel: {}", e))?),
+    };
     let mut props_builder = WriterProperties::builder()
-        .set_compression(Compression::ZSTD(
-            ZstdLevel::try_new(3).map_err(|e| format!("ZstdLevel: {}", e))?
-        ))
+        .set_compression(comp)
         .set_max_row_group_size(row_group_size)
         .set_dictionary_enabled(true);
 
@@ -201,7 +219,7 @@ mod tests {
 
     #[test]
     fn test_write_empty_parquet() {
-        let data = write_parquet_to_buffer(&[], 5000, 10).expect("write empty");
+        let data = write_parquet_to_buffer(&[], 5000, 10, "zstd", 6).expect("write empty");
         assert!(data.is_empty(), "empty input should produce no output");
     }
 
@@ -226,7 +244,7 @@ mod tests {
             model_group: Some("gpt-4-group".into()),
         }];
 
-        let data = write_parquet_to_buffer(&rows, 5000, 10).expect("write single row");
+        let data = write_parquet_to_buffer(&rows, 5000, 10, "zstd", 6).expect("write single row");
         assert!(!data.is_empty(), "should produce output");
         // Parquet magic bytes: "PAR1"
         assert_eq!(&data[0..4], b"PAR1", "should start with PAR1 magic bytes");
@@ -257,7 +275,7 @@ mod tests {
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("test.parquet");
 
-        let bytes = write_parquet_to_file(&path, &rows, 5000, 10).expect("write to file");
+        let bytes = write_parquet_to_file(&path, &rows, 5000, 10, "zstd", 6).expect("write to file");
         assert!(bytes > 0);
         assert!(path.exists());
 
@@ -287,7 +305,7 @@ mod tests {
             model_group: None,
         }).collect();
 
-        let data = write_parquet_to_buffer(&rows, 5000, 10).expect("write parquet");
+        let data = write_parquet_to_buffer(&rows, 5000, 10, "zstd", 6).expect("write parquet");
 
         // Parse metadata and verify no bloom filter is present
         use parquet::arrow::arrow_reader::ArrowReaderMetadata;

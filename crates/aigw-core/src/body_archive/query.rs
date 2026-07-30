@@ -302,7 +302,7 @@ mod tests {
             },
         ];
 
-        let data = write_parquet_to_buffer(&rows, 5000, 10).expect("write parquet");
+        let data = write_parquet_to_buffer(&rows, 5000, 10, "zstd", 6).expect("write parquet");
 
         let body = decode_body_from_parquet(&data, "req-001")
             .expect("decode")
@@ -338,7 +338,7 @@ mod tests {
             model_group: None,
         }];
 
-        let data = write_parquet_to_buffer(&rows, 5000, 10).expect("write");
+        let data = write_parquet_to_buffer(&rows, 5000, 10, "zstd", 6).expect("write");
         let result = decode_body_from_parquet(&data, "nonexistent").expect("decode");
         assert!(result.is_none(), "should return None for missing call_id");
     }
@@ -370,7 +370,7 @@ mod tests {
             model_group: None,
         }];
 
-        let data = write_parquet_to_buffer(&rows, 5000, 10).expect("write");
+        let data = write_parquet_to_buffer(&rows, 5000, 10, "zstd", 6).expect("write");
         let body = decode_body_from_parquet(&data, "req-null")
             .expect("decode")
             .expect("found");

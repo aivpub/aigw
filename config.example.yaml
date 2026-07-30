@@ -50,17 +50,48 @@ litellm_settings:
   request_timeout: 600
   set_verbose: false
 
-# Body Archive — cold storage for spend_logs body fields (messages/response/proxy_server_request)
+# Body Archive — cold storage for spend_logs body fields
+# (messages, response, proxy_server_request + metadata columns).
+# Archives old rows to Parquet on S3/local storage and optionally nulls
+# the body columns in the database after a retention period.
 # body_archive:
 #   auto_archive: false  # set to true to enable cron-based automatic archiving
+#
+#   # Storage backend — s3 (S3-compatible object storage) or fs (local filesystem).
 #   storage:
-#     type: s3  # or fs for local filesystem
-#     bucket: ""
-#     region: ""
-#     endpoint: ""
+#     type: s3  # or fs
+#     bucket: "aigw-logs"
+#     region: "ap-guangzhou"
+#     endpoint: ""           # optional, empty = AWS default
 #     access_key_id: "${AWS_ACCESS_KEY_ID}"
 #     secret_access_key: "${AWS_SECRET_ACCESS_KEY}"
+#     prefix: ""             # optional key prefix inside the bucket
+#     use_ssl: true
+#     compatibility_mode: false  # enable for COS/R2/MinIO
+#     url_style: "vhost"     # vhost or path
+#
+#   # Archive policy — controls when and how data is archived.
 #   archive:
-#     archive_after_hours: 1
-#     null_body_after_days: 7
-#     batch_size: 5000
+#     archive_after_hours: 1       # don't archive rows newer than N hours
+#     null_body_after_days: 7      # null body columns after N days (if null_body_after_archive)
+#     batch_size: 5000             # rows per archive batch
+#     row_group_size: 5000         # parquet row group size
+#     check_interval_secs: 300     # seconds between tick() discovery scans
+#     null_body_after_archive: true  # set to false to keep body in DB even after archive
+#     vacuum_after_null: true      # VACUUM after nulling (SQLite only)
+#     bloom_min_rows: 10           # skip Bloom filter when fewer than N rows (saves ~75% overhead)
+#     compression: zstd            # parquet compression: zstd | snappy | gzip | lz4 | none
+#     compression_level: 3         # zstd: 1-22, gzip: 1-9 (default: 3)
+#
+#   # Footer cache — avoids re-fetching parquet footers on repeated reads.
+#   # footer_cache:
+#   #   mode: mem          # none | mem | redis
+#   #   max_capacity: 10000
+#   #   ttl_secs: 3600
+#
+#   # Column chunk cache — local disk cache for hot column chunks.
+#   # col_chunk_cache:
+#   #   mode: fs           # none | fs
+#   #   dir: /tmp/aigw_parquet_cache
+#   #   max_size_mb: 1024
+#   #   max_entry_mb: 100
