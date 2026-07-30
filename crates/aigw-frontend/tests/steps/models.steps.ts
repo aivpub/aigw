@@ -126,3 +126,37 @@ When("I click the delete button on the first model row", async ({ page }) => {
 Then("a delete confirmation dialog appears", async ({ page }) => {
   await expect(page.locator('[role="dialog"]')).toContainText(/delete|confirm/i, { timeout: 5000 });
 });
+
+
+// ━━━━ Health tab steps (Stage 91) ━━━━
+// (Uses distinct phrasing to avoid clashing with the "I click the {string} tab"
+//  Given step defined in jobs.steps.ts.)
+
+When("I click the {string} tab on the Models page", async ({ page }, tabName: string) => {
+  await page.getByRole("tab", { name: new RegExp(tabName, "i") }).click();
+  await page.waitForTimeout(500);
+});
+
+Then("I should see the {string} button", async ({ page }, name: string) => {
+  await expect(page.getByRole("button", { name: new RegExp(name, "i") })).toBeVisible({ timeout: 5000 });
+});
+
+Then("I should see the health list with model rows", async ({ page }) => {
+  // The health table renders model names from /health/latest; the default
+  // mock returns healthy for the same sampleModels shown on the Models tab.
+  await expect(page.locator("main")).toContainText(/gpt-4|claude-sonnet/i, { timeout: 5000 });
+});
+
+Then("I should see a healthy status indicator for {string}", async ({ page }, modelName: string) => {
+  // HealthTab's healthy rows render the probe latency (e.g. "43ms") in both
+  // the desktop table and the mobile card; unhealthy rows render the error
+  // message instead. After clicking "Check All Models" the row briefly shows
+  // a "checking" spinner, so we wait for the latency to appear as the signal
+  // that the probe resolved to healthy. The mock returns response_time_ms=42.5
+  // which renders as "43ms". Assert within the Health tabpanel so the assertion
+  // is viewport-agnostic (works for both the table row and the mobile card).
+  const panel = page.locator('[role="tabpanel"]');
+  await panel.scrollIntoViewIfNeeded().catch(() => {});
+  await expect(panel).toContainText(modelName, { timeout: 8000 });
+  await expect(panel).toContainText(/\d+ms/i, { timeout: 8000 });
+});

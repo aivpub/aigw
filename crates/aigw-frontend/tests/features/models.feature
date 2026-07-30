@@ -36,3 +36,15 @@ Feature: Model Management
   Scenario: Delete model shows confirmation and removes from list
     When I click the delete button on the first model row
     Then a delete confirmation dialog appears
+
+  # ━━━━ Health tab (Stage 91) ━━━━
+
+  Scenario: Health tab shows model health list and Check All button
+    When I click the "Health" tab on the Models page
+    Then I should see the "Check All Models" button
+    And I should see the health list with model rows
+
+  Scenario: Clicking Check All Models shows healthy status
+    When I click the "Health" tab on the Models page
+    And I click the "Check All Models" button
+    Then I should see a healthy status indicator for "gpt-4"

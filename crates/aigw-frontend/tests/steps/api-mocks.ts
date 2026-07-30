@@ -289,6 +289,34 @@ export async function defineMockRoutes(route: Route, request: Request) {
   if (url.pathname === "/health/metrics") {
     return route.fulfill({ status: 200, json: { status: "ok", db: "connected", uptime_seconds: 3600, key_count: 3, model_count: 3 } });
   }
+  // Model health-check latest results — HealthTab polls this on load.
+  if (url.pathname === "/health/latest") {
+    const checkedAt = new Date().toISOString();
+    return route.fulfill({
+      status: 200,
+      json: {
+        data: sampleModels.map((m) => ({
+          model_name: m.model_name,
+          model_id: m.model_id,
+          status: "healthy",
+          response_time_ms: 42.5,
+          error_message: null,
+          checked_at: checkedAt,
+        })),
+        count: sampleModels.length,
+        last_success: Object.fromEntries(sampleModels.map((m) => [m.model_name, checkedAt])),
+      },
+    });
+  }
+  // Trigger model health checks — HealthTab POSTs these; respond immediately
+  // (the probe is async on the real backend, and the next /health/latest poll
+  // reflects the fresh "healthy" results above).
+  if (url.pathname === "/model/health-check/all" && route.request().method() === "POST") {
+    return route.fulfill({ status: 200, json: { status: "dispatched", models: sampleModels.length } });
+  }
+  if (url.pathname === "/model/health-check" && route.request().method() === "POST") {
+    return route.fulfill({ status: 200, json: { status: "checking", model_id: url.searchParams.get("model_id") } });
+  }
 
   // v1 endpoints
   if (url.pathname === "/v1/models") {
