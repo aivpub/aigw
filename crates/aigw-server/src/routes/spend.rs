@@ -393,36 +393,50 @@ pub async fn global_spend_log_detail(
         // Cold data — body archived to Parquet. Try to retrieve from storage.
         match &state.body_archiver {
             Some(archiver) => {
-                match archiver.get_message_body(&state.db, &call_id).await {
-                    Ok(Some(body)) => {
-                        #[cfg(debug_assertions)]
-                        {
-                            body_source = "parquet";
-                        }
-                        body
+                let parquet_path = log.parquet_path.as_deref().unwrap_or("");
+                if parquet_path.is_empty() {
+                    #[cfg(debug_assertions)]
+                    {
+                        body_source = "no-parquet-path";
                     }
-                    Ok(None) => {
-                        #[cfg(debug_assertions)]
-                        {
-                            body_source = "parquet-miss";
-                        }
-                        tracing::warn!(%call_id, "body_archived=true but cold retrieval returned None — storage or file missing");
-                        aigw_core::body_archive::query::BodyPayload {
-                            messages: None,
-                            response: None,
-                            proxy_server_request: None,
-                        }
+                    tracing::warn!(%call_id, "body_archived=true but parquet_path is empty");
+                    aigw_core::body_archive::query::BodyPayload {
+                        messages: None,
+                        response: None,
+                        proxy_server_request: None,
                     }
-                    Err(e) => {
-                        #[cfg(debug_assertions)]
-                        {
-                            body_source = "parquet-error";
+                } else {
+                    match archiver.read_body_from_parquet_path(parquet_path, &call_id).await {
+                        Ok(Some(body)) => {
+                            #[cfg(debug_assertions)]
+                            {
+                                body_source = "parquet";
+                            }
+                            body
                         }
-                        tracing::error!(%call_id, %e, "cold retrieval error");
-                        aigw_core::body_archive::query::BodyPayload {
-                            messages: None,
-                            response: None,
-                            proxy_server_request: None,
+                        Ok(None) => {
+                            #[cfg(debug_assertions)]
+                            {
+                                body_source = "parquet-miss";
+                            }
+                            tracing::warn!(%call_id, "body_archived=true but cold retrieval returned None — storage or file missing");
+                            aigw_core::body_archive::query::BodyPayload {
+                                messages: None,
+                                response: None,
+                                proxy_server_request: None,
+                            }
+                        }
+                        Err(e) => {
+                            #[cfg(debug_assertions)]
+                            {
+                                body_source = "parquet-error";
+                            }
+                            tracing::error!(%call_id, %e, "cold retrieval error");
+                            aigw_core::body_archive::query::BodyPayload {
+                                messages: None,
+                                response: None,
+                                proxy_server_request: None,
+                            }
                         }
                     }
                 }

@@ -15,6 +15,7 @@ pub mod writer;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
+use std::sync::{Arc, Mutex};
 use tracing::info;
 
 use crate::async_task::{AsyncTask, NewStep, StepOutput};
@@ -26,10 +27,25 @@ use crate::body_archive::writer::write_parquet_to_store;
 use crate::db::{Database, DbError, Result};
 
 /// BodyArchiver: archives spend_logs body fields to Parquet on object storage.
-#[derive(Debug)]
 pub struct BodyArchiver {
     config: BodyArchiveConfig,
     footer_cache: FooterCache,
+    /// Lazily-initialized object store. Built on first read and reused
+    /// for the lifetime of the archiver. Avoids rebuilding S3/LocalFS
+    /// client on every request. Mutex used to avoid unstable OnceLock::get_or_try_init.
+    store: Mutex<Option<Arc<dyn object_store::ObjectStore>>>,
+}
+
+// Manual Debug: Mutex<Option<Arc<dyn ObjectStore>>> doesn't impl Debug
+impl std::fmt::Debug for BodyArchiver {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let has_store = self.store.lock().unwrap().is_some();
+        f.debug_struct("BodyArchiver")
+            .field("config", &self.config)
+            .field("footer_cache", &self.footer_cache)
+            .field("store_initialized", &has_store)
+            .finish()
+    }
 }
 
 impl BodyArchiver {
@@ -37,7 +53,32 @@ impl BodyArchiver {
         Self {
             footer_cache: FooterCache::default(),
             config,
+            store: Mutex::new(None),
         }
+    }
+
+    /// Lazily build (on first call) or return the cached ObjectStore.
+    fn get_or_init_store(
+        &self,
+    ) -> std::result::Result<Arc<dyn object_store::ObjectStore>, String> {
+        // Fast path: store already initialized
+        {
+            let guard = self.store.lock().unwrap();
+            if let Some(ref store) = *guard {
+                return Ok(Arc::clone(store));
+            }
+        }
+        // Slow path: build the store
+        let resolved = resolve_env_placeholders(&self.config.storage);
+        let new_store = build_object_store_for_backend(&resolved)?;
+        let mut guard = self.store.lock().unwrap();
+        // Double-check: another thread might have initialized it while we
+        // were building
+        if let Some(ref existing) = *guard {
+            return Ok(Arc::clone(existing));
+        }
+        *guard = Some(Arc::clone(&new_store));
+        Ok(new_store)
     }
 
     pub fn config(&self) -> &BodyArchiveConfig {
@@ -315,7 +356,7 @@ impl BodyArchiver {
     }
 
     /// Read body from Parquet file at the given storage path, using the
-    /// configured storage backend (S3 or FileSystem). Uses the footer cache
+    /// cached object store (lazy-init on first call). Uses the footer cache
     /// so repeated reads of the same hour file skip the footer round-trip.
     ///
     /// Error semantics (Stage 83 P1-2):
@@ -326,8 +367,27 @@ impl BodyArchiver {
         parquet_path: &str,
         call_id: &str,
     ) -> Result<Option<BodyPayload>> {
-        let resolved = resolve_env_placeholders(&self.config.storage);
-        let store = build_object_store_for_backend(&resolved)
+        let store = self
+            .get_or_init_store()
+            .map_err(|e| DbError::Other(format!("storage init: {}", e)))?;
+        self.read_body_from_storage_with_store(&store, parquet_path, call_id)
+            .await
+    }
+
+    /// Read body directly from a known `parquet_path` without any DB query.
+    ///
+    /// The caller already knows the body is in cold storage (e.g. handler
+    /// has the `SpendLog` row and sees `body_archived=true` + `messages=None`).
+    /// This avoids the redundant DB round-trip that `get_message_body` performs.
+    ///
+    /// Debug builds emit per-phase trace logs with latency breakdowns.
+    pub async fn read_body_from_parquet_path(
+        &self,
+        parquet_path: &str,
+        call_id: &str,
+    ) -> Result<Option<BodyPayload>> {
+        let store = self
+            .get_or_init_store()
             .map_err(|e| DbError::Other(format!("storage init: {}", e)))?;
         self.read_body_from_storage_with_store(&store, parquet_path, call_id)
             .await

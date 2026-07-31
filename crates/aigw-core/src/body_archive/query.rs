@@ -171,10 +171,9 @@ pub async fn query_parquet_with_cache(
     };
 
     // 3. Build a stream that reads only the projected columns for the row
-    //    groups that might contain `target_call_id`. With bloom filters or
-    //    per-row-group statistics we could prune; without them we scan all row
-    //    groups but still only fetch the 4 projected column chunks (not the
-    //    full row-group payload of every column).
+    //    groups that might contain `target_call_id`. Use bloom filters (if
+    //    present) to prune row groups that definitely don't contain the target,
+    //    avoiding ZSTD decompression + Arrow decoding of large JSON columns.
     let schema_desc = metadata.file_metadata().schema_descr();
     // Resolve key column name: prefer `call_id` (new), fall back to `request_id` (old).
     let key_col = schema_desc
@@ -190,19 +189,93 @@ pub async fn query_parquet_with_cache(
                 .then_some("request_id")
         })
         .ok_or_else(|| "parquet schema has neither call_id nor request_id column".to_string())?;
+
+    // Find key column index (for bloom filter lookup).
+    let key_col_idx = schema_desc
+        .columns()
+        .iter()
+        .position(|c| c.name() == key_col)
+        .unwrap_or(0);
+
     let mask = ProjectionMask::columns(
         &schema_desc,
         [key_col, "messages", "response", "proxy_server_request"],
     );
 
     let reader = ParquetObjectReader::new(store.clone(), meta);
-    let arrow_meta = try_new_arrow_reader_metadata(metadata)?;
-    let builder = ParquetRecordBatchStreamBuilder::new_with_metadata(reader, arrow_meta);
+    // Clone metadata: try_new_arrow_reader_metadata consumes it, but we still
+    // need the original for row group iteration below.
+    let arrow_meta = try_new_arrow_reader_metadata(Arc::clone(&metadata))?;
+    let mut builder = ParquetRecordBatchStreamBuilder::new_with_metadata(reader, arrow_meta);
+
+    let total_row_groups = metadata.row_groups().len();
+    let mut pruned = 0usize;
+    let mut passing_indices: Vec<usize> = Vec::with_capacity(total_row_groups);
+
+    #[cfg(debug_assertions)]
+    let bloom_start = std::time::Instant::now();
+    #[cfg(debug_assertions)]
+    let mut bloom_checks: usize = 0;
+
+    for rg_idx in 0..total_row_groups {
+        let rg_meta = metadata.row_group(rg_idx);
+        let col_meta = rg_meta.column(key_col_idx);
+
+        // Only check bloom filter if it was written (offset is Some).
+        if col_meta.bloom_filter_offset().is_some() {
+            #[cfg(debug_assertions)]
+            {
+                bloom_checks += 1;
+            }
+            // Try to read + probe the bloom filter. This does a byte-range IO.
+            match builder
+                .get_row_group_column_bloom_filter(rg_idx, key_col_idx)
+                .await
+            {
+                Ok(Some(sbbf)) => {
+                    let key: &str = target_call_id;
+                    if sbbf.check(&key) {
+                        passing_indices.push(rg_idx);
+                    } else {
+                        pruned += 1;
+                    }
+                }
+                _ => {
+                    // Bloom filter read failed — conservatively include.
+                    passing_indices.push(rg_idx);
+                }
+            }
+        } else {
+            // No bloom filter written (too few rows) — include.
+            passing_indices.push(rg_idx);
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    {
+        let bloom_elapsed = bloom_start.elapsed();
+        tracing::trace!(
+            target_call_id,
+            %path_str,
+            total_row_groups,
+            scanned = passing_indices.len(),
+            pruned,
+            bloom_checks,
+            bloom_check_ms = bloom_elapsed.as_secs_f64() * 1000.0,
+            "🍉 parquet bloom filter: checked={} scanned={}/{} pruned={} bloom_ms={:.2}",
+            bloom_checks, passing_indices.len(), total_row_groups, pruned,
+            bloom_elapsed.as_secs_f64() * 1000.0,
+        );
+    }
 
     let stream = builder
+        .with_row_groups(passing_indices)
         .with_projection(mask)
         .build()
         .map_err(|e| format!("build stream: {}", e))?;
+
+    #[cfg(debug_assertions)]
+    let scan_start = std::time::Instant::now();
 
     let mut found: Option<BodyPayload> = None;
     tokio::pin!(stream);
@@ -212,6 +285,19 @@ pub async fn query_parquet_with_cache(
             found = Some(body);
             break;
         }
+    }
+
+    #[cfg(debug_assertions)]
+    {
+        use std::time::Instant;
+        let scan_elapsed = scan_start.elapsed();
+        tracing::trace!(
+            target_call_id,
+            %path_str,
+            scan_ms = scan_elapsed.as_secs_f64() * 1000.0,
+            "🍉 parquet scan: scan_ms={:.2}",
+            scan_elapsed.as_secs_f64() * 1000.0,
+        );
     }
 
     Ok(found)
