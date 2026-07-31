@@ -208,7 +208,7 @@ pub async fn job_detail_handler(
     State(state): State<SharedState>,
     SpendAuth(auth): SpendAuth,
     Path(job_id): Path<String>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+) -> Result<Json<JobDetailResponse>, (StatusCode, Json<Value>)> {
     require_admin(&auth)?;
 
     let result = get_job_detail(&state.db, &job_id).await
@@ -217,30 +217,30 @@ pub async fn job_detail_handler(
     match result {
         Some((job, steps)) => {
             let steps_json: Vec<Value> = steps.iter().map(|s| {
-                serde_json::json!({
-                    "id": s.id,
-                    "step_key": s.step_key,
-                    "status": s.status,
-                    "payload": s.payload,
-                    "result": s.result,
-                    "error_message": s.error_message,
-                    "retry_count": s.retry_count,
-                    "started_at": s.started_at,
-                    "completed_at": s.completed_at,
+                serde_json::json!(StepResponse {
+                    id: s.id.clone(),
+                    step_key: s.step_key.clone(),
+                    status: s.status.clone(),
+                    payload: s.payload.clone(),
+                    result: s.result.clone(),
+                    error_message: s.error_message.clone(),
+                    retry_count: s.retry_count,
+                    started_at: s.started_at.clone(),
+                    completed_at: s.completed_at.clone(),
                 })
             }).collect();
 
-            Ok(Json(serde_json::json!({
-                "job": JobListItem::from(job),
-                "steps": steps_json,
-                "summary": {
+            Ok(Json(JobDetailResponse {
+                job: JobListItem::from(job),
+                steps: steps_json,
+                summary: serde_json::json!({
                     "total_steps": steps.len(),
                     "completed": steps.iter().filter(|s| s.status == "completed").count(),
                     "failed": steps.iter().filter(|s| s.status == "failed").count(),
                     "pending": steps.iter().filter(|s| s.status == "pending").count(),
                     "running": steps.iter().filter(|s| s.status == "running").count(),
-                },
-            })))
+                }),
+            }))
         }
         None => Err((
             StatusCode::NOT_FOUND,
