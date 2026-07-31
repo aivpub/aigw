@@ -920,7 +920,7 @@ pub async fn messages_handler(
                 };
                 json!({
                     "streaming": true,
-                    "id": "chatcmpl-streaming",
+                    "id": upstream_id.as_deref().unwrap_or("chatcmpl-streaming"),
                     "object": "chat.completion",
                     "model": model_for_response,
                     "choices": [{"index": 0, "message": message, "finish_reason": finish_reason}],
