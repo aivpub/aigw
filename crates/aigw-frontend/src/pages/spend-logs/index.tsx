@@ -112,6 +112,11 @@ function fmtDuration(ms: number | null) {
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
 }
 function truncate8(s: string) { return s ? (s.length > 8 ? s.slice(0, 8) + "…" : s) : "—"; }
+function truncateUuid(s: string) {
+  if (!s) return "—";
+  if (s.length <= 10) return s;
+  return s.slice(0, 5) + "…" + s.slice(-5);
+}
 function extractCacheTokens(metadata: unknown): { cache_read_tokens?: number; cache_creation_tokens?: number; cache_read_spend?: number; cache_create_spend?: number } | null {
   if (!metadata || typeof metadata !== "object") return null;
   const m = metadata as Record<string, unknown>;
@@ -338,10 +343,10 @@ function DetailDrawer({ log, open, onClose, isDetailLoading, detailError, onRetr
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="default" className="text-[10px]">Call ID</Badge>
               <code>{log.call_id}</code>
-              <CopyIconButton text={log.call_id} />
+              <RowCopyButton text={log.call_id} />
               <Badge variant="secondary" className="text-[10px]">Request ID</Badge>
               {log.request_id ? (
-                <><code>{log.request_id}</code><CopyIconButton text={log.request_id} /></>
+                <><code>{log.request_id}</code><RowCopyButton text={log.request_id} /></>
               ) : (
                 <span className="text-muted-foreground italic">—</span>
               )}
@@ -668,8 +673,8 @@ export function SpendLogsPage() {
                   <TableBody>
                     {logs.map(log => (
                       <TableRow key={log.call_id} data-testid="spend-log-row" className="cursor-pointer hover:bg-muted/50" onClick={() => { setSelectedLog(log); setDrawerOpen(true); setDetailRequestId(log.call_id); }}>
-                        <TableCell className="text-xs font-mono"><div className="flex items-center gap-1">{truncate8(log.call_id)}<RowCopyButton text={log.call_id}/></div></TableCell>
-                        <TableCell className="text-xs font-mono text-muted-foreground">{log.request_id ? <><span>{truncate8(log.request_id)}</span><RowCopyButton text={log.request_id} /></> : "—"}</TableCell>
+                        <TableCell className="text-xs font-mono"><div className="flex items-center gap-1">{truncateUuid(log.call_id)}<RowCopyButton text={log.call_id}/></div></TableCell>
+                        <TableCell className="text-xs font-mono text-muted-foreground">{log.request_id ? <><span>{truncateUuid(log.request_id)}</span><RowCopyButton text={log.request_id} /></> : "—"}</TableCell>
                         <TableCell className="text-xs whitespace-nowrap">{log.start_time ? format(new Date(log.start_time), "MM-dd HH:mm:ss") : "—"}</TableCell>
                         <TableCell><Badge variant="outline" className="text-[10px] px-1 py-0">{log.call_type || "—"}</Badge></TableCell>
                         <TableCell className="text-xs whitespace-nowrap">
@@ -726,7 +731,7 @@ export function SpendLogsPage() {
                       <div>Time: <span>{log.start_time ? format(new Date(log.start_time), "HH:mm:ss") : "—"}</span></div>
                     </div>
                     <div className="flex items-center gap-1 mt-1 text-xs text-muted-foreground">
-                      <span className="font-mono">{truncate8(log.call_id)}</span>
+                      <span className="font-mono">{truncateUuid(log.call_id)}</span>
                       <RowCopyButton text={log.call_id}/>
                     </div>
                   </div>
