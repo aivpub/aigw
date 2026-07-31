@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -150,12 +151,13 @@ const COLORS = [
   "#14b8a6", "#f97316", "#06b6d4", "#84cc16", "#6366f1",
 ];
 
-const PRESETS: { key: DatePreset; label: string }[] = [
-  { key: "3d", label: "3 days" },
-  { key: "7d", label: "7 days" },
-  { key: "30d", label: "30 days" },
-  { key: "custom", label: "Custom" },
-];
+const PRESET_KEYS: DatePreset[] = ["3d", "7d", "30d", "custom"];
+const PRESET_LABELS: Record<DatePreset, string> = {
+  "3d": "usage.datePresets.3d",
+  "7d": "usage.datePresets.7d",
+  "30d": "usage.datePresets.30d",
+  custom: "usage.datePresets.custom",
+};
 
 type ChartMode = "spend" | "tokens" | "requests";
 type ModelViewMode = "chart" | "ranking";
@@ -205,6 +207,7 @@ function yAxisTick(v: number): string {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 export function UsagePage() {
+  const { t } = useTranslation();
   const [preset, setPreset] = useState<DatePreset>("3d");
   const [startDate, setStartDate] = useState(presetRange("3d").start);
   const [endDate, setEndDate] = useState(presetRange("3d").end);
@@ -312,20 +315,20 @@ export function UsagePage() {
     <div className="space-y-4">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Usage</h1>
-          <p className="text-sm text-muted-foreground">Usage and spend overview</p>
+          <h1 className="text-2xl font-bold tracking-tight">{t('usage.title')}</h1>
+          <p className="text-sm text-muted-foreground">{t('usage.description')}</p>
         </div>
         {/* Toolbar: date presets + custom picker */}
         <div className="flex flex-wrap items-center gap-2">
-          {PRESETS.map((p) => (
+          {PRESET_KEYS.map((k) => (
             <Button
-              key={p.key}
-              variant={preset === p.key ? "default" : "outline"}
+              key={k}
+              variant={preset === k ? "default" : "outline"}
               size="sm"
-              onClick={() => handlePreset(p.key)}
+              onClick={() => handlePreset(k)}
               className="h-7 text-xs"
             >
-              {p.label}
+              {t(PRESET_LABELS[k])}
             </Button>
           ))}
           {preset === "custom" && (
@@ -352,7 +355,7 @@ export function UsagePage() {
       <div className="grid gap-3 grid-cols-3 md:grid-cols-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-1 p-4">
-            <CardTitle className="text-xs font-medium">Spend</CardTitle>
+            <CardTitle className="text-xs font-medium">{t('usage.cards.spend')}</CardTitle>
             <DollarSign className="h-3.5 w-3.5 text-muted-foreground" />
           </CardHeader>
           <CardContent className="p-4 pt-0">
@@ -371,7 +374,7 @@ export function UsagePage() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-1 p-4">
-            <CardTitle className="text-xs font-medium">Requests</CardTitle>
+            <CardTitle className="text-xs font-medium">{t('usage.cards.requests')}</CardTitle>
             <BarChart3 className="h-3.5 w-3.5 text-muted-foreground" />
           </CardHeader>
           <CardContent className="p-4 pt-0">
@@ -385,7 +388,7 @@ export function UsagePage() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-1 p-4">
-            <CardTitle className="text-xs font-medium">OK</CardTitle>
+            <CardTitle className="text-xs font-medium">{t('usage.cards.ok')}</CardTitle>
             <CheckCircle className="h-3.5 w-3.5 text-green-500" />
           </CardHeader>
           <CardContent className="p-4 pt-0">
@@ -401,7 +404,7 @@ export function UsagePage() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-1 p-4">
-            <CardTitle className="text-xs font-medium">Failed</CardTitle>
+            <CardTitle className="text-xs font-medium">{t('usage.cards.failed')}</CardTitle>
             <XCircle className="h-3.5 w-3.5 text-red-500" />
           </CardHeader>
           <CardContent className="p-4 pt-0">
@@ -417,7 +420,7 @@ export function UsagePage() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-1 p-4">
-            <CardTitle className="text-xs font-medium">Tokens</CardTitle>
+            <CardTitle className="text-xs font-medium">{t('usage.cards.tokens')}</CardTitle>
             <Sparkles className="h-3.5 w-3.5 text-muted-foreground" />
           </CardHeader>
           <CardContent className="p-4 pt-0">
@@ -436,7 +439,7 @@ export function UsagePage() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-1 p-4">
-            <CardTitle className="text-xs font-medium">Rate</CardTitle>
+            <CardTitle className="text-xs font-medium">{t('usage.cards.rate')}</CardTitle>
             <TrendingUp className="h-3.5 w-3.5 text-muted-foreground" />
           </CardHeader>
           <CardContent className="p-4 pt-0">
@@ -456,7 +459,7 @@ export function UsagePage() {
       {/* Trend — independent tab state */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between pb-2 pt-4 px-4">
-          <CardTitle className="text-sm font-medium">Trend</CardTitle>
+          <CardTitle className="text-sm font-medium">{t('usage.trend')}</CardTitle>
           <Tabs defaultValue="spend" value={globalChartMode} onValueChange={(v) => setGlobalChartMode(v as ChartMode)}>
             <TabsList className="h-7">
               <TabsTrigger value="spend" className="text-xs px-3 h-5">💰 Spend</TabsTrigger>
