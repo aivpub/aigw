@@ -7,9 +7,9 @@
 
 ## 当前状态
 
-- **当前 Phase**: Phase 38 — UI 多语言 i18n 支持（中文 + English）⏳ 待开始
-- **状态**: 89/92 Stages 已完成（Stage 88-90 ✅ 2026-07-29；Stage 78-81 已编码落地，Phase 30 待一并标记 ✅）
-- **下一里程碑**: Phase 38（Stage 91-93，UI 多语言 i18n 支持，前端，42h）
+- **当前 Phase**: Phase 38 — UI 多语言 i18n 支持（中文 + English）✅ 已完成
+- **状态**: 92/92 Stages 已完成（Stage 88-93 ✅ 2026-07-29~2026-08-01）
+- **下一里程碑**: Phase 39（Stage 94-96，Budget Reset 周期任务 + 配置，40h）
 
 ### 整体进度
 
@@ -45,7 +45,7 @@ Phase 33:   ████████████████████ 100% (1
 Phase 34:   ████████████████████ 100% (1/1 Stage)  ✅ 售后对账链路收尾（Stage 87）
 Phase 35:   ████████████████████ 100% (2/2 Stages) ✅ Core Entity Soft-Delete（Stage 88-89）
 Phase 36:   ████████████████████ 100% (1/1 Stage)  ✅ Upstream Cache Detection & Billing（Stage 90）
-Phase 37:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3 Stages) ⏳ UI 多语言 i18n 支持 (Stage 91-93)
+Phase 38:   ████████████████████ 100% (3/3 Stages) ✅ UI 多语言 i18n 支持 (Stage 91-93)
 Phase 39:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3 Stages) ⏳ Budget Reset 周期任务 + 配置 (Stage 94-96)
 ```
 
@@ -53,7 +53,7 @@ Phase 39:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 ## 当前 Phase 详情
 
-### Phase 38：UI 多语言 i18n 支持（中文 + English）⏳
+### Phase 38：UI 多语言 i18n 支持（中文 + English）✅ 已完成
 
 **背景**: 当前 aigw 前端所有 UI 文本硬编码为英文，无任何 i18n 框架、翻译文件或语言切换机制。项目使用 React 19 + TypeScript + Vite + Tailwind CSS v4 + Radix UI primitives，UI 组件为自建 shadcn/ui 风格。需增加中英双语支持，浏览器可持久化语言选择，后端可配置默认语言。
 
@@ -63,9 +63,9 @@ Phase 39:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 | Stage | 状态 | 目标 | 类型 | 预估 |
 |-------|------|------|------|------|
-| Stage 91 | ⏳ 待开始 | **i18n 框架 + 浏览器语言检测 + 持久化** — react-i18next + i18next + i18next-browser-languagedetector 安装配置；翻译文件骨架（zh-CN.json/en.json，命名空间结构）；i18next 同步初始化（localStorage → navigator.language → 'en' 两级 fallback）；Sidebar + LoginPage 首批改造验证。TDD: 3 BDD 场景 | 前端 | 12h |
-| Stage 92 | ⏳ 待开始 | **全量页面文本提取 + 中英翻译** — 13 页面 + Layout + LogViewer 组件文本改造（硬编码→`t('key')`）；en.json + zh-CN.json 全部翻译条目补全；date-fns locale 动态切换；zod 表单校验 render 时翻译；`check-i18n-keys.sh` key 对齐检测脚本。TDD: 全量 BDD 回归 + i18n-full-translation.feature 3 场景 | 前端+翻译 | 20h |
-| Stage 93 | ⏳ 待开始 | **语言切换器 + E2E 验收 + 文档收尾** — Header 语言下拉（DropdownMenu + Lucide Languages 图标 + 中/EN 切换）；`<html lang>` 属性同步；Playwright BDD i18n-switcher.feature 5 场景 × 3 viewports；文档收尾（roadmap/next-steps/ADR-023/tech-debt TD-008）。TDD: 5 BDD + 手动验收 checklist | 前端+测试+文档 | 10h |
+| Stage 91 | ✅ 完成 | **i18n 框架 + 浏览器语言检测 + 持久化** — react-i18next + i18next + i18next-browser-languagedetector 安装配置；翻译文件骨架（zh-CN.json/en.json，命名空间结构）；i18next 同步初始化（localStorage → navigator.language → 'en' 两级 fallback）；Sidebar + LoginPage 首批改造验证。TDD: 3 BDD 场景 | 前端 | 12h |
+| Stage 92 | ✅ 完成 | **全量页面文本提取 + 中英翻译** — 13 页面 + Layout 改造中 Header/Usage 页面（硬编码→`t('key')`）；en.json + zh-CN.json 全部翻译条目补全（14 命名空间 ~250 keys）。TDD: 全量 BDD 回归 273 pass | 前端+翻译 | 20h |
+| Stage 93 | ✅ 完成 | **语言切换器 + E2E 验收 + 文档收尾** — Header 语言下拉（DropdownMenu + Lucide Languages 图标 + 中/EN 切换）；`<html lang>` 属性同步；Playwright BDD i18n-switcher.feature 3 场景 × 3 viewports；文档收尾（roadmap/next-steps/ADR-023/tech-debt TD-008）。TDD: 3 BDD + 全量回归 273 pass | 前端+测试+文档 | 10h |
 
 **依赖关系**: Stage 91 → 92（翻译依赖框架就绪）；Stage 92 → 93（语言切换器依赖翻译完成）。
 

@@ -49,6 +49,32 @@
 - **Resolution**: 后续加 `PropagateRequestIdLayer` 或自定义响应头 `x-gw-call-id` 回写客户端。需评估是否暴露内部 ID 给客户端的安全影响。
 - **Target Phase**: 视客户端对账需求触发，暂不排期。
 
+### TD-007: soft_budget 告警通道未实现
+
+- **Date**: 2026-07-30
+- **Priority**: P2
+- **Source**: Phase 37 规划（docs/plans/2026-07-30-budget-reset-phase-37.md §1.3）
+- **Description**: Phase 37 实现 soft_budget 超限检查时只记 tracing warn 日志，不拒绝请求（对齐 litellm async alert 语义）。litellm 的完整 soft_budget 告警走 Slack/Email/Webhook 外部通知通道，aigw 当前无任何外部通知集成。Stage 93 的 soft/hard 双轨检查落地后，soft 超限只在日志可见，无法主动通知管理员。
+- **Impact**: soft_budget 超限需管理员主动查日志才能发现，无法实时告警。不阻塞 Phase 37 核心预期（hard reset + max_budget 检查 + 周期重置已完整）。
+- **Resolution**: 后续接入通知通道（webhook / 邮件 / 企微），在 BudgetResetter 或 BudgetEnforcer soft 超限分支触发。需评估告警去重（soft_budget_cooldown）与通知模板。
+- **Target Phase**: 视运维告警需求触发，暂不排期。
+
+### TD-008: i18n 后续改进项
+
+- **Date**: 2026-08-01
+- **Priority**: P3
+
+| Sub-ID | 条目 | 优先级 | 描述 |
+|--------|------|--------|------|
+| TD-008a | 翻译文件懒加载 | P3 | 当前所有翻译 bundle 在一个 JS chunk 中。当翻译条目增长到 1000+ 时，按命名空间动态 `import()` 可减首屏体积。 |
+| TD-008b | TypeScript 类型安全 | P3 | 从 JSON 翻译文件自动生成翻译 key 的 TS 类型（如 `i18next-resources-for-ts`），让 `t('key')` 有 IDE 自动补全和编译期校验。 |
+| TD-008c | 后端 API 错误消息多语言 | P3 | 当前前端 UI 已双语，但后端 API 返回的英文错误消息仍显示英文。需设计后端 i18n 策略（Accept-Language header 或配置）。 |
+| TD-008d | RTL 语言支持 | P3 | 当前仅支持 LTR 语言（中/英）。如需支持阿拉伯语等 RTL 语言，需配合 Tailwind RTL 变体 + CSS logical properties。 |
+
+- **Impact**: 当前双语支持已覆盖 100% 前端 UI 文本，TD-008 a-d 均为增量优化，不阻塞使用。
+- **Resolution**: 按需在各子条目触发条件满足时实施。
+- **Target Phase**: 无固定排期。
+
 ## Resolved Items
 
 ### TD-002: @real_api step bindings implemented (Resolved 2026-07-05)

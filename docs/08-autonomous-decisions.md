@@ -364,3 +364,46 @@
   - litellm↔aigw 迁移路径完全不受影响（零回归，`build_cursor_sql`/`stream_pg_rows_keyset` 原样）。
   - 跨 master_key 同步加密表仍需 `remote-import`（明确边界，不混淆）。
   - TDD 8 UT 覆盖核心预期（全表/子集/`--days`/幂等/`--skip-body`/非法表名/config 默认排除+显式不覆盖/DEFAULT_TABLES 契约）；PG 跨方言覆盖复用 `bdd-real-*` testcontainers，不阻塞 UT。
+## ADR-023: Phase 37 规划 — Budget Reset 周期任务 + 配置（Stage 91-93）
+
+- **Date**: 2026-07-30
+- **Status**: Planned（Phase 37 待实施）
+- **Decision**: 复用 Stage 82-84 的 AsyncTask+Engine 框架新增 BudgetResetter（step_type=budget_reset），实现 budget_duration 周期性重置 spend。3 Stage / 40h：91 后端（duration 解析 + resetter + Budget CRUD + backfill + config）、92 前端（实体表单内联 budget_duration/soft_budget + Jobs Tab 补全）、93 全栈联调（soft/hard 双轨 + real BDD 三后端）。
+- **Background**: budgets 表 + 四实体表 budget 列 Stage 1 就 schema 对齐 litellm 但从未实现周期 reset。budget_duration/budget_reset_at 字段被写入却不消费，spend 累积到上限永久超额。Body Archive 已建成 AsyncTask+Engine + async_jobs 表 + 前端 Jobs 页，KNOWN_STEP_TYPES 已硬编码 budget_reset 但后端无实现、前端 Tab 占位。
+- **Key decisions**:
+  - **复用 AsyncTask+Engine 而非新建 scheduler**：零新增框架成本，天然多副本安全（claim_next_step SKIP LOCKED），前端 Jobs 页天然展示，与 charter Stage 3 一致。tick_interval=60s。
+  - **标准化对齐而非 now()+duration**：24h→UTC 0 点 / 7d→周一 0 点 / 30d/1mo→月初 1 号 0 点 / Nh/Nm/Ns→N 边界。用 chrono+chrono-tz。对齐 litellm get_next_standardized_reset_time，重置时刻可预期。
+  - **过期判断下沉 SQL**：WHERE budget_reset_at < now() OR (budget_reset_at IS NULL AND budget_duration IS NOT NULL)。NULL 保护子句防「有 duration 无 reset_at」行永久累积。
+  - **实体表单内联而非独立 Budgets 页**：用户选定，对齐 litellm 主流 UX。
+  - **reset 只 UPDATE spend=0 + reset_at 重算，不改 spend_logs**：审计流水完整保留。
+  - **aigw 无独立 Redis counter**：spend 列是 DB 真值，reset 后 BudgetEnforcer 直接读 DB 新值，无 litellm 的 counter 失效缺口（简化版优势）。
+  - **soft_budget 告警留 TD-007**：本 Phase 只 hard reset + max_budget 检查 + soft 记日志，告警通道后续做。
+  - **启动期 backfill**：防「有 duration 无 reset_at」行永久累积，对齐 litellm 启动行为。
+  - **NaN 防御**：max_budget 解析加 f64::is_finite，对齐 litellm 安全公告 GHSA-2rv4-xv66-fpjg。
+- **Consequences**:
+  - 配 budget_duration 的 key/team/user/org 到周期点自动清零 spend，支持 Codex/Claude Code 周期配额场景，兑现 charter Stage 3 承诺。
+  - Body Archive 的 AsyncTask+Engine 框架得到第二个使用者，验证其通用性。
+  - soft_budget 告警需后续接通知通道（TD-007）。
+  - TDD：~18 UT + 6 mock BDD + real BDD 三后端 + 前端 8 BDD × 3 viewports。
+
+---
+
+## ADR-023: UI 多语言 i18n 选型与架构
+
+- **Date**: 2026-08-01
+- **Status**: Implemented（Phase 38，Stage 91-93）
+- **Decision**: 使用 i18next + react-i18next + i18next-browser-languagedetector 实现前端中英双语支持。框架同步初始化（零闪烁），语言检测链 localStorage `aigw-language` → `navigator.language` → hardcoded `'en'` fallback。翻译文件采用 single-JSON per locale 按命名空间组织（common/sidebar/header/login/usage/keys/models/users/orgs/teams/spendLogs/playground/routerSettings/jobs/health/logViewer/pagination/auth），共 ~250 keys。
+- **Background**: 当前 aigw 前端所有 UI 文本硬编码为英文，无任何 i18n 框架、翻译文件或语言切换机制。litellm 也无多语言支持，本次是 net-new 能力。
+- **Key decisions**:
+  - **选 i18next 非 FormatJS**：React 生态事实标准，Tailwind/shadcn 项目常用，社区成熟度高。
+  - **单 JSON 文件命名空间**：初期文本量 < 500 keys，打包成本忽略不计，懒加载未必要。
+  - **JSON key 用英文 camelCase**：可读性好、IDE 补全、类型安全。
+  - **同步初始化不阻塞渲染**：零闪烁；语言检测在 <1ms 内完成。
+  - **管理员配置默认语言推迟**：首次访问通过 `navigator.language` 自动检测已覆盖 95%+ 场景。
+  - **通用 UI 组件不改**：`components/ui/*` 保持纯净，文案由调用方传入。
+  - **zod 校验在 render 时翻译**：语言切换需动态响应。
+- **Consequences**:
+  - 3 Stage 交付（91 框架 12h + 92 翻译 20h + 93 切换器 10h），共 42h。纯前端 Phase，零后端变更。
+  - 翻译文件懒加载、TypeScript 类型安全、后端 API 错误消息多语言、RTL 支持登记为 TD-008 a-d（P3）。
+  - 语言切换器位于 Header 右侧，使用 DropdownMenu + Lucide Languages 图标。
+  - `<html lang>` 属性随语言切换自动同步。

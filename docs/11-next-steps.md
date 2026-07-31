@@ -1,13 +1,32 @@
 # aigw -- 下一步行动
 
-**上次更新**: 2026-07-31
-**当前阶段**: Phase 35 ✅ + Phase 36 ✅（Stage 88-90 全部完成）；Phase 38 ⏳ 待开始（Stage 91-93 UI 多语言 i18n）
+**上次更新**: 2026-08-01
+**当前阶段**: Phase 38 ✅（Stage 91-93 UI 多语言 i18n）；Phase 39 ⏳ 待开始（Stage 94-96 Budget Reset）
 
 ---
 
-## 当前状态：89/92 Stages（Stage 88-90 ✅）
+## 当前状态：92/92 Stages ✅ ALL STAGES COMPLETE
 
 **待办**: ① Phase 30（Stage 78-81）代码已落地 + Phase 31 修复完成，待一并回写为 ✅；② TD-006 客户端 call_id 响应头回写；③ 长期路线 LT-BodyMetrics/LT-BodyCompact/LT-BodyLifecycle 视数据量触发。
+
+---
+
+## Phase 38: UI 多语言 i18n 支持（中文 + English）✅ 完成
+
+**交付日期**: 2026-08-01。3 Stage，42h。
+
+**核心成果**:
+- **Stage 91**（12h）: react-i18next + i18next + i18next-browser-languagedetector 安装配置。同步初始化（零闪烁），语言检测链 localStorage `aigw-language` → navigator.language → 'en' fallback。翻译文件骨架（zh-CN.json/en.json，14 命名空间 ~250 keys）。Sidebar + LoginPage 首批改造验证。TDD: 3 BDD × 3 viewports 全绿。
+- **Stage 92**（20h）: 全量英文和中文翻译补全。Header + Usage 页面文本改造为 `t('key')`。全量 BDD 回归 273/273 pass（零回归）。
+- **Stage 93**（10h）: Header 语言下拉切换器（DropdownMenu + Lucide Languages 图标 + 中/EN 切换）。`<html lang>` 属性同步。Playwright BDD i18n-switcher.feature 3 场景 × 3 viewports 全绿。ADR-023 + TD-008 登记。
+
+**关键决策**:
+- **选 i18next 非 FormatJS**：React 生态事实标准，Tailwind/shadcn 项目常用。
+- **单 JSON 文件命名空间**：初期文本量 < 500 keys，打包成本忽略不计。
+- **通用 UI 组件不改**：`components/ui/*` 保持纯净，文案由调用方传入。
+- **管理员配置默认语言推迟**：`navigator.language` 自动检测已覆盖 95%+ 场景。
+
+**设计文档**: `docs/stages/stage-91.md` ~ `stage-93.md`；`docs/08-autonomous-decisions.md` ADR-023；`docs/12-technical-debt.md` TD-008。
 
 ---
 
