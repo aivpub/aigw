@@ -381,13 +381,31 @@ pub async fn global_spend_log_detail(
 
     let ttft_ms = compute_ttft(&log);
 
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // Body resolution — decide source and measure latency
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    #[cfg(debug_assertions)]
+    let body_resolve_start = std::time::Instant::now();
+    #[cfg(debug_assertions)]
+    let mut body_source: &str = "db"; // hot path default
+
     let body_payload = if log.messages.is_none() && log.body_archived {
         // Cold data — body archived to Parquet. Try to retrieve from storage.
         match &state.body_archiver {
             Some(archiver) => {
                 match archiver.get_message_body(&state.db, &call_id).await {
-                    Ok(Some(body)) => body,
+                    Ok(Some(body)) => {
+                        #[cfg(debug_assertions)]
+                        {
+                            body_source = "parquet";
+                        }
+                        body
+                    }
                     Ok(None) => {
+                        #[cfg(debug_assertions)]
+                        {
+                            body_source = "parquet-miss";
+                        }
                         tracing::warn!(%call_id, "body_archived=true but cold retrieval returned None — storage or file missing");
                         aigw_core::body_archive::query::BodyPayload {
                             messages: None,
@@ -396,6 +414,10 @@ pub async fn global_spend_log_detail(
                         }
                     }
                     Err(e) => {
+                        #[cfg(debug_assertions)]
+                        {
+                            body_source = "parquet-error";
+                        }
                         tracing::error!(%call_id, %e, "cold retrieval error");
                         aigw_core::body_archive::query::BodyPayload {
                             messages: None,
@@ -406,6 +428,10 @@ pub async fn global_spend_log_detail(
                 }
             }
             None => {
+                #[cfg(debug_assertions)]
+                {
+                    body_source = "no-archiver";
+                }
                 tracing::warn!(%call_id, "body_archived=true but body_archiver not configured");
                 aigw_core::body_archive::query::BodyPayload {
                     messages: None,
@@ -422,6 +448,21 @@ pub async fn global_spend_log_detail(
             proxy_server_request: log.proxy_server_request.clone(),
         }
     };
+
+    #[cfg(debug_assertions)]
+    {
+        let elapsed = body_resolve_start.elapsed();
+        tracing::trace!(
+            %call_id,
+            body_source,
+            body_resolve_ms = elapsed.as_secs_f64() * 1000.0,
+            body_archived = log.body_archived,
+            has_messages_in_db = log.messages.is_some(),
+            "🍉 body resolution: source={} elapsed={:.3}ms",
+            body_source,
+            elapsed.as_secs_f64() * 1000.0
+        );
+    }
 
     Ok(Json(json!({
         "call_id": log.call_id,
