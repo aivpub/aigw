@@ -9,7 +9,7 @@
 
 - **当前 Phase**: Phase 38 — UI 多语言 i18n 支持（中文 + English）⏳ 待开始
 - **状态**: 89/92 Stages 已完成（Stage 88-90 ✅ 2026-07-29；Stage 78-81 已编码落地，Phase 30 待一并标记 ✅）
-- **下一里程碑**: Phase 38（Stage 91-93，UI 多语言 i18n 支持，前后端，46h）
+- **下一里程碑**: Phase 38（Stage 91-93，UI 多语言 i18n 支持，前端，42h）
 
 ### 整体进度
 
@@ -57,29 +57,29 @@ Phase 39:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 **背景**: 当前 aigw 前端所有 UI 文本硬编码为英文，无任何 i18n 框架、翻译文件或语言切换机制。项目使用 React 19 + TypeScript + Vite + Tailwind CSS v4 + Radix UI primitives，UI 组件为自建 shadcn/ui 风格。需增加中英双语支持，浏览器可持久化语言选择，后端可配置默认语言。
 
-**核心预期**: 用户可在浏览器切换中/英文，选择自动持久化到 localStorage；后端 `config.yaml` 可配置 `general_settings.ui_language` 作为默认语言（SaaS 中国区默认中文、海外区默认英文）；语言检测链：localStorage → 浏览器语言 → 后端默认。
+**核心预期**: 用户可在浏览器切换中/英文，选择自动持久化到 localStorage；首次访问通过 `navigator.language` 自动检测浏览器语言；语言检测链：localStorage → navigator.language → 'en'。
 
-**拆分**: 3 Stage（91 框架+后端 16h + 92 全量翻译 20h + 93 切换器+E2E+收尾 10h），共 46h。
+**拆分**: 3 Stage（91 框架 12h + 92 全量翻译 20h + 93 切换器+E2E+收尾 10h），共 42h。
 
 | Stage | 状态 | 目标 | 类型 | 预估 |
 |-------|------|------|------|------|
-| Stage 91 | ⏳ 待开始 | **i18n 框架 + 后端语言端点 + 浏览器持久化** — react-i18next + i18next + i18next-browser-languagedetector 安装配置；翻译文件骨架（zh-CN.json/en.json，命名空间结构）；后端 `GeneralSettings.ui_language` + `GET /api/v1/settings/language` 公开端点；`initI18n()` 异步初始化（localStorage → navigator → 后端 default 三级 fallback）；Sidebar + LoginPage 首批改造验证。TDD: 4 BDD 场景 + 3 UT | 全栈 | 16h |
+| Stage 91 | ⏳ 待开始 | **i18n 框架 + 浏览器语言检测 + 持久化** — react-i18next + i18next + i18next-browser-languagedetector 安装配置；翻译文件骨架（zh-CN.json/en.json，命名空间结构）；i18next 同步初始化（localStorage → navigator.language → 'en' 两级 fallback）；Sidebar + LoginPage 首批改造验证。TDD: 3 BDD 场景 | 前端 | 12h |
 | Stage 92 | ⏳ 待开始 | **全量页面文本提取 + 中英翻译** — 13 页面 + Layout + LogViewer 组件文本改造（硬编码→`t('key')`）；en.json + zh-CN.json 全部翻译条目补全；date-fns locale 动态切换；zod 表单校验 render 时翻译；`check-i18n-keys.sh` key 对齐检测脚本。TDD: 全量 BDD 回归 + i18n-full-translation.feature 3 场景 | 前端+翻译 | 20h |
 | Stage 93 | ⏳ 待开始 | **语言切换器 + E2E 验收 + 文档收尾** — Header 语言下拉（DropdownMenu + Lucide Languages 图标 + 中/EN 切换）；`<html lang>` 属性同步；Playwright BDD i18n-switcher.feature 5 场景 × 3 viewports；文档收尾（roadmap/next-steps/ADR-023/tech-debt TD-008）。TDD: 5 BDD + 手动验收 checklist | 前端+测试+文档 | 10h |
 
 **依赖关系**: Stage 91 → 92（翻译依赖框架就绪）；Stage 92 → 93（语言切换器依赖翻译完成）。
 
-**Phase 38 合计**: 46h，3 Stages。
+**Phase 38 合计**: 42h，3 Stages。纯前端 Phase，零后端变更。
 
 **设计文档**:
-- `docs/stages/stage-91.md`（i18n 框架 + 后端端点 + 持久化）
+- `docs/stages/stage-91.md`（i18n 框架 + 浏览器持久化）
 - `docs/stages/stage-92.md`（全量翻译 + 页面改造）
 - `docs/stages/stage-93.md`（语言切换器 + E2E + 收尾）
 
 **关键决策**:
 - **i18next 而非 FormatJS**：React 生态事实标准，Tailwind/shadcn 项目常用。
 - **单 JSON 文件命名空间**：初期文本量 < 500 keys，打包成本忽略不计，懒加载未必要。
-- **后端 `ui_language` 而非独立表**：SaaS 部署场景简单配置即可。
+- **管理员配置默认语言推迟**：首次访问通过 `navigator.language` 自动检测已覆盖 95%+ 场景，后续 Phase 需要时在 Router Settings 页加下拉即可。
 - **zod schema 不在定义时翻译**：语言切换需动态响应，render 时 `t()` 更安全。
 - **通用 UI 组件不改**：`components/ui/*` 保持纯净，文案由调用方传入。
 
