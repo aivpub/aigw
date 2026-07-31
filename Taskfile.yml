@@ -52,7 +52,6 @@ tasks:
         # Runtime vars (needed by the test binary, not by cargo build):
         export OPENAI_API_KEY="${OPENAI_API_KEY:-${OPENAPI_KEY:-}}"
         export OPENAI_BASE_URL="${OPENAI_BASE_URL:-${OPENAPI_BASE_URL:-}}"
-        export OPENAI_BASE_URL="${OPENAI_BASE_URL%/v1}"
         export AIGW_UPSTREAM_DB_URL="${AIGW_UPSTREAM_DB_URL:-}"
         export AIGW_UPSTREAM_ENCRYPT_KEY="${AIGW_UPSTREAM_ENCRYPT_KEY:-}"
         # Test harness vars (neither affects build fingerprint):
@@ -67,7 +66,6 @@ tasks:
         if [ -f .env ]; then set -a; . ./.env; set +a; fi
         export OPENAI_API_KEY="${OPENAI_API_KEY:-${OPENAPI_KEY:-}}"
         export OPENAI_BASE_URL="${OPENAI_BASE_URL:-${OPENAPI_BASE_URL:-}}"
-        export OPENAI_BASE_URL="${OPENAI_BASE_URL%/v1}"
         export AIGW_UPSTREAM_DB_URL="${AIGW_UPSTREAM_DB_URL:-}"
         export AIGW_UPSTREAM_ENCRYPT_KEY="${AIGW_UPSTREAM_ENCRYPT_KEY:-}"
         AIGW_REAL_API=1 AIGW_TEST_DB_DRIVER=postgres AIGW_TEST_START_SERVER=1 \
