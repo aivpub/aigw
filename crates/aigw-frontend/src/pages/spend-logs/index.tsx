@@ -314,7 +314,6 @@ function DetailDrawer({ log, open, onClose, isDetailLoading, detailError, onRetr
 }) {
   if (!log) return null;
 
-  const isFailure = (log.status ?? "").startsWith("failure");
   const hasPrompt = log.messages != null;
   const hasResponse = log.response != null;
 
@@ -353,7 +352,7 @@ function DetailDrawer({ log, open, onClose, isDetailLoading, detailError, onRetr
 
         {/* ── Summary pills row ── */}
         <div className="flex flex-wrap items-center gap-2 mt-3 mb-3">
-          <Badge variant={isFailure ? "destructive" : "default"} className="text-[10px]">{log.status || "—"}</Badge>
+          <StatusBadge status={log.status || ""} />
           <Badge variant="outline" className="text-[10px]">{log.call_type || "—"}</Badge>
           <span className="text-xs font-medium">{log.model}</span>
           <span className="text-xs font-mono text-muted-foreground">{fmtSpend(log.spend)}</span>
@@ -468,6 +467,26 @@ function DetailDrawer({ log, open, onClose, isDetailLoading, detailError, onRetr
 }
 
 /* ─────────────────────────────────── Main Page ── */
+
+// ── Status Badge ──
+function StatusBadge({ status }: { status: string }) {
+  if (status === "streaming") {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-green-500/10 text-green-600 dark:text-green-400 border border-green-500/20 text-[10px] px-1.5 py-0">
+        <span className="relative flex h-2 w-2">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"/>
+          <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"/>
+        </span>
+        streaming
+      </span>
+    );
+  }
+  return (
+    <Badge variant={status === "success" ? "default" : "destructive"} className="text-[10px] px-1.5 py-0">
+      {status || "—"}
+    </Badge>
+  );
+}
 
 function loadLiveTailPref() { try { return sessionStorage.getItem("spend-logs-live-tail") === "true"; } catch { return false; } }
 function saveLiveTailPref(v: boolean) { try { sessionStorage.setItem("spend-logs-live-tail", String(v)); } catch { /* */ } }
@@ -669,7 +688,9 @@ export function SpendLogsPage() {
                             {log.requester_ip_address && <RowCopyButton text={log.requester_ip_address} />}
                           </span>
                         </TableCell>
-                        <TableCell><Badge variant={log.status==="success"?"default":"destructive"} className="text-[10px] px-1.5 py-0">{log.status || "—"}</Badge></TableCell>
+                        <TableCell>
+                          <StatusBadge status={log.status ?? ""} />
+                        </TableCell>
                         <TableCell className="text-xs font-mono text-right">{fmtTtft(log.ttft_ms)}</TableCell>
                         <TableCell className="text-xs font-mono text-right">{fmtDuration(log.request_duration_ms)}</TableCell>
                         <TableCell className="text-xs text-right whitespace-nowrap"><span className="text-muted-foreground">{fmtTokens(log.prompt_tokens)}</span>{" / "}<span>{fmtTokens(log.completion_tokens)}</span>
@@ -689,7 +710,7 @@ export function SpendLogsPage() {
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
                         <Badge variant="outline" className="text-[10px] px-1 py-0">{log.call_type||"—"}</Badge>
-                        <Badge variant={log.status==="success"?"default":"destructive"} className="text-[10px] px-1.5 py-0">{log.status||"—"}</Badge>
+                        <StatusBadge status={log.status||""} />
                       </div>
                       <span className="text-xs font-mono font-medium">{fmtSpend(log.spend)}</span>
                     </div>

@@ -93,7 +93,8 @@ export async function defineMockRoutes(route: Route, request: Request) {
   if (url.pathname === "/admin/jobs") {
     const st = url.searchParams.get("step_type") || "";
     const filtered = st ? sampleJobs.filter(j => j.step_type === st) : sampleJobs;
-    return route.fulfill({ status: 200, json: { jobs: filtered, page: 1, limit: 50, total: filtered.length } });
+    // Return total: 120 to trigger pagination when requested, but only 2 items for page 1
+    return route.fulfill({ status: 200, json: { jobs: filtered, page: 1, limit: 50, total: 120 } });
   }
   if (url.pathname === "/admin/jobs/trigger" && route.request().method() === "POST") {
     return route.fulfill({ status: 200, json: { job_id: "job-new123-4567", status: "pending", total_steps: 3 } });

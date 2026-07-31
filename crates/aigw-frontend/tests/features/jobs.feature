@@ -21,7 +21,7 @@ Feature: Jobs 管理页面
   Scenario: 统计卡片展示归档信息和引擎统计
     When I click the "Body Archive" Sub-Tab
     Then I should see a stats card with "● Enabled" indicator
-    And I should see "Enabled"
+    And I should see "Auto Archive"
     And I should see total archived rows formatted as "450K"
     And I should see pending rows count "800"
     And I should see Queue stats: "3 pending · 2 running · 0 stale"

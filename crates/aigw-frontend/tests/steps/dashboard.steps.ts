@@ -46,9 +46,9 @@ When("I click the {string} tab in the Daily Trend card", async ({ page }, tabLab
 });
 
 Then("the Daily Trend chart should show stacked bars for prompt and completion tokens", async ({ page }) => {
-  // The chart legend should show "Prompt" and "Completion"
-  await expect(page.getByText("Prompt").first()).toBeVisible({ timeout: 5000 });
-  await expect(page.getByText("Completion").first()).toBeVisible({ timeout: 5000 });
+  // Chart legend now shows "Input" / "Output" / "Cache Read" / "Cache Write"
+  await expect(page.getByText("Input").first()).toBeVisible({ timeout: 5000 });
+  await expect(page.getByText("Output").first()).toBeVisible({ timeout: 5000 });
 });
 
 Then("the chart legend should show {string} and {string}", async ({ page }, name1: string, name2: string) => {

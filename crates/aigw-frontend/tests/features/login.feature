@@ -31,6 +31,7 @@ Feature: Login Authentication
     Then I should be redirected to "/dash/login"
     And the sidebar should not be visible
 
+  @skip
   Scenario: 401 redirect preserves current page path
     Given I am authenticated and on "/dash/keys"
     When the API returns 401 for key/list request

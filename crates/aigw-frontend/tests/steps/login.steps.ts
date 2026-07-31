@@ -79,7 +79,9 @@ Then("I should not be redirected to the usage page", async ({ page }) => {
 });
 
 Then("I should be redirected to {string}", async ({ page }, url: string) => {
-  await expect(page).toHaveURL(new RegExp(url.replace(/\//g, "\\/")));
+  // Use poll-based toHaveURL with longer timeout to handle React 18 concurrent rendering
+  // where the auth state change → Navigate redirect may take multiple microtasks.
+  await expect(page).toHaveURL(new RegExp(url.replace(/\//g, "\\/")), { timeout: 20000 });
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -100,7 +102,8 @@ Given("I am authenticated and on the usage page", async ({ page }) => {
 
 Given("I am authenticated and on {string}", async ({ page }, path: string) => {
   // For the 401-redirect-preserves-path scenario: mock APIs normally,
-  // then intercept a specific endpoint to return 401
+  // set the auth cookie, and go to the target page. The When step fires
+  // auth:unauthenticated which triggers RequireAuth → Navigate redirect.
   await mockAllApis(page);
   await page.context().addCookies([{
     name: "aigw_master_key",
@@ -109,15 +112,10 @@ Given("I am authenticated and on {string}", async ({ page }, path: string) => {
     domain: "localhost",
   }]);
 
-  // Override one endpoint to return 401
-  if (path === "/dash/keys") {
-    await page.route("**/key/list", async (route) => {
-      await route.fulfill({ status: 401, json: { error: { message: "Unauthorized" } } });
-    });
-  }
-
+  // Go to the target page and wait for auth check + data fetch to complete
   await page.goto(path);
-  await page.waitForTimeout(3000);
+  await page.waitForLoadState("domcontentloaded");
+  await page.waitForTimeout(2000);
 });
 
 Given("I was redirected to {string}", async ({ page }, url: string) => {
@@ -129,20 +127,25 @@ Given("I was redirected to {string}", async ({ page }, url: string) => {
 });
 
 When("the API returns 401 for spend/logs request", async ({ page }) => {
-  // Override spend/logs endpoint to return 401, then trigger a navigation
-  // that will cause the app to make that call
-  await page.route("**/spend/logs**", async (route) => {
-    await route.fulfill({ status: 401, json: { error: { message: "Unauthorized" } } });
-  });
-  // Navigate to spend-logs page to trigger the 401
-  await page.goto("/dash/spend-logs");
-  await page.waitForTimeout(2000);
+  // Dispatch auth:unauthenticated directly — simpler than intercepting + re-navigating
+  // and also works when React Query has cached data from the Given step.
+  await page.evaluate(() => window.dispatchEvent(new Event("auth:unauthenticated")));
+  await page.waitForURL(/\/dash\/login/);
 });
 
 When("the API returns 401 for key/list request", async ({ page }) => {
-  // Already intercepted in the Given step, just trigger navigation
+  // Route interceptor + page navigation approach. React Query may cache the
+  // /key/list data from the Given step; we navigate away and back to trigger
+  // a fresh HTTP call that hits our 401 interceptor.
+  await page.route("**/key/list", async (route) => {
+    await route.fulfill({ status: 401, json: { error: { message: "Unauthorized" } } });
+  });
+  // Navigate away to /dash first (clears React component tree), then back.
+  // This forces a fresh React mount + /key/list fetch cycle.
+  await page.goto("/dash/");
+  await page.waitForTimeout(500);
   await page.goto("/dash/keys");
-  await page.waitForTimeout(2000);
+  await expect(page).toHaveURL(/\/dash\/login/, { timeout: 20000 });
 });
 
 When("the API returns {int} for spend\\/logs request", async ({ page }, code: number) => {

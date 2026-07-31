@@ -108,6 +108,8 @@ async fn given_regular_key(world: &mut TestWorld, alias: String) {
         last_rotation_at: None,
         key_rotation_at: None,
         budget_limits: None,
+        user_email: None,
+        user_alias: None,
     };
     state.db.insert_key(&key).await.expect("insert key");
     world.created_keys.insert(alias, raw_token);

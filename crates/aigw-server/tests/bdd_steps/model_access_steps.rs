@@ -96,6 +96,8 @@ fn build_vk(alias: &str, models: &serde_json::Value, team_id: Option<&str>) -> (
         last_rotation_at: None,
         key_rotation_at: None,
         budget_limits: None,
+        user_email: None,
+        user_alias: None,
     };
     (raw_key, key)
 }

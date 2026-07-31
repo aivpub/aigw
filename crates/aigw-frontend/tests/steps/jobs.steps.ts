@@ -45,7 +45,9 @@ When("I click the {string} Sub-Tab", async ({ page }, tabName: string) => {
 
 Then("I should see a stats card with {string} indicator", async ({ page }, indicator: string) => {
   if (indicator.includes("Enabled")) {
-    await expect(page.getByText("Enabled")).toBeVisible();
+    // Archive card shows "Auto Archive: On" and "Storage: Configured" as badges
+    await expect(page.getByText("Auto Archive")).toBeVisible();
+    await expect(page.getByText("On").first()).toBeVisible();
   }
 });
 
@@ -374,7 +376,7 @@ When("I press the browser back button", async ({ page }) => {
 });
 
 Then("I should see the job list", async ({ page }) => {
-  await expect(page.getByText("Recent Jobs")).toBeVisible();
+  await expect(page.getByText("All Jobs")).toBeVisible();
 });
 
 Then("the URL is {string}", async ({ page }, expectedUrl: string) => {
@@ -388,7 +390,7 @@ Given("there are 120 jobs in total", async () => {});
 When("I am on the Jobs page with default page=1", async () => {});
 
 Then("I should see pagination controls with Page 1 of 3", async ({ page }) => {
-  await expect(page.getByText(/jobs total/)).toBeVisible();
+  await expect(page.getByText(/Page 1 of 3/).first()).toBeVisible();
 });
 
 When("I click page 2", async ({ page }) => {
@@ -494,12 +496,12 @@ Given("Job Detail has logs with step_keys {string} and {string}", async ({ page 
 });
 When("I view the Logs section", async () => {});
 Then("Logs table has a {string} column", async ({ page }, _col: string) => {
-  // Logs are grouped by step_key with each step's logs in an expandable panel.
-  await expect(page.getByRole("button", { name: "Logs for step hour=2026-07-25T14" })).toBeVisible();
+  // Logs are grouped by step_key with each step's logs in an expandable row.
+  // The step_key string is rendered as a table cell with a ▼/▲ toggle.
+  await expect(page.getByText("hour=2026-07-25T14").first()).toBeVisible();
 });
 Then("I can expand logs for a specific step_key", async ({ page }) => {
-  const panel = page.getByRole("button", { name: "Logs for step hour=2026-07-25T14" });
-  await panel.click();
+  await page.getByText("hour=2026-07-25T14").first().click();
 });
 
 // ── Q5: Trigger same row ──

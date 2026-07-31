@@ -19,7 +19,7 @@ Feature: Usage Overview
   Scenario: Daily Trend tokens shows prompt and completion stacked bars
     When I click the "📊 Tokens" tab in the Daily Trend card
     Then the Daily Trend chart should show stacked bars for prompt and completion tokens
-    And the chart legend should show "Prompt" and "Completion"
+    And the chart legend should show "Input" and "Output"
 
   Scenario: Daily Trend requests shows success and failed stacked bars
     When I click the "📋 Requests" tab in the Daily Trend card

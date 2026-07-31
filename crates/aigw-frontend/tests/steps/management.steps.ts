@@ -31,7 +31,8 @@ Then("I should see a user named {string} in the list", async ({ page }, name: st
 });
 
 Then("I should see a success toast", async ({ page }) => {
-  await expect(page.getByText(/created|success/i).first()).toBeVisible({ timeout: 5000 });
+  // Look for the toast element directly — avoid matching table header "Created" column
+  await expect(page.locator("[data-sonner-toast]").getByText(/created|success/i)).toBeVisible({ timeout: 5000 });
 });
 
 When("I click the delete button for the first user", async ({ page }) => {
