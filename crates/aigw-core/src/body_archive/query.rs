@@ -7,6 +7,7 @@
 //! range read that avoids re-fetching the parquet footer (and full file) on
 //! repeated queries to the same object.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use arrow::array::{Array, StringArray};
@@ -17,6 +18,7 @@ use parquet::arrow::async_reader::ParquetObjectReader;
 use parquet::arrow::{ParquetRecordBatchStreamBuilder, ProjectionMask};
 use parquet::file::metadata::ParquetMetaData;
 
+use crate::body_archive::cache::CachedMeta;
 use crate::body_archive::FooterCache;
 
 /// Body payload returned from Parquet cold storage.
@@ -156,9 +158,11 @@ pub async fn query_parquet_with_cache(
         .await
         .map_err(|e| format!("head {}: {}", path_str, e))?;
 
-    // 2. Resolve footer metadata — cache hit avoids re-fetching the footer.
-    let metadata = if let Some(cached) = footer_cache.get(path_str) {
-        cached
+    // 2. Resolve footer metadata and bloom filters from the cache.
+    //    Cache hit → zero IO for metadata AND bloom filter probes.
+    //    Cache miss → fetch footer + bloom filter section in batch.
+    let (metadata, cached_bloom) = if let Some(cached) = footer_cache.get(path_str) {
+        (cached.metadata, Some(cached.bloom_filters))
     } else {
         // ParquetObjectReader drives all IO via the store (footer + col chunks).
         let mut reader = ParquetObjectReader::new(store.clone(), meta.clone());
@@ -166,8 +170,14 @@ pub async fn query_parquet_with_cache(
             .await
             .map_err(|e| format!("load footer metadata: {}", e))?;
         let md = arrow_meta.metadata().clone();
-        footer_cache.put(path_str, md.clone());
-        md
+        // Bloom filters populate lazily on first probe (see loop below).
+        // We still insert the cache entry now so the metadata is cached;
+        // bloom_filters HashMap will be populated in place later.
+        footer_cache.put(path_str, CachedMeta {
+            metadata: Arc::clone(&md),
+            bloom_filters: HashMap::new(),
+        });
+        (md, None)
     };
 
     // 3. Build a stream that reads only the projected columns for the row
@@ -227,12 +237,38 @@ pub async fn query_parquet_with_cache(
             {
                 bloom_checks += 1;
             }
-            // Try to read + probe the bloom filter. This does a byte-range IO.
-            match builder
-                .get_row_group_column_bloom_filter(rg_idx, key_col_idx)
-                .await
-            {
-                Ok(Some(sbbf)) => {
+            // Check cache first (memory probe, ~ns).
+            // On cache miss, fetch via byte-range IO (~ms).
+            let sbbf_opt = if let Some(ref cb) = cached_bloom {
+                cb.get(&(rg_idx, key_col_idx)).cloned()
+            } else {
+                None
+            };
+
+            let sbbf_opt = if let Some(sbbf) = sbbf_opt {
+                Some(sbbf)
+            } else {
+                // Cache miss — byte-range IO to read the bloom filter.
+                match builder
+                    .get_row_group_column_bloom_filter(rg_idx, key_col_idx)
+                    .await
+                {
+                    Ok(Some(sbbf)) => {
+                        // Populate the cache entry for this file.
+                        // Re-acquire from cache (may have been updated by a
+                        // concurrent reader, or we inserted an empty one above).
+                        if let Some(mut cached) = footer_cache.get(path_str) {
+                            cached.bloom_filters.insert((rg_idx, key_col_idx), sbbf.clone());
+                            footer_cache.put(path_str, cached);
+                        }
+                        Some(sbbf)
+                    }
+                    _ => None,
+                }
+            };
+
+            match sbbf_opt {
+                Some(sbbf) => {
                     let key: &str = target_call_id;
                     if sbbf.check(&key) {
                         passing_indices.push(rg_idx);
@@ -240,7 +276,7 @@ pub async fn query_parquet_with_cache(
                         pruned += 1;
                     }
                 }
-                _ => {
+                None => {
                     // Bloom filter read failed — conservatively include.
                     passing_indices.push(rg_idx);
                 }
@@ -289,7 +325,6 @@ pub async fn query_parquet_with_cache(
 
     #[cfg(debug_assertions)]
     {
-        use std::time::Instant;
         let scan_elapsed = scan_start.elapsed();
         tracing::trace!(
             target_call_id,
