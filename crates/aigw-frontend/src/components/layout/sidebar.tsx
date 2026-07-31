@@ -1,45 +1,49 @@
 import { NavLink } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { Key, Box, Gamepad2, BarChart3, ScrollText, Users, Users2, Building2, Settings, Activity, ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
 interface NavGroup {
   title: string;
-  items: { to: string; label: string; icon: React.ComponentType<{ className?: string }> }[];
+  items: { to: string; labelKey: string; icon: React.ComponentType<{ className?: string }> }[];
 }
 
-const navGroups: NavGroup[] = [
-  {
-    title: "AI GATEWAY",
-    items: [
-      { to: "/dash/keys", label: "Virtual Keys", icon: Key },
-      { to: "/dash/models", label: "Models", icon: Box },
-      { to: "/dash/playground", label: "Playground", icon: Gamepad2 },
-    ],
-  },
-  {
-    title: "OBSERVABILITY",
-    items: [
-      { to: "/dash/usage", label: "Usage", icon: BarChart3 },
-      { to: "/dash/spend-logs", label: "Spend Logs", icon: ScrollText },
-    ],
-  },
-  {
-    title: "ACCESS CONTROL",
-    items: [
-      { to: "/dash/users", label: "Users", icon: Users },
-      { to: "/dash/teams", label: "Teams", icon: Users2 },
-      { to: "/dash/orgs", label: "Organizations", icon: Building2 },
-    ],
-  },
-  {
-    title: "SETTINGS",
-    items: [
-      { to: "/dash/router-settings", label: "Router Settings", icon: Settings },
-      { to: "/dash/jobs", label: "Jobs", icon: Activity },
-    ],
-  },
-];
+function useNavGroups(): NavGroup[] {
+  const { t } = useTranslation();
+  return [
+    {
+      title: t('sidebar.groups.aiGateway'),
+      items: [
+        { to: "/dash/keys", labelKey: "sidebar.nav.keys", icon: Key },
+        { to: "/dash/models", labelKey: "sidebar.nav.models", icon: Box },
+        { to: "/dash/playground", labelKey: "sidebar.nav.playground", icon: Gamepad2 },
+      ],
+    },
+    {
+      title: t('sidebar.groups.observability'),
+      items: [
+        { to: "/dash/usage", labelKey: "sidebar.nav.usage", icon: BarChart3 },
+        { to: "/dash/spend-logs", labelKey: "sidebar.nav.spendLogs", icon: ScrollText },
+      ],
+    },
+    {
+      title: t('sidebar.groups.accessControl'),
+      items: [
+        { to: "/dash/users", labelKey: "sidebar.nav.users", icon: Users },
+        { to: "/dash/teams", labelKey: "sidebar.nav.teams", icon: Users2 },
+        { to: "/dash/orgs", labelKey: "sidebar.nav.organizations", icon: Building2 },
+      ],
+    },
+    {
+      title: t('sidebar.groups.settings'),
+      items: [
+        { to: "/dash/router-settings", labelKey: "sidebar.nav.routerSettings", icon: Settings },
+        { to: "/dash/jobs", labelKey: "sidebar.nav.jobs", icon: Activity },
+      ],
+    },
+  ];
+}
 
 interface SidebarProps {
   open: boolean;
@@ -49,6 +53,9 @@ interface SidebarProps {
 }
 
 export function Sidebar({ open, onClose, collapsed, onToggleCollapse }: SidebarProps) {
+  const { t } = useTranslation();
+  const navGroups = useNavGroups();
+
   return (
     <>
       {/* Mobile overlay */}
@@ -76,13 +83,13 @@ export function Sidebar({ open, onClose, collapsed, onToggleCollapse }: SidebarP
             "text-lg font-bold tracking-tight transition-opacity",
             collapsed ? "opacity-0 w-0" : "",
           )}>
-            aigw
+            {t('sidebar.brand')}
           </span>
           <span className={cn(
             "text-xs text-muted-foreground transition-opacity",
             collapsed ? "opacity-0 w-0" : "ml-2",
           )}>
-            Admin
+            {t('sidebar.admin')}
           </span>
         </div>
 
@@ -100,7 +107,7 @@ export function Sidebar({ open, onClose, collapsed, onToggleCollapse }: SidebarP
                     key={item.to}
                     to={item.to}
                     onClick={onClose}
-                    title={collapsed ? item.label : undefined}
+                    title={collapsed ? t(item.labelKey) : undefined}
                     className={({ isActive }) =>
                       cn(
                         "flex items-center gap-3 rounded-md text-sm font-medium transition-colors",
@@ -112,7 +119,7 @@ export function Sidebar({ open, onClose, collapsed, onToggleCollapse }: SidebarP
                     }
                   >
                     <item.icon className="h-4 w-4 shrink-0" />
-                    {!collapsed && item.label}
+                    {!collapsed && t(item.labelKey)}
                   </NavLink>
                 ))}
               </div>
@@ -127,7 +134,7 @@ export function Sidebar({ open, onClose, collapsed, onToggleCollapse }: SidebarP
             size="icon"
             className="h-8 w-full flex items-center justify-center hover:bg-accent"
             onClick={onToggleCollapse}
-            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            title={collapsed ? t('sidebar.expandSidebar') : t('sidebar.collapseSidebar')}
           >
             {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
           </Button>

@@ -5,6 +5,7 @@ import { Toaster } from "sonner";
 import App from "./App";
 import { UnauthorizedError } from "@/lib/api";
 import "./index.css";
+import "@/i18n";
 
 const queryClient = new QueryClient({
   queryCache: new QueryCache({
