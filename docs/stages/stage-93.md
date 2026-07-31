@@ -4,7 +4,7 @@
 **优先级**: P1
 **状态**: ⏳ 待开始
 **预估**: 10h
-**前置**: Stage 91（框架 + 后端端点）+ Stage 92（全量翻译）
+**前置**: Stage 91（i18n 框架）+ Stage 92（全量翻译）
 
 ---
 
@@ -22,7 +22,7 @@
 
 ## 背景
 
-Stage 91 完成了 i18n 框架和后端语言端点，Stage 92 完成了全量页面翻译。本 Stage 提供用户切换语言的能力 + 端到端验收 + 文档闭环，完成 UI 多语言支持的全部交付。
+Stage 91 完成了 i18n 框架，Stage 92 完成了全量页面翻译。本 Stage 提供用户切换语言的能力 + 端到端验收 + 文档闭环，完成 UI 多语言支持的全部交付。
 
 ---
 
@@ -99,8 +99,8 @@ i18n.on('languageChanged', (lng) => {
 
 | # | 场景 | 验证点 |
 |---|------|--------|
-| 1 | 首次访问英文 | `navigator.language=en-US`，后端默认 `en` → 菜单文本为英文 |
-| 2 | 首次访问中文 | `navigator.language=zh-CN`，后端默认 `zh-CN` → 菜单/登录页中文 |
+| 1 | 首次访问英文 | `navigator.language=en-US` → 菜单文本为英文 |
+| 2 | 首次访问中文 | `navigator.language=zh-CN` → 菜单/登录页中文 |
 | 3 | 语言切换器切换 | 点击 Header 语言下拉 → 选 "English" → UI 即时变英文。菜单文本变 English |
 | 4 | localStorage 持久化 | 切换为中文 → 刷新页面 → 仍为中文（localStorage `aigw-language=zh-CN`） |
 | 5 | 中文 > 英文后日期格式 | 切换英文后日期显示 `Jul 31, 2026` 而非 `2026年7月31日` |
@@ -135,8 +135,8 @@ i18n.on('languageChanged', (lng) => {
 新增 ADR-023：UI 多语言 i18n 选型与架构
 - 技术选型：i18next + react-i18next（非 FormatJS）
 - 翻译策略：命名空间 + 单 JSON 文件
-- 后端语言配置：`GeneralSettings.ui_language`
-- 持久化：localStorage → navigator → 后端默认 三级 fallback
+- 持久化：localStorage → navigator.language → 'en' 两级 fallback
+- 管理员配置默认语言推迟到后续 Phase（需要时 Router Settings 页加下拉）
 
 ### 4. `docs/12-technical-debt.md`
 
@@ -149,13 +149,9 @@ i18n.on('languageChanged', (lng) => {
 | TD-008c | 后端 API 错误消息多语言 | P3 |
 | TD-008d | RTL 语言支持（阿拉伯语等） | P3 |
 
-### 5. 原 Phase 37 文档重命名
+### 5. 文档引用更新
 
-```
-docs/stages/stage-91.md → docs/stages/stage-94-budget-reset-backend.md
-docs/stages/stage-92.md → docs/stages/stage-95-budget-reset-frontend.md
-docs/stages/stage-93.md → docs/stages/stage-96-budget-reset-fullstack.md
-```
+原 Phase 37 budget reset 及其引用的 `docs/plans/2026-07-30-budget-reset-phase-37.md`、`docs/research/2026-07-30-budget-reset-gap.md` 中的 stage 编号映射已在 Stage 91 计划阶段完成（重命名为 stage-94.md ~ stage-96.md），本 Stage 无需再做。
 
 ---
 
