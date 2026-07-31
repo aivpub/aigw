@@ -1,4 +1,4 @@
-Feature: i18n Language Detection and Persistence
+Feature: i18n Language Switcher
 
   Scenario: First visit with Chinese browser shows Chinese sidebar menu
     Given I prepare Chinese browser locale

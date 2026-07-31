@@ -1,6 +1,12 @@
-import { Menu, LogOut, PanelLeftOpen, PanelLeftClose } from "lucide-react";
+import { Menu, LogOut, PanelLeftOpen, PanelLeftClose, Languages } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/hooks/use-auth";
 
 interface HeaderProps {
@@ -10,8 +16,13 @@ interface HeaderProps {
 }
 
 export function Header({ onMenuClick, collapsed, onToggleCollapse }: HeaderProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { logout } = useAuth();
+  const currentLang = i18n.language?.startsWith('zh') ? 'zh-CN' : 'en';
+
+  const switchLanguage = (lang: string) => {
+    i18n.changeLanguage(lang);
+  };
 
   return (
     <header className="sticky top-0 z-30 flex h-14 items-center gap-4 border-b bg-background px-4 lg:px-6">
@@ -36,6 +47,25 @@ export function Header({ onMenuClick, collapsed, onToggleCollapse }: HeaderProps
       </Button>
 
       <div className="flex-1" />
+
+      {/* Language Switcher */}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="sm" aria-label={t('header.switchLanguage')}>
+            <Languages className="h-4 w-4" />
+            <span className="ml-1.5 hidden sm:inline">{currentLang === 'zh-CN' ? '中文' : 'EN'}</span>
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onClick={() => switchLanguage('zh-CN')}>
+            <span className="mr-2">🇨🇳</span> 中文 {currentLang === 'zh-CN' && '✓'}
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => switchLanguage('en')}>
+            <span className="mr-2">🇺🇸</span> English {currentLang === 'en' && '✓'}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
       <Button variant="ghost" size="sm" onClick={logout}>
         <LogOut className="h-4 w-4 mr-2" />
         <span className="hidden sm:inline">{t('header.logout')}</span>

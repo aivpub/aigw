@@ -63,7 +63,8 @@
   "header": {
     "expandSidebar": "Expand sidebar",
     "collapseSidebar": "Collapse sidebar",
-    "logout": "Logout"
+    "logout": "Logout",
+    "switchLanguage": "Switch language"
   },
   "usage": {
     "title": "Usage",
