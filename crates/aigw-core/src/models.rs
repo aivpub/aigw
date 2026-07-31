@@ -874,6 +874,8 @@ pub struct GenerateKeyRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub key: Option<String>, // custom key value (migration-critical)
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub key_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub key_alias: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,

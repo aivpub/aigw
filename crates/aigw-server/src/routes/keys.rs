@@ -206,7 +206,7 @@ fn build_virtual_key(hash: &str, req: &GenerateKeyRequest) -> VirtualKey {
     let now = Utc::now();
     VirtualKey {
         token: hash.to_string(),
-        key_name: req.key_alias.clone(),
+        key_name: req.key_name.clone().or_else(|| req.key_alias.clone()),
         key_alias: req.key_alias.clone(),
         soft_budget_cooldown: "false".to_string(),
         spend: 0.0,

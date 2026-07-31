@@ -109,6 +109,7 @@ export function KeysPage() {
   const [deletedPageSize, setDeletedPageSize] = useState(30);
 
   // Form state
+  const [formName, setFormName] = useState("");
   const [formAlias, setFormAlias] = useState("");
   const [selectedModels, setSelectedModels] = useState<string[]>([]);
   const [formBudget, setFormBudget] = useState("");
@@ -230,6 +231,7 @@ export function KeysPage() {
   }
 
   function openCreate() {
+    setFormName("");
     setFormAlias("");
     setSelectedModels([]);
     setFormBudget("");
@@ -242,6 +244,7 @@ export function KeysPage() {
 
   function openEdit(key: KeyItem) {
     setSelectedKey(key);
+    setFormName(key.key_name ?? "");
     setFormAlias(key.key_alias ?? "");
     if (Array.isArray(key.models) && key.models.length > 0) {
       setSelectedModels(key.models);
@@ -266,6 +269,7 @@ export function KeysPage() {
 
   function buildCreateBody(): Record<string, unknown> {
     const body: Record<string, unknown> = {};
+    if (formName.trim()) body.key_name = formName.trim();
     if (formAlias.trim()) body.key_alias = formAlias.trim();
     if (selectedModels.includes("*")) {
       body.models = [];
@@ -287,6 +291,7 @@ export function KeysPage() {
     if (!selectedKey) return;
     editMutation.mutate({
       key: selectedKey.token,
+      ...(formName.trim() && { key_name: formName.trim() }),
       ...(formAlias.trim() && { key_alias: formAlias.trim() }),
       ...(selectedModels.includes("*")
         ? { models: [] }
@@ -457,6 +462,7 @@ export function KeysPage() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Alias</TableHead>
+                      <TableHead>Name</TableHead>
                       <TableHead>Token</TableHead>
                       <TableHead>User</TableHead>
                       <TableHead>Models</TableHead>
@@ -472,7 +478,7 @@ export function KeysPage() {
                     {isLoading
                       ? Array.from({ length: 3 }).map((_, i) => (
                           <TableRow key={i}>
-                            {Array.from({ length: 10 }).map((_, j) => (
+                            {Array.from({ length: 11 }).map((_, j) => (
                               <TableCell key={j}>
                                 <Skeleton className="h-4 w-full" />
                               </TableCell>
@@ -482,7 +488,10 @@ export function KeysPage() {
                       : filteredKeys.map((key) => (
                           <TableRow key={key.token}>
                             <TableCell className="font-medium">
-                              {key.key_alias ?? key.key_name ?? "—"}
+                              {key.key_alias ?? "—"}
+                            </TableCell>
+                            <TableCell className="text-sm">
+                              {key.key_name ?? "—"}
                             </TableCell>
                             <TableCell className="font-mono text-xs">
                               <span className="inline-flex items-center gap-1">
@@ -671,6 +680,11 @@ export function KeysPage() {
                               <Badge variant="default" className="text-xs">active</Badge>
                             )}
                           </div>
+                          {key.key_name && key.key_alias && (
+                            <div className="flex items-center justify-between text-xs text-muted-foreground">
+                              <span>{key.key_name}</span>
+                            </div>
+                          )}
                           <div className="flex items-center gap-2 text-xs font-mono">
                             <span className="text-muted-foreground truncate max-w-[60%]">
                               {visibleTokens.has(key.token)
@@ -801,6 +815,15 @@ export function KeysPage() {
             <>
               <div className="space-y-4">
                 <div>
+                  <Label htmlFor="name">Name</Label>
+                  <Input
+                    id="name"
+                    value={formName}
+                    onChange={(e) => setFormName(e.target.value)}
+                    placeholder="e.g. Production GPT-4 Key"
+                  />
+                </div>
+                <div>
                   <Label htmlFor="alias">Alias</Label>
                   <Input
                     id="alias"
@@ -890,6 +913,15 @@ export function KeysPage() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
+            <div>
+              <Label htmlFor="edit-name">Name</Label>
+              <Input
+                id="edit-name"
+                value={formName}
+                onChange={(e) => setFormName(e.target.value)}
+                placeholder="e.g. Production GPT-4 Key"
+              />
+            </div>
             <div>
               <Label htmlFor="edit-alias">Alias</Label>
               <Input
