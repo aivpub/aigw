@@ -1,13 +1,43 @@
 # aigw -- 下一步行动
 
-**上次更新**: 2026-07-29
-**当前阶段**: Phase 35 ✅ + Phase 36 ✅（Stage 88-90 全部完成）
+**上次更新**: 2026-07-31
+**当前阶段**: Phase 35 ✅ + Phase 36 ✅（Stage 88-90 全部完成）；Phase 38 ⏳ 待开始（Stage 91-93 UI 多语言 i18n）
 
 ---
 
-## 当前状态：85/89 Stages（Stage 88-90 ✅）
+## 当前状态：89/92 Stages（Stage 88-90 ✅）
 
 **待办**: ① Phase 30（Stage 78-81）代码已落地 + Phase 31 修复完成，待一并回写为 ✅；② TD-006 客户端 call_id 响应头回写；③ 长期路线 LT-BodyMetrics/LT-BodyCompact/LT-BodyLifecycle 视数据量触发。
+
+---
+
+## Phase 38: UI 多语言 i18n 支持（中文 + English）⏳ 待开始
+
+**起因**: 当前 aigw 前端所有 UI 文本硬编码为英文，无任何 i18n 框架、翻译文件或语言切换机制。需要在保留英文的同时新增中文支持，浏览器可持久化语言选择，后端可配置不同部署实例的默认语言。
+
+**核心预期**: 用户可在浏览器 Header 下拉切换中/英文，选择自动持久化到 localStorage；语言检测链：localStorage → 浏览器语言 → 后端 `config.yaml` `general_settings.ui_language` 默认值；后端新增 `GET /api/v1/settings/language` 公开端点；前端使用 i18next + react-i18next 框架，单 JSON 文件按命名空间组织翻译；日期/数字格式跟随语言变化（date-fns locale）。
+
+**工作量**: 46h，3 Stages。
+
+| Stage | 目标 | 类型 | 预估 | 状态 |
+|-------|------|------|------|------|
+| Stage 91 | i18n 框架（react-i18next + i18next + browser-languagedetector）+ 翻译文件骨架 + 后端 `ui_language` 配置 + `GET /settings/language` 端点 + 浏览器持久化 + Sidebar/LoginPage 首批改造验证。TDD: 4 BDD + 3 UT | 全栈 | 16h | ⏳ 待开始 |
+| Stage 92 | 全量页面文本提取（13 页面 + Layout + LogViewer）+ zh-CN.json/en.json 完整翻译 + date-fns locale 动态切换 + `check-i18n-keys.sh` 检测脚本。TDD: 全量 BDD 回归 + i18n-full-translation 3 BDD | 前端+翻译 | 20h | ⏳ 待开始 |
+| Stage 93 | Header 语言下拉切换器 + `<html lang>` 同步 + Playwright BDD 5 场景 × 3 viewports + 文档收尾（ADR-023/TD-008）。TDD: 5 BDD + 手动验收 checklist | 前端+测试+文档 | 10h | ⏳ 待开始 |
+
+**依赖**: Stage 91 → 92（翻译依赖框架就绪）；Stage 92 → 93（语言切换器依赖翻译完成）。
+
+**设计文档**: docs/stages/stage-91.md ~ stage-93.md
+
+**关键决策**: 选 i18next 非 FormatJS（React 生态事实标准）；单 JSON 文件命名空间（初期 < 500 keys）；后端 `ui_language` 在 GeneralSettings 中（不建独立表）；通用 UI 组件不改（文案由调用方传入）；zod 校验在 render 时翻译而非 schema 定义时。
+
+---
+
+## Phase 39: Budget Reset 周期任务 + 配置 ⏳ 推后
+
+> 原 Phase 37（Stage 91-93）的 Budget Reset 工作因 UI 多语言需求优先级更高而推后，重新编号为 Phase 39（Stage 94-96）。原设计文档和 planning 文件保留，stage 文档已重命名。
+
+**设计文档**: docs/stages/stage-94.md ~ stage-96.md + docs/plans/2026-07-30-budget-reset-phase-37.md + docs/research/2026-07-30-budget-reset-gap.md
 
 ---
 
@@ -48,6 +78,10 @@ eebf644 feat(stage-88): core entity soft-delete — migrations + DB layer + 4 ar
 
 ---
 
+
+
+> 原 Phase 37（Stage 91-93）的 Budget Reset 工作因 UI 多语言需求优先级更高而推后，重新编号为 Phase 39（Stage 94-96）。原设计文档和 planning 文件保留，stage 文档已重命名。
+
 ## 上一阶段回顾 — Stage 86（Phase 33 ✅）
 
 Stage 86（`aigw-migrate sync` 子命令 — aigw↔aigw 多表只读增量同步）于 2026-07-28 完成。核心预期：任意两个 aigw DB 实例间（PG↔SQLite 任意组合）一条 CLI 同步数据，默认全 11 张业务表，`--tables` 选子集，`spend_logs` 按"最近 N 天"增量，其他表全量幂等追加，重跑不重复。实现：native.rs `build_aigw_cursor_sql`（锚点 `start_time`，不动 litellm `build_cursor_sql` 保零回归）+ `stream_rows_with_cursor_aigw` + `stream_pg_rows_keyset_aigw`（PG keyset `(start_time, call_id)`）；sync.rs `run_sync` + `SyncStats` + 常量 + `parse_tables`/`resolve_tables`/`resolve_cursor`；main.rs `Sync` 子命令 + short alias（-s/-t/-T/-d/-r/-e/-B/-b）+ env 回退。空 overrides direct-match；加密表直接复制密文；config 默认排除。TDD 8 UT 红绿（全表/子集/`--days 7`/幂等/`--skip-body`/非法表名/config 默认排除+显式不覆盖/DEFAULT_TABLES 契约）。验证：`cargo test -p aigw-migrate` 27+27+8+1 全，无回归；`aigw-migrate sync --help` 输出表清单。Phase 30（Stage 78-81）仍待一并标记 ✅。
@@ -84,6 +118,10 @@ Phase 31:   ████████████████████ 100% (3
 Phase 32:   ████████████████████ 100% (1/1)  ✅ request_id → call_id 改名 + 上游对账链路（Stage 85）
 Phase 33:   ████████████████████ 100% (1/1)  ✅ aigw↔aigw 多表只读增量同步（Stage 86）
 Phase 34:   ████████████████████ 100% (1/1)  ✅ 售后对账链路收尾（Stage 87）
+Phase 35:   ████████████████████ 100% (2/2)  ✅ Core Entity Soft-Delete (Stage 88-89)
+Phase 36:   ████████████████████ 100% (1/1)  ✅ Upstream Cache Detection & Billing (Stage 90)
+Phase 38:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3)  ⏳ UI 多语言 i18n 支持 (Stage 91-93)
+Phase 39:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3)  ⏳ Budget Reset 周期任务 + 配置 (Stage 94-96)
 ```
 
 ### 测试目标

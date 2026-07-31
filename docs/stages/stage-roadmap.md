@@ -1,15 +1,15 @@
 # aigw — AI Gateway Stage Roadmap
 
 **项目**: aigw (litellm Rust 最小兼容替代)
-**最后更新**: 2026-07-28
+**最后更新**: 2026-07-31
 
 ---
 
 ## 当前状态
 
-- **当前 Phase**: Phase 36 — Upstream Prompt Cache Detection & Differentiated Billing ⏳ 待开始
-- **状态**: 83/89 Stages 已完成（Stage 86 ✅ 2026-07-28；Stage 87 ✅ 2026-07-28；Stage 88-89 待开始；Stage 90 待开始；Stage 78-81 已编码落地，Phase 30 待一并标记 ✅）
-- **下一里程碑**: Stage 90（calc_spend 三级缓存差异化计费 + upstream response 缓存 token 解析）与 Stage 88-89（Core Entity Soft-Delete）可并行
+- **当前 Phase**: Phase 38 — UI 多语言 i18n 支持（中文 + English）⏳ 待开始
+- **状态**: 89/92 Stages 已完成（Stage 88-90 ✅ 2026-07-29；Stage 78-81 已编码落地，Phase 30 待一并标记 ✅）
+- **下一里程碑**: Phase 38（Stage 91-93，UI 多语言 i18n 支持，前后端，46h）
 
 ### 整体进度
 
@@ -43,15 +43,70 @@ Phase 31:   ████████████████████ 100% (3
 Phase 32:   ████████████████████ 100% (1/1 Stage)  ✅ request_id→call_id 改名 + 上游对账链路（Stage 85）
 Phase 33:   ████████████████████ 100% (1/1 Stage)  ✅ aigw↔aigw 多表只读增量同步（Stage 86）
 Phase 34:   ████████████████████ 100% (1/1 Stage)  ✅ 售后对账链路收尾（Stage 87）
-Phase 35:   ░░░░░░░░░░░░░░░░░░░░   0% (0/2 Stages) ⏳ Core Entity Soft-Delete（Stage 88-89）
-Phase 36:   ░░░░░░░░░░░░░░░░░░░░   0% (0/1 Stage)  ⏳ Upstream Cache Detection & Billing（Stage 90）
+Phase 35:   ████████████████████ 100% (2/2 Stages) ✅ Core Entity Soft-Delete（Stage 88-89）
+Phase 36:   ████████████████████ 100% (1/1 Stage)  ✅ Upstream Cache Detection & Billing（Stage 90）
+Phase 37:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3 Stages) ⏳ UI 多语言 i18n 支持 (Stage 91-93)
+Phase 39:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3 Stages) ⏳ Budget Reset 周期任务 + 配置 (Stage 94-96)
 ```
 
 ---
 
 ## 当前 Phase 详情
 
-### Phase 36：Upstream Prompt Cache Detection & Differentiated Billing ⏳
+### Phase 38：UI 多语言 i18n 支持（中文 + English）⏳
+
+**背景**: 当前 aigw 前端所有 UI 文本硬编码为英文，无任何 i18n 框架、翻译文件或语言切换机制。项目使用 React 19 + TypeScript + Vite + Tailwind CSS v4 + Radix UI primitives，UI 组件为自建 shadcn/ui 风格。需增加中英双语支持，浏览器可持久化语言选择，后端可配置默认语言。
+
+**核心预期**: 用户可在浏览器切换中/英文，选择自动持久化到 localStorage；后端 `config.yaml` 可配置 `general_settings.ui_language` 作为默认语言（SaaS 中国区默认中文、海外区默认英文）；语言检测链：localStorage → 浏览器语言 → 后端默认。
+
+**拆分**: 3 Stage（91 框架+后端 16h + 92 全量翻译 20h + 93 切换器+E2E+收尾 10h），共 46h。
+
+| Stage | 状态 | 目标 | 类型 | 预估 |
+|-------|------|------|------|------|
+| Stage 91 | ⏳ 待开始 | **i18n 框架 + 后端语言端点 + 浏览器持久化** — react-i18next + i18next + i18next-browser-languagedetector 安装配置；翻译文件骨架（zh-CN.json/en.json，命名空间结构）；后端 `GeneralSettings.ui_language` + `GET /api/v1/settings/language` 公开端点；`initI18n()` 异步初始化（localStorage → navigator → 后端 default 三级 fallback）；Sidebar + LoginPage 首批改造验证。TDD: 4 BDD 场景 + 3 UT | 全栈 | 16h |
+| Stage 92 | ⏳ 待开始 | **全量页面文本提取 + 中英翻译** — 13 页面 + Layout + LogViewer 组件文本改造（硬编码→`t('key')`）；en.json + zh-CN.json 全部翻译条目补全；date-fns locale 动态切换；zod 表单校验 render 时翻译；`check-i18n-keys.sh` key 对齐检测脚本。TDD: 全量 BDD 回归 + i18n-full-translation.feature 3 场景 | 前端+翻译 | 20h |
+| Stage 93 | ⏳ 待开始 | **语言切换器 + E2E 验收 + 文档收尾** — Header 语言下拉（DropdownMenu + Lucide Languages 图标 + 中/EN 切换）；`<html lang>` 属性同步；Playwright BDD i18n-switcher.feature 5 场景 × 3 viewports；文档收尾（roadmap/next-steps/ADR-023/tech-debt TD-008）。TDD: 5 BDD + 手动验收 checklist | 前端+测试+文档 | 10h |
+
+**依赖关系**: Stage 91 → 92（翻译依赖框架就绪）；Stage 92 → 93（语言切换器依赖翻译完成）。
+
+**Phase 38 合计**: 46h，3 Stages。
+
+**设计文档**:
+- `docs/stages/stage-91.md`（i18n 框架 + 后端端点 + 持久化）
+- `docs/stages/stage-92.md`（全量翻译 + 页面改造）
+- `docs/stages/stage-93.md`（语言切换器 + E2E + 收尾）
+
+**关键决策**:
+- **i18next 而非 FormatJS**：React 生态事实标准，Tailwind/shadcn 项目常用。
+- **单 JSON 文件命名空间**：初期文本量 < 500 keys，打包成本忽略不计，懒加载未必要。
+- **后端 `ui_language` 而非独立表**：SaaS 部署场景简单配置即可。
+- **zod schema 不在定义时翻译**：语言切换需动态响应，render 时 `t()` 更安全。
+- **通用 UI 组件不改**：`components/ui/*` 保持纯净，文案由调用方传入。
+
+### Phase 39：Budget Reset 周期任务 + 配置 ⏳（从原 Phase 37 / Stage 91-93 推后）
+
+**背景**: budgets 表 + 四实体表的 spend/max_budget/budget_duration/budget_reset_at 列 Stage 1 就 schema 对齐但从未实现周期 reset。复用 Stage 82-84 的 AsyncTask+Engine 框架。详见 docs/research/2026-07-30-budget-reset-gap.md。
+
+**核心预期**: 配置了 budget_duration 的 key/team/user/org 到周期点后 spend 自动清零、budget_reset_at 自动滚动。用户能在实体表单内联配置，管理员在 Jobs 页查看/手动 trigger。
+
+| Stage | 状态 | 目标 | 类型 | 预估 |
+|-------|------|------|------|------|
+| Stage 94 | ⏳ 待开始 | **后端** — duration 解析 + BudgetResetter AsyncTask + DB 层 4 reset × 3 方言 + Budget CRUD + backfill + Engine 注册 + config。TDD: ~18 UT + 6 BDD + real BDD 三后端 | 后端+测试 | 16h |
+| Stage 95 | ⏳ 待开始 | **前端** — keys/teams/users/orgs 表单内联 budget_duration 下拉 + soft_budget + 列展示；budget_reset Job Tab 补全。TDD: budgets.feature 8 + jobs 增 3 × 3 viewports | 前端+测试 | 16h |
+| Stage 96 | ⏳ 待开始 | **全栈联调** — soft/hard 双轨检查 + 端到端联调 + real BDD 三后端 + 文档收尾。TDD: 3 UT + real BDD 3×3 | 全栈+测试 | 8h |
+
+**Phase 39 合计**: 40h，3 Stages。原编号 Stage 91-93 → 94-96。
+
+**设计文档**: `docs/stages/stage-94.md` / `stage-95.md` / `stage-96.md` / `docs/plans/2026-07-30-budget-reset-phase-37.md` / `docs/research/2026-07-30-budget-reset-gap.md`
+
+### Phase 36：Upstream Prompt Cache Detection & Differentiated Billing ✅ 已完成
+
+（详情见下，Stage 90 已于 2026-07-29 完成）
+
+
+---
+
+### Phase 36：Upstream Prompt Cache Detection & Differentiated Billing ✅ 已完成
 
 **背景**: 调研确认（`docs/research/2026-07-28-upstream-prompt-cache-detection-and-billing.md`）litellm 对上游 provider 的 prompt caching 有两套解析（Anthropic 顶层字段 + OpenAI `prompt_tokens_details`）和三级差异化计费（regular / cache_read / cache_creation），而 aigw 当前 `calc_spend` 对所有 prompt token 使用同一单价，`Deployment` 不含缓存定价字段。核心目标：补齐上游缓存 token 解析 → 三级计费 → daily 聚合表写入的完整链路。
 
@@ -662,3 +717,4 @@ Phase 36:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 | v35.0 | 2026-07-28 | **Stage 86 完成（Phase 33 ✅）**：实现 `aigw-migrate sync` 子命令——aigw↔aigw 同构只读增量同步。native.rs 新增 `build_aigw_cursor_sql`（锚点 `start_time`，不改 litellm `build_cursor_sql` 保零回归）+ `stream_rows_with_cursor_aigw` dispatch + `stream_pg_rows_keyset_aigw`（PG keyset 用 `(start_time, call_id)` 而非 `(startTime, request_id)`）。sync.rs 新增 `run_sync` + `SyncStats`/`TableSyncStats` + `ALL_AIGW_TABLES`/`DEFAULT_TABLES`/`SPEND_LOGS_BODY_COLUMNS` 常量 + `parse_tables`/`resolve_tables`/`resolve_cursor`（表名校验、`--days` UTC 转 CursorRange、与显式 `--resume-after`/`--end-before` 取更严边界）。main.rs `Sync` 子命令 + short alias（-s/-t/-T/-d/-r/-e/-B/-b）+ env 回退（`AIGW_SYNC_SOURCE_URL`/`AIGW_SYNC_TARGET_URL`）。空 overrides direct-match（aigw↔aigw 同 schema，不做 `call_id←request_id` 重定向）；`credentials`/`proxy_models` 当 plain 复制密文不调 migrate_credentials；config 默认排除。TDD 8 UT 红绿（`tests/sync.rs`：全表同步/`--tables` 子集/`--days 7` 过滤/幂等重跑/`--skip-body`/非法表名报错/config 默认排除+显式 INSERT OR IGNORE 不覆盖/DEFAULT_TABLES 契约）。验证：`cargo test -p aigw-migrate` 全量通过（27+27+8+1，无回归）+ `aigw-migrate sync --help` 输出表清单。总进度 82/86。|
 | v37.0 | 2026-07-28 | **Stage 87 完成 + Phase 35 规划**：Stage 87 ✅（Spend Logs UI 双 id + 模糊搜索全部落地，Phase 34 ✅）。新增 Phase 35（Core Entity Soft-Delete，Stages 88-89，共 18h）：独立归档表模式扩展 teams/users/orgs/models 四表软删除。Stage 88=后端全链路（迁移+DB层+API+测试，12h）；Stage 89=前端（删除确认+已删除视图+E2E，6h）。设计文档：`stage-88.md`、`stage-89.md`、`docs/plans/2026-07-28-soft-delete-archive-tables.md`。总进度 85/88（Stage 87 ✅、Stage 88-89 待开始）。|
 | v38.0 | 2026-07-28 | **Phase 36 规划**：新增 Phase 36（Upstream Prompt Cache Detection & Differentiated Billing，Stage 90，10h）。基于 `docs/research/2026-07-28-upstream-prompt-cache-detection-and-billing.md` 调研结果——上游 provider 缓存 token 解析 + calc_spend 三级差异化计费 + Deployment 缓存定价字段 + daily_*_spend 缓存列写入。单 Stage 纯后端，与 Phase 35 并行。设计文档：`stage-90.md`。总进度 83/89（Stage 90 待开始）。|
+| v39.0 | 2026-07-30 | **Phase 37 规划**：新增 Phase 37（Budget Reset 周期任务 + 配置，Stages 91-93，共 40h）。基于 docs/research/2026-07-30-budget-reset-gap.md 调研——budgets 表 + 四实体表 budget 列 Stage 1 就 schema 对齐但从未实现周期 reset，budget_duration/budget_reset_at 字段被写入却不消费。复用 Stage 82-84 的 AsyncTask+Engine 框架新增 BudgetResetter（step_type=budget_reset，tick 扫过期记录批量 UPDATE spend=0 + 标准化对齐重算 reset_at）。3 Stage：91 后端（duration 解析+resetter+Budget CRUD+backfill+config，16h）、92 前端（实体表单内联 budget_duration/soft_budget+Jobs Tab 补全，16h）、93 全栈联调（soft/hard 双轨+real BDD 三后端+收尾，8h）。soft_budget 告警通道登记 TD-007。设计文档：stage-91~93.md + plans/2026-07-30-budget-reset-phase-37.md。总进度 89/92（Stage 91-93 待开始）。 |
