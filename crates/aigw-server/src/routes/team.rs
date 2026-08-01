@@ -9,6 +9,7 @@
 //! - GET    /team/deleted — List deleted teams
 
 use aigw_core::models::Team;
+use aigw_core::db::Database;
 use axum::{extract::State, http::StatusCode, Json};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -20,6 +21,30 @@ use super::spend::{require_admin, SpendAuth};
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Request types
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Validate team budget against parent organization budget (via budgets table).
+async fn validate_team_budget(
+    db: &Database,
+    team_max_budget: f64,
+    organization_id: Option<&str>,
+) -> Result<(), (StatusCode, Json<Value>)> {
+    if let Some(oid) = organization_id {
+        // Org delegates budget to budgets table via budget_id
+        if let Ok(Some(org)) = db.get_organization_by_id(oid).await {
+            if let Ok(Some(budget)) = db.get_budget_by_id(&org.budget_id).await {
+                if let Some(org_max) = budget.max_budget_f64() {
+                    if org_max > 0.0 && team_max_budget > org_max {
+                        return Err((
+                            StatusCode::BAD_REQUEST,
+                            Json(json!({"error": {"message": "Team budget cannot exceed organization budget", "type": "budget_violation"}})),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
 
 #[derive(Debug, Deserialize)]
 pub struct TeamInfoQuery {
@@ -89,6 +114,13 @@ pub async fn team_new(
         model_id: body.get("model_id").and_then(|v| v.as_i64()).map(|v| v as i32),
         allow_team_guardrail_config: body.get("allow_team_guardrail_config").and_then(|v| v.as_bool()).unwrap_or(false),
     };
+
+    // Validate budget hierarchy: team budget cannot exceed organization budget
+    if let Some(tb) = team.max_budget_f64() {
+        if tb > 0.0 {
+            validate_team_budget(&state.db, tb, team.organization_id.as_deref()).await?;
+        }
+    }
 
     state.db.insert_team(&team).await.map_err(|e| {
         (
@@ -244,6 +276,13 @@ pub async fn team_update(
         existing.blocked = v.as_bool().unwrap_or(existing.blocked);
     }
     existing.updated_at = chrono::Utc::now();
+
+    // Validate budget hierarchy: team budget cannot exceed organization budget
+    if let Some(tb) = existing.max_budget_f64() {
+        if tb > 0.0 {
+            validate_team_budget(&state.db, tb, existing.organization_id.as_deref()).await?;
+        }
+    }
 
     state.db.update_team(&existing).await.map_err(|e| {
         (

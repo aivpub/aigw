@@ -4,6 +4,17 @@ use serde::{Deserialize, Serialize};
 use crate::otel_tracing::OtelConfig;
 use crate::body_archive::config::BodyArchiveConfig;
 
+/// Budget reset configuration.
+///
+/// Controls periodic spend reset for entities (virtual_keys, teams, users,
+/// organizations) that have `budget_duration` set.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct BudgetResetConfig {
+    /// Enable the periodic budget reset worker. Default: false.
+    #[serde(default)]
+    pub enabled: bool,
+}
+
 /// Top-level config (litellm-compatible)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AigwConfig {
@@ -27,6 +38,11 @@ pub struct AigwConfig {
 
     #[serde(rename = "body_archive", skip_serializing_if = "Option::is_none")]
     pub body_archive: Option<BodyArchiveConfig>,
+
+    /// Budget reset config: controls periodic spend reset for entities
+    /// with budget_duration set (virtual_keys, teams, users, organizations).
+    #[serde(rename = "budget_reset", skip_serializing_if = "Option::is_none")]
+    pub budget_reset: Option<BudgetResetConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

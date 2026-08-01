@@ -355,6 +355,34 @@ pub trait KeyStore {
     async fn increment_user_spend(&self, user_id: &str, cost: f64) -> Result<()>;
     async fn increment_team_spend(&self, team_id: &str, cost: f64) -> Result<()>;
     async fn increment_org_spend(&self, org_id: &str, cost: f64) -> Result<()>;
+
+    /// Reset spend to 0 and update budget_reset_at for the given entity.
+    async fn reset_spend_and_update_reset_at(
+        &self,
+        entity_type: &str,
+        entity_id: &str,
+        next_reset_at: &str,
+    ) -> Result<()>;
+
+    /// Find keys whose budget reset is expired.
+    async fn find_expired_resets_keys(
+        &self,
+    ) -> Result<Vec<(String, Option<String>, Option<String>)>>;
+
+    /// Find users whose budget reset is expired.
+    async fn find_expired_resets_users(
+        &self,
+    ) -> Result<Vec<(String, Option<String>, Option<String>)>>;
+
+    /// Find teams whose budget reset is expired.
+    async fn find_expired_resets_teams(
+        &self,
+    ) -> Result<Vec<(String, Option<String>, Option<String>)>>;
+
+    /// Find orgs whose budget reset is expired (via budgets table JOIN).
+    async fn find_expired_resets_orgs(
+        &self,
+    ) -> Result<Vec<(String, Option<String>, Option<String>)>>;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -899,6 +927,105 @@ impl KeyStore for SqlitePool {
             .await?;
         Ok(())
     }
+
+    async fn reset_spend_and_update_reset_at(
+        &self,
+        entity_type: &str,
+        entity_id: &str,
+        next_reset_at: &str,
+    ) -> Result<()> {
+        match entity_type {
+            "key" => {
+                sqlx::query("UPDATE virtual_keys SET spend = 0, budget_reset_at = ? WHERE token = ?")
+                    .bind(next_reset_at)
+                    .bind(entity_id)
+                    .execute(self)
+                    .await?;
+            }
+            "user" => {
+                sqlx::query("UPDATE users SET spend = 0, budget_reset_at = ? WHERE user_id = ?")
+                    .bind(next_reset_at)
+                    .bind(entity_id)
+                    .execute(self)
+                    .await?;
+            }
+            "team" => {
+                sqlx::query("UPDATE teams SET spend = 0, budget_reset_at = ? WHERE team_id = ?")
+                    .bind(next_reset_at)
+                    .bind(entity_id)
+                    .execute(self)
+                    .await?;
+            }
+            "org" => {
+                // SQLite does not support UPDATE ... FROM, so use two queries.
+                sqlx::query("UPDATE organizations SET spend = 0 WHERE organization_id = ?")
+                    .bind(entity_id)
+                    .execute(self)
+                    .await?;
+                sqlx::query("UPDATE budgets SET budget_reset_at = ? WHERE budget_id = (SELECT budget_id FROM organizations WHERE organization_id = ?)")
+                    .bind(next_reset_at)
+                    .bind(entity_id)
+                    .execute(self)
+                    .await?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    async fn find_expired_resets_keys(
+        &self,
+    ) -> Result<Vec<(String, Option<String>, Option<String>)>> {
+        let rows = sqlx::query_as::<_, (String, Option<String>, Option<String>)>(
+            r#"SELECT token, budget_reset_at, budget_duration FROM virtual_keys
+               WHERE (budget_reset_at IS NOT NULL AND budget_reset_at < datetime('now'))
+                  OR (budget_reset_at IS NULL AND budget_duration IS NOT NULL)"#,
+        )
+        .fetch_all(self)
+        .await?;
+        Ok(rows)
+    }
+
+    async fn find_expired_resets_users(
+        &self,
+    ) -> Result<Vec<(String, Option<String>, Option<String>)>> {
+        let rows = sqlx::query_as::<_, (String, Option<String>, Option<String>)>(
+            r#"SELECT user_id, budget_reset_at, budget_duration FROM users
+               WHERE (budget_reset_at IS NOT NULL AND budget_reset_at < datetime('now'))
+                  OR (budget_reset_at IS NULL AND budget_duration IS NOT NULL)"#,
+        )
+        .fetch_all(self)
+        .await?;
+        Ok(rows)
+    }
+
+    async fn find_expired_resets_teams(
+        &self,
+    ) -> Result<Vec<(String, Option<String>, Option<String>)>> {
+        let rows = sqlx::query_as::<_, (String, Option<String>, Option<String>)>(
+            r#"SELECT team_id, budget_reset_at, budget_duration FROM teams
+               WHERE (budget_reset_at IS NOT NULL AND budget_reset_at < datetime('now'))
+                  OR (budget_reset_at IS NULL AND budget_duration IS NOT NULL)"#,
+        )
+        .fetch_all(self)
+        .await?;
+        Ok(rows)
+    }
+
+    async fn find_expired_resets_orgs(
+        &self,
+    ) -> Result<Vec<(String, Option<String>, Option<String>)>> {
+        let rows = sqlx::query_as::<_, (String, Option<String>, Option<String>)>(
+            r#"SELECT o.organization_id, b.budget_reset_at, b.budget_duration
+               FROM organizations o
+               JOIN budgets b ON o.budget_id = b.budget_id
+               WHERE (b.budget_reset_at IS NOT NULL AND b.budget_reset_at < datetime('now'))
+                  OR (b.budget_reset_at IS NULL AND b.budget_duration IS NOT NULL)"#,
+        )
+        .fetch_all(self)
+        .await?;
+        Ok(rows)
+    }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1191,6 +1318,103 @@ impl KeyStore for MySqlPool {
             .execute(self)
             .await?;
         Ok(())
+    }
+
+    async fn reset_spend_and_update_reset_at(
+        &self,
+        entity_type: &str,
+        entity_id: &str,
+        next_reset_at: &str,
+    ) -> Result<()> {
+        match entity_type {
+            "key" => {
+                sqlx::query("UPDATE virtual_keys SET spend = 0, budget_reset_at = ? WHERE token = ?")
+                    .bind(next_reset_at)
+                    .bind(entity_id)
+                    .execute(self)
+                    .await?;
+            }
+            "user" => {
+                sqlx::query("UPDATE users SET spend = 0, budget_reset_at = ? WHERE user_id = ?")
+                    .bind(next_reset_at)
+                    .bind(entity_id)
+                    .execute(self)
+                    .await?;
+            }
+            "team" => {
+                sqlx::query("UPDATE teams SET spend = 0, budget_reset_at = ? WHERE team_id = ?")
+                    .bind(next_reset_at)
+                    .bind(entity_id)
+                    .execute(self)
+                    .await?;
+            }
+            "org" => {
+                sqlx::query("UPDATE organizations SET spend = 0 WHERE organization_id = ?")
+                    .bind(entity_id)
+                    .execute(self)
+                    .await?;
+                sqlx::query("UPDATE budgets SET budget_reset_at = ? WHERE budget_id = (SELECT budget_id FROM organizations WHERE organization_id = ?)")
+                    .bind(next_reset_at)
+                    .bind(entity_id)
+                    .execute(self)
+                    .await?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    async fn find_expired_resets_keys(
+        &self,
+    ) -> Result<Vec<(String, Option<String>, Option<String>)>> {
+        let rows = sqlx::query_as::<_, (String, Option<String>, Option<String>)>(
+            r#"SELECT token, budget_reset_at, budget_duration FROM virtual_keys
+               WHERE (budget_reset_at IS NOT NULL AND budget_reset_at < NOW())
+                  OR (budget_reset_at IS NULL AND budget_duration IS NOT NULL)"#,
+        )
+        .fetch_all(self)
+        .await?;
+        Ok(rows)
+    }
+
+    async fn find_expired_resets_users(
+        &self,
+    ) -> Result<Vec<(String, Option<String>, Option<String>)>> {
+        let rows = sqlx::query_as::<_, (String, Option<String>, Option<String>)>(
+            r#"SELECT user_id, budget_reset_at, budget_duration FROM users
+               WHERE (budget_reset_at IS NOT NULL AND budget_reset_at < NOW())
+                  OR (budget_reset_at IS NULL AND budget_duration IS NOT NULL)"#,
+        )
+        .fetch_all(self)
+        .await?;
+        Ok(rows)
+    }
+
+    async fn find_expired_resets_teams(
+        &self    ) -> Result<Vec<(String, Option<String>, Option<String>)>> {
+        let rows = sqlx::query_as::<_, (String, Option<String>, Option<String>)>(
+            r#"SELECT team_id, budget_reset_at, budget_duration FROM teams
+               WHERE (budget_reset_at IS NOT NULL AND budget_reset_at < NOW())
+                  OR (budget_reset_at IS NULL AND budget_duration IS NOT NULL)"#,
+        )
+        .fetch_all(self)
+        .await?;
+        Ok(rows)
+    }
+
+    async fn find_expired_resets_orgs(
+        &self,
+    ) -> Result<Vec<(String, Option<String>, Option<String>)>> {
+        let rows = sqlx::query_as::<_, (String, Option<String>, Option<String>)>(
+            r#"SELECT o.organization_id, b.budget_reset_at, b.budget_duration
+               FROM organizations o
+               JOIN budgets b ON o.budget_id = b.budget_id
+               WHERE (b.budget_reset_at IS NOT NULL AND b.budget_reset_at < NOW())
+                  OR (b.budget_reset_at IS NULL AND b.budget_duration IS NOT NULL)"#,
+        )
+        .fetch_all(self)
+        .await?;
+        Ok(rows)
     }
 }
 
@@ -1531,6 +1755,104 @@ impl KeyStore for PgPool {
             .await?;
         Ok(())
     }
+
+    async fn reset_spend_and_update_reset_at(
+        &self,
+        entity_type: &str,
+        entity_id: &str,
+        next_reset_at: &str,
+    ) -> Result<()> {
+        match entity_type {
+            "key" => {
+                sqlx::query("UPDATE virtual_keys SET spend = 0, budget_reset_at = $1 WHERE token = $2")
+                    .bind(next_reset_at)
+                    .bind(entity_id)
+                    .execute(self)
+                    .await?;
+            }
+            "user" => {
+                sqlx::query("UPDATE users SET spend = 0, budget_reset_at = $1 WHERE user_id = $2")
+                    .bind(next_reset_at)
+                    .bind(entity_id)
+                    .execute(self)
+                    .await?;
+            }
+            "team" => {
+                sqlx::query("UPDATE teams SET spend = 0, budget_reset_at = $1 WHERE team_id = $2")
+                    .bind(next_reset_at)
+                    .bind(entity_id)
+                    .execute(self)
+                    .await?;
+            }
+            "org" => {
+                sqlx::query("UPDATE organizations SET spend = 0 WHERE organization_id = $1")
+                    .bind(entity_id)
+                    .execute(self)
+                    .await?;
+                sqlx::query("UPDATE budgets SET budget_reset_at = $1 FROM organizations WHERE budgets.budget_id = organizations.budget_id AND organizations.organization_id = $2")
+                    .bind(next_reset_at)
+                    .bind(entity_id)
+                    .execute(self)
+                    .await?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    async fn find_expired_resets_keys(
+        &self,
+    ) -> Result<Vec<(String, Option<String>, Option<String>)>> {
+        let rows = sqlx::query_as::<_, (String, Option<String>, Option<String>)>(
+            r#"SELECT token, budget_reset_at, budget_duration FROM virtual_keys
+               WHERE (budget_reset_at IS NOT NULL AND budget_reset_at < NOW())
+                  OR (budget_reset_at IS NULL AND budget_duration IS NOT NULL)"#,
+        )
+        .fetch_all(self)
+        .await?;
+        Ok(rows)
+    }
+
+    async fn find_expired_resets_users(
+        &self,
+    ) -> Result<Vec<(String, Option<String>, Option<String>)>> {
+        let rows = sqlx::query_as::<_, (String, Option<String>, Option<String>)>(
+            r#"SELECT user_id, budget_reset_at, budget_duration FROM users
+               WHERE (budget_reset_at IS NOT NULL AND budget_reset_at < NOW())
+                  OR (budget_reset_at IS NULL AND budget_duration IS NOT NULL)"#,
+        )
+        .fetch_all(self)
+        .await?;
+        Ok(rows)
+    }
+
+    async fn find_expired_resets_teams(
+        &self,
+    ) -> Result<Vec<(String, Option<String>, Option<String>)>> {
+        let rows = sqlx::query_as::<_, (String, Option<String>, Option<String>)>(
+            r#"SELECT team_id, budget_reset_at, budget_duration FROM teams
+               WHERE (budget_reset_at IS NOT NULL AND budget_reset_at < NOW())
+                  OR (budget_reset_at IS NULL AND budget_duration IS NOT NULL)"#,
+        )
+        .fetch_all(self)
+        .await?;
+        Ok(rows)
+    }
+
+    async fn find_expired_resets_orgs(
+        &self,
+    ) -> Result<Vec<(String, Option<String>, Option<String>)>> {
+        let rows = sqlx::query_as::<_, (String, Option<String>, Option<String>)>(
+            r#"SELECT o.organization_id, b.budget_reset_at, b.budget_duration
+               FROM organizations o
+               JOIN budgets b ON o.budget_id = b.budget_id
+               WHERE (b.budget_reset_at IS NOT NULL AND b.budget_reset_at < NOW())
+                  OR (b.budget_reset_at IS NULL AND b.budget_duration IS NOT NULL)"#,
+        )
+        .fetch_all(self)
+        .await?;
+        Ok(rows)
+    }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1666,6 +1988,59 @@ impl Database {
             Database::Sqlite(pool) => pool.increment_org_spend(org_id, cost).await,
             Database::Mysql(pool) => pool.increment_org_spend(org_id, cost).await,
             Database::Postgres(pool) => pool.increment_org_spend(org_id, cost).await,
+        }
+    }
+
+    pub async fn reset_spend_and_update_reset_at(
+        &self,
+        entity_type: &str,
+        entity_id: &str,
+        next_reset_at: &str,
+    ) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.reset_spend_and_update_reset_at(entity_type, entity_id, next_reset_at).await,
+            Database::Mysql(pool) => pool.reset_spend_and_update_reset_at(entity_type, entity_id, next_reset_at).await,
+            Database::Postgres(pool) => pool.reset_spend_and_update_reset_at(entity_type, entity_id, next_reset_at).await,
+        }
+    }
+
+    pub async fn find_expired_resets_keys(
+        &self,
+    ) -> Result<Vec<(String, Option<String>, Option<String>)>> {
+        match self {
+            Database::Sqlite(pool) => pool.find_expired_resets_keys().await,
+            Database::Mysql(pool) => pool.find_expired_resets_keys().await,
+            Database::Postgres(pool) => pool.find_expired_resets_keys().await,
+        }
+    }
+
+    pub async fn find_expired_resets_users(
+        &self,
+    ) -> Result<Vec<(String, Option<String>, Option<String>)>> {
+        match self {
+            Database::Sqlite(pool) => pool.find_expired_resets_users().await,
+            Database::Mysql(pool) => pool.find_expired_resets_users().await,
+            Database::Postgres(pool) => pool.find_expired_resets_users().await,
+        }
+    }
+
+    pub async fn find_expired_resets_teams(
+        &self,
+    ) -> Result<Vec<(String, Option<String>, Option<String>)>> {
+        match self {
+            Database::Sqlite(pool) => pool.find_expired_resets_teams().await,
+            Database::Mysql(pool) => pool.find_expired_resets_teams().await,
+            Database::Postgres(pool) => pool.find_expired_resets_teams().await,
+        }
+    }
+
+    pub async fn find_expired_resets_orgs(
+        &self,
+    ) -> Result<Vec<(String, Option<String>, Option<String>)>> {
+        match self {
+            Database::Sqlite(pool) => pool.find_expired_resets_orgs().await,
+            Database::Mysql(pool) => pool.find_expired_resets_orgs().await,
+            Database::Postgres(pool) => pool.find_expired_resets_orgs().await,
         }
     }
 }
@@ -4932,6 +5307,219 @@ impl UserStore for PgPool {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// BudgetStore trait — budget CRUD across all DB backends
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[async_trait]
+pub trait BudgetStore {
+    async fn insert_budget(&self, b: &Budget) -> Result<()>;
+    async fn get_budget_by_id(&self, budget_id: &str) -> Result<Option<Budget>>;
+    async fn list_budgets(&self) -> Result<Vec<Budget>>;
+    async fn list_budgets_paged(&self, limit: i64, offset: i64) -> Result<Vec<Budget>>;
+    async fn count_budgets(&self) -> Result<i64>;
+    async fn update_budget(&self, b: &Budget) -> Result<()>;
+    async fn delete_budget(&self, budget_id: &str) -> Result<()>;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// BudgetStore — SqlitePool
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const INSERT_BUDGET_SQLITE: &str = r#"
+INSERT INTO budgets (budget_id, max_budget, soft_budget, max_parallel_requests, tpm_limit, rpm_limit, model_max_budget, budget_duration, budget_reset_at, allowed_models, created_at, created_by, updated_at, updated_by)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+"#;
+
+const GET_BUDGET_SQLITE: &str = r#"
+SELECT budget_id, max_budget, soft_budget, max_parallel_requests, tpm_limit, rpm_limit, model_max_budget, budget_duration, budget_reset_at, allowed_models, created_at, created_by, updated_at, updated_by
+FROM budgets WHERE budget_id = ?
+"#;
+
+const LIST_BUDGETS_SQLITE: &str = r#"
+SELECT budget_id, max_budget, soft_budget, max_parallel_requests, tpm_limit, rpm_limit, model_max_budget, budget_duration, budget_reset_at, allowed_models, created_at, created_by, updated_at, updated_by
+FROM budgets ORDER BY budget_id
+"#;
+
+const UPDATE_BUDGET_SQLITE: &str = r#"
+UPDATE budgets SET max_budget = ?, soft_budget = ?, max_parallel_requests = ?, tpm_limit = ?, rpm_limit = ?, model_max_budget = ?, budget_duration = ?, budget_reset_at = ?, allowed_models = ?, updated_at = ?, updated_by = ?
+WHERE budget_id = ?
+"#;
+
+#[async_trait]
+impl BudgetStore for SqlitePool {
+    async fn insert_budget(&self, b: &Budget) -> Result<()> {
+        sqlx::query(INSERT_BUDGET_SQLITE)
+            .bind(&b.budget_id).bind(&b.max_budget).bind(&b.soft_budget)
+            .bind(&b.max_parallel_requests).bind(&b.tpm_limit).bind(&b.rpm_limit)
+            .bind(&b.model_max_budget).bind(&b.budget_duration).bind(b.budget_reset_at)
+            .bind(&b.allowed_models).bind(b.created_at).bind(&b.created_by)
+            .bind(b.updated_at).bind(&b.updated_by)
+            .execute(self).await?;
+        Ok(())
+    }
+
+    async fn get_budget_by_id(&self, budget_id: &str) -> Result<Option<Budget>> {
+        sqlx::query_as(GET_BUDGET_SQLITE).bind(budget_id).fetch_optional(self).await.map_err(DbError::from)
+    }
+
+    async fn list_budgets(&self) -> Result<Vec<Budget>> {
+        sqlx::query_as(LIST_BUDGETS_SQLITE).fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn list_budgets_paged(&self, limit: i64, offset: i64) -> Result<Vec<Budget>> {
+        sqlx::query_as("SELECT budget_id, max_budget, soft_budget, max_parallel_requests, tpm_limit, rpm_limit, model_max_budget, budget_duration, budget_reset_at, allowed_models, created_at, created_by, updated_at, updated_by FROM budgets ORDER BY budget_id LIMIT ? OFFSET ?")
+            .bind(limit).bind(offset)
+            .fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn count_budgets(&self) -> Result<i64> {
+        sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM budgets")
+            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+    }
+
+    async fn update_budget(&self, b: &Budget) -> Result<()> {
+        sqlx::query(UPDATE_BUDGET_SQLITE)
+            .bind(&b.max_budget).bind(&b.soft_budget)
+            .bind(&b.max_parallel_requests).bind(&b.tpm_limit).bind(&b.rpm_limit)
+            .bind(&b.model_max_budget).bind(&b.budget_duration).bind(b.budget_reset_at)
+            .bind(&b.allowed_models).bind(b.updated_at).bind(&b.updated_by)
+            .bind(&b.budget_id)
+            .execute(self).await?;
+        Ok(())
+    }
+
+    async fn delete_budget(&self, budget_id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM budgets WHERE budget_id = ?")
+            .bind(budget_id).execute(self).await?;
+        Ok(())
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// BudgetStore — MySqlPool
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const INSERT_BUDGET_MYSQL: &str = r#"
+INSERT INTO budgets (budget_id, max_budget, soft_budget, max_parallel_requests, tpm_limit, rpm_limit, model_max_budget, budget_duration, budget_reset_at, allowed_models, created_at, created_by, updated_at, updated_by)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+"#;
+
+const UPDATE_BUDGET_MYSQL: &str = r#"
+UPDATE budgets SET max_budget = ?, soft_budget = ?, max_parallel_requests = ?, tpm_limit = ?, rpm_limit = ?, model_max_budget = ?, budget_duration = ?, budget_reset_at = ?, allowed_models = ?, updated_at = ?, updated_by = ?
+WHERE budget_id = ?
+"#;
+
+#[async_trait]
+impl BudgetStore for MySqlPool {
+    async fn insert_budget(&self, b: &Budget) -> Result<()> {
+        sqlx::query(INSERT_BUDGET_MYSQL)
+            .bind(&b.budget_id).bind(&b.max_budget).bind(&b.soft_budget)
+            .bind(&b.max_parallel_requests).bind(&b.tpm_limit).bind(&b.rpm_limit)
+            .bind(&b.model_max_budget).bind(&b.budget_duration).bind(b.budget_reset_at)
+            .bind(&b.allowed_models).bind(b.created_at).bind(&b.created_by)
+            .bind(b.updated_at).bind(&b.updated_by)
+            .execute(self).await?;
+        Ok(())
+    }
+
+    async fn get_budget_by_id(&self, budget_id: &str) -> Result<Option<Budget>> {
+        sqlx::query_as("SELECT budget_id, max_budget, soft_budget, max_parallel_requests, tpm_limit, rpm_limit, model_max_budget, budget_duration, budget_reset_at, allowed_models, created_at, created_by, updated_at, updated_by FROM budgets WHERE budget_id = ?")
+            .bind(budget_id).fetch_optional(self).await.map_err(DbError::from)
+    }
+
+    async fn list_budgets(&self) -> Result<Vec<Budget>> {
+        sqlx::query_as("SELECT budget_id, max_budget, soft_budget, max_parallel_requests, tpm_limit, rpm_limit, model_max_budget, budget_duration, budget_reset_at, allowed_models, created_at, created_by, updated_at, updated_by FROM budgets ORDER BY budget_id")
+            .fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn list_budgets_paged(&self, limit: i64, offset: i64) -> Result<Vec<Budget>> {
+        sqlx::query_as("SELECT budget_id, max_budget, soft_budget, max_parallel_requests, tpm_limit, rpm_limit, model_max_budget, budget_duration, budget_reset_at, allowed_models, created_at, created_by, updated_at, updated_by FROM budgets ORDER BY budget_id LIMIT ? OFFSET ?")
+            .bind(limit).bind(offset)
+            .fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn count_budgets(&self) -> Result<i64> {
+        sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM budgets")
+            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+    }
+
+    async fn update_budget(&self, b: &Budget) -> Result<()> {
+        sqlx::query(UPDATE_BUDGET_MYSQL)
+            .bind(&b.max_budget).bind(&b.soft_budget)
+            .bind(&b.max_parallel_requests).bind(&b.tpm_limit).bind(&b.rpm_limit)
+            .bind(&b.model_max_budget).bind(&b.budget_duration).bind(b.budget_reset_at)
+            .bind(&b.allowed_models).bind(b.updated_at).bind(&b.updated_by)
+            .bind(&b.budget_id)
+            .execute(self).await?;
+        Ok(())
+    }
+
+    async fn delete_budget(&self, budget_id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM budgets WHERE budget_id = ?")
+            .bind(budget_id).execute(self).await?;
+        Ok(())
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// BudgetStore — PgPool
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[async_trait]
+impl BudgetStore for PgPool {
+    async fn insert_budget(&self, b: &Budget) -> Result<()> {
+        let cols = "budget_id, max_budget, soft_budget, max_parallel_requests, tpm_limit, rpm_limit, model_max_budget, budget_duration, budget_reset_at, allowed_models, created_at, created_by, updated_at, updated_by";
+        let vals = "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14";
+        sqlx::query(&format!("INSERT INTO budgets ({}) VALUES ({})", cols, vals))
+            .bind(&b.budget_id).bind(&b.max_budget).bind(&b.soft_budget)
+            .bind(&b.max_parallel_requests).bind(&b.tpm_limit).bind(&b.rpm_limit)
+            .bind(&b.model_max_budget).bind(&b.budget_duration).bind(b.budget_reset_at)
+            .bind(&b.allowed_models).bind(b.created_at).bind(&b.created_by)
+            .bind(b.updated_at).bind(&b.updated_by)
+            .execute(self).await?;
+        Ok(())
+    }
+
+    async fn get_budget_by_id(&self, budget_id: &str) -> Result<Option<Budget>> {
+        sqlx::query_as("SELECT budget_id, max_budget, soft_budget, max_parallel_requests, tpm_limit, rpm_limit, model_max_budget, budget_duration, budget_reset_at, allowed_models, created_at, created_by, updated_at, updated_by FROM budgets WHERE budget_id = $1")
+            .bind(budget_id).fetch_optional(self).await.map_err(DbError::from)
+    }
+
+    async fn list_budgets(&self) -> Result<Vec<Budget>> {
+        sqlx::query_as("SELECT budget_id, max_budget, soft_budget, max_parallel_requests, tpm_limit, rpm_limit, model_max_budget, budget_duration, budget_reset_at, allowed_models, created_at, created_by, updated_at, updated_by FROM budgets ORDER BY budget_id")
+            .fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn list_budgets_paged(&self, limit: i64, offset: i64) -> Result<Vec<Budget>> {
+        sqlx::query_as("SELECT budget_id, max_budget, soft_budget, max_parallel_requests, tpm_limit, rpm_limit, model_max_budget, budget_duration, budget_reset_at, allowed_models, created_at, created_by, updated_at, updated_by FROM budgets ORDER BY budget_id LIMIT $1 OFFSET $2")
+            .bind(limit).bind(offset)
+            .fetch_all(self).await.map_err(DbError::from)
+    }
+
+    async fn count_budgets(&self) -> Result<i64> {
+        sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM budgets")
+            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+    }
+
+    async fn update_budget(&self, b: &Budget) -> Result<()> {
+        sqlx::query("UPDATE budgets SET max_budget = $1, soft_budget = $2, max_parallel_requests = $3, tpm_limit = $4, rpm_limit = $5, model_max_budget = $6, budget_duration = $7, budget_reset_at = $8, allowed_models = $9, updated_at = $10, updated_by = $11 WHERE budget_id = $12")
+            .bind(&b.max_budget).bind(&b.soft_budget)
+            .bind(&b.max_parallel_requests).bind(&b.tpm_limit).bind(&b.rpm_limit)
+            .bind(&b.model_max_budget).bind(&b.budget_duration).bind(b.budget_reset_at)
+            .bind(&b.allowed_models).bind(b.updated_at).bind(&b.updated_by)
+            .bind(&b.budget_id)
+            .execute(self).await?;
+        Ok(())
+    }
+
+    async fn delete_budget(&self, budget_id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM budgets WHERE budget_id = $1")
+            .bind(budget_id).execute(self).await?;
+        Ok(())
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Database enum dispatch: org, team, user CRUD
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -5152,6 +5740,63 @@ impl Database {
             Database::Sqlite(pool) => pool.list_deleted_users().await,
             Database::Mysql(pool) => pool.list_deleted_users().await,
             Database::Postgres(pool) => pool.list_deleted_users().await,
+        }
+    }
+
+    // ── Budget dispatch ──
+    pub async fn insert_budget(&self, b: &Budget) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.insert_budget(b).await,
+            Database::Mysql(pool) => pool.insert_budget(b).await,
+            Database::Postgres(pool) => pool.insert_budget(b).await,
+        }
+    }
+
+    pub async fn get_budget_by_id(&self, budget_id: &str) -> Result<Option<Budget>> {
+        match self {
+            Database::Sqlite(pool) => pool.get_budget_by_id(budget_id).await,
+            Database::Mysql(pool) => pool.get_budget_by_id(budget_id).await,
+            Database::Postgres(pool) => pool.get_budget_by_id(budget_id).await,
+        }
+    }
+
+    pub async fn list_budgets(&self) -> Result<Vec<Budget>> {
+        match self {
+            Database::Sqlite(pool) => pool.list_budgets().await,
+            Database::Mysql(pool) => pool.list_budgets().await,
+            Database::Postgres(pool) => pool.list_budgets().await,
+        }
+    }
+
+    pub async fn list_budgets_paged(&self, limit: i64, offset: i64) -> Result<Vec<Budget>> {
+        match self {
+            Database::Sqlite(pool) => pool.list_budgets_paged(limit, offset).await,
+            Database::Mysql(pool) => pool.list_budgets_paged(limit, offset).await,
+            Database::Postgres(pool) => pool.list_budgets_paged(limit, offset).await,
+        }
+    }
+
+    pub async fn count_budgets(&self) -> Result<i64> {
+        match self {
+            Database::Sqlite(pool) => pool.count_budgets().await,
+            Database::Mysql(pool) => pool.count_budgets().await,
+            Database::Postgres(pool) => pool.count_budgets().await,
+        }
+    }
+
+    pub async fn update_budget(&self, b: &Budget) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.update_budget(b).await,
+            Database::Mysql(pool) => pool.update_budget(b).await,
+            Database::Postgres(pool) => pool.update_budget(b).await,
+        }
+    }
+
+    pub async fn delete_budget(&self, budget_id: &str) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.delete_budget(budget_id).await,
+            Database::Mysql(pool) => pool.delete_budget(budget_id).await,
+            Database::Postgres(pool) => pool.delete_budget(budget_id).await,
         }
     }
 

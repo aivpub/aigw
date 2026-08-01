@@ -159,6 +159,45 @@ pub struct GenerateKeyResponse {
 // Helper functions
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+/// Validate key budget against parent user/team quotas.
+/// Called before key create/update when max_budget is set.
+async fn validate_key_budget(
+    db: &Database,
+    key_max_budget: f64,
+    user_id: Option<&str>,
+    team_id: Option<&str>,
+) -> Result<(), (StatusCode, Json<Value>)> {
+    // Check against user budget
+    if let Some(uid) = user_id {
+        if let Ok(Some(user)) = db.get_user_by_id(uid).await {
+            if let Some(user_max) = user.max_budget_f64() {
+                if user_max > 0.0 && key_max_budget > user_max {
+                    return Err((
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({"error": {"message": "Key budget cannot exceed user budget", "type": "budget_violation"}})),
+                    ));
+                }
+            }
+        }
+    }
+
+    // Check against team budget
+    if let Some(tid) = team_id {
+        if let Ok(Some(team)) = db.get_team_by_id(tid).await {
+            if let Some(team_max) = team.max_budget_f64() {
+                if team_max > 0.0 && key_max_budget > team_max {
+                    return Err((
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({"error": {"message": "Key budget cannot exceed team budget", "type": "budget_violation"}})),
+                    ));
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Generate a litellm-compatible key token: sk- + 22 base64url chars
 pub fn generate_key_token() -> String {
     let mut buf = [0u8; 16];
@@ -313,6 +352,19 @@ pub async fn generate_key(
     }
 
     let vkey = build_virtual_key(&hash, &req);
+
+    // Validate budget hierarchy: key budget cannot exceed parent user/team budget
+    if let Some(kb) = vkey.max_budget_f64() {
+        if kb > 0.0 {
+            validate_key_budget(
+                &state.db,
+                kb,
+                vkey.user_id.as_deref(),
+                vkey.team_id.as_deref(),
+            )
+            .await?;
+        }
+    }
 
     state.db.insert_key(&vkey).await.map_err(|e| {
         (
@@ -582,6 +634,19 @@ pub async fn key_update(
         user_email: None,
         user_alias: None,
     };
+
+    // Validate budget hierarchy: key budget cannot exceed parent user/team budget
+    if let Some(kb) = updated.max_budget_f64() {
+        if kb > 0.0 {
+            validate_key_budget(
+                &state.db,
+                kb,
+                updated.user_id.as_deref(),
+                updated.team_id.as_deref(),
+            )
+            .await?;
+        }
+    }
 
     state.db.update_key(&hash, &updated).await.map_err(|e| {
         (

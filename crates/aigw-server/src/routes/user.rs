@@ -10,6 +10,7 @@
 
 use aigw_core::models::User;
 use aigw_core::models::DeletedUser;
+use aigw_core::db::Database;
 use axum::{extract::State, http::StatusCode, Json};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -21,6 +22,27 @@ use super::spend::{require_admin, SpendAuth};
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Request types
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Validate user budget against parent team quota.
+async fn validate_user_budget(
+    db: &Database,
+    user_max_budget: f64,
+    team_id: Option<&str>,
+) -> Result<(), (StatusCode, Json<Value>)> {
+    if let Some(tid) = team_id {
+        if let Ok(Some(team)) = db.get_team_by_id(tid).await {
+            if let Some(team_max) = team.max_budget_f64() {
+                if team_max > 0.0 && user_max_budget > team_max {
+                    return Err((
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({"error": {"message": "User budget cannot exceed team budget", "type": "budget_violation"}})),
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
 
 #[derive(Debug, Deserialize)]
 pub struct UserInfoQuery {
@@ -86,6 +108,13 @@ pub async fn user_new(
         created_at: Some(now),
         updated_at: Some(now),
     };
+
+    // Validate budget hierarchy: user budget cannot exceed team budget
+    if let Some(ub) = user.max_budget_f64() {
+        if ub > 0.0 {
+            validate_user_budget(&state.db, ub, user.team_id.as_deref()).await?;
+        }
+    }
 
     state.db.insert_user(&user).await.map_err(|e| {
         (
@@ -275,6 +304,13 @@ pub async fn user_update(
         existing.model_max_budget = v.clone();
     }
     existing.updated_at = Some(chrono::Utc::now());
+
+    // Validate budget hierarchy: user budget cannot exceed team budget
+    if let Some(ub) = existing.max_budget_f64() {
+        if ub > 0.0 {
+            validate_user_budget(&state.db, ub, existing.team_id.as_deref()).await?;
+        }
+    }
 
     state.db.update_user(&existing).await.map_err(|e| {
         (

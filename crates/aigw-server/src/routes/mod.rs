@@ -1,6 +1,7 @@
 //! Route modules for aigw-server
 
 pub mod auth;
+pub mod budget;
 pub mod chat;
 pub mod cors_layer;
 pub mod credentials;

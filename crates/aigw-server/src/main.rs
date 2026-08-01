@@ -38,6 +38,8 @@ pub const LONG_VERSION: &str = concat!(
 );
 
 use aigw_core::body_archive::BodyArchiver;
+use aigw_core::budget::duration::compute_next_reset_at;
+use aigw_core::budget::resetter::BudgetResetter;
 use aigw_core::config::{AigwConfig, CompressionConfig};
 use aigw_core::daily_spend_queue::DailySpendQueue;
 use aigw_core::db::Database;
@@ -51,7 +53,7 @@ use axum::http::HeaderName;
 use axum::{middleware, routing::get, Router};
 use clap::Parser;
 use routes::keys::{self, AppState, SharedState};
-use routes::{chat, cors_layer, credentials, docs, health, jobs, login, models, org, router_settings, spend, team, user, v1_messages};
+use routes::{chat, cors_layer, credentials, docs, health, jobs, login, models, org, router_settings, spend, team, user, budget, v1_messages};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -284,6 +286,12 @@ async fn main() -> anyhow::Result<()> {
     let body_archiver = Arc::new(BodyArchiver::new(body_archive_config));
     let body_archiver_arc: Option<Arc<BodyArchiver>> = Some(body_archiver.clone());
 
+    // Build budget_reset config from parsed config
+    let budget_reset_config = config
+        .as_ref()
+        .and_then(|c| c.budget_reset.clone())
+        .unwrap_or_default();
+
     let state: SharedState = Arc::new(AppState {
         db: (*db_arc).clone(),
         master_key: Some(master_key.clone()),
@@ -301,10 +309,24 @@ async fn main() -> anyhow::Result<()> {
         body_archiver: body_archiver_arc.clone(),
     });
 
-    // Start async job engine with body_archive worker
+    // Start async job engine with body_archive and budget_reset workers
     {
         let mut engine = Engine::new(Arc::clone(&db_arc), EngineConfig::default());
         engine.register(body_archiver);
+        if budget_reset_config.enabled {
+            let budget_resetter = Arc::new(BudgetResetter::new());
+            engine.register(budget_resetter.clone());
+            tracing::info!("BudgetResetter registered (periodic spend reset enabled)");
+
+            // Backfill missing budget_reset_at for entities with budget_duration set.
+            // Runs once at startup; errors are logged but don't prevent server start.
+            let backfill_db = Arc::clone(&db_arc);
+            tokio::spawn(async move {
+                if let Err(e) = backfill_missing_reset_at(&backfill_db).await {
+                    tracing::error!("Budget reset backfill failed: {}", e);
+                }
+            });
+        }
         tokio::spawn(async move { engine.run().await });
         tracing::info!("Async job engine started");
     }
@@ -409,6 +431,12 @@ async fn main() -> anyhow::Result<()> {
         .route("/user/update", axum::routing::put(user::user_update))
         .route("/user/delete", axum::routing::delete(user::user_delete))
         .route("/user/deleted", get(user::user_deleted_list))
+        // Budget management routes
+        .route("/budget/list", get(budget::budget_list))
+        .route("/budget/new", axum::routing::post(budget::budget_new))
+        .route("/budget/info", get(budget::budget_info))
+        .route("/budget/update", axum::routing::post(budget::budget_update))
+        .route("/budget/delete", axum::routing::post(budget::budget_delete))
         // Router settings endpoints (Phase 23)
         .route("/router/settings", get(router_settings::get_global).put(router_settings::put_global))
         .route("/key/{token}/router/settings", axum::routing::patch(router_settings::patch_key))
@@ -510,6 +538,285 @@ async fn shutdown_signal() {
     }
 
     tracing::info!("Shutdown signal received, shutting down gracefully");
+}
+
+/// Backfill missing `budget_reset_at` for entities that have `budget_duration` set
+/// but `budget_reset_at` is NULL. Runs once at startup when budget_reset.enabled = true.
+///
+/// Covers: virtual_keys, teams, users, and organizations (via budgets JOIN).
+async fn backfill_missing_reset_at(db: &Arc<Database>) -> anyhow::Result<()> {
+    use aigw_core::db::Database;
+
+    let now = chrono::Utc::now();
+
+    // Helper: execute a backfill query on one table.
+    // For organizations, we need a JOIN; for keys/teams/users, a simple UPDATE.
+    let db_ref = db.as_ref();
+
+    // ── virtual_keys ──
+    let key_rows: Vec<(String, String)> = match db_ref {
+        Database::Sqlite(pool) => {
+            sqlx::query_as::<_, (String, String)>(
+                "SELECT token, budget_duration FROM virtual_keys
+                 WHERE budget_duration IS NOT NULL AND budget_reset_at IS NULL",
+            )
+            .fetch_all(pool)
+            .await?
+        }
+        Database::Mysql(pool) => {
+            sqlx::query_as::<_, (String, String)>(
+                "SELECT token, budget_duration FROM virtual_keys
+                 WHERE budget_duration IS NOT NULL AND budget_reset_at IS NULL",
+            )
+            .fetch_all(pool)
+            .await?
+        }
+        Database::Postgres(pool) => {
+            sqlx::query_as::<_, (String, String)>(
+                "SELECT token, budget_duration FROM virtual_keys
+                 WHERE budget_duration IS NOT NULL AND budget_reset_at IS NULL",
+            )
+            .fetch_all(pool)
+            .await?
+        }
+    };
+
+    let mut updated_keys = 0usize;
+    for (token, duration) in &key_rows {
+        if let Some(next) = compute_next_reset_at(duration, now, None, None) {
+            let next_str = next.format("%Y-%m-%d %H:%M:%S").to_string();
+            match db_ref {
+                Database::Sqlite(pool) => {
+                    sqlx::query("UPDATE virtual_keys SET budget_reset_at = ? WHERE token = ?")
+                        .bind(&next_str)
+                        .bind(token)
+                        .execute(pool)
+                        .await?;
+                }
+                Database::Mysql(pool) => {
+                    sqlx::query("UPDATE virtual_keys SET budget_reset_at = ? WHERE token = ?")
+                        .bind(&next_str)
+                        .bind(token)
+                        .execute(pool)
+                        .await?;
+                }
+                Database::Postgres(pool) => {
+                    sqlx::query("UPDATE virtual_keys SET budget_reset_at = ? WHERE token = ?")
+                        .bind(&next_str)
+                        .bind(token)
+                        .execute(pool)
+                        .await?;
+                }
+            }
+            updated_keys += 1;
+        }
+    }
+    tracing::info!(
+        "Budget backfill: updated {} virtual_keys with budget_reset_at",
+        updated_keys
+    );
+
+    // ── teams ──
+    let team_rows: Vec<(String, String)> = match db_ref {
+        Database::Sqlite(pool) => {
+            sqlx::query_as::<_, (String, String)>(
+                "SELECT team_id, budget_duration FROM teams
+                 WHERE budget_duration IS NOT NULL AND budget_reset_at IS NULL",
+            )
+            .fetch_all(pool)
+            .await?
+        }
+        Database::Mysql(pool) => {
+            sqlx::query_as::<_, (String, String)>(
+                "SELECT team_id, budget_duration FROM teams
+                 WHERE budget_duration IS NOT NULL AND budget_reset_at IS NULL",
+            )
+            .fetch_all(pool)
+            .await?
+        }
+        Database::Postgres(pool) => {
+            sqlx::query_as::<_, (String, String)>(
+                "SELECT team_id, budget_duration FROM teams
+                 WHERE budget_duration IS NOT NULL AND budget_reset_at IS NULL",
+            )
+            .fetch_all(pool)
+            .await?
+        }
+    };
+
+    let mut updated_teams = 0usize;
+    for (team_id, duration) in &team_rows {
+        if let Some(next) = compute_next_reset_at(duration, now, None, None) {
+            let next_str = next.format("%Y-%m-%d %H:%M:%S").to_string();
+            match db_ref {
+                Database::Sqlite(pool) => {
+                    sqlx::query("UPDATE teams SET budget_reset_at = ? WHERE team_id = ?")
+                        .bind(&next_str)
+                        .bind(team_id)
+                        .execute(pool)
+                        .await?;
+                }
+                Database::Mysql(pool) => {
+                    sqlx::query("UPDATE teams SET budget_reset_at = ? WHERE team_id = ?")
+                        .bind(&next_str)
+                        .bind(team_id)
+                        .execute(pool)
+                        .await?;
+                }
+                Database::Postgres(pool) => {
+                    sqlx::query("UPDATE teams SET budget_reset_at = ? WHERE team_id = ?")
+                        .bind(&next_str)
+                        .bind(team_id)
+                        .execute(pool)
+                        .await?;
+                }
+            }
+            updated_teams += 1;
+        }
+    }
+    tracing::info!(
+        "Budget backfill: updated {} teams with budget_reset_at",
+        updated_teams
+    );
+
+    // ── users ──
+    let user_rows: Vec<(String, String)> = match db_ref {
+        Database::Sqlite(pool) => {
+            sqlx::query_as::<_, (String, String)>(
+                "SELECT user_id, budget_duration FROM users
+                 WHERE budget_duration IS NOT NULL AND budget_reset_at IS NULL",
+            )
+            .fetch_all(pool)
+            .await?
+        }
+        Database::Mysql(pool) => {
+            sqlx::query_as::<_, (String, String)>(
+                "SELECT user_id, budget_duration FROM users
+                 WHERE budget_duration IS NOT NULL AND budget_reset_at IS NULL",
+            )
+            .fetch_all(pool)
+            .await?
+        }
+        Database::Postgres(pool) => {
+            sqlx::query_as::<_, (String, String)>(
+                "SELECT user_id, budget_duration FROM users
+                 WHERE budget_duration IS NOT NULL AND budget_reset_at IS NULL",
+            )
+            .fetch_all(pool)
+            .await?
+        }
+    };
+
+    let mut updated_users = 0usize;
+    for (user_id, duration) in &user_rows {
+        if let Some(next) = compute_next_reset_at(duration, now, None, None) {
+            let next_str = next.format("%Y-%m-%d %H:%M:%S").to_string();
+            match db_ref {
+                Database::Sqlite(pool) => {
+                    sqlx::query("UPDATE users SET budget_reset_at = ? WHERE user_id = ?")
+                        .bind(&next_str)
+                        .bind(user_id)
+                        .execute(pool)
+                        .await?;
+                }
+                Database::Mysql(pool) => {
+                    sqlx::query("UPDATE users SET budget_reset_at = ? WHERE user_id = ?")
+                        .bind(&next_str)
+                        .bind(user_id)
+                        .execute(pool)
+                        .await?;
+                }
+                Database::Postgres(pool) => {
+                    sqlx::query("UPDATE users SET budget_reset_at = ? WHERE user_id = ?")
+                        .bind(&next_str)
+                        .bind(user_id)
+                        .execute(pool)
+                        .await?;
+                }
+            }
+            updated_users += 1;
+        }
+    }
+    tracing::info!(
+        "Budget backfill: updated {} users with budget_reset_at",
+        updated_users
+    );
+
+    // ── organizations (via budgets JOIN) ──
+    let org_rows: Vec<(String, String)> = match db_ref {
+        Database::Sqlite(pool) => {
+            sqlx::query_as::<_, (String, String)>(
+                "SELECT b.budget_id, b.budget_duration FROM organizations o
+                 JOIN budgets b ON o.budget_id = b.budget_id
+                 WHERE b.budget_duration IS NOT NULL AND b.budget_reset_at IS NULL",
+            )
+            .fetch_all(pool)
+            .await?
+        }
+        Database::Mysql(pool) => {
+            sqlx::query_as::<_, (String, String)>(
+                "SELECT b.budget_id, b.budget_duration FROM organizations o
+                 JOIN budgets b ON o.budget_id = b.budget_id
+                 WHERE b.budget_duration IS NOT NULL AND b.budget_reset_at IS NULL",
+            )
+            .fetch_all(pool)
+            .await?
+        }
+        Database::Postgres(pool) => {
+            sqlx::query_as::<_, (String, String)>(
+                "SELECT b.budget_id, b.budget_duration FROM organizations o
+                 JOIN budgets b ON o.budget_id = b.budget_id
+                 WHERE b.budget_duration IS NOT NULL AND b.budget_reset_at IS NULL",
+            )
+            .fetch_all(pool)
+            .await?
+        }
+    };
+
+    let mut updated_orgs = 0usize;
+    for (budget_id, duration) in &org_rows {
+        if let Some(next) = compute_next_reset_at(duration, now, None, None) {
+            let next_str = next.format("%Y-%m-%d %H:%M:%S").to_string();
+            match db_ref {
+                Database::Sqlite(pool) => {
+                    sqlx::query("UPDATE budgets SET budget_reset_at = ? WHERE budget_id = ?")
+                        .bind(&next_str)
+                        .bind(budget_id)
+                        .execute(pool)
+                        .await?;
+                }
+                Database::Mysql(pool) => {
+                    sqlx::query("UPDATE budgets SET budget_reset_at = ? WHERE budget_id = ?")
+                        .bind(&next_str)
+                        .bind(budget_id)
+                        .execute(pool)
+                        .await?;
+                }
+                Database::Postgres(pool) => {
+                    sqlx::query("UPDATE budgets SET budget_reset_at = ? WHERE budget_id = ?")
+                        .bind(&next_str)
+                        .bind(budget_id)
+                        .execute(pool)
+                        .await?;
+                }
+            }
+            updated_orgs += 1;
+        }
+    }
+    tracing::info!(
+        "Budget backfill: updated {} organizations (budgets) with budget_reset_at",
+        updated_orgs
+    );
+
+    let total = updated_keys + updated_teams + updated_users + updated_orgs;
+    if total > 0 {
+        tracing::info!(
+            "Budget backfill complete: {} entities updated across keys/teams/users/orgs",
+            total
+        );
+    }
+
+    Ok(())
 }
 
 /// Build a `CompressionLayer` from configuration.

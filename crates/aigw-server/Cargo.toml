@@ -36,6 +36,7 @@ prometheus = "0.14.0"
 reqwest-middleware = "0.3"
 reqwest-retry = "0.6"
 axum-client-ip = "1"
+sqlx = { workspace = true }
 
 [dev-dependencies]
 aigw-migrate = { path = "../aigw-migrate" }
@@ -43,7 +44,6 @@ axum-test = "16"
 cucumber = { version = "0.21", features = ["macros"] }
 tokio = { workspace = true, features = ["test-util"] }
 anyhow = "1"
-sqlx = { workspace = true }
 
 [[test]]
 name = "bdd"
