@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -35,16 +36,17 @@ export function PaginationBar({
   onPage,
   onPageSize,
 }: PaginationBarProps) {
+  const { t } = useTranslation();
   const from = totalCount === 0 ? 0 : (page - 1) * pageSize + 1;
   const to = Math.min(page * pageSize, totalCount);
   return (
     <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
       <div className="flex items-center gap-3">
         <span className="text-xs text-muted-foreground">
-          Showing {from}–{to} of {totalCount}
+          {t('pagination.showing', { from, to, total: totalCount })}
         </span>
         <span className="text-xs text-muted-foreground">
-          Page {page} of {Math.max(totalPages, 1)}
+          {t('pagination.pageInfo', { page, total: Math.max(totalPages, 1) })}
         </span>
       </div>
       <div className="flex items-center gap-2">

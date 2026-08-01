@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Copy, Check } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 import { toast } from "sonner";
 
@@ -10,8 +11,9 @@ interface CopyButtonProps {
 }
 
 export function CopyButton({ text, label, className = "" }: CopyButtonProps) {
+  const { t } = useTranslation();
   const { copied, copy } = useCopyToClipboard({
-    onError: () => toast.error("Copy failed — clipboard unavailable"),
+    onError: () => toast.error(t('keys.toast.copyFailed')),
   });
 
   return (

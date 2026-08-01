@@ -128,10 +128,10 @@ export function triggerJob(payload: {
 
 // ── Helpers ──
 
-/** Map step_type to human-readable label. */
+/** Map step_type to human-readable i18n key. Use stepTypeLabel() instead. */
 const STEP_LABELS: Record<string, string> = {
-  body_archive: "Body Archive",
-  budget_reset: "Budget Reset",
+  body_archive: "jobs.subTabs.bodyArchive",
+  budget_reset: "jobs.subTabs.budgetReset",
 };
 
 /**

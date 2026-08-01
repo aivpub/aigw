@@ -115,13 +115,14 @@ function StepsPagination({
   onPage: (p: number) => void;
   onPageSize: (s: number) => void;
 }) {
+  const { t: _t } = useTranslation();
   const from = totalCount === 0 ? 0 : (page - 1) * pageSize + 1;
   const to = Math.min(page * pageSize, totalCount);
   return (
     <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 mt-2">
       <div className="flex items-center gap-3">
-        <span className="text-xs text-muted-foreground">Showing {from}–{to} of {totalCount}</span>
-        <span className="text-xs text-muted-foreground">Page {page} of {Math.max(totalPages, 1)}</span>
+        <span className="text-xs text-muted-foreground">{_t('pagination.showing', { from, to, total: totalCount })}</span>
+        <span className="text-xs text-muted-foreground">{_t('pagination.pageInfo', { page, total: Math.max(totalPages, 1) })}</span>
       </div>
       <div className="flex items-center gap-2">
         <Select value={String(pageSize)} onValueChange={(v) => onPageSize(Number(v))}>
@@ -416,7 +417,7 @@ export function JobDetailPage() {
                                   setExpandedPayload(step.id);
                                 }
                               }}
-                              aria-label="Expand payload"
+                              aria-label={t("jobs.steps.expandPayload")}
                             >
                               {JSON.stringify(step.payload).slice(0, 40)}...
                             </span>
