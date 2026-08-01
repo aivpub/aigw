@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import {
   fetchJobDetail,
   fetchJobLogs,
@@ -26,6 +27,7 @@ import { toast } from "sonner";
 
 // ── Status Badge ──
 function StatusBadge({ status, className }: { status: string; className?: string }) {
+  const { t } = useTranslation();
   const colors: Record<string, string> = {
     pending: "bg-yellow-500/10 text-yellow-500 border-yellow-500/20",
     running: "bg-blue-500/10 text-blue-500 border-blue-500/20",
@@ -40,7 +42,7 @@ function StatusBadge({ status, className }: { status: string; className?: string
       aria-label={`Status: ${status}`}
     >
       {status === "running" && <span className="mr-1 inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" />}
-      {status}
+      {status === "pending" ? t("jobs.status.pending") : status === "running" ? t("jobs.status.running") : status === "completed" ? t("jobs.status.completed") : status === "failed" ? t("jobs.status.failed") : status === "partially_failed" ? t("jobs.status.partiallyFailed") : status}
     </Badge>
   );
 }
@@ -143,16 +145,17 @@ function StepsPagination({
 
 // ── Step Logs (inline expandable) ──
 function StepLogRows({ logs }: { logs: LogEntry[] }) {
+  const { t } = useTranslation();
   if (logs.length === 0) {
-    return <p className="p-2 text-xs text-muted-foreground">No logs for this step.</p>;
+    return <p className="p-2 text-xs text-muted-foreground">{t("jobs.noLogs")}</p>;
   }
   return (
     <table className="w-full text-sm">
       <thead className="bg-muted">
         <tr>
-          <th className="text-left p-2 w-16">Level</th>
-          <th className="text-left p-2">Message</th>
-          <th className="text-left p-2 w-32">Time</th>
+          <th className="text-left p-2 w-16">{t("jobs.level")}</th>
+          <th className="text-left p-2">{t("jobs.message")}</th>
+          <th className="text-left p-2 w-32">{t("jobs.logs.timestamp")}</th>
         </tr>
       </thead>
       <tbody>
@@ -182,6 +185,7 @@ function StepLogRows({ logs }: { logs: LogEntry[] }) {
 
 // ── Job Detail Page Component ──
 export function JobDetailPage() {
+  const { t } = useTranslation();
   const { jobId } = useParams<{ jobId: string }>();
   const navigate = useNavigate();
 
@@ -200,7 +204,7 @@ export function JobDetailPage() {
       setDetail(data);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      toast.error(`Failed to load job detail: ${msg}`);
+      toast.error(`${t("jobs.toast.loadDetailFailed")}: ${msg}`);
     }
   }, [jobId]);
 
@@ -270,7 +274,7 @@ export function JobDetailPage() {
     <div className="space-y-6">
       {/* Back button */}
       <Button variant="ghost" size="sm" onClick={() => navigate(-1)}>
-        ← Back
+        ← {t("common.back")}
       </Button>
 
       {/* Title */}
@@ -287,28 +291,28 @@ export function JobDetailPage() {
       {/* Summary */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Summary</CardTitle>
+          <CardTitle className="text-base">{t("jobs.summary")}</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
             <div>
-              <span className="text-muted-foreground">Total:</span>{" "}
+              <span className="text-muted-foreground">{t("jobs.total")}:</span>{" "}
               {totalSteps}
             </div>
             <div>
-              <span className="text-muted-foreground">Completed:</span>{" "}
+              <span className="text-muted-foreground">{t("jobs.status.completed")}:</span>{" "}
               {summary.completed}
             </div>
             <div>
-              <span className="text-muted-foreground">Failed:</span>{" "}
+              <span className="text-muted-foreground">{t("jobs.status.failed")}:</span>{" "}
               {summary.failed}
             </div>
             <div>
-              <span className="text-muted-foreground">Pending:</span>{" "}
+              <span className="text-muted-foreground">{t("jobs.status.pending")}:</span>{" "}
               {summary.pending}
             </div>
             <div>
-              <span className="text-muted-foreground">Running:</span>{" "}
+              <span className="text-muted-foreground">{t("jobs.status.running")}:</span>{" "}
               {summary.running}
             </div>
           </div>
@@ -319,7 +323,7 @@ export function JobDetailPage() {
             return (
             <div className="mt-4 space-y-1">
               <div className="flex justify-between text-xs text-muted-foreground">
-                <span>Progress</span>
+                <span>{t("jobs.progress")}</span>
                 <span>
                   {done}/{totalSteps} ({summary.failed > 0 ? `${summary.failed} failed · ` : ""}
                   {pct}%)
@@ -340,7 +344,7 @@ export function JobDetailPage() {
       {/* Steps Table */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Steps</CardTitle>
+          <CardTitle className="text-base">{t("jobs.steps")}</CardTitle>
         </CardHeader>
         <CardContent>
           <StepsPagination
@@ -356,11 +360,11 @@ export function JobDetailPage() {
               <table className="w-full text-sm">
                 <thead className="bg-muted">
                   <tr>
-                    <th className="text-left p-2">Step Key</th>
-                    <th className="text-left p-2">Status</th>
-                    <th className="text-left p-2">Payload</th>
-                    <th className="text-left p-2">Result</th>
-                    <th className="text-left p-2">Duration</th>
+                    <th className="text-left p-2">{t("jobs.steps.stepKey")}</th>
+                    <th className="text-left p-2">{t("jobs.steps.status")}</th>
+                    <th className="text-left p-2">{t("jobs.steps.payload")}</th>
+                    <th className="text-left p-2">{t("jobs.steps.result")}</th>
+                    <th className="text-left p-2">{t("jobs.steps.duration")}</th>
                   </tr>
                 </thead>
                 <tbody>

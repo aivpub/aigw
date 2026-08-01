@@ -40,13 +40,31 @@
     "editing": "Editing...",
     "select": "Select",
     "optionalField": "Optional",
-    "unlimited": "Unlimited"
+    "unlimited": "Unlimited",
+    "settings": "Settings",
+    "retry": "Retry"
   },
   "sidebar": {
     "brand": "aigw",
     "admin": "Admin",
-    "groups": { "aiGateway": "AI GATEWAY", "observability": "OBSERVABILITY", "accessControl": "ACCESS CONTROL", "settings": "SETTINGS" },
-    "nav": { "keys": "Virtual Keys", "models": "Models", "playground": "Playground", "usage": "Usage", "spendLogs": "Spend Logs", "users": "Users", "teams": "Teams", "organizations": "Organizations", "routerSettings": "Router Settings", "jobs": "Jobs" },
+    "groups": {
+      "aiGateway": "AI GATEWAY",
+      "observability": "OBSERVABILITY",
+      "accessControl": "ACCESS CONTROL",
+      "settings": "SETTINGS"
+    },
+    "nav": {
+      "keys": "Virtual Keys",
+      "models": "Models",
+      "playground": "Playground",
+      "usage": "Usage",
+      "spendLogs": "Spend Logs",
+      "users": "Users",
+      "teams": "Teams",
+      "organizations": "Organizations",
+      "routerSettings": "Router Settings",
+      "jobs": "Jobs"
+    },
     "expandSidebar": "Expand sidebar",
     "collapseSidebar": "Collapse sidebar"
   },
@@ -69,8 +87,20 @@
   "usage": {
     "title": "Usage",
     "description": "Usage and spend overview",
-    "datePresets": { "3d": "3 days", "7d": "7 days", "30d": "30 days", "custom": "Custom" },
-    "cards": { "spend": "Spend", "requests": "Requests", "ok": "OK", "failed": "Failed", "tokens": "Tokens", "rate": "Rate" },
+    "datePresets": {
+      "3d": "3 days",
+      "7d": "7 days",
+      "30d": "30 days",
+      "custom": "Custom"
+    },
+    "cards": {
+      "spend": "Spend",
+      "requests": "Requests",
+      "ok": "OK",
+      "failed": "Failed",
+      "tokens": "Tokens",
+      "rate": "Rate"
+    },
     "trend": "Trend",
     "tabSpend": "💰 Spend",
     "tabTokens": "📊 Tokens",
@@ -78,7 +108,16 @@
     "tabChart": "📊 Chart",
     "noData": "No data available",
     "cache": "cache",
-    "chart": { "output": "Output", "cacheWrite": "Cache Write", "cacheRead": "Cache Read", "input": "Input", "success": "Success", "spend": "Spend", "tokens": "Tokens", "requests": "Requests" },
+    "chart": {
+      "output": "Output",
+      "cacheWrite": "Cache Write",
+      "cacheRead": "Cache Read",
+      "input": "Input",
+      "success": "Success",
+      "spend": "Spend",
+      "tokens": "Tokens",
+      "requests": "Requests"
+    },
     "topKeys": "Top Virtual Keys",
     "spendByProvider": "Spend by Provider",
     "spendByModelGroup": "Spend by Model Group",
@@ -87,14 +126,25 @@
   },
   "dashboard": {
     "title": "Dashboard",
-    "description": "System overview",
+    "description": "Usage and spend overview",
     "totalSpend": "Total Spend",
     "periodSpend": "Period Spend",
     "totalRequests": "Total Requests",
     "spendByModel": "Spend by Model",
     "spendByProvider": "Spend by Provider",
     "spendLogs": "Spend Logs",
-    "table": { "time": "Time", "model": "Model", "tokens": "Tokens", "cost": "Cost", "status": "Status" }
+    "from": "From",
+    "to": "To",
+    "noData": "No data available",
+    "noSpendLogs": "No spend logs found for this period",
+    "tokens": "tokens",
+    "table": {
+      "time": "Time",
+      "model": "Model",
+      "tokens": "Tokens",
+      "cost": "Cost",
+      "status": "Status"
+    }
   },
   "keys": {
     "title": "API Keys",
@@ -104,35 +154,265 @@
     "searchPlaceholder": "Search by alias, name, user, or email...",
     "noKeys": "No keys yet",
     "noMatch": "No keys match your search",
-    "viewMode": { "active": "Active", "deleted": "Deleted" },
-    "table": { "alias": "Alias", "name": "Name", "token": "Token", "user": "User", "models": "Models", "spend": "Spend", "budget": "Budget", "expires": "Expires", "created": "Created", "status": "Status", "actions": "Actions", "deletedAt": "Deleted At" },
+    "viewMode": {
+      "active": "Active",
+      "deleted": "Deleted"
+    },
+    "table": {
+      "alias": "Alias",
+      "name": "Name",
+      "token": "Token",
+      "user": "User",
+      "models": "Models",
+      "spend": "Spend",
+      "budget": "Budget",
+      "expires": "Expires",
+      "created": "Created",
+      "status": "Status",
+      "actions": "Actions",
+      "deletedAt": "Deleted At"
+    },
     "allModels": "All Models",
     "blocked": "blocked",
     "active": "active",
-    "userTooltip": { "userId": "User ID", "alias": "Alias", "email": "Email" },
-    "mobile": { "spent": "Spent", "expires": "Expires", "created": "Created" },
-    "createDialog": { "title": "Create API Key", "description": "Generate a new virtual key for LLM access.", "nameLabel": "Name", "namePlaceholder": "e.g. Production GPT-4 Key", "aliasLabel": "Alias", "aliasPlaceholder": "my-app-key", "modelsLabel": "Models", "budgetLabel": "Max Budget ($)", "tpmLabel": "TPM Limit", "rpmLabel": "RPM Limit", "expiresLabel": "Expires", "generateBtn": "Generate Key", "created": "Key created! Copy it now — it won't be shown again.", "savedBtn": "I've saved my key" },
-    "editDialog": { "title": "Edit Key", "description": "Update", "nameLabel": "Name", "namePlaceholder": "e.g. Production GPT-4 Key", "aliasLabel": "Alias", "modelsLabel": "Models", "budgetLabel": "Max Budget ($)", "tpmLabel": "TPM Limit", "rpmLabel": "RPM Limit", "expiresLabel": "Expires", "saveBtn": "Save Changes" },
-    "deleteDialog": { "title": "Delete Key", "description": "Are you sure you want to delete", "confirm": "? This key will be archived and viewable in the Deleted tab." },
-    "toast": { "created": "Key created. Please save your API key.", "updated": "Key updated", "deleted": "Key deleted", "unblocked": "Key unblocked", "blocked": "Key blocked", "copied": "Copied to clipboard", "copyFailed": "Copy failed — clipboard unavailable" },
+    "userTooltip": {
+      "userId": "User ID",
+      "alias": "Alias",
+      "email": "Email"
+    },
+    "mobile": {
+      "spent": "Spent",
+      "expires": "Expires",
+      "created": "Created"
+    },
+    "createDialog": {
+      "title": "Create API Key",
+      "description": "Generate a new virtual key for LLM access.",
+      "nameLabel": "Name",
+      "namePlaceholder": "e.g. Production GPT-4 Key",
+      "aliasLabel": "Alias",
+      "aliasPlaceholder": "my-app-key",
+      "modelsLabel": "Models",
+      "budgetLabel": "Max Budget ($)",
+      "tpmLabel": "TPM Limit",
+      "rpmLabel": "RPM Limit",
+      "expiresLabel": "Expires",
+      "generateBtn": "Generate Key",
+      "created": "Key created! Copy it now — it won't be shown again.",
+      "savedBtn": "I've saved my key"
+    },
+    "editDialog": {
+      "title": "Edit Key",
+      "description": "Update",
+      "nameLabel": "Name",
+      "namePlaceholder": "e.g. Production GPT-4 Key",
+      "aliasLabel": "Alias",
+      "modelsLabel": "Models",
+      "budgetLabel": "Max Budget ($)",
+      "tpmLabel": "TPM Limit",
+      "rpmLabel": "RPM Limit",
+      "expiresLabel": "Expires",
+      "saveBtn": "Save Changes"
+    },
+    "deleteDialog": {
+      "title": "Delete Key",
+      "description": "Are you sure you want to delete",
+      "confirm": "? This key will be archived and viewable in the Deleted tab."
+    },
+    "toast": {
+      "created": "Key created. Please save your API key.",
+      "updated": "Key updated",
+      "deleted": "Key deleted",
+      "unblocked": "Key unblocked",
+      "blocked": "Key blocked",
+      "copied": "Copied to clipboard",
+      "copyFailed": "Copy failed — clipboard unavailable"
+    },
     "noDeletedRecords": "No deleted records"
   },
   "models": {
     "title": "Models",
     "description": "Proxy model configurations, credentials, and system health",
     "searchPlaceholder": "Search by name, provider...",
-    "activeModels": "Active Models",
+    "tabModelGroups": "Model Groups",
+    "tabCredentials": "Credentials",
+    "tabHealth": "Health",
+    "allModels": "All Models",
     "deletedModels": "Deleted Models",
-    "credentials": "Credentials",
-    "health": "Health",
-    "newModel": "New Model",
-    "noModels": "No models yet",
+    "newModel": "Add Model",
+    "noModels": "No models configured",
+    "noMatch": "No models match your search",
     "noDeletedRecords": "No deleted records",
-    "table": { "modelName": "Model Name", "modelId": "Model ID", "provider": "Provider", "upstreamModel": "Upstream Model", "status": "Status", "cost": "Cost (Per 1M)", "created": "Created", "actions": "Actions", "deletedAt": "Deleted At" },
-    "dialog": { "title": { "create": "New Model", "edit": "Edit Model" }, "modelName": { "label": "Model Name", "description": "Proxy model group name exposed via /v1/models" }, "upstreamModel": { "label": "Upstream Model", "description": "Auto-fills from Model Name. Edit to override" }, "provider": { "label": "Provider", "description": "Upstream LLM provider" }, "credential": { "label": "Credential", "description": "Select a stored credential", "new": "New credential" }, "apiKey": { "label": "API Key", "description": "API key instead of credential" }, "inputPrice": { "label": "Input Price ($/1M)", "description": "e.g. 30 for GPT-4" }, "outputPrice": { "label": "Output Price ($/1M)", "description": "e.g. 60 for GPT-4" }, "cacheReadPrice": { "label": "Cache Read Price ($/1M)", "description": "Prompt caching read price; typically 10%-50% of Input" }, "cacheWritePrice": { "label": "Cache Write Price ($/1M)", "description": "Prompt caching write price; typically ~125% of Input" }, "rpm": { "label": "RPM", "description": "Requests per minute" }, "tpm": { "label": "TPM", "description": "Tokens per minute" }, "systemMessage": { "label": "System Message Handling", "description": "Normalize multiple system messages for upstream format" }, "selectProvider": "Select provider…", "selectCredential": "Select credential…", "autoDetect": "Auto-detect (recommended)" },
-    "deleteDialog": { "title": "Delete Model", "description": "Are you sure you want to delete", "confirm": "? This model will be archived and viewable in the Deleted tab." },
-    "credentials": { "allCredentials": "All Credentials", "newCredential": "New Credential", "editCredential": "Edit Credential", "deleteCredential": "Delete Credential", "name": "Name", "provider": "Provider", "actions": "Actions", "values": "Values", "namePlaceholder": "e.g. openai-production-key", "providerPlaceholder": "Select provider…", "addValue": "Add Value", "addValueDescription": "Value sets are added via {key}:{value} format", "keyPlaceholder": "key name", "valuePlaceholder": "value", "deleteConfirmTitle": "Delete Confirmation", "deleteConfirmDescription": "Are you sure you want to delete", "deleteConfirmSuffix": "? This cannot be undone.", "toast": { "created": "Credential created", "updated": "Credential updated", "saved": "Credential created", "deleted": "Credential deleted", "saveFailed": "Save failed", "deleteFailed": "Delete failed" } },
-    "health": { "checkBtn": "Check", "checkingBtn": "Checking...", "status": "Status", "model": "Model", "latency": "Latency", "lastSuccess": "Last Success", "error": "Error", "action": "Action" }
+    "empty": "(empty)",
+    "costInput": "Input",
+    "costOutput": "Output",
+    "costCacheRead": "Cache Read",
+    "costCacheWrite": "Cache Write",
+    "detailId": "ID:",
+    "detailCreatedBy": "Created by:",
+    "detailUpdatedBy": "Updated by:",
+    "mobileProvider": "Provider:",
+    "mobileUpstream": "Upstream:",
+    "mobileCost": "Cost:",
+    "mobileCreated": "Created",
+    "table": {
+      "modelName": "Model Name",
+      "modelId": "Model ID",
+      "provider": "Provider",
+      "upstreamModel": "Upstream Model",
+      "status": "Status",
+      "cost": "Cost (Per 1M)",
+      "created": "Created",
+      "actions": "Actions",
+      "deletedAt": "Deleted At"
+    },
+    "dialog": {
+      "title": {
+        "create": "Add Model",
+        "edit": "Edit Model"
+      },
+      "createDescription": "Create a new proxy model configuration",
+      "editDescription": "Update proxy model configuration for",
+      "modelNameRequired": "Model name is required",
+      "modelName": {
+        "label": "Model Name",
+        "description": "Proxy model group name exposed via /v1/models",
+        "placeholder": "my-gpt-4"
+      },
+      "upstreamModel": {
+        "label": "Upstream Model",
+        "description": "Auto-fills from Model Name. Edit to override (e.g. openai/gpt-4)"
+      },
+      "provider": {
+        "label": "Provider",
+        "description": "Upstream LLM provider"
+      },
+      "authentication": "Authentication",
+      "apiKey": {
+        "tab": "API Key",
+        "label": "API Key",
+        "placeholder": "sk-..."
+      },
+      "apiBase": {
+        "label": "API Base",
+        "placeholder": "https://api.openai.com/v1"
+      },
+      "credential": {
+        "tab": "Credential",
+        "label": "Credential",
+        "description": "Select a stored credential",
+        "new": "New credential",
+        "selectPlaceholder": "Select credential…"
+      },
+      "pricingSection": "Pricing ($/1M tokens)",
+      "inputPrice": {
+        "label": "Input Price ($/1M)",
+        "description": "e.g. 30 for GPT-4"
+      },
+      "outputPrice": {
+        "label": "Output Price ($/1M)",
+        "description": "e.g. 60 for GPT-4"
+      },
+      "cacheReadPrice": {
+        "label": "Cache Read Price ($/1M)",
+        "description": "Prompt caching read price; typically 10%-50% of Input"
+      },
+      "cacheWritePrice": {
+        "label": "Cache Write Price ($/1M)",
+        "description": "Prompt caching write price; typically ~125% of Input"
+      },
+      "rateLimits": "Rate Limits",
+      "rpm": {
+        "label": "RPM",
+        "description": "Requests per minute"
+      },
+      "tpm": {
+        "label": "TPM",
+        "description": "Tokens per minute"
+      },
+      "chatTemplateSection": "Chat Template Compatibility",
+      "systemMessage": {
+        "label": "System Message Handling",
+        "description": "Some models (e.g. Qwen) require system messages only at position 0, otherwise 400. Auto-detect by model name; override if misdetected."
+      },
+      "selectProvider": "Select provider…",
+      "selectCredential": "Select credential…",
+      "autoDetect": "Auto-detect",
+      "strictOption": "Strict (Qwen-like templates)",
+      "looseOption": "Loose (passthrough)",
+      "saveChanges": "Save Changes",
+      "advancedSection": "Advanced: litellm_params (raw JSON override)",
+      "advancedHint": "Use only fields not covered by the form above. Merged with form fields.",
+      "advancedPlaceholder": "{\"key\": \"value\"}"
+    },
+    "deleteDialog": {
+      "title": "Delete Model",
+      "description": "Delete proxy model \"{{modelName}}\"? It will be archived and viewable in the Deleted view. Existing API keys that reference this model will no longer have access."
+    },
+    "credentials": {
+      "new": "New",
+      "allCredentials": "All Credentials",
+      "empty": "No credentials found",
+      "newCredential": "New Credential",
+      "editCredential": "Edit Credential",
+      "deleteCredential": "Delete Credential",
+      "name": "Name",
+      "provider": "Provider",
+      "apiBase": "API Base",
+      "apiKey": "API Key",
+      "actions": "Actions",
+      "encryptDesc": "API keys are encrypted at rest using AIGW_MASTER_KEY. Toggle advanced mode to edit raw JSON.",
+      "deleteDescription": "This will permanently remove {{credentialName}}. Models referencing it will lose their API authentication.",
+      "form": {
+        "nameLabel": "Credential Name *",
+        "namePlaceholder": "e.g. openai-prod",
+        "providerLabel": "Provider",
+        "providerPlaceholder": "e.g. openai, anthropic, deepseek",
+        "apiBaseLabel": "API Base URL",
+        "apiBasePlaceholder": "https://api.openai.com/v1",
+        "apiKeyLabel": "API Key",
+        "apiKeyPlaceholder": "sk-...",
+        "credInfoLabel": "Credential Info (JSON, optional)",
+        "credInfoPlaceholder": "{\"description\":\"...\"}",
+        "valuesJsonLabel": "Credential Values (JSON)",
+        "infoJsonLabel": "Credential Info (JSON)",
+        "advancedToggle": "Advanced (raw JSON)",
+        "advancedJsonInvalid": "Advanced JSON is not valid",
+        "credInfoJsonInvalid": "Credential Info is not valid JSON"
+      },
+      "toast": {
+        "created": "Credential created",
+        "updated": "Credential updated",
+        "saved": "Credential created",
+        "deleted": "Credential deleted",
+        "saveFailed": "Save failed",
+        "deleteFailed": "Delete failed"
+      },
+      "deleteDialog": {
+        "title": "Delete Credential"
+      }
+    },
+    "health": {
+      "title": "Model Health",
+      "description": "Ping each model's upstream endpoint to verify connectivity.",
+      "checkBtn": "Check",
+      "checkAll": "Check All Models",
+      "checking": "Checking…",
+      "reCheck": "Re-check",
+      "lastRun": "Last run:",
+      "lastOk": "Last OK:",
+      "noRuns": "No health checks run yet.",
+      "noRunsHint": "Click \"Check All Models\" to run diagnostics.",
+      "noErrors": "no errors",
+      "checkingStatus": "checking…",
+      "unknownError": "unknown error",
+      "status": "Status",
+      "model": "Model",
+      "latency": "Latency",
+      "lastSuccess": "Last Success",
+      "error": "Error",
+      "action": "Action"
+    }
   },
   "users": {
     "title": "Users",
@@ -140,55 +420,266 @@
     "newUser": "New User",
     "allUsers": "All Users",
     "deletedUsers": "Deleted Users",
+    "deletedCardTitle": "Deleted Users ({{count}})",
+    "allCardTitle": "All Users ({{count}})",
     "searchPlaceholder": "Search by alias, email, or role...",
     "noUsers": "No users yet",
     "noMatch": "No users match your search",
     "noDeletedRecords": "No deleted records",
-    "table": { "alias": "Alias", "userId": "User ID", "email": "Email", "role": "Role", "spend": "Spend", "deletedAt": "Deleted At", "actions": "Actions", "keys": "Keys" },
-    "viewMode": { "active": "Active", "deleted": "Deleted" },
-    "dialog": { "titleCreate": "Create User", "titleEdit": "Edit User", "emailLabel": "Email", "emailPlaceholder": "user@example.com", "aliasLabel": "Alias", "aliasPlaceholder": "User display name", "roleLabel": "Role", "spendLabel": "Spend", "budgetLabel": "Max Budget ($)" },
-    "deleteDialog": { "title": "Delete User", "description": "Are you sure you want to delete", "confirm": "? This user will be archived and viewable in the Deleted tab." },
-    "toast": { "created": "User created", "updated": "User updated", "deleted": "User deleted", "blocked": "User blocked", "unblocked": "User unblocked" }
+    "alias": "Alias",
+    "mobile": {
+      "id": "ID:",
+      "deleted": "Deleted:",
+      "spent": "Spent",
+      "budget": "Budget",
+      "noBudget": "No budget",
+      "created": "Created:"
+    },
+    "table": {
+      "alias": "Alias",
+      "userId": "User ID",
+      "email": "Email",
+      "role": "Role",
+      "spend": "Spend",
+      "deletedAt": "Deleted At",
+      "actions": "Actions",
+      "keys": "Keys"
+    },
+    "viewMode": {
+      "active": "Active",
+      "deleted": "Deleted"
+    },
+    "dialog": {
+      "titleCreate": "Create User",
+      "titleEdit": "Edit User",
+      "descriptionCreate": "Add a new user account.",
+      "descriptionEdit": "Update {{name}}",
+      "emailLabel": "Email",
+      "emailPlaceholder": "user@example.com",
+      "passwordLabel": "Password",
+      "passwordPlaceholder": "••••••",
+      "aliasLabel": "Alias",
+      "aliasPlaceholder": "Display name",
+      "roleLabel": "Role",
+      "spendLabel": "Spend",
+      "budgetLabel": "Max Budget ($)"
+    },
+    "deleteDialog": {
+      "title": "Delete User",
+      "confirm": "Are you sure you want to delete {{name}}? It will be archived and viewable in the Deleted tab."
+    },
+    "toast": {
+      "created": "User created",
+      "updated": "User updated",
+      "deleted": "User deleted",
+      "blocked": "User blocked",
+      "unblocked": "User unblocked"
+    }
   },
   "orgs": {
     "title": "Organizations",
-    "description": "Manage organizations and budgets",
-    "newOrg": "New Organization",
+    "description": "Manage organizations",
+    "newOrg": "New Org",
     "allOrgs": "All Organizations",
     "deletedOrgs": "Deleted Organizations",
+    "deletedCardTitle": "Deleted Organizations ({{count}})",
+    "allCardTitle": "All Organizations ({{count}})",
     "searchPlaceholder": "Search by name...",
-    "noOrgs": "No organizations yet",
+    "noOrgs": "No orgs yet",
+    "noMatch": "No orgs match",
     "noDeletedRecords": "No deleted records",
-    "table": { "name": "Name", "orgId": "Organization ID", "budgetId": "Budget ID", "spend": "Spend", "created": "Created", "actions": "Actions", "deletedAt": "Deleted At" },
-    "dialog": { "titleCreate": "Create Organization", "titleEdit": "Edit Organization", "nameLabel": "Name", "namePlaceholder": "Engineering", "budgetIdLabel": "Budget ID" },
-    "deleteDialog": { "title": "Delete Organization", "description": "Are you sure you want to delete", "confirm": "? This organization will be archived and viewable in the Deleted tab." },
-    "toast": { "created": "Organization created", "updated": "Organization updated", "deleted": "Organization deleted" }
+    "mobile": {
+      "id": "ID:",
+      "deleted": "Deleted:",
+      "budget": "Budget:",
+      "created": "Created:"
+    },
+    "table": {
+      "name": "Name",
+      "orgId": "Organization ID",
+      "budgetId": "Budget ID",
+      "spend": "Spend",
+      "created": "Created",
+      "actions": "Actions",
+      "deletedAt": "Deleted At"
+    },
+    "dialog": {
+      "titleCreate": "Create Organization",
+      "titleEdit": "Edit Organization",
+      "titleDelete": "Delete Organization",
+      "nameLabel": "Name",
+      "namePlaceholder": "Engineering",
+      "confirmDelete": "Delete {{name}}? It will be archived and viewable in the Deleted tab."
+    },
+    "toast": {
+      "created": "Organization created",
+      "updated": "Organization updated",
+      "deleted": "Organization deleted"
+    }
   },
   "teams": {
     "title": "Teams",
-    "description": "Manage teams and assignments",
+    "description": "Manage teams and members",
     "newTeam": "New Team",
     "allTeams": "All Teams",
     "deletedTeams": "Deleted Teams",
+    "deletedCardTitle": "Deleted Teams ({{count}})",
+    "allCardTitle": "All Teams ({{count}})",
     "searchPlaceholder": "Search by name...",
     "noTeams": "No teams yet",
+    "noMatch": "No teams match",
     "noDeletedRecords": "No deleted records",
-    "table": { "name": "Name", "teamId": "Team ID", "org": "Org", "members": "Members", "status": "Status", "spend": "Spend", "budget": "Budget", "created": "Created", "actions": "Actions", "deletedAt": "Deleted At" },
-    "active": "Active",
+    "membersCount": "{{count}} members",
+    "noBudget": "No budget",
+    "active": "active",
     "blocked": "Blocked",
-    "dialog": { "titleCreate": "Create Team", "titleEdit": "Edit Team", "nameLabel": "Name", "namePlaceholder": "AI Team", "orgIdLabel": "Organization ID", "orgPlaceholder": "org-1", "budgetLabel": "Max Budget ($)", "budgetPlaceholder": "500" },
-    "deleteDialog": { "title": "Delete Team", "description": "Are you sure you want to delete", "confirm": "? This team will be archived and viewable in the Deleted tab." },
-    "toast": { "created": "Team created", "updated": "Team updated", "deleted": "Team deleted" }
+    "mobile": {
+      "id": "ID:",
+      "org": "Org:",
+      "deleted": "Deleted:",
+      "spent": "Spent",
+      "budget": "Budget",
+      "created": "Created:"
+    },
+    "table": {
+      "name": "Name",
+      "teamId": "Team ID",
+      "org": "Org",
+      "members": "Members",
+      "status": "Status",
+      "spend": "Spend",
+      "budget": "Budget",
+      "created": "Created",
+      "actions": "Actions",
+      "deletedAt": "Deleted At"
+    },
+    "dialog": {
+      "titleCreate": "Create Team",
+      "titleEdit": "Edit Team",
+      "titleDelete": "Delete Team",
+      "descriptionCreate": "Add a new team.",
+      "nameLabel": "Name",
+      "namePlaceholder": "AI Team",
+      "orgIdLabel": "Organization ID",
+      "orgIdPlaceholder": "org-1",
+      "budgetLabel": "Max Budget ($)",
+      "budgetPlaceholder": "500",
+      "confirmDelete": "Delete {{name}}? It will be archived and viewable in the Deleted tab."
+    },
+    "toast": {
+      "created": "Team created",
+      "updated": "Team updated",
+      "deleted": "Team deleted"
+    }
   },
   "spendLogs": {
     "title": "Spend Logs",
     "description": "Detailed spending records",
-    "timePresets": { "15m": "15 min", "1h": "1 hour", "6h": "6 hours", "24h": "24 hours", "7d": "7 days" },
-    "filters": { "status": "Status", "all": "All", "success": "Success", "failure": "Failure", "streaming": "Streaming", "model": "Model", "session": "Session", "tokenRange": "Token Range" },
-    "table": { "callId": "Call ID", "upstreamId": "Upstream ID", "time": "Time", "model": "Model", "key": "Key", "tokens": "Tokens", "spend": "Cost", "duration": "Duration", "ttft": "TTFT", "status": "Status", "provider": "Provider" },
-    "drawer": { "title": "Request Detail", "callId": "Call ID", "upstreamId": "Upstream ID", "tabs": { "prompt": "Prompt", "response": "Response", "raw": "Raw", "timing": "Timing" }, "noData": "No content", "noUpstreamId": "—", "timing": { "total": "Total", "upstream": "Upstream", "queue": "Queue", "gatewayOverhead": "Gateway Overhead", "notAvailable": "Timing data not available" }, "metadata": { "model": "Model", "provider": "Provider", "tokens": "Tokens", "prompt": "Prompt", "completion": "Completion", "cost": "Cost", "duration": "Duration" }, "fetchError": "Failed to load, click to retry" },
+    "timePresets": {
+      "15m": "15 min",
+      "1h": "1 hour",
+      "6h": "6 hours",
+      "24h": "24 hours",
+      "7d": "7 days"
+    },
+    "filters": {
+      "callRequestIdPlaceholder": "Call / Request ID…",
+      "modelPlaceholder": "Model…",
+      "statusPlaceholder": "Status",
+      "status": "Status",
+      "all": "All",
+      "success": "Success",
+      "failure": "Failure",
+      "streaming": "Streaming",
+      "model": "Model",
+      "session": "Session",
+      "tokenRange": "Token Range",
+      "minTokPlaceholder": "Min tok",
+      "maxTokPlaceholder": "Max tok"
+    },
+    "table": {
+      "callId": "Call ID",
+      "requestId": "Request ID",
+      "upstreamId": "Upstream ID",
+      "time": "Time",
+      "type": "Type",
+      "model": "Model",
+      "key": "Key",
+      "endUser": "End User",
+      "ip": "IP",
+      "tokens": "Tokens",
+      "cost": "Cost",
+      "spend": "Cost",
+      "duration": "Duration",
+      "ttft": "TTFT",
+      "status": "Status",
+      "provider": "Provider"
+    },
+    "drawer": {
+      "title": "Request Detail",
+      "callId": "Call ID",
+      "requestId": "Request ID",
+      "upstreamId": "Upstream ID",
+      "toolsCount": "Tools ({{count}})",
+      "tabs": {
+        "prompt": "Prompt",
+        "response": "Response",
+        "raw": "Raw",
+        "timing": "Timing"
+      },
+      "noData": "No content",
+      "noUpstreamId": "—",
+      "tabVisual": "Visual",
+      "tabRaw": "Raw",
+      "noPromptData": "No prompt data",
+      "noResponseData": "No response data",
+      "loadError": "Failed to load request detail",
+      "meta": {
+        "start": "Start:",
+        "end": "End:",
+        "group": "Group:",
+        "provider": "Provider:",
+        "id": "ID:",
+        "base": "Base:",
+        "user": "User:",
+        "endUser": "End User:",
+        "session": "Session:",
+        "cache": "Cache",
+        "cacheRead": "read",
+        "cacheWrite": "write",
+        "cacheHit": "Cache Hit",
+        "cacheKey": "Cache Key:",
+        "team": "Team:",
+        "org": "Org:",
+        "mcpTool": "MCP Tool:"
+      },
+      "timing": {
+        "total": "Total",
+        "upstream": "Upstream",
+        "queue": "Queue",
+        "gatewayOverhead": "Gateway Overhead",
+        "notAvailable": "Timing data not available"
+      },
+      "metadata": {
+        "model": "Model",
+        "provider": "Provider",
+        "tokens": "Tokens",
+        "prompt": "Prompt",
+        "completion": "Completion",
+        "cost": "Cost",
+        "duration": "Duration"
+      },
+      "fetchError": "Failed to load, click to retry"
+    },
     "noData": "No data available",
-    "search": { "placeholder": "Search by call_id or request_id..." }
+    "search": {
+      "placeholder": "Search by call_id or request_id..."
+    },
+    "status": {
+      "streaming": "streaming"
+    },
+    "liveTail": "Live Tail",
+    "cardTitle": "Spend Logs ({{count}})"
   },
   "playground": {
     "title": "Playground",
@@ -199,11 +690,41 @@
     "clearSession": "Clear Session",
     "getCode": "Get Code",
     "selectModel": "Select a model",
+    "selectModelPlaceholder": "Select a model",
     "placeholder": "Type a message… (Shift+Enter for new line)",
     "temperature": "Temperature",
     "maxTokens": "Max Tokens",
+    "topP": "Top P",
+    "freqPenalty": "Frequency Penalty",
+    "presPenalty": "Presence Penalty",
+    "streaming": "Streaming",
+    "virtualKey": "Virtual Key",
+    "virtualKeySession": "Current UI Session (Cookie)",
+    "virtualKeyCustom": "Custom Virtual Key (SK)",
+    "endpointType": "Endpoint Type",
+    "endpointChat": "Chat Completions (/v1/chat/completions)",
+    "endpointMessages": "Claude Messages (/v1/messages)",
+    "messagesHint": "Uses Anthropic Messages API format",
+    "newChat": "New Chat",
+    "startConversation": "Start a conversation",
+    "startHint": "Type a message below to begin testing",
+    "modelLabel": "Model:",
+    "streamLabel": "Stream",
+    "selectModelToBegin": "Select a model to begin",
+    "saveResend": "Save &amp; Resend",
+    "error": "Error",
+    "requestFailed": "Request failed",
+    "tokensSuffix": " tokens",
+    "in": "In:",
+    "out": "Out:",
+    "total": "Total:",
+    "streamingStatus": "streaming…",
     "response": "Response",
-    "codeDialog": { "title": "Call Code", "curl": "curl", "sdk": "SDK (Python)" }
+    "codeDialog": {
+      "title": "Call Code",
+      "curl": "curl",
+      "sdk": "SDK (Python)"
+    }
   },
   "routerSettings": {
     "title": "Router Settings",
@@ -213,38 +734,154 @@
     "team": "Team",
     "reliability": "Reliability & Retries",
     "reliabilityDesc": "Failure tolerance and automatic cooldown behavior.",
+    "strategyDesc": "How aigw picks an upstream deployment when multiple instances share the same model name.",
     "selectKey": "Select a key to configure…",
+    "selectKeyLabel": "Select Key",
+    "selectKeyPlaceholder": "— Select a key —",
+    "selectKeyHint": "Select a key above to configure its router settings. Settings here override the global defaults.",
     "selectTeam": "Select a team to configure…",
-    "fields": { "numRetries": "Retries", "numRetriesDesc": "Retries for failed requests (0 = no retry)", "retryAfter": "Retry After (s)", "allowedFails": "Allowed Fails", "allowedFailsDesc": "Consecutive failures before cooldown", "cooldown": "Cooldown (s)", "cooldownDesc": "Time before retrying route after cooldown", "ttl": "TTL (s)", "ttlDesc": "Route cache entry TTL" },
+    "selectTeamLabel": "Select Team",
+    "selectTeamPlaceholder": "— Select a team —",
+    "selectTeamHint": "Select a team above to configure its router settings. Settings here override the global defaults.",
+    "fields": {
+      "strategy": "Strategy",
+      "numRetries": "Retry Count",
+      "numRetriesDesc": "Retries on failure (0–10).",
+      "retryAfter": "Retry After (s)",
+      "allowedFails": "Allowed Failures",
+      "allowedFailsDesc": "Consecutive failures before cooldown.",
+      "cooldown": "Cooldown (s)",
+      "cooldownDesc": "Deployment cooldown duration.",
+      "ttl": "TTL (s)",
+      "ttlDesc": "Route cache entry TTL"
+    },
     "saveGlobal": "Save Global",
     "saveKey": "Save Key",
     "saveTeam": "Save Team",
-    "toast": { "globalSaved": "Global router settings updated", "keySaved": "Key router settings updated", "teamSaved": "Team router settings updated", "saveFailed": "Failed to save" }
+    "toast": {
+      "globalSaved": "Global router settings updated",
+      "keySaved": "Key router settings updated",
+      "teamSaved": "Team router settings updated",
+      "saveFailed": "Failed to save"
+    }
   },
   "jobs": {
     "title": "Jobs",
     "description": "Manage scheduled tasks and pipelines",
     "trigger": "Manual Trigger",
     "noJobs": "No jobs found",
-    "subTabs": { "bodyArchive": "Body Archive" },
-    "table": { "jobId": "Job ID", "type": "Type", "status": "Status", "steps": "Steps", "created": "Created" },
-    "status": { "pending": "Pending", "running": "Running", "completed": "Completed", "failed": "Failed", "partiallyFailed": "Partial" },
-    "detail": { "title": "Job Detail", "stepsTitle": "Steps", "logsTitle": "Logs", "overview": "Overview", "jobId": "Job ID", "type": "Type", "status": "Status", "created": "Created", "updated": "Updated" },
-    "steps": { "stepKey": "Step Key", "status": "Status", "started": "Started", "completed": "Completed", "retryCount": "Retries", "payload": "Payload", "result": "Result", "error": "Error", "rowsArchived": "Rows", "duration": "Duration" },
-    "logs": { "stepKey": "Step Key", "message": "Message", "timestamp": "Time" },
-    "triggerDialog": { "title": "Manual Trigger", "description": "Start a new execution for the selected job type.", "selectType": "Select job type (step_type)", "triggerBtn": "Trigger", "triggered": "Job triggered! Job ID: ", "closeBtn": "Close", "toast": { "triggered": "Job triggered" } },
+    "subTabs": {
+      "bodyArchive": "Body Archive"
+    },
+    "overview": "Overview",
+    "archiveOverview": "Archive Overview",
+    "allJobs": "All Jobs",
+    "autoArchive": "Auto Archive",
+    "storage": "Storage",
+    "archivedRows": "Archived Rows",
+    "pendingRows": "Pending Rows",
+    "on": "On",
+    "off": "Off",
+    "configured": "Configured",
+    "notConfigured": "Not configured",
+    "noJobsYet": "No jobs yet",
+    "total": "Total",
+    "noJobsRegistered": "No jobs registered. Start the engine to see stats.",
+    "storageNotConfigured": "Storage not configured",
+    "triggerArchive": "Trigger Archive",
+    "triggerArchiveDesc": "Archive spend_logs body data for a specific date range. Each hour of data becomes one job step.",
+    "startDate": "Start Date",
+    "endDate": "End Date",
+    "batchSize": "Batch Size",
+    "triggerJob": "Trigger Job",
+    "triggerToast": "Job {{jobId}}... created with {{totalSteps}} steps",
+    "summary": "Summary",
+    "steps": {
+      "stepKey": "Step Key",
+      "status": "Status",
+      "started": "Started",
+      "completed": "Completed",
+      "retryCount": "Retries",
+      "payload": "Payload",
+      "result": "Result",
+      "error": "Error",
+      "rowsArchived": "Rows",
+      "duration": "Duration"
+    },
+    "progress": "Progress",
+    "noLogs": "No logs for this step.",
+    "level": "Level",
+    "message": "Message",
+    "stepJobs": "{{type}} Jobs",
+    "failedSteps": "({{count}} failed)",
+    "table": {
+      "jobId": "Job ID",
+      "type": "Type",
+      "status": "Status",
+      "steps": "Steps",
+      "created": "Created",
+      "id": "ID",
+      "stepType": "Step Type",
+      "trigger": "Trigger",
+      "progress": "Progress",
+      "ended": "Ended"
+    },
+    "status": {
+      "pending": "Pending",
+      "running": "Running",
+      "completed": "Completed",
+      "failed": "Failed",
+      "partiallyFailed": "Partial"
+    },
+    "detail": {
+      "title": "Job Detail",
+      "stepsTitle": "Steps",
+      "logsTitle": "Logs",
+      "overview": "Overview",
+      "jobId": "Job ID",
+      "type": "Type",
+      "status": "Status",
+      "created": "Created",
+      "updated": "Updated"
+    },
+    "logs": {
+      "stepKey": "Step Key",
+      "message": "Message",
+      "timestamp": "Time"
+    },
+    "triggerDialog": {
+      "title": "Manual Trigger",
+      "description": "Start a new execution for the selected job type.",
+      "selectType": "Select job type (step_type)",
+      "triggerBtn": "Trigger",
+      "triggered": "Job triggered! Job ID: ",
+      "closeBtn": "Close",
+      "toast": {
+        "triggered": "Job triggered"
+      }
+    },
     "disabled": "Trigger disabled when storage is not configured",
     "noop": "no-op — rows_archived=0",
-    "noDetailSteps": "No steps yet"
+    "noDetailSteps": "No steps yet",
+    "pagination": {
+      "showing": "Showing {{from}}–{{to}} of {{total}}",
+      "page": "Page {{page}} of {{total}}"
+    },
+    "toast": {
+      "loadStatsFailed": "Failed to load stats",
+      "loadJobsFailed": "Failed to load jobs",
+      "loadDetailFailed": "Failed to load job detail",
+      "triggerFailed": "Trigger failed"
+    }
   },
   "health": {
     "title": "System Health",
     "description": "Service status and database metrics",
+    "apiStatus": "API Status",
     "version": "Version",
     "database": "Database",
     "dbDescription": "Connection pool status",
     "uptime": "Uptime",
-    "version": "Version",
     "build": "Build",
     "connections": "Connections",
     "idle": "Idle",

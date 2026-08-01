@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { apiGet } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -103,6 +104,7 @@ function MessageBubble({
   onDelete?: (id: string) => void;
   onCopy?: (content: string) => void;
 }) {
+  const { t } = useTranslation();
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState(msg.content);
 
@@ -129,11 +131,11 @@ function MessageBubble({
       <div className={`flex-1 min-w-0 ${isUser ? "flex flex-col items-end" : ""}`}>
         <div className="flex items-center gap-2 mb-1">
           <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
-            {isSystem ? "System" : isUser ? "You" : "Assistant"}
+            {isSystem ? t('logViewer.system') : isUser ? t('logViewer.user') : t('logViewer.assistant')}
           </span>
           {msg.tokens && (
             <Badge variant="outline" className="text-[9px] px-1 py-0 h-4">
-              {msg.tokens.prompt + msg.tokens.completion} tokens
+              {msg.tokens.prompt + msg.tokens.completion}{t('playground.tokensSuffix')}
             </Badge>
           )}
         </div>
@@ -148,16 +150,16 @@ function MessageBubble({
             />
             <div className="flex gap-1">
               <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => { onEdit?.(msg.id, editText); setEditing(false); }}>
-                <Check className="h-3 w-3 mr-1" /> Save & Resend
+                <Check className="h-3 w-3 mr-1" /> {t('playground.saveResend')}
               </Button>
               <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => { setEditText(msg.content); setEditing(false); }}>
-                <X className="h-3 w-3 mr-1" /> Cancel
+                <X className="h-3 w-3 mr-1" /> {t('common.cancel')}
               </Button>
             </div>
           </div>
         ) : msg.error ? (
           <div className="bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded-lg p-3 text-sm text-red-700 dark:text-red-300">
-            <p className="font-medium">Error</p>
+            <p className="font-medium">{t('playground.error')}</p>
             <p className="text-xs mt-1">{msg.error}</p>
           </div>
         ) : (
@@ -183,16 +185,16 @@ function MessageBubble({
           <div className="flex items-center gap-2 mt-1 text-[10px] text-muted-foreground">
             {msg.tokens ? (
               <>
-                <span>In: {msg.tokens.prompt}</span>
+                <span>{t('playground.in')}: {msg.tokens.prompt}</span>
                 <span className="text-muted-foreground/50">|</span>
-                <span>Out: {msg.tokens.completion}</span>
+                <span>{t('playground.out')}: {msg.tokens.completion}</span>
                 <span className="text-muted-foreground/50">|</span>
-                <span>Total: {msg.tokens.prompt + msg.tokens.completion}</span>
+                <span>{t('playground.total')}: {msg.tokens.prompt + msg.tokens.completion}</span>
                 <span className="text-muted-foreground/50">|</span>
               </>
             ) : (
               <>
-                <span>streaming…</span>
+                <span>{t('playground.streamingStatus')}</span>
                 <span className="text-muted-foreground/50">|</span>
               </>
             )}
@@ -201,7 +203,7 @@ function MessageBubble({
               size="icon"
               className="h-5 w-5 ml-auto"
               onClick={() => onCopy?.(msg.content)}
-              title="Copy"
+              title={t('common.copy')}
             >
               <Copy className="h-2.5 w-2.5" />
             </Button>
@@ -211,7 +213,7 @@ function MessageBubble({
                 size="icon"
                 className="h-5 w-5"
                 onClick={() => onDelete(msg.id)}
-                title="Delete"
+                title={t('common.delete')}
               >
                 <Trash2 className="h-2.5 w-2.5" />
               </Button>
@@ -278,13 +280,14 @@ function SettingsPanel({
   onChange: (s: SettingsData) => void;
   models: ModelItem[];
 }) {
+  const { t } = useTranslation();
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-1.5">
-        <Label className="text-xs">Model</Label>
+        <Label className="text-xs">{t('playground.selectModel')}</Label>
         <Select value={settings.model} onValueChange={(v) => onChange({ ...settings, model: v })}>
           <SelectTrigger className="h-8 text-xs">
-            <SelectValue placeholder="Select a model" />
+            <SelectValue placeholder={t('playground.selectModelPlaceholder')} />
           </SelectTrigger>
           <SelectContent>
             {models.map((m) => (
@@ -295,49 +298,49 @@ function SettingsPanel({
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <Label className="text-xs">Temperature ({settings.temperature.toFixed(2)})</Label>
+        <Label className="text-xs">{t('playground.temperature', { n: settings.temperature.toFixed(2) })}</Label>
         <Input type="range" min="0" max="2" step="0.01" value={settings.temperature}
           onChange={(e) => onChange({ ...settings, temperature: parseFloat(e.target.value) })} className="h-8" />
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <Label className="text-xs">Max Tokens</Label>
+        <Label className="text-xs">{t('playground.maxTokens')}</Label>
         <Input type="number" min={1} max={200000} value={settings.maxTokens}
           onChange={(e) => onChange({ ...settings, maxTokens: parseInt(e.target.value) || 4096 })} className="h-8 text-xs" />
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <Label className="text-xs">Top P ({settings.topP.toFixed(2)})</Label>
+        <Label className="text-xs">{t('playground.topP', { n: settings.topP.toFixed(2) })}</Label>
         <Input type="range" min="0" max="1" step="0.01" value={settings.topP}
           onChange={(e) => onChange({ ...settings, topP: parseFloat(e.target.value) })} className="h-8" />
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <Label className="text-xs">Frequency Penalty ({settings.freqPenalty.toFixed(2)})</Label>
+        <Label className="text-xs">{t('playground.freqPenalty', { n: settings.freqPenalty.toFixed(2) })}</Label>
         <Input type="range" min="-2" max="2" step="0.01" value={settings.freqPenalty}
           onChange={(e) => onChange({ ...settings, freqPenalty: parseFloat(e.target.value) })} className="h-8" />
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <Label className="text-xs">Presence Penalty ({settings.presPenalty.toFixed(2)})</Label>
+        <Label className="text-xs">{t('playground.presPenalty', { n: settings.presPenalty.toFixed(2) })}</Label>
         <Input type="range" min="-2" max="2" step="0.01" value={settings.presPenalty}
           onChange={(e) => onChange({ ...settings, presPenalty: parseFloat(e.target.value) })} className="h-8" />
       </div>
 
       <div className="flex items-center justify-between">
-        <Label className="text-xs">Streaming</Label>
+        <Label className="text-xs">{t('playground.streaming')}</Label>
         <Switch checked={settings.streaming} onCheckedChange={(v) => onChange({ ...settings, streaming: v })} />
       </div>
 
       <div className="border-t pt-4 mt-2">
-        <Label className="text-xs font-semibold mb-2 block">Virtual Key</Label>
+        <Label className="text-xs font-semibold mb-2 block">{t('playground.virtualKey')}</Label>
         <Select value={settings.virtualKey} onValueChange={(v) => onChange({ ...settings, virtualKey: v as "session" | "custom" })}>
           <SelectTrigger className="h-8 text-xs">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="session">Current UI Session (Cookie)</SelectItem>
-            <SelectItem value="custom">Custom Virtual Key (SK)</SelectItem>
+            <SelectItem value="session">{t('playground.virtualKeySession')}</SelectItem>
+            <SelectItem value="custom">{t('playground.virtualKeyCustom')}</SelectItem>
           </SelectContent>
         </Select>
         {settings.virtualKey === "custom" && (
@@ -352,18 +355,18 @@ function SettingsPanel({
       </div>
 
       <div className="border-t pt-4 mt-2">
-        <Label className="text-xs font-semibold mb-2 block">Endpoint Type</Label>
+        <Label className="text-xs font-semibold mb-2 block">{t('playground.endpointType')}</Label>
         <Select value={settings.endpointType} onValueChange={(v) => onChange({ ...settings, endpointType: v as "chat" | "messages" })}>
           <SelectTrigger className="h-8 text-xs">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="chat">Chat Completions (/v1/chat/completions)</SelectItem>
-            <SelectItem value="messages">Claude Messages (/v1/messages)</SelectItem>
+            <SelectItem value="chat">{t('playground.endpointChat')}</SelectItem>
+            <SelectItem value="messages">{t('playground.endpointMessages')}</SelectItem>
           </SelectContent>
         </Select>
         {settings.endpointType === "messages" && (
-          <p className="text-[10px] text-muted-foreground mt-1">Uses Anthropic Messages API format</p>
+          <p className="text-[10px] text-muted-foreground mt-1">{t('playground.messagesHint')}</p>
         )}
       </div>
     </div>
@@ -375,6 +378,7 @@ function SettingsPanel({
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 export function PlaygroundPage() {
+  const { t } = useTranslation();
   const [settings, setSettings] = useState<SettingsData>(DEFAULT_SETTINGS);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -599,7 +603,7 @@ export function PlaygroundPage() {
         updateMessage(asstId, { content: updateMessage.toString(), error: undefined });
       } else {
         updateMessage(asstId, {
-          error: err instanceof Error ? err.message : "Request failed",
+          error: err instanceof Error ? err.message : t('playground.requestFailed'),
         });
       }
     } finally {
@@ -637,23 +641,23 @@ export function PlaygroundPage() {
         <div>
           <h1 className="text-xl font-bold tracking-tight flex items-center gap-2">
             <Gamepad2 className="h-5 w-5" />
-            Playground
+            {t('playground.title')}
           </h1>
-          <p className="text-xs text-muted-foreground">Test chat completions interactively</p>
+          <p className="text-xs text-muted-foreground">{t('playground.description')}</p>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={clearChat} className="h-8 text-xs">
-            <Plus className="h-3.5 w-3.5 mr-1" /> New Chat
+            <Plus className="h-3.5 w-3.5 mr-1" /> {t('playground.newChat')}
           </Button>
           <Button variant="ghost" size="sm" onClick={clearSession} className="h-8 text-xs" disabled={messages.length === 0}>
-            <Eraser className="h-3.5 w-3.5 mr-1" /> Clear Session
+            <Eraser className="h-3.5 w-3.5 mr-1" /> {t('playground.clearSession')}
           </Button>
           <Button variant="ghost" size="sm" onClick={() => setGetCodeOpen(true)} className="h-8 text-xs">
-            <Code2 className="h-3.5 w-3.5 mr-1" /> Get Code
+            <Code2 className="h-3.5 w-3.5 mr-1" /> {t('playground.getCode')}
           </Button>
           {/* Mobile settings toggle */}
           <Button variant="outline" size="sm" className="h-8 text-xs lg:hidden" onClick={() => setSettingsOpen(true)}>
-            <Settings2 className="h-3.5 w-3.5 mr-1" /> Settings
+            <Settings2 className="h-3.5 w-3.5 mr-1" /> {t('common.settings')}
           </Button>
         </div>
       </div>
@@ -668,8 +672,8 @@ export function PlaygroundPage() {
               <div className="flex flex-col items-center justify-center h-full text-center gap-3">
                 <Sparkles className="h-12 w-12 text-muted-foreground/50" />
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">Start a conversation</p>
-                  <p className="text-xs text-muted-foreground/70 mt-1">Type a message below to begin testing</p>
+                  <p className="text-sm font-medium text-muted-foreground">{t('playground.startConversation')}</p>
+                  <p className="text-xs text-muted-foreground/70 mt-1">{t('playground.startHint')}</p>
                 </div>
               </div>
             ) : (
@@ -690,7 +694,7 @@ export function PlaygroundPage() {
           <div className="shrink-0 mt-4">
             <div className="flex gap-2">
               <Textarea
-                placeholder="Type a message… (Shift+Enter for new line)"
+                placeholder={t('playground.placeholder')}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
@@ -718,11 +722,11 @@ export function PlaygroundPage() {
             <p className="text-[10px] text-muted-foreground mt-1">
               {settings.model ? (
                 <span className="flex items-center gap-2">
-                  <span>Model: <Badge variant="outline" className="text-[9px] px-1 py-0 h-4">{quoteName(settings.model, 20)}</Badge></span>
-                  {settings.streaming && <span className="flex items-center gap-0.5"><Zap className="h-2.5 w-2.5" /> Stream</span>}
+                  <span>{t('playground.modelLabel')}: <Badge variant="outline" className="text-[9px] px-1 py-0 h-4">{quoteName(settings.model, 20)}</Badge></span>
+                  {settings.streaming && <span className="flex items-center gap-0.5"><Zap className="h-2.5 w-2.5" /> {t('playground.streamLabel')}</span>}
                 </span>
               ) : (
-                "Select a model to begin"
+                t('playground.selectModelToBegin')
               )}
             </p>
           </div>
@@ -732,7 +736,7 @@ export function PlaygroundPage() {
         <div className="hidden lg:block w-60 shrink-0 overflow-y-auto">
           <div className="border rounded-lg p-4">
             <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
-              <Settings2 className="h-4 w-4" /> Settings
+              <Settings2 className="h-4 w-4" /> {t('common.settings')}
             </h3>
             <SettingsPanel settings={settings} onChange={setSettings} models={models} />
           </div>
@@ -743,7 +747,7 @@ export function PlaygroundPage() {
         <Sheet open={settingsOpen} onOpenChange={setSettingsOpen}>
           <SheetContent side="right">
             <SheetHeader>
-              <SheetTitle>Settings</SheetTitle>
+              <SheetTitle>{t('common.settings')}</SheetTitle>
             </SheetHeader>
             <div className="mt-4">
               <SettingsPanel settings={settings} onChange={setSettings} models={models} />
@@ -755,7 +759,7 @@ export function PlaygroundPage() {
         <Dialog open={getCodeOpen} onOpenChange={setGetCodeOpen}>
           <DialogContent className="max-w-2xl">
             <DialogHeader>
-              <DialogTitle>Get Code</DialogTitle>
+              <DialogTitle>{t('playground.getCode')}</DialogTitle>
             </DialogHeader>
             <Tabs defaultValue="curl">
               <TabsList>

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import {
   Dialog,
@@ -23,6 +24,7 @@ export function TriggerDialog({
   onOpenChange: (open: boolean) => void;
   onSuccess: () => void;
 }) {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const now = new Date();
   const end = now.toISOString().slice(0, 16);
@@ -49,13 +51,13 @@ export function TriggerDialog({
         },
       });
 
-      toast.success(`Job ${data.job_id.slice(0, 12)}... created with ${data.total_steps} steps`);
+      toast.success(t("jobs.triggerToast", { jobId: data.job_id.slice(0, 12), totalSteps: data.total_steps }));
       onOpenChange(false);
       onSuccess();
       navigate(`/dash/jobs/${data.job_id}`);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      toast.error(`Trigger failed: ${msg}`);
+      toast.error(`${t("jobs.toast.triggerFailed")}: ${msg}`);
     }
   };
 
@@ -63,14 +65,14 @@ export function TriggerDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Trigger Body Archive</DialogTitle>
+          <DialogTitle>{t("jobs.triggerArchive")}</DialogTitle>
           <DialogDescription>
-            Archive spend_logs body data for a specific date range. Each hour of data becomes one job step.
+            {t("jobs.triggerArchiveDesc")}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="start-date">Start Date</Label>
+            <Label htmlFor="start-date">{t("jobs.startDate")}</Label>
             <Input
               id="start-date"
               type="datetime-local"
@@ -79,7 +81,7 @@ export function TriggerDialog({
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="end-date">End Date</Label>
+            <Label htmlFor="end-date">{t("jobs.endDate")}</Label>
             <Input
               id="end-date"
               type="datetime-local"
@@ -88,7 +90,7 @@ export function TriggerDialog({
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="batch-size">Batch Size</Label>
+            <Label htmlFor="batch-size">{t("jobs.batchSize")}</Label>
             <Input
               id="batch-size"
               type="number"
@@ -101,9 +103,9 @@ export function TriggerDialog({
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
+            {t("common.cancel")}
           </Button>
-          <Button onClick={handleTrigger}>Trigger Job</Button>
+          <Button onClick={handleTrigger}>{t("jobs.triggerJob")}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

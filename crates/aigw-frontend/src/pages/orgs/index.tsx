@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { apiGet, apiPost, apiPut, apiDelete } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -52,6 +53,7 @@ interface DeletedOrgListResponse {
 }
 
 export function OrgsPage() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [viewMode, setViewMode] = useState<"active" | "deleted">("active");
@@ -96,7 +98,7 @@ export function OrgsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["orgs"] });
       setCreateOpen(false);
-      toast.success("Organization created");
+      toast.success(t("orgs.toast.created"));
     },
     onError: (err: Error) => toast.error(err.message),
   });
@@ -107,7 +109,7 @@ export function OrgsPage() {
       queryClient.invalidateQueries({ queryKey: ["orgs"] });
       setEditOpen(false);
       setSelected(null);
-      toast.success("Organization updated");
+      toast.success(t("orgs.toast.updated"));
     },
     onError: (err: Error) => toast.error(err.message),
   });
@@ -118,7 +120,7 @@ export function OrgsPage() {
       queryClient.invalidateQueries({ queryKey: ["orgs"] });
       setDeleteOpen(false);
       setSelected(null);
-      toast.success("Organization deleted");
+      toast.success(t("orgs.toast.deleted"));
     },
     onError: (err: Error) => toast.error(err.message),
   });
@@ -135,12 +137,12 @@ export function OrgsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Organizations</h1>
-          <p className="text-sm text-muted-foreground">Manage organizations</p>
+          <h1 className="text-2xl font-bold tracking-tight">{t("orgs.title")}</h1>
+          <p className="text-sm text-muted-foreground">{t("orgs.description")}</p>
         </div>
         {canEdit && (
           <Button onClick={openCreate}>
-            <Plus className="h-4 w-4" /> New Org
+            <Plus className="h-4 w-4" /> {t("orgs.newOrg")}
           </Button>
         )}
       </div>
@@ -149,26 +151,26 @@ export function OrgsPage() {
         {viewMode === "active" && (
           <div className="relative flex-1 max-w-sm">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input placeholder="Search by name..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
+            <Input placeholder={t("orgs.searchPlaceholder")} value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
           </div>
         )}
         <div className="flex-1" />
         <div className="flex items-center rounded-md border p-0.5">
           <button type="button" onClick={() => setViewMode("active")}
-            className={`px-3 py-1 text-sm rounded-sm font-medium transition-colors ${viewMode === "active" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>Active</button>
+            className={`px-3 py-1 text-sm rounded-sm font-medium transition-colors ${viewMode === "active" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>{t("keys.viewMode.active")}</button>
           <button type="button" onClick={() => setViewMode("deleted")}
-            className={`px-3 py-1 text-sm rounded-sm font-medium transition-colors ${viewMode === "deleted" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>Deleted</button>
+            className={`px-3 py-1 text-sm rounded-sm font-medium transition-colors ${viewMode === "deleted" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>{t("keys.viewMode.deleted")}</button>
         </div>
       </div>
 
       {viewMode === "deleted" && (
         <Card>
-          <CardHeader className="pb-2"><CardTitle>Deleted Organizations ({deletedTotalCount})</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><CardTitle>{t("orgs.deletedCardTitle", { count: deletedTotalCount })}</CardTitle></CardHeader>
           <CardContent>
             {deletedLoading ? (
               Array.from({ length: 3 }).map((_, i) => <div key={i} className="py-2"><Skeleton className="h-4 w-full" /></div>)
             ) : deletedOrgs.length === 0 ? (
-              <div className="text-center text-muted-foreground py-8">No deleted records</div>
+              <div className="text-center text-muted-foreground py-8">{t("orgs.noDeletedRecords")}</div>
             ) : (
               <>
                 <PaginationBar
@@ -182,10 +184,10 @@ export function OrgsPage() {
                 <div className="hidden md:block">
                   <Table>
                     <TableHeader><TableRow>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Organization ID</TableHead>
-                      <TableHead className="text-right">Spend</TableHead>
-                      <TableHead className="text-right">Deleted At</TableHead>
+                      <TableHead>{t("orgs.table.name")}</TableHead>
+                      <TableHead>{t("orgs.table.orgId")}</TableHead>
+                      <TableHead className="text-right">{t("orgs.table.spend")}</TableHead>
+                      <TableHead className="text-right">{t("orgs.table.deletedAt")}</TableHead>
                     </TableRow></TableHeader>
                     <TableBody>
                       {deletedOrgs.map((o) => (
@@ -206,8 +208,8 @@ export function OrgsPage() {
                         <span className="font-medium text-sm">{o.organization_alias}</span>
                         <span className="text-xs text-muted-foreground">${o.spend.toFixed(4)}</span>
                       </div>
-                      <div className="text-xs text-muted-foreground">ID: {o.organization_id}</div>
-                      <div className="text-xs text-muted-foreground">Deleted: {formatDate(o.deleted_at)}</div>
+                      <div className="text-xs text-muted-foreground">{t("orgs.mobile.id")}: {o.organization_id}</div>
+                      <div className="text-xs text-muted-foreground">{t("orgs.mobile.deleted")}: {formatDate(o.deleted_at)}</div>
                     </CardContent></Card>
                   ))}
                 </div>
@@ -230,7 +232,7 @@ export function OrgsPage() {
       {viewMode === "active" && (<>
 
       <Card>
-        <CardHeader className="pb-2"><CardTitle>All Organizations ({totalCount})</CardTitle></CardHeader>
+        <CardHeader className="pb-2"><CardTitle>{t("orgs.allCardTitle", { count: totalCount })}</CardTitle></CardHeader>
         <CardContent>
           {error ? (
             <p className="text-sm text-destructive">{(error as Error).message}</p>
@@ -248,11 +250,11 @@ export function OrgsPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Budget ID</TableHead>
-                      <TableHead className="text-right">Spend</TableHead>
-                      <TableHead>Created</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
+                      <TableHead>{t("orgs.table.name")}</TableHead>
+                      <TableHead>{t("orgs.table.budgetId")}</TableHead>
+                      <TableHead className="text-right">{t("orgs.table.spend")}</TableHead>
+                      <TableHead>{t("orgs.table.created")}</TableHead>
+                      <TableHead className="text-right">{t("orgs.table.actions")}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -277,7 +279,7 @@ export function OrgsPage() {
                   </TableBody>
                 </Table>
                 {!isLoading && filtered.length === 0 && (
-                  <div className="text-center text-muted-foreground py-8">{search ? "No orgs match" : "No orgs yet"}</div>
+                  <div className="text-center text-muted-foreground py-8">{search ? t("orgs.noMatch") : t("orgs.noOrgs")}</div>
                 )}
               </div>
 
@@ -293,17 +295,17 @@ export function OrgsPage() {
                             <span className="font-medium text-sm">{o.organization_alias}</span>
                             <span className="text-xs text-muted-foreground">${o.spend.toFixed(4)}</span>
                           </div>
-                          <div className="text-xs text-muted-foreground">Budget: {o.budget_id ?? "—"}</div>
-                          <div className="text-xs text-muted-foreground">Created: {o.created_at ? formatDate(o.created_at) : "—"}</div>
+                          <div className="text-xs text-muted-foreground">{t("orgs.mobile.budget")}: {o.budget_id ?? "—"}</div>
+                          <div className="text-xs text-muted-foreground">{t("orgs.mobile.created")}: {o.created_at ? formatDate(o.created_at) : "—"}</div>
                           <div className="flex justify-end gap-1 pt-1">
-                            <Button variant="ghost" size="sm" onClick={() => openEdit(o)}><Pencil className="h-3.5 w-3.5 mr-1" /> Edit</Button>
-                            <Button variant="ghost" size="sm" onClick={() => openDelete(o)}><Trash2 className="h-3.5 w-3.5 mr-1 text-destructive" /> Delete</Button>
+                            <Button variant="ghost" size="sm" onClick={() => openEdit(o)}><Pencil className="h-3.5 w-3.5 mr-1" /> {t("common.edit")}</Button>
+                            <Button variant="ghost" size="sm" onClick={() => openDelete(o)}><Trash2 className="h-3.5 w-3.5 mr-1 text-destructive" /> {t("common.delete")}</Button>
                           </div>
                         </CardContent>
                       </Card>
                     ))}
                 {!isLoading && filtered.length === 0 && (
-                  <div className="text-center text-muted-foreground py-8">{search ? "No orgs match" : "No orgs yet"}</div>
+                  <div className="text-center text-muted-foreground py-8">{search ? t("orgs.noMatch") : t("orgs.noOrgs")}</div>
                 )}
               </div>
               {filtered.length > 0 ? (
@@ -326,15 +328,15 @@ export function OrgsPage() {
       {/* Create Dialog */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Create Organization</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{t("orgs.dialog.titleCreate")}</DialogTitle></DialogHeader>
           <div>
-            <Label htmlFor="o-alias">Name</Label>
-            <Input id="o-alias" value={formAlias} onChange={(e) => setFormAlias(e.target.value)} placeholder="Engineering" />
+            <Label htmlFor="o-alias">{t("orgs.dialog.nameLabel")}</Label>
+            <Input id="o-alias" value={formAlias} onChange={(e) => setFormAlias(e.target.value)} placeholder={t("orgs.dialog.namePlaceholder")} />
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setCreateOpen(false)}>{t("common.cancel")}</Button>
             <Button onClick={() => createMutation.mutate({ organization_alias: formAlias })} disabled={createMutation.isPending || !formAlias.trim()}>
-              {createMutation.isPending && <Spinner className="mr-2" />} Create
+              {createMutation.isPending && <Spinner className="mr-2" />} {t("common.create")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -343,15 +345,15 @@ export function OrgsPage() {
       {/* Edit Dialog */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Edit Organization</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{t("orgs.dialog.titleEdit")}</DialogTitle></DialogHeader>
           <div>
-            <Label htmlFor="oe-alias">Name</Label>
+            <Label htmlFor="oe-alias">{t("orgs.dialog.nameLabel")}</Label>
             <Input id="oe-alias" value={formAlias} onChange={(e) => setFormAlias(e.target.value)} />
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setEditOpen(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setEditOpen(false)}>{t("common.cancel")}</Button>
             <Button onClick={() => selected && editMutation.mutate({ organization_id: selected.organization_id, organization_alias: formAlias })} disabled={editMutation.isPending}>
-              {editMutation.isPending && <Spinner className="mr-2" />} Save
+              {editMutation.isPending && <Spinner className="mr-2" />} {t("common.save")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -361,13 +363,13 @@ export function OrgsPage() {
       <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete Organization</DialogTitle>
-            <DialogDescription>Delete <strong>{selected?.organization_alias}</strong>? It will be archived and viewable in the Deleted tab.</DialogDescription>
+            <DialogTitle>{t("orgs.dialog.titleDelete")}</DialogTitle>
+            <DialogDescription>{t("orgs.dialog.confirmDelete", { name: selected?.organization_alias })}</DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteOpen(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setDeleteOpen(false)}>{t("common.cancel")}</Button>
             <Button variant="destructive" onClick={() => selected && deleteMutation.mutate(selected.organization_id)} disabled={deleteMutation.isPending}>
-              {deleteMutation.isPending && <Spinner className="mr-2" />} Delete
+              {deleteMutation.isPending && <Spinner className="mr-2" />} {t("common.delete")}
             </Button>
           </DialogFooter>
         </DialogContent>

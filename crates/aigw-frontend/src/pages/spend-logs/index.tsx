@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiGet } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -133,7 +134,7 @@ function truncateEndUser(s: string): string {
   return s.length > 30 ? s.slice(0, 30) + "…" : s;
 }
 
-function exportToCSV(logs: SpendLog[], startDate: string, endDate: string) {
+function exportToCSV(logs: SpendLog[], startDate: string, endDate: string, csvHeaders: string[]) {
   const headers = ["Call ID","Request ID","Time","Type","Model","Status","Prompt Tokens","Completion Tokens","Total Tokens","TTFT (ms)","Duration (ms)","Cost","User","End User","API Key"];
   const rows = logs.map(l => [l.call_id,l.request_id ?? "",l.start_time,l.call_type,l.model,l.status??"",l.prompt_tokens,l.completion_tokens,l.total_tokens,l.ttft_ms??"",l.request_duration_ms??"",l.spend,l.user??"",l.end_user??"",l.api_key.slice(0,12)+"…"]);
   const csv = [headers,...rows].map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
@@ -175,7 +176,8 @@ function ProviderLogo({ provider }: { provider?: string | null }) {
 /* ───────────────────────────────── Row-level copy ── */
 
 function RowCopyButton({ text }: { text: string }) {
-  const { copied, copy } = useCopyToClipboard({ onError: () => toast.error("Copy failed — clipboard unavailable") });
+  const { t } = useTranslation();
+  const { copied, copy } = useCopyToClipboard({ onError: () => toast.error(t('common.copyFailed')) });
   return (
     <Button variant="ghost" size="icon" className="h-4 w-4" onClick={e => { e.stopPropagation(); copy(text); }}>
       {copied ? <Check className="h-2.5 w-2.5 text-green-500" /> : <Copy className="h-2.5 w-2.5" />}
@@ -184,9 +186,10 @@ function RowCopyButton({ text }: { text: string }) {
 }
 
 function CopyIconButton({ text, className }: { text: string; className?: string }) {
-  const { copied, copy } = useCopyToClipboard({ onError: () => toast.error("Copy failed — clipboard unavailable") });
+  const { t } = useTranslation();
+  const { copied, copy } = useCopyToClipboard({ onError: () => toast.error(t('common.copyFailed')) });
   return (
-    <button type="button" tabIndex={-1} className={className ?? "p-0.5 hover:text-foreground text-muted-foreground"} onClick={() => copy(text)} title="Copy">
+    <button type="button" tabIndex={-1} className={className ?? "p-0.5 hover:text-foreground text-muted-foreground"} onClick={() => copy(text)} title={t('common.copy')}>
       {copied ? <Check className="h-3.5 w-3.5 text-green-500" /> : <Copy className="h-3.5 w-3.5" />}
     </button>
   );
@@ -210,19 +213,25 @@ function RawJsonBlock({ data }: { data: unknown }) {
 
 /* ─────────────────────────────────────────── Tabs ── */
 
-const PRESETS: { key: TimePreset; label: string }[] = [
-  { key: "15m", label: "15 min" }, { key: "4h", label: "4 hours" },
-  { key: "24h", label: "24 hours" }, { key: "7d", label: "7 days" }, { key: "custom", label: "Custom" },
-];
+const PRESET_KEYS: TimePreset[] = ["15m", "4h", "24h", "7d", "custom"];
+
+const PRESET_LABEL_MAP: Record<TimePreset, string> = {
+  "15m": "spendLogs.timePresets.15m",
+  "4h": "spendLogs.timePresets.6h",
+  "24h": "spendLogs.timePresets.24h",
+  "7d": "spendLogs.timePresets.7d",
+  "custom": "usage.datePresets.custom",
+};
 
 function TimePresetBar({ preset, onPreset, startDate, endDate, onStartDate, onEndDate }: {
   preset: TimePreset; onPreset: (p: TimePreset) => void;
   startDate: string; endDate: string; onStartDate: (v: string) => void; onEndDate: (v: string) => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="flex flex-wrap items-center gap-2">
-      {PRESETS.map(p => (
-        <Button key={p.key} variant={preset===p.key?"default":"outline"} size="sm" onClick={()=>onPreset(p.key)} className="h-7 text-xs">{p.label}</Button>
+      {PRESET_KEYS.map(p => (
+        <Button key={p} variant={preset===p?"default":"outline"} size="sm" onClick={()=>onPreset(p)} className="h-7 text-xs">{t(PRESET_LABEL_MAP[p])}</Button>
       ))}
       {preset === "custom" && (
         <div className="flex items-center gap-2 ml-2">
@@ -237,9 +246,10 @@ function TimePresetBar({ preset, onPreset, startDate, endDate, onStartDate, onEn
 
 /* ───────────────────────────────── Tools Card (top-level) ── */
 
-function ToolsCard({ tools }: { tools: unknown[] }) {
+function ToolsCard({ _tools }: { _tools: unknown[] }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
-  if (!tools || tools.length === 0) return null;
+  if (!_tools || _tools.length === 0) return null;
 
   return (
     <div className="border rounded-lg overflow-hidden">
@@ -249,13 +259,13 @@ function ToolsCard({ tools }: { tools: unknown[] }) {
       >
         <span className="text-[10px]">{open ? "▾" : "▸"}</span>
         <span className="text-blue-600 dark:text-blue-400">🛠</span>
-        <span>Tools ({tools.length})</span>
+        <span>{t('spendLogs.drawer.toolsCount', { count: _tools.length })}</span>
       </button>
       {open ? (
         <div className="p-2 space-y-1 border-t max-h-64 overflow-y-auto">
-          {tools.map((t, i) => {
-            const tool = t as Record<string, unknown>;
-            const func = (tool.function ?? {}) as Record<string, unknown>;
+          {_tools.map((tool, i) => {
+            const t = tool as Record<string, unknown>;
+            const func = (t.function ?? {}) as Record<string, unknown>;
             return <ToolItem key={i} name={String(func.name ?? `tool_${i}`)} description={func.description as string | undefined} params={func.parameters} />;
           })}
         </div>
@@ -265,6 +275,7 @@ function ToolsCard({ tools }: { tools: unknown[] }) {
 }
 
 function ToolItem({ name, description, params }: { name: string; description?: string; params?: unknown }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   return (
     <div className="border rounded overflow-hidden text-[11px]">
@@ -283,8 +294,8 @@ function ToolItem({ name, description, params }: { name: string; description?: s
           {description && params ? (
             <Tabs defaultValue="desc">
               <TabsList className="h-6">
-                <TabsTrigger value="desc" className="text-[10px] h-5 px-2">Description</TabsTrigger>
-                <TabsTrigger value="params" className="text-[10px] h-5 px-2">Params</TabsTrigger>
+                <TabsTrigger value="desc" className="text-[10px] h-5 px-2">{t('spendLogs.drawer.tabDescription')}</TabsTrigger>
+                <TabsTrigger value="params" className="text-[10px] h-5 px-2">{t('spendLogs.drawer.tabParams')}</TabsTrigger>
               </TabsList>
               <TabsContent value="desc" className="mt-1">
                 {description ? <p className="text-muted-foreground leading-relaxed text-[11px]">{description}</p> : null}
@@ -317,6 +328,7 @@ function DetailDrawer({ log, open, onClose, isDetailLoading, detailError, onRetr
   log: SpendLogDetail | null; open: boolean; onClose: () => void;
   isDetailLoading: boolean; detailError: boolean; onRetry: () => void;
 }) {
+  const { t } = useTranslation();
   if (!log) return null;
 
   const hasPrompt = log.messages != null;
@@ -341,10 +353,10 @@ function DetailDrawer({ log, open, onClose, isDetailLoading, detailError, onRetr
           <SheetDescription className="text-[10px] font-mono break-all space-y-1" asChild>
             <div>
             <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="default" className="text-[10px]">Call ID</Badge>
+              <Badge variant="default" className="text-[10px]">{t('spendLogs.drawer.callId')}</Badge>
               <code>{log.call_id}</code>
               <RowCopyButton text={log.call_id} />
-              <Badge variant="secondary" className="text-[10px]">Request ID</Badge>
+              <Badge variant="secondary" className="text-[10px]">{t('spendLogs.drawer.requestId')}</Badge>
               {log.request_id ? (
                 <><code>{log.request_id}</code><RowCopyButton text={log.request_id} /></>
               ) : (
@@ -373,37 +385,37 @@ function DetailDrawer({ log, open, onClose, isDetailLoading, detailError, onRetr
         {/* ── Top info row: model info + timestamps + metadata ── */}
         <div className="text-[11px] text-muted-foreground bg-muted/20 rounded p-2 mb-3 space-y-1">
           <div className="flex flex-wrap gap-x-4 gap-y-0.5">
-            <span>Start: <span className="font-mono text-foreground">{log.start_time ? format(new Date(log.start_time), "yyyy-MM-dd HH:mm:ss") : "—"}</span></span>
-            <span>End: <span className="font-mono text-foreground">{log.end_time ? format(new Date(log.end_time), "yyyy-MM-dd HH:mm:ss") : "—"}</span></span>
-            {log.model_group ? <span>Group: <span className="font-mono text-foreground">{log.model_group}</span></span> : null}
-            {log.custom_llm_provider ? <span>Provider: <span className="font-mono text-foreground">{log.custom_llm_provider}</span></span> : null}
-            {log.model_id ? <span>ID: <code className="text-[10px] text-foreground">{log.model_id}</code></span> : null}
-            {log.api_base ? <span>Base: <code className="text-[10px]">{log.api_base}</code></span> : null}
+            <span>{t('spendLogs.drawer.meta.start')} <span className="font-mono text-foreground">{log.start_time ? format(new Date(log.start_time), "yyyy-MM-dd HH:mm:ss") : "—"}</span></span>
+            <span>{t('spendLogs.drawer.meta.end')} <span className="font-mono text-foreground">{log.end_time ? format(new Date(log.end_time), "yyyy-MM-dd HH:mm:ss") : "—"}</span></span>
+            {log.model_group ? <span>{t('spendLogs.drawer.meta.group')} <span className="font-mono text-foreground">{log.model_group}</span></span> : null}
+            {log.custom_llm_provider ? <span>{t('spendLogs.drawer.meta.provider')} <span className="font-mono text-foreground">{log.custom_llm_provider}</span></span> : null}
+            {log.model_id ? <span>{t('spendLogs.drawer.meta.id')} <code className="text-[10px] text-foreground">{log.model_id}</code></span> : null}
+            {log.api_base ? <span>{t('spendLogs.drawer.meta.base')} <code className="text-[10px]">{log.api_base}</code></span> : null}
           </div>
           <div className="flex flex-wrap gap-x-4 gap-y-0.5">
-            {log.user ? <span>User: <span className="font-mono text-foreground">{log.user}</span></span> : null}
+            {log.user ? <span>{t('spendLogs.drawer.meta.user')} <span className="font-mono text-foreground">{log.user}</span></span> : null}
             {log.end_user ? (
               <span className="flex items-center gap-1">
-                <span>End User:</span>
+                <span>{t('spendLogs.drawer.meta.endUser')}</span>
                 <code className="text-[10px] bg-muted/40 rounded px-1 py-0.5 font-mono max-w-[200px] truncate">{log.end_user}</code>
                 <CopyIconButton text={log.end_user} />
               </span>
             ) : null}
-            {log.session_id ? <span>Session: <code className="text-[10px] text-foreground">{log.session_id}</code></span> : null}
+            {log.session_id ? <span>{t('spendLogs.drawer.meta.session')} <code className="text-[10px] text-foreground">{log.session_id}</code></span> : null}
             {(() => { const c = extractCacheTokens(log.metadata); return c ? (
-              <span className="text-amber-600">Cache: {fmtTokens(c.cache_read_tokens ?? 0)} read / {fmtTokens(c.cache_creation_tokens ?? 0)} write{c.cache_read_spend ? ` ($${c.cache_read_spend.toFixed(4)} + $${(c.cache_create_spend ?? 0).toFixed(4)})` : ""}</span>
+              <span className="text-amber-600">{t('spendLogs.drawer.meta.cache')}: {fmtTokens(c.cache_read_tokens ?? 0)} {t('spendLogs.drawer.meta.cacheRead')} / {fmtTokens(c.cache_creation_tokens ?? 0)} {t('spendLogs.drawer.meta.cacheWrite')}{c.cache_read_spend ? ` ($${c.cache_read_spend.toFixed(4)} + $${(c.cache_create_spend ?? 0).toFixed(4)})` : ""}</span>
             ) : null; })()}
-            {log.team_id ? <span>Team: <span className="text-foreground">{log.team_id}</span></span> : null}
-            {log.organization_id ? <span>Org: <span className="text-foreground">{log.organization_id}</span></span> : null}
-            {log.cache_hit != null ? <span>Cache: <span className="text-foreground">{String(log.cache_hit)}</span></span> : null}
-            {log.cache_key ? <span>Cache Key: <code className="text-[10px] text-foreground">{log.cache_key}</code></span> : null}
-            {log.mcp_namespaced_tool_name ? <span>MCP Tool: <span className="text-foreground">{log.mcp_namespaced_tool_name}</span></span> : null}
+            {log.team_id ? <span>{t('spendLogs.drawer.meta.team')} <span className="text-foreground">{log.team_id}</span></span> : null}
+            {log.organization_id ? <span>{t('spendLogs.drawer.meta.org')} <span className="text-foreground">{log.organization_id}</span></span> : null}
+            {log.cache_hit != null ? <span>{t('spendLogs.drawer.meta.cacheHit')}: <span className="text-foreground">{String(log.cache_hit)}</span></span> : null}
+            {log.cache_key ? <span>{t('spendLogs.drawer.meta.cacheKey')} <code className="text-[10px] text-foreground">{log.cache_key}</code></span> : null}
+            {log.mcp_namespaced_tool_name ? <span>{t('spendLogs.drawer.meta.mcpTool')} <span className="text-foreground">{log.mcp_namespaced_tool_name}</span></span> : null}
           </div>
         </div>
 
         {/* ── Body area: loading / error / content ── */}
         <div className="space-y-3">
-          {tools && tools.length > 0 ? <ToolsCard tools={tools} /> : null}
+          {tools && tools.length > 0 ? <ToolsCard _tools={tools} /> : null}
 
           {isDetailLoading ? (
             <div className="space-y-3 py-4">
@@ -415,9 +427,9 @@ function DetailDrawer({ log, open, onClose, isDetailLoading, detailError, onRetr
           ) : detailError ? (
             <div className="flex flex-col items-center gap-3 py-8 text-center">
               <AlertCircle className="h-8 w-8 text-red-500" />
-              <p className="text-sm text-muted-foreground">Failed to load request detail</p>
+              <p className="text-sm text-muted-foreground">{t('spendLogs.drawer.loadError')}</p>
               <Button variant="outline" size="sm" onClick={onRetry}>
-                <RefreshCw className="h-3.5 w-3.5 mr-1.5" /> Retry
+                <RefreshCw className="h-3.5 w-3.5 mr-1.5" /> {t('common.retry')}
               </Button>
             </div>
           ) : (
@@ -427,8 +439,8 @@ function DetailDrawer({ log, open, onClose, isDetailLoading, detailError, onRetr
                   <Tabs defaultValue="visual">
                     <div className="flex items-center justify-between mb-1.5">
                       <TabsList className="h-7">
-                        <TabsTrigger value="visual" className="text-xs h-6">Visual</TabsTrigger>
-                        <TabsTrigger value="raw" className="text-xs h-6">Raw</TabsTrigger>
+                        <TabsTrigger value="visual" className="text-xs h-6">{t('spendLogs.drawer.tabVisual')}</TabsTrigger>
+                        <TabsTrigger value="raw" className="text-xs h-6">{t('spendLogs.drawer.tabRaw')}</TabsTrigger>
                       </TabsList>
                     </div>
                     <TabsContent value="visual" className="mt-0">
@@ -440,7 +452,7 @@ function DetailDrawer({ log, open, onClose, isDetailLoading, detailError, onRetr
                   </Tabs>
                 </div>
               ) : (
-                <p className="text-xs text-muted-foreground italic py-2">No prompt data</p>
+                <p className="text-xs text-muted-foreground italic py-2">{t('spendLogs.drawer.noPromptData')}</p>
               )}
 
               {hasResponse ? (
@@ -448,8 +460,8 @@ function DetailDrawer({ log, open, onClose, isDetailLoading, detailError, onRetr
                   <Tabs defaultValue="visual">
                     <div className="flex items-center justify-between mb-1.5">
                       <TabsList className="h-7">
-                        <TabsTrigger value="visual" className="text-xs h-6">Visual</TabsTrigger>
-                        <TabsTrigger value="raw" className="text-xs h-6">Raw</TabsTrigger>
+                        <TabsTrigger value="visual" className="text-xs h-6">{t('spendLogs.drawer.tabVisual')}</TabsTrigger>
+                        <TabsTrigger value="raw" className="text-xs h-6">{t('spendLogs.drawer.tabRaw')}</TabsTrigger>
                       </TabsList>
                     </div>
                     <TabsContent value="visual" className="mt-0">
@@ -461,7 +473,7 @@ function DetailDrawer({ log, open, onClose, isDetailLoading, detailError, onRetr
                   </Tabs>
                 </div>
               ) : (
-                <p className="text-xs text-muted-foreground italic py-2">No response data</p>
+                <p className="text-xs text-muted-foreground italic py-2">{t('spendLogs.drawer.noResponseData')}</p>
               )}
             </>
           )}
@@ -475,6 +487,7 @@ function DetailDrawer({ log, open, onClose, isDetailLoading, detailError, onRetr
 
 // ── Status Badge ──
 function StatusBadge({ status }: { status: string }) {
+  const { t } = useTranslation();
   if (status === "streaming") {
     return (
       <span className="inline-flex items-center gap-1.5 rounded-full bg-green-500/10 text-green-600 dark:text-green-400 border border-green-500/20 text-[10px] px-1.5 py-0">
@@ -482,7 +495,7 @@ function StatusBadge({ status }: { status: string }) {
           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"/>
           <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"/>
         </span>
-        streaming
+        {t('spendLogs.status.streaming')}
       </span>
     );
   }
@@ -499,6 +512,7 @@ function saveLiveTailPref(v: boolean) { try { sessionStorage.setItem("spend-logs
 const LIVE_TAIL_INTERVAL = 15_000; // 15 seconds
 
 export function SpendLogsPage() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [preset, setPreset] = useState<TimePreset>("4h");
   const [startDate, setStartDate] = useState(presetRange("4h").start);
@@ -594,8 +608,8 @@ export function SpendLogsPage() {
     <div className="space-y-4 max-w-full">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Spend Logs</h1>
-          <p className="text-sm text-muted-foreground">Detailed request log with cost and token breakdown</p>
+          <h1 className="text-2xl font-bold tracking-tight">{t('spendLogs.title')}</h1>
+          <p className="text-sm text-muted-foreground">{t('spendLogs.description')}</p>
         </div>
         <div className="flex items-center gap-3">
           {effectiveLiveTail ? (
@@ -604,7 +618,7 @@ export function SpendLogsPage() {
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"/>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"/>
               </span>
-              <span className="font-medium">LIVE</span>
+              <span className="font-medium">{t('spendLogs.live')}</span>
               <span className="text-muted-foreground tabular-nums">
                 · {lastRefreshTime ? `${countdownSec}s` : "…"}
               </span>
@@ -612,19 +626,19 @@ export function SpendLogsPage() {
             </div>
           ) : null}
           <div className="flex items-center gap-2">
-            <Label htmlFor="live-tail" className="text-xs cursor-pointer">Live Tail</Label>
+            <Label htmlFor="live-tail" className="text-xs cursor-pointer">{t('spendLogs.liveTail')}</Label>
             <Switch id="live-tail" checked={liveTail} onCheckedChange={handleLiveTailToggle}/>
           </div>
         </div>
       </div>
 
       <Card>
-        <CardHeader className="pb-2"><CardTitle className="text-sm font-medium flex items-center gap-2"><Calendar className="h-4 w-4"/>Spend Logs ({totalCount})</CardTitle></CardHeader>
+        <CardHeader className="pb-2"><CardTitle className="text-sm font-medium flex items-center gap-2"><Calendar className="h-4 w-4"/>{t('spendLogs.cardTitle', { count: totalCount })}</CardTitle></CardHeader>
         <CardContent className="space-y-2">
           {/* Time presets + all filters + actions in one compact row */}
           <div className="flex flex-wrap items-center gap-2">
-            {PRESETS.map(p => (
-              <Button key={p.key} variant={preset===p.key?"default":"outline"} size="sm" onClick={()=>handlePreset(p.key)} className="h-7 text-xs">{p.label}</Button>
+            {PRESET_KEYS.map(p => (
+              <Button key={p} variant={preset===p?"default":"outline"} size="sm" onClick={()=>handlePreset(p)} className="h-7 text-xs">{t(PRESET_LABEL_MAP[p])}</Button>
             ))}
             {preset === "custom" && (
               <>
@@ -634,40 +648,40 @@ export function SpendLogsPage() {
               </>
             )}
             <div className="h-5 w-px bg-border mx-1" />
-            <div className="w-36 relative"><Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground"/><Input placeholder="Call / Request ID…" value={requestIdInput} onChange={e => handleRequestIdInput(e.target.value)} className="h-7 pl-7 text-xs"/></div>
-            <div className="w-32"><Input placeholder="Model…" value={modelFilter} onChange={e => { setModelFilter(e.target.value); setPage(1); }} className="h-7 text-xs"/></div>
+            <div className="w-36 relative"><Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground"/><Input placeholder={t('spendLogs.filters.callRequestIdPlaceholder')} value={requestIdInput} onChange={e => handleRequestIdInput(e.target.value)} className="h-7 pl-7 text-xs"/></div>
+            <div className="w-32"><Input placeholder={t('spendLogs.filters.modelPlaceholder')} value={modelFilter} onChange={e => { setModelFilter(e.target.value); setPage(1); }} className="h-7 text-xs"/></div>
             <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setPage(1); }}>
-              <SelectTrigger className="h-7 w-[100px] text-xs"><SelectValue placeholder="Status"/></SelectTrigger>
+              <SelectTrigger className="h-7 w-[100px] text-xs"><SelectValue placeholder={t('spendLogs.filters.statusPlaceholder')}/></SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All</SelectItem>
-                <SelectItem value="success">Success</SelectItem>
-                <SelectItem value="failure">Failure</SelectItem>
-                <SelectItem value="streaming">Streaming</SelectItem>
+                <SelectItem value="all">{t('spendLogs.filters.all')}</SelectItem>
+                <SelectItem value="success">{t('spendLogs.filters.success')}</SelectItem>
+                <SelectItem value="failure">{t('spendLogs.filters.failure')}</SelectItem>
+                <SelectItem value="streaming">{t('spendLogs.filters.streaming')}</SelectItem>
               </SelectContent>
             </Select>
-            <Input type="number" placeholder="Min tok" value={minTokens !== undefined ? String(minTokens) : ""} onChange={e => { const v = e.target.value; setMinTokens(v ? Number(v) : undefined); setPage(1); }} className="h-7 w-[70px] text-xs"/>
-            <Input type="number" placeholder="Max tok" value={maxTokens !== undefined ? String(maxTokens) : ""} onChange={e => { const v = e.target.value; setMaxTokens(v ? Number(v) : undefined); setPage(1); }} className="h-7 w-[70px] text-xs"/>
-            <Button variant="outline" size="sm" onClick={() => { queryClient.invalidateQueries({ queryKey: ["global-spend-logs"] }); refetch(); }} className="h-7 shrink-0 text-xs"><RefreshCw className="h-3 w-3 mr-1"/>Fetch</Button>
-            <Button variant="outline" size="sm" onClick={() => exportToCSV(logs, startDate, endDate)} disabled={logs.length===0} className="h-7 shrink-0 text-xs"><Download className="h-3 w-3 mr-1"/>CSV</Button>
+            <Input type="number" placeholder={t('spendLogs.filters.minTokPlaceholder')} value={minTokens !== undefined ? String(minTokens) : ""} onChange={e => { const v = e.target.value; setMinTokens(v ? Number(v) : undefined); setPage(1); }} className="h-7 w-[70px] text-xs"/>
+            <Input type="number" placeholder={t('spendLogs.filters.maxTokPlaceholder')} value={maxTokens !== undefined ? String(maxTokens) : ""} onChange={e => { const v = e.target.value; setMaxTokens(v ? Number(v) : undefined); setPage(1); }} className="h-7 w-[70px] text-xs"/>
+            <Button variant="outline" size="sm" onClick={() => { queryClient.invalidateQueries({ queryKey: ["global-spend-logs"] }); refetch(); }} className="h-7 shrink-0 text-xs"><RefreshCw className="h-3 w-3 mr-1"/>{t('common.refresh')}</Button>
+            <Button variant="outline" size="sm" onClick={() => exportToCSV(logs, startDate, endDate)} disabled={logs.length===0} className="h-7 shrink-0 text-xs"><Download className="h-3 w-3 mr-1"/>{t('common.export')}</Button>
           </div>
           <PaginationBar page={page} pageSize={pageSize} totalCount={totalCount} totalPages={totalPages} onPage={setPage} onPageSize={s => { setPageSize(s); setPage(1); }}/>
           <div className="hidden md:block overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="text-xs whitespace-nowrap">Call ID</TableHead>
-                      <TableHead className="text-xs whitespace-nowrap">Request ID</TableHead>
-                      <TableHead className="text-xs whitespace-nowrap"><Clock className="h-3 w-3 inline mr-1"/>Time</TableHead>
-                      <TableHead className="text-xs whitespace-nowrap">Type</TableHead>
-                      <TableHead className="text-xs whitespace-nowrap">Model</TableHead>
-                      <TableHead className="text-xs whitespace-nowrap">Key</TableHead>
-                      <TableHead className="text-xs whitespace-nowrap">End User</TableHead>
-                      <TableHead className="text-xs whitespace-nowrap">IP</TableHead>
-                      <TableHead className="text-xs whitespace-nowrap">Status</TableHead>
-                      <TableHead className="text-xs whitespace-nowrap text-right">TTFT</TableHead>
-                      <TableHead className="text-xs whitespace-nowrap text-right">Duration</TableHead>
-                      <TableHead className="text-xs whitespace-nowrap text-right">Tokens</TableHead>
-                      <TableHead className="text-xs whitespace-nowrap text-right">Cost</TableHead>
+                      <TableHead className="text-xs whitespace-nowrap">{t('spendLogs.table.callId')}</TableHead>
+                      <TableHead className="text-xs whitespace-nowrap">{t('spendLogs.table.requestId')}</TableHead>
+                      <TableHead className="text-xs whitespace-nowrap"><Clock className="h-3 w-3 inline mr-1"/>{t('spendLogs.table.time')}</TableHead>
+                      <TableHead className="text-xs whitespace-nowrap">{t('spendLogs.table.type')}</TableHead>
+                      <TableHead className="text-xs whitespace-nowrap">{t('spendLogs.table.model')}</TableHead>
+                      <TableHead className="text-xs whitespace-nowrap">{t('spendLogs.table.key')}</TableHead>
+                      <TableHead className="text-xs whitespace-nowrap">{t('spendLogs.table.endUser')}</TableHead>
+                      <TableHead className="text-xs whitespace-nowrap">{t('spendLogs.table.ip')}</TableHead>
+                      <TableHead className="text-xs whitespace-nowrap">{t('spendLogs.table.status')}</TableHead>
+                      <TableHead className="text-xs whitespace-nowrap text-right">{t('spendLogs.table.ttft')}</TableHead>
+                      <TableHead className="text-xs whitespace-nowrap text-right">{t('spendLogs.table.duration')}</TableHead>
+                      <TableHead className="text-xs whitespace-nowrap text-right">{t('spendLogs.table.tokens')}</TableHead>
+                      <TableHead className="text-xs whitespace-nowrap text-right">{t('spendLogs.table.cost')}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -723,12 +737,12 @@ export function SpendLogsPage() {
                       {log.model_group ? <Badge variant="secondary" className="text-[10px] px-1 py-0 font-normal">{log.model_group}</Badge> : null}
                       <span className="truncate">{log.model}</span>
                     </div>
-                    {log.end_user ? <div className="text-xs text-muted-foreground mb-1">End User: <code className="text-[10px]">{truncateEndUser(log.end_user)}</code></div> : null}
+                    {log.end_user ? <div className="text-xs text-muted-foreground mb-1">{t('spendLogs.table.endUser')}: <code className="text-[10px]">{truncateEndUser(log.end_user)}</code></div> : null}
                     <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                      <div>TTFT: <span className="font-mono">{fmtTtft(log.ttft_ms)}</span></div>
-                      <div>Dur: <span className="font-mono">{fmtDuration(log.request_duration_ms)}</span></div>
-                      <div>Tokens: <span>{fmtTokens(log.total_tokens)}</span></div>
-                      <div>Time: <span>{log.start_time ? format(new Date(log.start_time), "HH:mm:ss") : "—"}</span></div>
+                      <div>{t('spendLogs.table.ttft')}: <span className="font-mono">{fmtTtft(log.ttft_ms)}</span></div>
+                      <div>{t('spendLogs.table.duration')}: <span className="font-mono">{fmtDuration(log.request_duration_ms)}</span></div>
+                      <div>{t('spendLogs.table.tokens')}: <span>{fmtTokens(log.total_tokens)}</span></div>
+                      <div>{t('spendLogs.table.time')}: <span>{log.start_time ? format(new Date(log.start_time), "HH:mm:ss") : "—"}</span></div>
                     </div>
                     <div className="flex items-center gap-1 mt-1 text-xs text-muted-foreground">
                       <span className="font-mono">{truncateUuid(log.call_id)}</span>

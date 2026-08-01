@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "@/lib/api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -26,6 +27,7 @@ interface HealthResponse {
 }
 
 export function HealthPage() {
+  const { t } = useTranslation();
   const { data, isLoading } = useQuery<HealthResponse>({
     queryKey: ["health"],
     queryFn: () => apiGet("/health"),
@@ -34,8 +36,8 @@ export function HealthPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">Health</h1>
-        <p className="text-sm text-muted-foreground">System health status</p>
+        <h1 className="text-2xl font-bold tracking-tight">{t('health.title')}</h1>
+        <p className="text-sm text-muted-foreground">{t('health.description')}</p>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
@@ -49,7 +51,7 @@ export function HealthPage() {
               ) : (
                 <XCircle className="h-5 w-5 text-destructive" />
               )}
-              API Status
+              {t("health.apiStatus")}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -59,7 +61,7 @@ export function HealthPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Version</CardTitle>
+            <CardTitle>{t('health.version')}</CardTitle>
           </CardHeader>
           <CardContent>
             {isLoading ? <Skeleton className="h-4 w-24" /> : <p className="text-2xl font-bold">{data?.version}</p>}
@@ -68,8 +70,8 @@ export function HealthPage() {
 
         <Card className="md:col-span-2">
           <CardHeader>
-            <CardTitle>Database</CardTitle>
-            <CardDescription>Connection pool status</CardDescription>
+            <CardTitle>{t('health.database')}</CardTitle>
+            <CardDescription>{t('health.dbDescription')}</CardDescription>
           </CardHeader>
           <CardContent>
             {isLoading ? (
@@ -80,15 +82,15 @@ export function HealthPage() {
             ) : (
               <dl className="grid grid-cols-3 gap-4 text-sm">
                 <div>
-                  <dt className="text-muted-foreground">Min</dt>
+                  <dt className="text-muted-foreground">{t('health.min')}</dt>
                   <dd className="text-lg font-semibold">{data?.db.connections.pool_min}</dd>
                 </div>
                 <div>
-                  <dt className="text-muted-foreground">Max</dt>
+                  <dt className="text-muted-foreground">{t('health.max')}</dt>
                   <dd className="text-lg font-semibold">{data?.db.connections.pool_max}</dd>
                 </div>
                 <div>
-                  <dt className="text-muted-foreground">Idle</dt>
+                  <dt className="text-muted-foreground">{t('health.idle')}</dt>
                   <dd className="text-lg font-semibold">{data?.db.connections.pool_idle}</dd>
                 </div>
               </dl>

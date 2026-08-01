@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -124,6 +125,7 @@ const COLORS = [
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 export function DashboardPage() {
+  const { t } = useTranslation();
   const [startDate, setStartDate] = useState(monthStartStr());
   const [endDate, setEndDate] = useState(todayStr());
 
@@ -189,9 +191,9 @@ export function DashboardPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
+        <h1 className="text-2xl font-bold tracking-tight">{t('dashboard.title')}</h1>
         <p className="text-sm text-muted-foreground">
-          Usage and spend overview
+          {t('dashboard.description')}
         </p>
       </div>
 
@@ -199,7 +201,7 @@ export function DashboardPage() {
       <div className="grid gap-4 grid-cols-2 md:grid-cols-3">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Total Spend</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('dashboard.totalSpend')}</CardTitle>
             <DollarSign className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -215,7 +217,7 @@ export function DashboardPage() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Period Spend</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('dashboard.periodSpend')}</CardTitle>
             <TrendingUp className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -232,7 +234,7 @@ export function DashboardPage() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Total Requests</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('dashboard.totalRequests')}</CardTitle>
             <BarChart3 className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -250,7 +252,7 @@ export function DashboardPage() {
         {/* Model Bar Chart */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Spend by Model</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('dashboard.spendByModel')}</CardTitle>
             <BarChart3 className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -258,7 +260,7 @@ export function DashboardPage() {
               <Skeleton className="h-64 w-full" />
             ) : modelChartData.length === 0 ? (
               <div className="flex items-center justify-center h-64 text-sm text-muted-foreground">
-                No data available
+                {t('dashboard.noData')}
               </div>
             ) : (
               <div className="h-[200px] md:h-[280px]">
@@ -280,7 +282,7 @@ export function DashboardPage() {
                         border: "1px solid hsl(var(--border))",
                         borderRadius: "6px",
                       }}
-                      formatter={(value) => [fmtSpend(value as number), "Spend"]}
+                      formatter={(value) => [fmtSpend(value as number), t('dashboard.spend')]}
                     />
                     <Bar dataKey="spend" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
                   </BarChart>
@@ -293,7 +295,7 @@ export function DashboardPage() {
         {/* Provider Donut Chart */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Spend by Provider</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('dashboard.spendByProvider')}</CardTitle>
             <PieChartIcon className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -301,7 +303,7 @@ export function DashboardPage() {
               <Skeleton className="h-64 w-full" />
             ) : providerChartData.length === 0 ? (
               <div className="flex items-center justify-center h-64 text-sm text-muted-foreground">
-                No data available
+                {t('dashboard.noData')}
               </div>
             ) : (
               <div className="h-[200px] md:h-[280px]">
@@ -328,7 +330,7 @@ export function DashboardPage() {
                         border: "1px solid hsl(var(--border))",
                         borderRadius: "6px",
                       }}
-                      formatter={(value) => [fmtSpend(value as number), "Spend"]}
+                      formatter={(value) => [fmtSpend(value as number), t('dashboard.spend')]}
                     />
                     <Legend />
                   </PieChart>
@@ -343,11 +345,11 @@ export function DashboardPage() {
       <Card>
         <CardHeader className="pb-2">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
-            <CardTitle className="text-sm font-medium">Spend Logs</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('dashboard.spendLogs')}</CardTitle>
             <div className="flex items-center gap-2 flex-wrap">
               <Calendar className="h-4 w-4 text-muted-foreground hidden sm:block" />
               <div className="flex items-center gap-1.5">
-                <Label className="text-xs" htmlFor="start-date">From</Label>
+                <Label className="text-xs" htmlFor="start-date">{t('dashboard.from')}</Label>
                 <Input
                   id="start-date"
                   type="date"
@@ -357,7 +359,7 @@ export function DashboardPage() {
                 />
               </div>
               <div className="flex items-center gap-1.5">
-                <Label className="text-xs" htmlFor="end-date">To</Label>
+                <Label className="text-xs" htmlFor="end-date">{t('dashboard.to')}</Label>
                 <Input
                   id="end-date"
                   type="date"
@@ -378,7 +380,7 @@ export function DashboardPage() {
             </div>
           ) : logs.length === 0 ? (
             <div className="flex items-center justify-center h-32 text-sm text-muted-foreground">
-              No spend logs found for this period
+              {t('dashboard.noSpendLogs')}
             </div>
           ) : (
             <>
@@ -387,11 +389,11 @@ export function DashboardPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Time</TableHead>
-                      <TableHead>Model</TableHead>
-                      <TableHead className="text-right">Tokens</TableHead>
-                      <TableHead className="text-right">Cost</TableHead>
-                      <TableHead>Status</TableHead>
+                      <TableHead>{t('dashboard.table.time')}</TableHead>
+                      <TableHead>{t('dashboard.table.model')}</TableHead>
+                      <TableHead className="text-right">{t('dashboard.table.tokens')}</TableHead>
+                      <TableHead className="text-right">{t('dashboard.table.cost')}</TableHead>
+                      <TableHead>{t('dashboard.table.status')}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -459,7 +461,7 @@ export function DashboardPage() {
                         {fmtSpend(log.spend)}
                       </div>
                       <div className="text-xs text-muted-foreground">
-                        {fmtTokens(log.total_tokens)} tokens
+                        {fmtTokens(log.total_tokens)} {t('dashboard.tokens')}
                       </div>
                     </div>
                   </div>

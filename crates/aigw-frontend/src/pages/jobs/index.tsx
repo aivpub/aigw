@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import {
   fetchJobStats,
   fetchJobs,
@@ -28,6 +29,7 @@ import { toast } from "sonner";
 
 // ── Status Badge ──
 function StatusBadge({ status, className }: { status: string; className?: string }) {
+  const { t } = useTranslation();
   const colors: Record<string, string> = {
     pending: "bg-yellow-500/10 text-yellow-500 border-yellow-500/20",
     running: "bg-blue-500/10 text-blue-500 border-blue-500/20",
@@ -42,7 +44,7 @@ function StatusBadge({ status, className }: { status: string; className?: string
       aria-label={`Status: ${status}`}
     >
       {status === "running" && <span className="mr-1 inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" />}
-      {status}
+      {status === "pending" ? t("jobs.status.pending") : status === "running" ? t("jobs.status.running") : status === "completed" ? t("jobs.status.completed") : status === "failed" ? t("jobs.status.failed") : status === "partially_failed" ? t("jobs.status.partiallyFailed") : status}
     </Badge>
   );
 }
@@ -111,6 +113,7 @@ function JobListTable({
   onPageSize: (s: number) => void;
   onJobClick: (id: string) => void;
 }) {
+  const { t } = useTranslation();
   const totalPages = Math.max(1, Math.ceil(total / limit));
 
   if (loading) return <Skeleton className="h-40 w-full" />;
@@ -126,19 +129,19 @@ function JobListTable({
         onPageSize={onPageSize}
       />
       {jobs.length === 0 ? (
-        <p className="text-muted-foreground text-center py-4">No jobs found.</p>
+        <p className="text-muted-foreground text-center py-4">{t("jobs.noJobs")}</p>
       ) : (
         <div className="border rounded overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-muted">
               <tr>
-                <th className="text-left p-2">ID</th>
-                <th className="text-left p-2">Step Type</th>
-                <th className="text-left p-2">Trigger</th>
-                <th className="text-left p-2">Status</th>
-                <th className="text-left p-2">Progress</th>
-                <th className="text-left p-2">Created</th>
-                <th className="text-left p-2">Ended</th>
+                <th className="text-left p-2">{t("jobs.table.id")}</th>
+                <th className="text-left p-2">{t("jobs.table.stepType")}</th>
+                <th className="text-left p-2">{t("jobs.table.trigger")}</th>
+                <th className="text-left p-2">{t("jobs.table.status")}</th>
+                <th className="text-left p-2">{t("jobs.table.progress")}</th>
+                <th className="text-left p-2">{t("jobs.table.created")}</th>
+                <th className="text-left p-2">{t("jobs.table.ended")}</th>
               </tr>
             </thead>
             <tbody>
@@ -168,7 +171,7 @@ function JobListTable({
                     <td className="p-2 text-xs">
                       {job.completed_steps + job.failed_steps}/{job.total_steps}
                       {job.failed_steps > 0 && (
-                        <span className="text-red-500 ml-1">({job.failed_steps} failed)</span>
+                        <span className="text-red-500 ml-1">{t("jobs.failedSteps", { count: job.failed_steps })}</span>
                       )}
                     </td>
                     <td className="p-2 text-xs text-muted-foreground">
@@ -200,35 +203,36 @@ function JobListTable({
 
 // ── Archive Stats Card ──
 function ArchiveStatsCard({ archiveStats }: { archiveStats: ArchiveStats }) {
+  const { t } = useTranslation();
   const auto = archiveStats.auto_archive;
   const sc = archiveStats.storage_configured;
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">Archive Overview</CardTitle>
+        <CardTitle className="text-base">{t("jobs.archiveOverview")}</CardTitle>
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
           <div>
-            <div className="text-muted-foreground">Auto Archive</div>
+            <div className="text-muted-foreground">{t("jobs.autoArchive")}</div>
             <Badge variant={auto ? "default" : "secondary"}>
               <span className={`mr-1 inline-block w-2 h-2 rounded-full ${auto ? "bg-green-500" : "bg-gray-400"}`} />
-              {auto ? "On" : "Off"}
+              {auto ? t("jobs.on") : t("jobs.off")}
             </Badge>
           </div>
           <div>
-            <div className="text-muted-foreground">Storage</div>
+            <div className="text-muted-foreground">{t("jobs.storage")}</div>
             <Badge variant={sc ? "default" : "secondary"}>
               <span className={`mr-1 inline-block w-2 h-2 rounded-full ${sc ? "bg-green-500" : "bg-yellow-500"}`} />
-              {sc ? "Configured" : "Not configured"}
+              {sc ? t("jobs.configured") : t("jobs.notConfigured")}
             </Badge>
           </div>
           <div>
-            <div className="text-muted-foreground">Archived Rows</div>
+            <div className="text-muted-foreground">{t("jobs.archivedRows")}</div>
             <div className="font-medium">{formatCount(archiveStats.total_archived_rows)}</div>
           </div>
           <div>
-            <div className="text-muted-foreground">Pending Rows</div>
+            <div className="text-muted-foreground">{t("jobs.pendingRows")}</div>
             <div className="font-medium">{formatCount(archiveStats.pending_rows)}</div>
           </div>
         </div>
@@ -239,10 +243,11 @@ function ArchiveStatsCard({ archiveStats }: { archiveStats: ArchiveStats }) {
 
 // ── Budget Reset Placeholder ──
 function BudgetResetPlaceholder() {
+  const { t } = useTranslation();
   return (
     <Card>
       <CardContent className="py-12">
-        <p className="text-muted-foreground text-center">No jobs yet</p>
+        <p className="text-muted-foreground text-center">{t("jobs.noJobsYet")}</p>
       </CardContent>
     </Card>
   );
@@ -258,10 +263,11 @@ function OverviewCards({
   stats: JobStats | null;
   onSelectTab: (st: string) => void;
 }) {
+  const { t } = useTranslation();
   if (!stepTypes.length) {
     return (
       <p className="text-muted-foreground col-span-3 text-center py-8">
-        No jobs registered. Start the engine to see stats.
+        {t("jobs.noJobsRegistered")}
       </p>
     );
   }
@@ -291,10 +297,10 @@ function OverviewCards({
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-2 gap-2 text-sm">
-                <div className="flex justify-between"><span>Pending</span><Badge variant="secondary">{s.pending}</Badge></div>
-                <div className="flex justify-between"><span>Running</span><Badge variant="secondary">{s.running}</Badge></div>
-                <div className="flex justify-between"><span>Completed</span><Badge variant="secondary">{s.completed}</Badge></div>
-                <div className="flex justify-between"><span>Failed</span><Badge variant="secondary">{s.failed}</Badge></div>
+                <div className="flex justify-between"><span>{t("jobs.status.pending")}</span><Badge variant="secondary">{s.pending}</Badge></div>
+                <div className="flex justify-between"><span>{t("jobs.status.running")}</span><Badge variant="secondary">{s.running}</Badge></div>
+                <div className="flex justify-between"><span>{t("jobs.status.completed")}</span><Badge variant="secondary">{s.completed}</Badge></div>
+                <div className="flex justify-between"><span>{t("jobs.status.failed")}</span><Badge variant="secondary">{s.failed}</Badge></div>
               </div>
             </CardContent>
           </Card>
@@ -306,6 +312,7 @@ function OverviewCards({
 
 // ── Main Jobs Page Component ──
 export function JobsPage() {
+  const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
 
@@ -361,7 +368,7 @@ export function JobsPage() {
       setStats(data);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      toast.error(`Failed to load stats: ${msg}`);
+      toast.error(`${t("jobs.toast.loadStatsFailed")}: ${msg}`);
     }
   }, []);
 
@@ -376,7 +383,7 @@ export function JobsPage() {
       setTotalJobs(data.total || (data.jobs || []).length);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      toast.error(`Failed to load jobs: ${msg}`);
+      toast.error(`${t("jobs.toast.loadJobsFailed")}: ${msg}`);
     }
     setLoading(false);
   }, [tab, statusFilter, page, limit]);
@@ -410,7 +417,7 @@ export function JobsPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Jobs</h1>
+      <h1 className="text-2xl font-bold">{t("jobs.title")}</h1>
 
       <Tabs
         defaultValue="overview"
@@ -421,7 +428,7 @@ export function JobsPage() {
       >
         <div className="flex items-center justify-between">
           <TabsList className="overflow-x-auto">
-            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="overview">{t("jobs.overview")}</TabsTrigger>
             {stepTypes.map((st) => (
               <TabsTrigger key={st} value={st}>
                 {stepTypeLabel(st)}
@@ -433,10 +440,10 @@ export function JobsPage() {
             <Button
               onClick={() => setTriggerOpen(true)}
               disabled={archiveStats !== null && !archiveStats.storage_configured}
-              title={archiveStats && !archiveStats.storage_configured ? "Storage not configured" : "Trigger Archive"}
+              title={archiveStats && !archiveStats.storage_configured ? t("jobs.storageNotConfigured") : t("jobs.triggerArchive")}
               size="sm"
             >
-              Trigger Archive
+              {t("jobs.triggerArchive")}
             </Button>
           )}
         </div>
@@ -448,18 +455,18 @@ export function JobsPage() {
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
-                <CardTitle className="text-base">All Jobs</CardTitle>
+                <CardTitle className="text-base">{t("jobs.allJobs")}</CardTitle>
                 <Select value={statusFilter} onValueChange={(v) => setUrlParam({ status: v === "all" ? null : v, page: null })}>
                   <SelectTrigger className="w-32">
-                    <SelectValue placeholder="Status" />
+                    <SelectValue placeholder={t("common.status")} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All</SelectItem>
-                    <SelectItem value="pending">Pending</SelectItem>
-                    <SelectItem value="running">Running</SelectItem>
-                    <SelectItem value="completed">Completed</SelectItem>
-                    <SelectItem value="failed">Failed</SelectItem>
-                    <SelectItem value="partially_failed">Partial</SelectItem>
+                    <SelectItem value="all">{t("spendLogs.filters.all")}</SelectItem>
+                    <SelectItem value="pending">{t("jobs.status.pending")}</SelectItem>
+                    <SelectItem value="running">{t("jobs.status.running")}</SelectItem>
+                    <SelectItem value="completed">{t("jobs.status.completed")}</SelectItem>
+                    <SelectItem value="failed">{t("jobs.status.failed")}</SelectItem>
+                    <SelectItem value="partially_failed">{t("jobs.status.partiallyFailed")}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -494,7 +501,7 @@ export function JobsPage() {
             <Card>
               <CardHeader>
                 <div className="flex items-center justify-between">
-                  <CardTitle className="text-base">{stepTypeLabel(st)} Jobs</CardTitle>
+                  <CardTitle className="text-base">{t("jobs.stepJobs", { type: stepTypeLabel(st) })}</CardTitle>
                   <Select value={statusFilter} onValueChange={(v) => setUrlParam({ status: v === "all" ? null : v, page: null })}>
                     <SelectTrigger className="w-32">
                       <SelectValue placeholder="Status" />

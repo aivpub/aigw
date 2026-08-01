@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { Shuffle, RotateCcw, Save } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 interface RouterSettingsValue {
   routing_strategy?: string;
@@ -48,6 +49,7 @@ function RouterSettingsForm({
   saving: boolean;
   onSave: () => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="space-y-6">
       <div className="grid gap-4 lg:grid-cols-2">
@@ -55,15 +57,15 @@ function RouterSettingsForm({
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-lg">
             <Shuffle className="h-5 w-5" />
-            Routing Strategy
+            {t('routerSettings.fields.strategy')}
           </CardTitle>
           <CardDescription>
-            How aigw picks an upstream deployment when multiple instances share the same model name.
+            {t('routerSettings.strategyDesc')}
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="space-y-2">
-            <Label htmlFor="routing_strategy">Strategy</Label>
+            <Label htmlFor="routing_strategy">{t('routerSettings.fields.strategy')}</Label>
             <Select
               value={form.routing_strategy ?? DEFAULTS.routing_strategy}
               onValueChange={(v) => onChange({ ...form, routing_strategy: v })}
@@ -84,31 +86,31 @@ function RouterSettingsForm({
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">Reliability &amp; Retries</CardTitle>
-          <CardDescription>Failure tolerance and automatic cooldown behavior.</CardDescription>
+          <CardTitle className="text-lg">{t('routerSettings.reliability')}</CardTitle>
+          <CardDescription>{t('routerSettings.reliabilityDesc')}</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-3 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="num_retries">Retry Count</Label>
+              <Label htmlFor="num_retries">{t('routerSettings.fields.numRetries')}</Label>
               <Input id="num_retries" type="number" min={0} max={10}
                 value={form.num_retries ?? 0}
                 onChange={(e) => onChange({ ...form, num_retries: Math.max(0, parseInt(e.target.value) || 0) })} />
-              <p className="text-xs text-muted-foreground">Retries on failure (0–10).</p>
+              <p className="text-xs text-muted-foreground">{t('routerSettings.fields.numRetriesDesc')}</p>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="allowed_fails">Allowed Failures</Label>
+              <Label htmlFor="allowed_fails">{t('routerSettings.fields.allowedFails')}</Label>
               <Input id="allowed_fails" type="number" min={1} max={100}
                 value={form.allowed_fails ?? 3}
                 onChange={(e) => onChange({ ...form, allowed_fails: Math.max(1, parseInt(e.target.value) || 1) })} />
-              <p className="text-xs text-muted-foreground">Consecutive failures before cooldown.</p>
+              <p className="text-xs text-muted-foreground">{t('routerSettings.fields.allowedFailsDesc')}</p>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="cooldown_time">Cooldown (s)</Label>
+              <Label htmlFor="cooldown_time">{t('routerSettings.fields.cooldown')}</Label>
               <Input id="cooldown_time" type="number" min={1} max={3600}
                 value={form.cooldown_time ?? 5}
                 onChange={(e) => onChange({ ...form, cooldown_time: Math.max(1, parseInt(e.target.value) || 1) })} />
-              <p className="text-xs text-muted-foreground">Deployment cooldown duration.</p>
+              <p className="text-xs text-muted-foreground">{t('routerSettings.fields.cooldownDesc')}</p>
             </div>
           </div>
         </CardContent>
@@ -117,11 +119,11 @@ function RouterSettingsForm({
 
       <div className="flex justify-between">
         <Button variant="outline" onClick={() => onChange({ ...DEFAULTS })}>
-          <RotateCcw className="mr-2 h-4 w-4" /> Reset to Defaults
+          <RotateCcw className="mr-2 h-4 w-4" /> {t('common.reset')}
         </Button>
         <Button onClick={onSave} disabled={saving}>
           {saving ? <Spinner className="mr-2 h-4 w-4" /> : <Save className="mr-2 h-4 w-4" />}
-          Save
+          {t('common.save')}
         </Button>
       </div>
     </div>
@@ -133,6 +135,7 @@ function RouterSettingsForm({
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 function GlobalTab() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
@@ -158,9 +161,9 @@ function GlobalTab() {
     mutationFn: (body: RouterSettingsValue) => apiPut("/router/settings", body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["router-settings-global"] });
-      toast.success("Global router settings updated");
+      toast.success(t('routerSettings.toast.globalSaved'));
     },
-    onError: (err: Error) => toast.error("Failed to save", { description: err.message }),
+    onError: (err: Error) => toast.error(t('routerSettings.toast.saveFailed'), { description: err.message }),
   });
 
   if (isLoading) return <Skeleton className="h-64 w-full" />;
@@ -187,6 +190,7 @@ interface KeyItem {
 }
 
 function KeysTab() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
 
   const { data: keysData, isLoading } = useQuery({
@@ -218,9 +222,9 @@ function KeysTab() {
     mutationFn: (body: RouterSettingsValue) => apiPatch(`/key/${selectedToken}/router/settings`, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["keys-list"] });
-      toast.success("Key router settings updated");
+      toast.success(t('routerSettings.toast.keySaved'));
     },
-    onError: (err: Error) => toast.error("Failed to save", { description: err.message }),
+    onError: (err: Error) => toast.error(t('routerSettings.toast.saveFailed'), { description: err.message }),
   });
 
   if (isLoading) return <Skeleton className="h-64 w-full" />;
@@ -228,13 +232,13 @@ function KeysTab() {
   return (
     <div className="space-y-4">
       <div className="space-y-2">
-        <Label htmlFor="key-select">Select Key</Label>
+        <Label htmlFor="key-select">{t('routerSettings.selectKeyLabel')}</Label>
         <Select value={selectedToken || "none"} onValueChange={(v) => setSelectedToken(v === "none" ? "" : v)}>
           <SelectTrigger id="key-select">
-            <SelectValue placeholder="Select a key to configure…" />
+            <SelectValue placeholder={t('routerSettings.selectKey')} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="none">— Select a key —</SelectItem>
+            <SelectItem value="none">{t('routerSettings.selectKeyPlaceholder')}</SelectItem>
             {keys.map((k) => (
               <SelectItem key={k.token} value={k.token}>
                 {k.key_alias || k.key_name || k.token.slice(0, 16) + "…"}
@@ -253,7 +257,7 @@ function KeysTab() {
         />
       ) : (
         <p className="text-sm text-muted-foreground py-8 text-center">
-          Select a key above to configure its router settings. Settings here override the global defaults.
+          {t('routerSettings.selectKeyHint')}
         </p>
       )}
     </div>
@@ -272,6 +276,7 @@ interface TeamItem {
 }
 
 function TeamsTab() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
 
   const { data: teamsData, isLoading } = useQuery({
@@ -303,9 +308,9 @@ function TeamsTab() {
     mutationFn: (body: RouterSettingsValue) => apiPatch(`/team/${selectedId}/router/settings`, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["teams-list"] });
-      toast.success("Team router settings updated");
+      toast.success(t('routerSettings.toast.teamSaved'));
     },
-    onError: (err: Error) => toast.error("Failed to save", { description: err.message }),
+    onError: (err: Error) => toast.error(t('routerSettings.toast.saveFailed'), { description: err.message }),
   });
 
   if (isLoading) return <Skeleton className="h-64 w-full" />;
@@ -313,13 +318,13 @@ function TeamsTab() {
   return (
     <div className="space-y-4">
       <div className="space-y-2">
-        <Label htmlFor="team-select">Select Team</Label>
+        <Label htmlFor="team-select">{t('routerSettings.selectTeamLabel')}</Label>
         <Select value={selectedId || "none"} onValueChange={(v) => setSelectedId(v === "none" ? "" : v)}>
           <SelectTrigger id="team-select">
-            <SelectValue placeholder="Select a team to configure…" />
+            <SelectValue placeholder={t('routerSettings.selectTeam')} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="none">— Select a team —</SelectItem>
+            <SelectItem value="none">{t('routerSettings.selectTeamPlaceholder')}</SelectItem>
             {teams.map((t) => (
               <SelectItem key={t.team_id} value={t.team_id}>
                 {t.team_alias || t.team_name || t.team_id}
@@ -338,7 +343,7 @@ function TeamsTab() {
         />
       ) : (
         <p className="text-sm text-muted-foreground py-8 text-center">
-          Select a team above to configure its router settings. Settings here override the global defaults.
+          {t('routerSettings.selectTeamHint')}
         </p>
       )}
     </div>
@@ -350,15 +355,16 @@ function TeamsTab() {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 export function RouterSettingsPage() {
+  const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = searchParams.get("tab") || "global";
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Router Settings</h1>
+          <h1 className="text-2xl font-bold tracking-tight">{t('routerSettings.title')}</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Configure routing strategy, retries, and cooldown. Team settings override Global defaults.
+            {t('routerSettings.description')}
           </p>
         </div>
         <Tabs
@@ -367,8 +373,8 @@ export function RouterSettingsPage() {
           onValueChange={(v) => setSearchParams({ tab: v }, { replace: true })}
         >
           <TabsList>
-            <TabsTrigger value="global">Global</TabsTrigger>
-            <TabsTrigger value="teams">Teams</TabsTrigger>
+            <TabsTrigger value="global">{t('routerSettings.global')}</TabsTrigger>
+            <TabsTrigger value="teams">{t('routerSettings.team')}</TabsTrigger>
           </TabsList>
         </Tabs>
       </div>
