@@ -8,6 +8,7 @@
     "search": "搜索",
     "loading": "加载中...",
     "noResults": "暂无数据",
+    "removeAll": "移除全部",
     "confirm": "确认",
     "close": "关闭",
     "back": "返回",
@@ -51,7 +52,10 @@
     "user": "用户",
     "spend": "消费",
     "deletedAt": "删除时间",
-    "deleted": "已删除"
+    "deleted": "已删除",
+    "searchModels": "搜索模型...",
+    "loadingModels": "加载模型...",
+    "noMatchingModels": "没有匹配的模型"
   },
   "sidebar": {
     "brand": "aigw",
@@ -125,7 +129,13 @@
       "success": "成功",
       "spend": "消费",
       "tokens": "Token",
-      "requests": "请求"
+      "requests": "请求",
+      "promptTokens": "Prompt",
+      "completionTokens": "Completion",
+      "totalTokens": "合计",
+      "successCount": "成功",
+      "failedCount": "失败",
+      "totalRequests": "合计"
     },
     "topKeys": "Top API 密钥",
     "spendByProvider": "按供应商消费",
@@ -416,6 +426,8 @@
       "noErrors": "无错误",
       "checkingStatus": "检测中…",
       "unknownError": "未知错误",
+      "healthCheckFailed": "健康检查失败：",
+      "singleHealthCheckFailed": "单次健康检查失败：",
       "status": "状态",
       "model": "模型",
       "latency": "延迟",
@@ -689,7 +701,15 @@
       "streaming": "流式"
     },
     "liveTail": "实时追踪",
-    "cardTitle": "消费日志 ({{count}})"
+    "live": "实时",
+    "cardTitle": "消费日志 ({{count}})",
+    "csv": {
+      "promptTokens": "Prompt Tokens",
+      "completionTokens": "Completion Tokens",
+      "totalTokens": "总 Tokens",
+      "ttft": "TTFT (ms)",
+      "duration": "耗时 (ms)"
+    }
   },
   "playground": {
     "title": "体验",
@@ -724,6 +744,7 @@
     "saveResend": "保存并重新发送",
     "error": "错误",
     "requestFailed": "请求失败",
+    "noResponseBody": "无响应体",
     "tokensSuffix": " tokens",
     "in": "输入：",
     "out": "输出：",
@@ -921,7 +942,10 @@
     "prompt": "Prompt",
     "raw": "原始",
     "noContent": "无内容",
-    "copy": "复制"
+    "copy": "复制",
+    "parseError": "解析响应失败",
+    "error": "错误",
+    "finish": "结束"
   },
   "pagination": {
     "showing": "第 {{from}}–{{to}} 条，共 {{total}} 条",

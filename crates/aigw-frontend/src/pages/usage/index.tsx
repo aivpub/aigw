@@ -473,7 +473,7 @@ export function UsagePage() {
             <Skeleton className="h-64 w-full" />
           ) : dailyChartData.length === 0 ? (
             <div className="flex items-center justify-center h-64 text-sm text-muted-foreground">
-              No data available
+              {t('usage.noData')}
             </div>
           ) : (
             <div className="h-[220px] md:h-[260px]">
@@ -516,20 +516,20 @@ export function UsagePage() {
                     }}
                   />
                   {globalChartMode === "spend" && (
-                    <Bar dataKey="spend" name="Spend" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="spend" name={t('usage.chart.spend')} fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
                   )}
                   {globalChartMode === "tokens" && (
                     <>
-                      <Bar dataKey="completion_tokens" name="Output" fill="#3b82f6" stackId="tokens" />
-                      <Bar dataKey="cache_creation_tokens" name="Cache Write" fill="#f59e0b" stackId="tokens" />
-                      <Bar dataKey="cache_read_tokens" name="Cache Read" fill="#22c55e" stackId="tokens" />
-                      <Bar dataKey="regular_input_tokens" name="Input" fill="#94a3b8" stackId="tokens" radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="completion_tokens" name={t('usage.chart.output')} fill="#3b82f6" stackId="tokens" />
+                      <Bar dataKey="cache_creation_tokens" name={t('usage.chart.cacheWrite')} fill="#f59e0b" stackId="tokens" />
+                      <Bar dataKey="cache_read_tokens" name={t('usage.chart.cacheRead')} fill="#22c55e" stackId="tokens" />
+                      <Bar dataKey="regular_input_tokens" name={t('usage.chart.input')} fill="#94a3b8" stackId="tokens" radius={[4, 4, 0, 0]} />
                     </>
                   )}
                   {globalChartMode === "requests" && (
                     <>
-                      <Bar dataKey="failed_requests" name="Failed" fill="#ef4444" stackId="requests" />
-                      <Bar dataKey="successful_requests" name="Success" fill="#22c55e" stackId="requests" radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="failed_requests" name={t('usage.cards.failed')} fill="#ef4444" stackId="requests" />
+                      <Bar dataKey="successful_requests" name={t('usage.cards.ok')} fill="#22c55e" stackId="requests" radius={[4, 4, 0, 0]} />
                     </>
                   )}
                   <Legend />
@@ -540,12 +540,12 @@ export function UsagePage() {
         </CardContent>
       </Card>
 
-      {/* Row 1: Top Virtual Keys + Spend by Provider */}
+      {/* Row 1: {t('usage.topKeys')} + Spend by Provider */}
       <div className="grid gap-4 lg:grid-cols-2">
-        {/* Top Virtual Keys Ranking */}
+        {/* {t('usage.topKeys')} Ranking */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2 pt-4 px-4">
-            <CardTitle className="text-sm font-medium">Top Virtual Keys</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('usage.topKeys')}</CardTitle>
             <Tabs defaultValue="spend" value={globalChartMode} onValueChange={(v) => setGlobalChartMode(v as ChartMode)}>
               <TabsList className="h-7">
                 <TabsTrigger value="spend" className="text-xs px-3 h-5">💰 Spend</TabsTrigger>
@@ -563,7 +563,7 @@ export function UsagePage() {
               </div>
             ) : rankings.length === 0 ? (
               <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
-                No data available
+                {t('usage.noData')}
               </div>
             ) : (
               <div className="space-y-2">
@@ -618,7 +618,7 @@ export function UsagePage() {
         {/* Provider card — donut chart default, toggle to ranking */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2 pt-4 px-4">
-            <CardTitle className="text-sm font-medium">Spend by Provider</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('usage.spendByProvider')}</CardTitle>
             <div className="flex items-center gap-2">
               <Tabs defaultValue="chart" value={providerViewMode} onValueChange={(v) => setProviderViewMode(v as ModelViewMode)}>
                 <TabsList className="h-7">
@@ -640,7 +640,7 @@ export function UsagePage() {
               <Skeleton className="h-64 w-full" />
             ) : providerChartData.length === 0 ? (
               <div className="flex items-center justify-center h-64 text-sm text-muted-foreground">
-                No data available
+                {t('usage.noData')}
               </div>
             ) : providerViewMode === "chart" ? (
               <div className="h-[200px] md:h-[260px]">
@@ -725,7 +725,7 @@ export function UsagePage() {
         {/* Model Group card — left side */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2 pt-4 px-4">
-            <CardTitle className="text-sm font-medium">Spend by Model Group</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('usage.spendByModelGroup')}</CardTitle>
             <div className="flex items-center gap-2">
               <Tabs defaultValue="chart" value={groupViewMode} onValueChange={(v) => setGroupViewMode(v as ModelViewMode)}>
                 <TabsList className="h-7">
@@ -758,7 +758,7 @@ export function UsagePage() {
               <Skeleton className="h-64 w-full" />
             ) : groupChartData.length === 0 ? (
               <div className="flex items-center justify-center h-64 text-sm text-muted-foreground">
-                No data available
+                {t('usage.noData')}
               </div>
             ) : groupViewMode === "chart" ? (
               <div className="h-[200px] md:h-[260px]">
@@ -843,7 +843,7 @@ export function UsagePage() {
         {/* Model card — right side */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2 pt-4 px-4">
-            <CardTitle className="text-sm font-medium">Spend by Model</CardTitle>
+            <CardTitle className="text-sm font-medium">{t('usage.spendByModel')}</CardTitle>
             <div className="flex items-center gap-2">
               <Tabs defaultValue="chart" value={modelViewMode} onValueChange={(v) => setModelViewMode(v as ModelViewMode)}>
                 <TabsList className="h-7">
@@ -876,7 +876,7 @@ export function UsagePage() {
               <Skeleton className="h-64 w-full" />
             ) : modelChartData.length === 0 ? (
               <div className="flex items-center justify-center h-64 text-sm text-muted-foreground">
-                No data available
+                {t('usage.noData')}
               </div>
             ) : modelViewMode === "chart" ? (
               <div className="h-[200px] md:h-[260px]">

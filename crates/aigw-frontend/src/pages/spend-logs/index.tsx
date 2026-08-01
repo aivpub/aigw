@@ -134,8 +134,28 @@ function truncateEndUser(s: string): string {
   return s.length > 30 ? s.slice(0, 30) + "…" : s;
 }
 
-function exportToCSV(logs: SpendLog[], startDate: string, endDate: string) {
-  const headers = ["Call ID","Request ID","Time","Type","Model","Status","Prompt Tokens","Completion Tokens","Total Tokens","TTFT (ms)","Duration (ms)","Cost","User","End User","API Key"];
+function buildCSVHeaders(t: (key: string) => string): string[] {
+  return [
+    t('spendLogs.table.callId'),
+    t('spendLogs.table.upstreamId'),
+    t('spendLogs.table.time'),
+    "Type",
+    t('spendLogs.table.model'),
+    t('spendLogs.table.status'),
+    t('spendLogs.csv.promptTokens'),
+    t('spendLogs.csv.completionTokens'),
+    t('spendLogs.csv.totalTokens'),
+    t('spendLogs.csv.ttft'),
+    t('spendLogs.csv.duration'),
+    t('spendLogs.table.cost'),
+    "User",
+    "End User",
+    "API Key",
+  ];
+}
+
+function exportToCSV(logs: SpendLog[], startDate: string, endDate: string, csvHeaders: string[]) {
+  const headers = csvHeaders;
   const rows = logs.map(l => [l.call_id,l.request_id ?? "",l.start_time,l.call_type,l.model,l.status??"",l.prompt_tokens,l.completion_tokens,l.total_tokens,l.ttft_ms??"",l.request_duration_ms??"",l.spend,l.user??"",l.end_user??"",l.api_key.slice(0,12)+"…"]);
   const csv = [headers,...rows].map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
   const blob = new Blob(["﻿"+csv],{type:"text/csv;charset=utf-8"});
@@ -662,7 +682,7 @@ export function SpendLogsPage() {
             <Input type="number" placeholder={t('spendLogs.filters.minTokPlaceholder')} value={minTokens !== undefined ? String(minTokens) : ""} onChange={e => { const v = e.target.value; setMinTokens(v ? Number(v) : undefined); setPage(1); }} className="h-7 w-[70px] text-xs"/>
             <Input type="number" placeholder={t('spendLogs.filters.maxTokPlaceholder')} value={maxTokens !== undefined ? String(maxTokens) : ""} onChange={e => { const v = e.target.value; setMaxTokens(v ? Number(v) : undefined); setPage(1); }} className="h-7 w-[70px] text-xs"/>
             <Button variant="outline" size="sm" onClick={() => { queryClient.invalidateQueries({ queryKey: ["global-spend-logs"] }); refetch(); }} className="h-7 shrink-0 text-xs"><RefreshCw className="h-3 w-3 mr-1"/>{t('common.refresh')}</Button>
-            <Button variant="outline" size="sm" onClick={() => exportToCSV(logs, startDate, endDate)} disabled={logs.length===0} className="h-7 shrink-0 text-xs"><Download className="h-3 w-3 mr-1"/>{t('common.export')}</Button>
+            <Button variant="outline" size="sm" onClick={() => exportToCSV(logs, startDate, endDate, buildCSVHeaders(t))} disabled={logs.length===0} className="h-7 shrink-0 text-xs"><Download className="h-3 w-3 mr-1"/>{t('common.export')}</Button>
           </div>
           <PaginationBar page={page} pageSize={pageSize} totalCount={totalCount} totalPages={totalPages} onPage={setPage} onPageSize={s => { setPageSize(s); setPage(1); }}/>
           <div className="hidden md:block overflow-x-auto">
@@ -714,7 +734,7 @@ export function SpendLogsPage() {
                         <TableCell className="text-xs font-mono text-right">{fmtDuration(log.request_duration_ms)}</TableCell>
                         <TableCell className="text-xs text-right whitespace-nowrap"><span className="text-muted-foreground">{fmtTokens(log.prompt_tokens)}</span>{" / "}<span>{fmtTokens(log.completion_tokens)}</span>
                           {(() => { const c = extractCacheTokens(log.metadata); return c ? (
-                            <span className="text-[10px] block text-muted-foreground/70">cache: {fmtTokens(c.cache_read_tokens ?? 0)}R / {fmtTokens(c.cache_creation_tokens ?? 0)}W</span>
+                            <span className="text-[10px] block text-muted-foreground/70">{t('usage.cache')}: {fmtTokens(c.cache_read_tokens ?? 0)}R / {fmtTokens(c.cache_creation_tokens ?? 0)}W</span>
                           ) : null; })()}
                         </TableCell>
                         <TableCell className="text-xs font-mono text-right font-medium">{fmtSpend(log.spend)}</TableCell>

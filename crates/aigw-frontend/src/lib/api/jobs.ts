@@ -1,4 +1,5 @@
 import { apiGet, apiPost } from "@/lib/api";
+import i18n from "@/i18n";
 
 // ── Types ──
 
@@ -146,7 +147,8 @@ const STEP_LABELS: Record<string, string> = {
 export const KNOWN_STEP_TYPES: string[] = ["body_archive", "budget_reset"];
 
 export function stepTypeLabel(st: string): string {
-  return STEP_LABELS[st] || st.replace(/_/g, " ");
+  const key = STEP_LABELS[st];
+  return key ? i18n.t(key) : st.replace(/_/g, " ");
 }
 
 /** Format a number with K/M suffixes. */

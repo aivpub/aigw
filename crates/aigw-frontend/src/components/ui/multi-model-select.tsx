@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -27,6 +28,7 @@ export function MultiModelSelect({
   onChange,
   className,
 }: MultiModelSelectProps) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -115,7 +117,7 @@ export function MultiModelSelect({
       >
       {selected.includes("*") ? (
           <Badge variant="default" className="gap-1 pr-1 cursor-default">
-            All Models
+            {t('common.all')}
             <button
               type="button"
               onClick={(e) => {
@@ -123,7 +125,7 @@ export function MultiModelSelect({
                 onChange([]);
               }}
               className="ml-0.5 rounded-full p-0.5 hover:bg-primary-foreground/20 transition-colors"
-              aria-label="Remove All Models"
+              aria-label={t('common.removeAll')}
             >
               <X className="h-3 w-3" />
             </button>
@@ -160,7 +162,7 @@ export function MultiModelSelect({
           }}
           onFocus={() => setOpen(true)}
           onKeyDown={handleKeyDown}
-          placeholder={selected.length === 0 ? "Search models..." : ""}
+          placeholder={selected.length === 0 ? t('common.search') + "..." : ""}
           className="flex-1 min-w-[120px] bg-transparent border-0 outline-none text-sm placeholder:text-muted-foreground p-0"
           tabIndex={selected.includes("*") ? -1 : undefined}
         />
@@ -181,14 +183,14 @@ export function MultiModelSelect({
                   "border-b border-border mb-1 pb-2",
                 )}
               >
-                <span className="flex-1 text-left">All Models</span>
+                <span className="flex-1 text-left">{t('keys.allModels')}</span>
               </button>
             )}
             {unselectedModels.length === 0 ? (
               <div className="px-2 py-4 text-sm text-center text-muted-foreground">
                 {allModels.length === 0
-                  ? "Loading models..."
-                  : "No matching models"}
+                  ? t('common.loading')
+                  : t('common.noResults')}
               </div>
             ) : (
               unselectedModels.map((model) => (

@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import i18n from "@/i18n";
 import { apiGet } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -526,7 +527,7 @@ export function PlaygroundPage() {
 
       if (settings.streaming) {
         const reader = res.body?.getReader();
-        if (!reader) throw new Error("No response body");
+        if (!reader) throw new Error(i18n.t('playground.noResponseBody'));
         const decoder = new TextDecoder();
         let buf = "";
         let fullContent = "";

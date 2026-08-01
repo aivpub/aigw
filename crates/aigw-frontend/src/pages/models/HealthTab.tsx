@@ -71,7 +71,7 @@ export function HealthTab() {
       // Start polling; results will arrive asynchronously
       await queryClient.invalidateQueries({ queryKey: ["health-latest"] });
     } catch (e) {
-      console.error("Health check failed:", e);
+      console.error(t('models.health.healthCheckFailed'), e);
     } finally {
       // Keep checking state true until all are done
       setTimeout(() => setChecking(false), 2000);
@@ -85,7 +85,7 @@ export function HealthTab() {
       setChecking(true);
       setTimeout(() => setChecking(false), 2000);
     } catch (e) {
-      console.error("Single health check failed:", e);
+      console.error(t('models.health.singleHealthCheckFailed'), e);
     }
   }
 

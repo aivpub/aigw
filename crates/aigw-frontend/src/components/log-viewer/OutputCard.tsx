@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
+import i18n from "@/i18n";
 import { SectionHeader } from "./SectionHeader";
 import { ToolCallBlock } from "./ToolCallBlock";
 import { extractText } from "./utils";
@@ -79,7 +81,7 @@ function parseOutput(raw: unknown): ParsedOutput {
 
     return empty;
   } catch {
-    return { ...empty, error: "Failed to parse response" };
+    return { ...empty, error: i18n.t('logViewer.parseError') };
   }
 }
 
@@ -90,6 +92,7 @@ interface OutputCardProps {
 }
 
 export function OutputCard({ response, completionTokens, spend }: OutputCardProps) {
+  const { t } = useTranslation();
   const [collapsed, setCollapsed] = useState(false);
 
   const parsed = parseOutput(response);
@@ -114,7 +117,7 @@ export function OutputCard({ response, completionTokens, spend }: OutputCardProp
           {parsed.error ? (
             <div className="bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-lg p-3">
               <div className="flex items-center gap-1.5 mb-1">
-                <span className="text-[10px] uppercase tracking-wider text-red-600 dark:text-red-400 font-medium">Error</span>
+                <span className="text-[10px] uppercase tracking-wider text-red-600 dark:text-red-400 font-medium">{t('playground.error')}</span>
               </div>
               <pre className="text-xs text-red-700 dark:text-red-300 whitespace-pre-wrap break-all leading-relaxed font-mono">
                 {parsed.error}
@@ -149,14 +152,14 @@ export function OutputCard({ response, completionTokens, spend }: OutputCardProp
           {/* Finish reason */}
           {parsed.finishReason ? (
             <div className="text-[11px] text-muted-foreground">
-              Finish: <code className="font-mono bg-muted px-1 rounded">{parsed.finishReason}</code>
+              {t('logViewer.finishReason')}: <code className="font-mono bg-muted px-1 rounded">{parsed.finishReason}</code>
             </div>
           ) : null}
 
           {/* Empty state */}
           {!parsed.error && !parsed.text && !parsed.toolCalls && !parsed.usage ? (
             <p className="text-xs text-muted-foreground italic py-2 text-center">
-              No response content to display
+              {t('logViewer.noContent')}
             </p>
           ) : null}
         </div>

@@ -8,6 +8,7 @@
     "search": "Search",
     "loading": "Loading...",
     "noResults": "No results found",
+    "removeAll": "Remove All",
     "confirm": "Confirm",
     "close": "Close",
     "back": "Back",
@@ -51,7 +52,10 @@
     "user": "User",
     "spend": "Spend",
     "deletedAt": "Deleted At",
-    "deleted": "Deleted"
+    "deleted": "Deleted",
+    "searchModels": "Search models...",
+    "loadingModels": "Loading models...",
+    "noMatchingModels": "No matching models"
   },
   "sidebar": {
     "brand": "aigw",
@@ -125,7 +129,13 @@
       "success": "Success",
       "spend": "Spend",
       "tokens": "Tokens",
-      "requests": "Requests"
+      "requests": "Requests",
+      "promptTokens": "Prompt",
+      "completionTokens": "Completion",
+      "totalTokens": "Total",
+      "successCount": "Success",
+      "failedCount": "Failed",
+      "totalRequests": "Total"
     },
     "topKeys": "Top Virtual Keys",
     "spendByProvider": "Spend by Provider",
@@ -416,6 +426,8 @@
       "noErrors": "no errors",
       "checkingStatus": "checking…",
       "unknownError": "unknown error",
+      "healthCheckFailed": "Health check failed:",
+      "singleHealthCheckFailed": "Single health check failed:",
       "status": "Status",
       "model": "Model",
       "latency": "Latency",
@@ -689,7 +701,15 @@
       "streaming": "streaming"
     },
     "liveTail": "Live Tail",
-    "cardTitle": "Spend Logs ({{count}})"
+    "live": "LIVE",
+    "cardTitle": "Spend Logs ({{count}})",
+    "csv": {
+      "promptTokens": "Prompt Tokens",
+      "completionTokens": "Completion Tokens",
+      "totalTokens": "Total Tokens",
+      "ttft": "TTFT (ms)",
+      "duration": "Duration (ms)"
+    }
   },
   "playground": {
     "title": "Playground",
@@ -724,6 +744,7 @@
     "saveResend": "Save &amp; Resend",
     "error": "Error",
     "requestFailed": "Request failed",
+    "noResponseBody": "No response body",
     "tokensSuffix": " tokens",
     "in": "In:",
     "out": "Out:",
@@ -921,7 +942,10 @@
     "prompt": "Prompt",
     "raw": "Raw",
     "noContent": "No content",
-    "copy": "Copy"
+    "copy": "Copy",
+    "parseError": "Failed to parse response",
+    "error": "Error",
+    "finish": "Finish"
   },
   "pagination": {
     "showing": "Showing {{from}}–{{to}} of {{total}}",

@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from "react";
+import i18n from "@/i18n";
 
 interface AuthState {
   isAuthenticated: boolean;
@@ -60,7 +61,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err.error?.message || "Login failed");
+      throw new Error(err.error?.message || i18n.t('auth.loginFailed'));
     }
     setIsAuthenticated(true);
   }, []);
