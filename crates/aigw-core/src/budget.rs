@@ -69,7 +69,7 @@ impl BudgetEnforcer {
 
         // If no max_budget is set, the key has unlimited budget
         let max_budget = match key.max_budget_f64() {
-            Some(mb) if mb > 0.0 => mb,
+            Some(mb) if mb.is_finite() && mb > 0.0 => mb,
             _ => return Ok(()),
         };
 
@@ -235,5 +235,33 @@ mod tests {
             result.is_ok(),
             "nonexistent key should pass (let auth handle it)"
         );
+    }
+
+    #[tokio::test]
+    async fn test_budget_nan_max_budget() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let raw = "sk-budget-nan";
+        let hash = hash_token(raw);
+
+        // max_budget = NaN — treated as unlimited
+        let key = make_test_key(&hash, 100.0, Some(f64::NAN));
+        db.insert_key(&key).await.expect("insert");
+
+        let result = BudgetEnforcer::check_budget(&db, &hash).await;
+        assert!(result.is_ok(), "NaN max_budget should be treated as unlimited");
+    }
+
+    #[tokio::test]
+    async fn test_budget_infinity_max_budget() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let raw = "sk-budget-inf";
+        let hash = hash_token(raw);
+
+        // max_budget = INFINITY, spend = 100.0 — inf treated as unlimited
+        let key = make_test_key(&hash, 100.0, Some(f64::INFINITY));
+        db.insert_key(&key).await.expect("insert");
+
+        let result = BudgetEnforcer::check_budget(&db, &hash).await;
+        assert!(result.is_ok(), "INFINITY max_budget should be treated as unlimited");
     }
 }

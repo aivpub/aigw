@@ -1063,6 +1063,8 @@ pub async fn chat_completions(
             let fail_model_name = _model.to_string();
             let err_msg_for_log = err_msg.clone();
             let fail_request_id = request_id.clone();
+            let auth_team_id = auth.team_id.clone();
+            let auth_org_id = auth.organization_id.clone();
             tokio::spawn(async move {
                 let sl = SpendLog {
                     call_id: fail_request_id,
@@ -1089,8 +1091,8 @@ pub async fn chat_completions(
                     cache_hit: None,
                     cache_key: None,
                     request_tags: None,
-                    team_id: None,
-                    organization_id: None,
+                    team_id: auth_team_id,
+                    organization_id: auth_org_id,
                     end_user: fail_end_user,
                     requester_ip_address: fail_requester_ip,
                     messages: Some(fail_upstream_body),
@@ -1177,6 +1179,8 @@ pub async fn chat_completions(
                 .ok()
                 .and_then(|v| v.get("id").and_then(|x| x.as_str()).map(|s| s.to_string()))
                 .or_else(|| upstream_req_id.clone());
+            let auth_team_id = auth.team_id.clone();
+            let auth_org_id = auth.organization_id.clone();
             tokio::spawn(async move {
                 let sl = SpendLog {
                     call_id: fail_request_id,
@@ -1203,8 +1207,8 @@ pub async fn chat_completions(
                     cache_hit: None,
                     cache_key: None,
                     request_tags: None,
-                    team_id: None,
-                    organization_id: None,
+                    team_id: auth_team_id,
+                    organization_id: auth_org_id,
                     end_user: fail_end_user,
                     requester_ip_address: fail_requester_ip,
                     messages: Some(fail_upstream_body),
@@ -1602,6 +1606,8 @@ pub async fn chat_completions(
             // captured at chat.rs:1067-1073 before upstream_resp was consumed.
             let fail_upstream_id = fail_resp.get("id").and_then(|v| v.as_str()).map(|s| s.to_string())
                 .or_else(|| upstream_req_id.clone());
+            let auth_team_id = auth.team_id.clone();
+            let auth_org_id = auth.organization_id.clone();
             tokio::spawn(async move {
                 let sl = SpendLog {
                     call_id: fail_request_id,
@@ -1628,8 +1634,8 @@ pub async fn chat_completions(
                     cache_hit: None,
                     cache_key: None,
                     request_tags: None,
-                    team_id: None,
-                    organization_id: None,
+                    team_id: auth_team_id,
+                    organization_id: auth_org_id,
                     end_user: fail_end_user2,
                     requester_ip_address: fail_requester_ip2,
                     messages: Some(fail_upstream_body),
@@ -1743,6 +1749,26 @@ pub async fn chat_completions(
         // Record spend log (don't fail the request if logging fails)
         let _ = state.db.insert_spend_log(&spend_log).await;
 
+        // Increment entity spends asynchronously (key + user + team + org if associated)
+        let inc_db = state.db.clone();
+        let inc_token_hash = auth.token_hash.clone();
+        let inc_user_id = auth.user_id.clone();
+        let inc_team_id = auth.team_id.clone();
+        let inc_org_id = auth.organization_id.clone();
+        let inc_cost = spend_amount;
+        tokio::spawn(async move {
+            let _ = inc_db.increment_key_spend(&inc_token_hash, inc_cost).await;
+            if let Some(ref uid) = inc_user_id {
+                let _ = inc_db.increment_user_spend(uid, inc_cost).await;
+            }
+            if let Some(ref tid) = inc_team_id {
+                let _ = inc_db.increment_team_spend(tid, inc_cost).await;
+            }
+            if let Some(ref oid) = inc_org_id {
+                let _ = inc_db.increment_org_spend(oid, inc_cost).await;
+            }
+        });
+
         // Record OTEL span attributes and close root span
         root_span.record("prompt_tokens", spend_log.prompt_tokens as i64);
         root_span.record("completion_tokens", spend_log.completion_tokens as i64);
@@ -1802,7 +1828,34 @@ pub async fn chat_completions(
                 failed_requests: if is_success { 0 } else { 1 },
                 kind: DailySpendKind::User,
             };
-            queue.queue(ds_log);
+            queue.queue(ds_log.clone());
+
+            // Queue additional daily_spend dimensions
+            if let Some(ref tid) = spend_log.team_id {
+                let mut ds_team = ds_log.clone();
+                ds_team.entity_id = tid.clone();
+                ds_team.kind = DailySpendKind::Team;
+                queue.queue(ds_team);
+            }
+            if let Some(ref oid) = spend_log.organization_id {
+                let mut ds_org = ds_log.clone();
+                ds_org.entity_id = oid.clone();
+                ds_org.kind = DailySpendKind::Organization;
+                queue.queue(ds_org);
+            }
+            if let Some(ref euid) = spend_log.end_user {
+                let mut ds_eu = ds_log.clone();
+                ds_eu.entity_id = euid.clone();
+                ds_eu.kind = DailySpendKind::EndUser;
+                queue.queue(ds_eu);
+            }
+            // Agent dimension (reserved, currently always None)
+            if let Some(ref aid) = spend_log.agent_id {
+                let mut ds_agent = ds_log.clone();
+                ds_agent.entity_id = aid.clone();
+                ds_agent.kind = DailySpendKind::Agent;
+                queue.queue(ds_agent);
+            }
         }
 
         Ok(Json(resp_body).into_response())

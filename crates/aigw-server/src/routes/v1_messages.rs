@@ -57,7 +57,7 @@ fn anthropic_error(
 async fn try_cookie_jwt_auth(
     state: &SharedState,
     headers: &http::HeaderMap,
-) -> Option<(String, Option<String>)> {
+) -> Option<(String, Option<String>, Option<String>, Option<String>)> {
     let master_key = state.master_key.as_deref()?;
 
     // Extract cookie named "token"
@@ -78,7 +78,9 @@ async fn try_cookie_jwt_auth(
     let token_hash = hash_token(&token);
     let key = state.db.get_key_by_token(&token_hash).await.ok()??;
 
-    Some((token_hash, key.user_id))
+    let team_id = key.team_id.clone();
+    let org_id = key.organization_id.clone();
+    Some((token_hash, key.user_id, team_id, org_id))
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -127,7 +129,7 @@ pub async fn messages_handler(
         });
 
     // 1b. Validate token and extract identity (saved for SpendLog)
-    let (auth_token_hash, auth_user_id) = if let Some(token) = extracted {
+    let (auth_token_hash, auth_user_id, auth_team_id, auth_org_id) = if let Some(token) = extracted {
         if token.is_empty() {
             let request_id = format!("req_{}", &request_id);
             return Err((
@@ -149,7 +151,7 @@ pub async fn messages_handler(
             .unwrap_or(false);
 
         if is_master {
-            ("master_key".to_string(), None)
+            ("master_key".to_string(), None, None, None)
         } else {
             let token_hash = hash_token(token);
             let key = state.db.get_key_by_token(&token_hash).await.map_err(|_| {
@@ -194,12 +196,14 @@ pub async fn messages_handler(
             }
 
             let user_id = key.user_id.clone();
-            (token_hash, user_id)
+            let team_id = key.team_id.clone();
+            let org_id = key.organization_id.clone();
+            (token_hash, user_id, team_id, org_id)
         }
     } else {
         // Fallback: try cookie JWT (same pattern as ChatAuth)
         match try_cookie_jwt_auth(&state, &headers).await {
-            Some((token_hash, user_id)) => (token_hash, user_id),
+            Some((token_hash, user_id, team_id, org_id)) => (token_hash, user_id, team_id, org_id),
             None => {
                 let request_id = format!("req_{}", &request_id);
                 return Err((
@@ -376,6 +380,8 @@ pub async fn messages_handler(
             let log_model = model.clone();
             let log_token_hash = auth_token_hash.clone();
             let log_user_id = auth_user_id.clone();
+            let log_team_id = auth_team_id.clone();
+            let log_org_id = auth_org_id.clone();
             let log_end_user = end_user.clone();
             let log_session_id = session_id.clone();
             let log_requester_ip = requester_ip.clone();
@@ -406,8 +412,8 @@ pub async fn messages_handler(
                     cache_hit: None,
                     cache_key: None,
                     request_tags: None,
-                    team_id: None,
-                    organization_id: None,
+                    team_id: log_team_id,
+                    organization_id: log_org_id,
                     end_user: log_end_user,
                     requester_ip_address: log_requester_ip,
                     messages: Some(error_body.clone()),
@@ -551,6 +557,8 @@ pub async fn messages_handler(
             let upstream_model2 = upstream_model.clone();
             let auth_token_hash_clone = auth_token_hash.clone();
             let auth_user_id_clone = auth_user_id.clone();
+            let auth_team_id_clone = auth_team_id.clone();
+            let auth_org_id_clone = auth_org_id.clone();
             let end_user_clone = end_user.clone();
             let psr = proxy_server_request.clone();
             let session_id_clone = session_id.clone();
@@ -592,8 +600,8 @@ pub async fn messages_handler(
                     cache_hit: None,
                     cache_key: None,
                     request_tags: None,
-                    team_id: None,
-                    organization_id: None,
+                    team_id: auth_team_id_clone,
+                    organization_id: auth_org_id_clone,
                     end_user: end_user_clone,
                     requester_ip_address: requester_ip_clone,
                     messages: Some(upstream_body_clone),
@@ -661,6 +669,8 @@ pub async fn messages_handler(
         let upstream_base_url_clone = upstream_base_url.clone();
         let auth_token_hash_clone = auth_token_hash.clone();
         let auth_user_id_clone = auth_user_id.clone();
+        let auth_team_id_clone = auth_team_id.clone();
+        let auth_org_id_clone = auth_org_id.clone();
         let end_user_clone = end_user.clone();
         let psr = proxy_server_request.clone();
         let session_id_clone = session_id.clone();
@@ -704,8 +714,8 @@ pub async fn messages_handler(
                 cache_hit: None,
                 cache_key: None,
                 request_tags: None,
-                team_id: None,
-                organization_id: None,
+                team_id: auth_team_id_clone,
+                organization_id: auth_org_id_clone,
                 end_user: end_user_clone,
                 requester_ip_address: requester_ip_clone,
                 messages: Some(upstream_body_clone),
@@ -767,8 +777,8 @@ pub async fn messages_handler(
                 cache_hit: None,
                 cache_key: None,
                 request_tags: None,
-                team_id: None,
-                organization_id: None,
+                team_id: auth_team_id.clone(),
+                organization_id: auth_org_id.clone(),
                 end_user: end_user.clone(),
                 requester_ip_address: requester_ip.clone(),
                 messages: Some(upstream_body.clone()),
@@ -1096,8 +1106,8 @@ pub async fn messages_handler(
             cache_hit: None,
             cache_key: None,
             request_tags: None,
-            team_id: None,
-            organization_id: None,
+            team_id: auth_team_id.clone(),
+            organization_id: auth_org_id.clone(),
             end_user: end_user.clone(),
             requester_ip_address: requester_ip.clone(),
             messages: Some(upstream_body),
@@ -1112,6 +1122,26 @@ pub async fn messages_handler(
         };
 
         let _ = state.db.insert_spend_log(&spend_log).await;
+
+        // Increment entity spends asynchronously (key + user + team + org if associated)
+        let inc_db = state.db.clone();
+        let inc_token_hash = auth_token_hash.clone();
+        let inc_user_id = auth_user_id.clone();
+        let inc_team_id = auth_team_id.clone();
+        let inc_org_id = auth_org_id.clone();
+        let inc_cost = spend_amount;
+        tokio::spawn(async move {
+            let _ = inc_db.increment_key_spend(&inc_token_hash, inc_cost).await;
+            if let Some(ref uid) = inc_user_id {
+                let _ = inc_db.increment_user_spend(uid, inc_cost).await;
+            }
+            if let Some(ref tid) = inc_team_id {
+                let _ = inc_db.increment_team_spend(tid, inc_cost).await;
+            }
+            if let Some(ref oid) = inc_org_id {
+                let _ = inc_db.increment_org_spend(oid, inc_cost).await;
+            }
+        });
 
         // Record OTEL span attributes and close root span
         root_span.record("prompt_tokens", spend_log.prompt_tokens as i64);
@@ -1172,7 +1202,34 @@ pub async fn messages_handler(
                 failed_requests: if is_success { 0 } else { 1 },
                 kind: DailySpendKind::User,
             };
-            queue.queue(ds_log);
+            queue.queue(ds_log.clone());
+
+            // Queue additional daily_spend dimensions
+            if let Some(ref tid) = spend_log.team_id {
+                let mut ds_team = ds_log.clone();
+                ds_team.entity_id = tid.clone();
+                ds_team.kind = DailySpendKind::Team;
+                queue.queue(ds_team);
+            }
+            if let Some(ref oid) = spend_log.organization_id {
+                let mut ds_org = ds_log.clone();
+                ds_org.entity_id = oid.clone();
+                ds_org.kind = DailySpendKind::Organization;
+                queue.queue(ds_org);
+            }
+            if let Some(ref euid) = spend_log.end_user {
+                let mut ds_eu = ds_log.clone();
+                ds_eu.entity_id = euid.clone();
+                ds_eu.kind = DailySpendKind::EndUser;
+                queue.queue(ds_eu);
+            }
+            // Agent dimension (reserved, currently always None)
+            if let Some(ref aid) = spend_log.agent_id {
+                let mut ds_agent = ds_log.clone();
+                ds_agent.entity_id = aid.clone();
+                ds_agent.kind = DailySpendKind::Agent;
+                queue.queue(ds_agent);
+            }
         }
 
         Ok(Json(serde_json::to_value(&claude_response).map_err(

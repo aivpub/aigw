@@ -350,6 +350,11 @@ pub trait KeyStore {
 
     /// Update specific fields on a key (spend, models, max_budget, tpm_limit, rpm_limit, blocked, metadata, tags).
     async fn update_key(&self, token_hash: &str, key: &VirtualKey) -> Result<()>;
+
+    async fn increment_key_spend(&self, token_hash: &str, cost: f64) -> Result<()>;
+    async fn increment_user_spend(&self, user_id: &str, cost: f64) -> Result<()>;
+    async fn increment_team_spend(&self, team_id: &str, cost: f64) -> Result<()>;
+    async fn increment_org_spend(&self, org_id: &str, cost: f64) -> Result<()>;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -858,6 +863,42 @@ impl KeyStore for SqlitePool {
             .await?;
         Ok(())
     }
+
+    async fn increment_key_spend(&self, token_hash: &str, cost: f64) -> Result<()> {
+        sqlx::query("UPDATE virtual_keys SET spend = spend + ? WHERE token = ?")
+            .bind(cost)
+            .bind(token_hash)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn increment_user_spend(&self, user_id: &str, cost: f64) -> Result<()> {
+        sqlx::query("UPDATE users SET spend = spend + ? WHERE user_id = ?")
+            .bind(cost)
+            .bind(user_id)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn increment_team_spend(&self, team_id: &str, cost: f64) -> Result<()> {
+        sqlx::query("UPDATE teams SET spend = spend + ? WHERE team_id = ?")
+            .bind(cost)
+            .bind(team_id)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn increment_org_spend(&self, org_id: &str, cost: f64) -> Result<()> {
+        sqlx::query("UPDATE organizations SET spend = spend + ? WHERE organization_id = ?")
+            .bind(cost)
+            .bind(org_id)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1113,6 +1154,42 @@ impl KeyStore for MySqlPool {
             .bind(&key.budget_limits)
             .bind(token_hash)
             .execute(self).await?;
+        Ok(())
+    }
+
+    async fn increment_key_spend(&self, token_hash: &str, cost: f64) -> Result<()> {
+        sqlx::query("UPDATE virtual_keys SET spend = spend + ? WHERE token = ?")
+            .bind(cost)
+            .bind(token_hash)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn increment_user_spend(&self, user_id: &str, cost: f64) -> Result<()> {
+        sqlx::query("UPDATE users SET spend = spend + ? WHERE user_id = ?")
+            .bind(cost)
+            .bind(user_id)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn increment_team_spend(&self, team_id: &str, cost: f64) -> Result<()> {
+        sqlx::query("UPDATE teams SET spend = spend + ? WHERE team_id = ?")
+            .bind(cost)
+            .bind(team_id)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn increment_org_spend(&self, org_id: &str, cost: f64) -> Result<()> {
+        sqlx::query("UPDATE organizations SET spend = spend + ? WHERE organization_id = ?")
+            .bind(cost)
+            .bind(org_id)
+            .execute(self)
+            .await?;
         Ok(())
     }
 }
@@ -1418,6 +1495,42 @@ impl KeyStore for PgPool {
             .execute(self).await?;
         Ok(())
     }
+
+    async fn increment_key_spend(&self, token_hash: &str, cost: f64) -> Result<()> {
+        sqlx::query("UPDATE virtual_keys SET spend = spend + $1 WHERE token = $2")
+            .bind(cost)
+            .bind(token_hash)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn increment_user_spend(&self, user_id: &str, cost: f64) -> Result<()> {
+        sqlx::query("UPDATE users SET spend = spend + $1 WHERE user_id = $2")
+            .bind(cost)
+            .bind(user_id)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn increment_team_spend(&self, team_id: &str, cost: f64) -> Result<()> {
+        sqlx::query("UPDATE teams SET spend = spend + $1 WHERE team_id = $2")
+            .bind(cost)
+            .bind(team_id)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn increment_org_spend(&self, org_id: &str, cost: f64) -> Result<()> {
+        sqlx::query("UPDATE organizations SET spend = spend + $1 WHERE organization_id = $2")
+            .bind(cost)
+            .bind(org_id)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1521,6 +1634,38 @@ impl Database {
             Database::Sqlite(pool) => pool.update_key(token_hash, key).await,
             Database::Mysql(pool) => pool.update_key(token_hash, key).await,
             Database::Postgres(pool) => pool.update_key(token_hash, key).await,
+        }
+    }
+
+    pub async fn increment_key_spend(&self, token_hash: &str, cost: f64) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.increment_key_spend(token_hash, cost).await,
+            Database::Mysql(pool) => pool.increment_key_spend(token_hash, cost).await,
+            Database::Postgres(pool) => pool.increment_key_spend(token_hash, cost).await,
+        }
+    }
+
+    pub async fn increment_user_spend(&self, user_id: &str, cost: f64) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.increment_user_spend(user_id, cost).await,
+            Database::Mysql(pool) => pool.increment_user_spend(user_id, cost).await,
+            Database::Postgres(pool) => pool.increment_user_spend(user_id, cost).await,
+        }
+    }
+
+    pub async fn increment_team_spend(&self, team_id: &str, cost: f64) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.increment_team_spend(team_id, cost).await,
+            Database::Mysql(pool) => pool.increment_team_spend(team_id, cost).await,
+            Database::Postgres(pool) => pool.increment_team_spend(team_id, cost).await,
+        }
+    }
+
+    pub async fn increment_org_spend(&self, org_id: &str, cost: f64) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.increment_org_spend(org_id, cost).await,
+            Database::Mysql(pool) => pool.increment_org_spend(org_id, cost).await,
+            Database::Postgres(pool) => pool.increment_org_spend(org_id, cost).await,
         }
     }
 }
