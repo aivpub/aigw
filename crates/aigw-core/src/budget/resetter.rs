@@ -30,7 +30,7 @@ impl BudgetResetter {
 
 /// The kind of entity being reset.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EntityType {
+pub enum EntityType {
     Key,
     Team,
     User,
@@ -38,7 +38,7 @@ enum EntityType {
 }
 
 impl EntityType {
-    fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             EntityType::Key => "key",
             EntityType::Team => "team",
@@ -56,7 +56,7 @@ impl EntityType {
         }
     }
 
-    fn pk_column(&self) -> &'static str {
+    pub fn pk_column(&self) -> &'static str {
         match self {
             EntityType::Key => "token",
             EntityType::Team => "team_id",
@@ -65,7 +65,7 @@ impl EntityType {
         }
     }
 
-    fn from_str(s: &str) -> Option<Self> {
+    pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "key" => Some(EntityType::Key),
             "team" => Some(EntityType::Team),
@@ -82,10 +82,10 @@ impl EntityType {
 
 /// Represents an entity row that needs a budget reset.
 #[derive(Debug)]
-struct ResetCandidate {
-    entity_type: EntityType,
-    entity_id: String,
-    budget_duration: String,
+pub struct ResetCandidate {
+    pub entity_type: EntityType,
+    pub entity_id: String,
+    pub budget_duration: String,
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -179,7 +179,7 @@ async fn scan_organizations(db: &Database) -> Result<Vec<ResetCandidate>, DbErro
 }
 
 /// Scan all entity tables and return the combined list of reset candidates.
-async fn scan_all(db: &Database) -> Result<Vec<ResetCandidate>, DbError> {
+pub async fn scan_all(db: &Database) -> Result<Vec<ResetCandidate>, DbError> {
     let mut candidates = Vec::new();
 
     for et in [EntityType::Key, EntityType::Team, EntityType::User] {
@@ -193,8 +193,16 @@ async fn scan_all(db: &Database) -> Result<Vec<ResetCandidate>, DbError> {
     Ok(candidates)
 }
 
+/// Scan only entities of a specific type and return reset candidates.
+pub async fn scan_by_type(db: &Database, entity_type: EntityType) -> Result<Vec<ResetCandidate>, DbError> {
+    match entity_type {
+        EntityType::Organization => scan_organizations(db).await,
+        et => scan_entity_table(db, et).await,
+    }
+}
+
 /// Convert reset candidates into NewStep entries for the async job engine.
-fn candidates_to_steps(candidates: Vec<ResetCandidate>) -> Vec<NewStep> {
+pub fn candidates_to_steps(candidates: Vec<ResetCandidate>) -> Vec<NewStep> {
     candidates
         .into_iter()
         .map(|c| NewStep {

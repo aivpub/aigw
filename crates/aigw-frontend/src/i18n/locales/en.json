@@ -76,7 +76,8 @@
       "teams": "Teams",
       "organizations": "Organizations",
       "routerSettings": "Router Settings",
-      "jobs": "Jobs"
+      "jobs": "Jobs",
+      "budgets": "Budgets"
     },
     "expandSidebar": "Expand sidebar",
     "collapseSidebar": "Collapse sidebar"
@@ -822,6 +823,26 @@
     "storageNotConfigured": "Storage not configured",
     "triggerArchive": "Trigger Archive",
     "triggerArchiveDesc": "Archive spend_logs body data for a specific date range. Each hour of data becomes one job step.",
+    "budgetReset": {
+      "overview": "Budget Reset Overview",
+      "readyToReset": "Ready to Reset",
+      "lastReset": "Last Reset",
+      "nextCheck": "Next Check",
+      "triggerReset": "Trigger Reset",
+      "triggerDesc": "Scan all entities and reset spend counters for those with expired budget periods.",
+      "entityType": "Entity Type",
+      "entityTypes": {
+        "all": "All Entities",
+        "keys": "Keys",
+        "users": "Users",
+        "teams": "Teams",
+        "orgs": "Organizations"
+      },
+      "recentResets": "Recent Resets",
+      "entitiesReset": "{{count}} entities reset",
+      "neverReset": "Never",
+      "noRecentResets": "No recent budget resets"
+    },
     "startDate": "Start Date",
     "endDate": "End Date",
     "batchSize": "Batch Size",

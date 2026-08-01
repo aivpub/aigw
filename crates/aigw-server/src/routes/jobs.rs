@@ -4,6 +4,10 @@
 //! Requires admin authentication.
 
 use aigw_core::async_task::{AsyncTask, JobRecord};
+use aigw_core::budget::resetter::scan_all as budget_scan_all;
+use aigw_core::budget::resetter::scan_by_type as budget_scan_by_type;
+use aigw_core::budget::resetter::candidates_to_steps as budget_candidates_to_steps;
+use aigw_core::budget::resetter::EntityType;
 use aigw_core::engine::{create_job, get_job_detail, get_job_logs as engine_get_job_logs, get_job_stats, list_jobs};
 use axum::{
     extract::{Path, Query, State},
@@ -117,7 +121,7 @@ pub async fn trigger_job(
     let step_type = req.step_type.as_str();
     let triggered_by = auth.user_id.clone().unwrap_or_else(|| "admin".to_string());
 
-    // Only body_archive is supported for now
+    // Only body_archive and budget_reset are supported for now
     let steps = match step_type {
         "body_archive" => {
             let archiver = state.body_archiver.as_ref()
@@ -134,6 +138,26 @@ pub async fn trigger_job(
             archiver.steps_from_payload(&req.payload).await.map_err(|e| {
                 (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": e.to_string()})))
             })?
+        }
+        "budget_reset" => {
+            let entity_type = req.payload.get("entity_type").and_then(|v| v.as_str());
+            let candidates = match entity_type {
+                Some(et_str) => {
+                    let et = EntityType::from_str(et_str).ok_or((
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({"error": format!("unknown entity_type: {et_str}")})),
+                    ))?;
+                    budget_scan_by_type(&state.db, et).await.map_err(|e| {
+                        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()})))
+                    })?
+                }
+                None => {
+                    budget_scan_all(&state.db).await.map_err(|e| {
+                        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()})))
+                    })?
+                }
+            };
+            budget_candidates_to_steps(candidates)
         }
         _ => {
             return Err((

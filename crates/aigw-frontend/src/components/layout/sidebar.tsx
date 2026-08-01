@@ -1,6 +1,6 @@
 import { NavLink } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { Key, Box, Gamepad2, BarChart3, ScrollText, Users, Users2, Building2, Settings, Activity, ChevronLeft, ChevronRight } from "lucide-react";
+import { Key, Box, Gamepad2, BarChart3, ScrollText, Users, Users2, Building2, Settings, Activity, ChevronLeft, ChevronRight, PiggyBank } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
@@ -40,6 +40,7 @@ function useNavGroups(): NavGroup[] {
       items: [
         { to: "/dash/router-settings", labelKey: "sidebar.nav.routerSettings", icon: Settings },
         { to: "/dash/jobs", labelKey: "sidebar.nav.jobs", icon: Activity },
+        { to: "/dash/budgets", labelKey: "sidebar.nav.budgets", icon: PiggyBank },
       ],
     },
   ];

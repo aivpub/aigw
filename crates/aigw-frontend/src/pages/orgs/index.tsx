@@ -25,6 +25,8 @@ interface OrgItem {
   organization_alias: string;
   budget_id: string | null;
   spend: number;
+  budget_duration: string | null;
+  soft_budget: number | null;
   created_at: string | null;
 }
 
@@ -62,6 +64,8 @@ export function OrgsPage() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [selected, setSelected] = useState<OrgItem | null>(null);
   const [formAlias, setFormAlias] = useState("");
+  const [formBudgetDuration, setFormBudgetDuration] = useState("");
+  const [formSoftBudget, setFormSoftBudget] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(30);
   const [deletedPage, setDeletedPage] = useState(1);
@@ -125,8 +129,8 @@ export function OrgsPage() {
     onError: (err: Error) => toast.error(err.message),
   });
 
-  function openCreate() { setFormAlias(""); setCreateOpen(true); }
-  function openEdit(o: OrgItem) { setSelected(o); setFormAlias(o.organization_alias); setEditOpen(true); }
+  function openCreate() { setFormAlias(""); setFormBudgetDuration(""); setFormSoftBudget(""); setCreateOpen(true); }
+  function openEdit(o: OrgItem) { setSelected(o); setFormAlias(o.organization_alias); setFormBudgetDuration(o.budget_duration ?? ""); setFormSoftBudget(o.soft_budget?.toString() ?? ""); setEditOpen(true); }
   function openDelete(o: OrgItem) { setSelected(o); setDeleteOpen(true); }
 
   function formatDate(d: string) {
@@ -333,9 +337,29 @@ export function OrgsPage() {
             <Label htmlFor="o-alias">{t("orgs.dialog.nameLabel")}</Label>
             <Input id="o-alias" value={formAlias} onChange={(e) => setFormAlias(e.target.value)} placeholder={t("orgs.dialog.namePlaceholder")} />
           </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <Label htmlFor="o-budget-duration">Reset Cycle</Label>
+              <select
+                id="o-budget-duration"
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                value={formBudgetDuration}
+                onChange={(e) => setFormBudgetDuration(e.target.value)}
+              >
+                <option value="">None (no reset)</option>
+                <option value="24h">Daily (24h)</option>
+                <option value="7d">Weekly (7d)</option>
+                <option value="30d">Monthly (30d)</option>
+              </select>
+            </div>
+            <div>
+              <Label htmlFor="o-soft-budget">Soft Budget Alert ($)</Label>
+              <Input id="o-soft-budget" type="number" step="0.0001" value={formSoftBudget} onChange={(e) => setFormSoftBudget(e.target.value)} placeholder="0.00 — warn but don't block" />
+            </div>
+          </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateOpen(false)}>{t("common.cancel")}</Button>
-            <Button onClick={() => createMutation.mutate({ organization_alias: formAlias })} disabled={createMutation.isPending || !formAlias.trim()}>
+            <Button onClick={() => createMutation.mutate({ organization_alias: formAlias, ...(formBudgetDuration.trim() && { budget_duration: formBudgetDuration.trim() }), ...(formSoftBudget.trim() && { soft_budget: parseFloat(formSoftBudget) }) })} disabled={createMutation.isPending || !formAlias.trim()}>
               {createMutation.isPending && <Spinner className="mr-2" />} {t("common.create")}
             </Button>
           </DialogFooter>
@@ -350,9 +374,42 @@ export function OrgsPage() {
             <Label htmlFor="oe-alias">{t("orgs.dialog.nameLabel")}</Label>
             <Input id="oe-alias" value={formAlias} onChange={(e) => setFormAlias(e.target.value)} />
           </div>
+          {selected?.budget_id ? (
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="oe-budget-duration">Reset Cycle</Label>
+                <Input id="oe-budget-duration" value={formBudgetDuration || "—"} disabled />
+              </div>
+              <div>
+                <Label htmlFor="oe-soft-budget">Soft Budget Alert ($)</Label>
+                <Input id="oe-soft-budget" value={formSoftBudget || "—"} disabled />
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="oe-budget-duration">Reset Cycle</Label>
+                <select
+                  id="oe-budget-duration"
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                  value={formBudgetDuration}
+                  onChange={(e) => setFormBudgetDuration(e.target.value)}
+                >
+                  <option value="">None (no reset)</option>
+                  <option value="24h">Daily (24h)</option>
+                  <option value="7d">Weekly (7d)</option>
+                  <option value="30d">Monthly (30d)</option>
+                </select>
+              </div>
+              <div>
+                <Label htmlFor="oe-soft-budget">Soft Budget Alert ($)</Label>
+                <Input id="oe-soft-budget" type="number" step="0.0001" value={formSoftBudget} onChange={(e) => setFormSoftBudget(e.target.value)} placeholder="0.00 — warn but don't block" />
+              </div>
+            </div>
+          )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditOpen(false)}>{t("common.cancel")}</Button>
-            <Button onClick={() => selected && editMutation.mutate({ organization_id: selected.organization_id, organization_alias: formAlias })} disabled={editMutation.isPending}>
+            <Button onClick={() => selected && editMutation.mutate({ organization_id: selected.organization_id, organization_alias: formAlias, ...(!selected.budget_id && { ...(formBudgetDuration.trim() && { budget_duration: formBudgetDuration.trim() }), ...(formSoftBudget.trim() && { soft_budget: parseFloat(formSoftBudget) }) }) })} disabled={editMutation.isPending}>
               {editMutation.isPending && <Spinner className="mr-2" />} {t("common.save")}
             </Button>
           </DialogFooter>

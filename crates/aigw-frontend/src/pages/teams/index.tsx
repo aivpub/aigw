@@ -29,6 +29,8 @@ interface TeamItem {
   admins: string[];
   spend: number;
   max_budget: number | null;
+  budget_duration: string | null;
+  soft_budget: number | null;
   blocked: boolean;
   created_at: string | null;
 }
@@ -71,6 +73,8 @@ export function TeamsPage() {
   const [formAlias, setFormAlias] = useState("");
   const [formOrgId, setFormOrgId] = useState("");
   const [formBudget, setFormBudget] = useState("");
+  const [formBudgetDuration, setFormBudgetDuration] = useState("");
+  const [formSoftBudget, setFormSoftBudget] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(30);
   const [deletedPage, setDeletedPage] = useState(1);
@@ -133,8 +137,8 @@ export function TeamsPage() {
     onError: (err: Error) => toast.error(err.message),
   });
 
-  function openCreate() { setFormAlias(""); setFormOrgId(""); setFormBudget(""); setCreateOpen(true); }
-  function openEdit(team: TeamItem) { setSelected(team); setFormAlias(team.team_alias); setFormOrgId(team.organization_id ?? ""); setFormBudget(team.max_budget?.toString() ?? ""); setEditOpen(true); }
+  function openCreate() { setFormAlias(""); setFormOrgId(""); setFormBudget(""); setFormBudgetDuration(""); setFormSoftBudget(""); setCreateOpen(true); }
+  function openEdit(team: TeamItem) { setSelected(team); setFormAlias(team.team_alias); setFormOrgId(team.organization_id ?? ""); setFormBudget(team.max_budget?.toString() ?? ""); setFormBudgetDuration(team.budget_duration ?? ""); setFormSoftBudget(team.soft_budget?.toString() ?? ""); setEditOpen(true); }
   function openDelete(team: TeamItem) { setSelected(team); setDeleteOpen(true); }
 
   function formatDate(d: string) {
@@ -283,7 +287,7 @@ export function TeamsPage() {
                                 <TableCell className="text-sm">{t("teams.membersCount", { count: team.members.length })}</TableCell>
                                 <TableCell>{team.blocked ? <Badge variant="destructive">{t("keys.blocked")}</Badge> : <Badge variant="default">{t("teams.active")}</Badge>}</TableCell>
                                 <TableCell className="text-right text-sm">${team.spend.toFixed(4)}</TableCell>
-                                <TableCell className="text-right text-sm">{team.max_budget != null ? `$${team.max_budget.toFixed(2)}` : "∞"}</TableCell>
+                                <TableCell className="text-right text-sm">{team.max_budget != null ? `$${team.max_budget.toFixed(2)}${team.budget_duration ? ` / ${team.budget_duration}` : ""}` : "∞"}</TableCell>
                                 <TableCell className="text-xs text-muted-foreground">{team.created_at ? formatDate(team.created_at) : "—"}</TableCell>
                                 <TableCell className="text-right">
                                   <div className="flex justify-end gap-1">
@@ -315,7 +319,7 @@ export function TeamsPage() {
                               <div className="text-xs text-muted-foreground">{t("teams.mobile.org")}: {team.organization_id ?? "—"} | {t("teams.membersCount", { count: team.members.length })}</div>
                               <div className="flex items-center justify-between text-xs text-muted-foreground">
                                 <span>{t("teams.mobile.spent")} ${team.spend.toFixed(4)}</span>
-                                <span>{team.max_budget != null ? `${t("teams.mobile.budget")} $${team.max_budget.toFixed(2)}` : t("teams.noBudget")}</span>
+                                <span>{team.max_budget != null ? `${t("teams.mobile.budget")} $${team.max_budget.toFixed(2)}${team.budget_duration ? ` / ${team.budget_duration}` : ""}` : t("teams.noBudget")}</span>
                               </div>
                               <div className="text-xs text-muted-foreground">{t("teams.mobile.created")}: {team.created_at ? formatDate(team.created_at) : "—"}</div>
                               <div className="flex justify-end gap-1 pt-1">
@@ -354,10 +358,30 @@ export function TeamsPage() {
                 <div><Label htmlFor="t-alias">{t("teams.dialog.nameLabel")}</Label><Input id="t-alias" value={formAlias} onChange={(e) => setFormAlias(e.target.value)} placeholder={t("teams.dialog.namePlaceholder")} /></div>
                 <div><Label htmlFor="t-org">{t("teams.dialog.orgIdLabel")}</Label><Input id="t-org" value={formOrgId} onChange={(e) => setFormOrgId(e.target.value)} placeholder={t("teams.dialog.orgIdPlaceholder")} /></div>
                 <div><Label htmlFor="t-budget">{t("teams.dialog.budgetLabel")}</Label><Input id="t-budget" type="number" value={formBudget} onChange={(e) => setFormBudget(e.target.value)} placeholder={t("teams.dialog.budgetPlaceholder")} /></div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="t-budget-duration">Reset Cycle</Label>
+                    <select
+                      id="t-budget-duration"
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                      value={formBudgetDuration}
+                      onChange={(e) => setFormBudgetDuration(e.target.value)}
+                    >
+                      <option value="">None (no reset)</option>
+                      <option value="24h">Daily (24h)</option>
+                      <option value="7d">Weekly (7d)</option>
+                      <option value="30d">Monthly (30d)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <Label htmlFor="t-soft-budget">Soft Budget Alert ($)</Label>
+                    <Input id="t-soft-budget" type="number" step="0.0001" value={formSoftBudget} onChange={(e) => setFormSoftBudget(e.target.value)} placeholder="0.00 — warn but don't block" />
+                  </div>
+                </div>
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setCreateOpen(false)}>{t("common.cancel")}</Button>
-                <Button onClick={() => createMutation.mutate({ team_alias: formAlias, organization_id: formOrgId || undefined, ...(formBudget && { max_budget: parseFloat(formBudget) }) })} disabled={createMutation.isPending || !formAlias.trim()}>
+                <Button onClick={() => createMutation.mutate({ team_alias: formAlias, organization_id: formOrgId || undefined, ...(formBudget && { max_budget: parseFloat(formBudget) }), ...(formBudgetDuration.trim() && { budget_duration: formBudgetDuration.trim() }), ...(formSoftBudget.trim() && { soft_budget: parseFloat(formSoftBudget) }) })} disabled={createMutation.isPending || !formAlias.trim()}>
                   {createMutation.isPending && <Spinner className="mr-2" />} {t("common.create")}
                 </Button>
               </DialogFooter>
@@ -372,10 +396,30 @@ export function TeamsPage() {
                 <div><Label htmlFor="te-alias">{t("teams.dialog.nameLabel")}</Label><Input id="te-alias" value={formAlias} onChange={(e) => setFormAlias(e.target.value)} /></div>
                 <div><Label htmlFor="te-org">{t("teams.dialog.orgIdLabel")}</Label><Input id="te-org" value={formOrgId} onChange={(e) => setFormOrgId(e.target.value)} /></div>
                 <div><Label htmlFor="te-budget">{t("teams.dialog.budgetLabel")}</Label><Input id="te-budget" type="number" value={formBudget} onChange={(e) => setFormBudget(e.target.value)} /></div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="te-budget-duration">Reset Cycle</Label>
+                    <select
+                      id="te-budget-duration"
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                      value={formBudgetDuration}
+                      onChange={(e) => setFormBudgetDuration(e.target.value)}
+                    >
+                      <option value="">None (no reset)</option>
+                      <option value="24h">Daily (24h)</option>
+                      <option value="7d">Weekly (7d)</option>
+                      <option value="30d">Monthly (30d)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <Label htmlFor="te-soft-budget">Soft Budget Alert ($)</Label>
+                    <Input id="te-soft-budget" type="number" step="0.0001" value={formSoftBudget} onChange={(e) => setFormSoftBudget(e.target.value)} placeholder="0.00 — warn but don't block" />
+                  </div>
+                </div>
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setEditOpen(false)}>{t("common.cancel")}</Button>
-                <Button onClick={() => selected && editMutation.mutate({ team_id: selected.team_id, team_alias: formAlias, ...(formOrgId && { organization_id: formOrgId }), ...(formBudget && { max_budget: parseFloat(formBudget) }) })} disabled={editMutation.isPending}>
+                <Button onClick={() => selected && editMutation.mutate({ team_id: selected.team_id, team_alias: formAlias, ...(formOrgId && { organization_id: formOrgId }), ...(formBudget && { max_budget: parseFloat(formBudget) }), ...(formBudgetDuration.trim() && { budget_duration: formBudgetDuration.trim() }), ...(formSoftBudget.trim() && { soft_budget: parseFloat(formSoftBudget) }) })} disabled={editMutation.isPending}>
                   {editMutation.isPending && <Spinner className="mr-2" />} {t("common.save")}
                 </Button>
               </DialogFooter>

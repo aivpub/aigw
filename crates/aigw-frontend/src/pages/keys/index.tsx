@@ -51,6 +51,8 @@ interface KeyItem {
   team_id: string | null;
   spend: number;
   max_budget: number | null;
+  budget_duration: string | null;
+  soft_budget: number | null;
   tpm_limit: number | null;
   rpm_limit: number | null;
   blocked: boolean | null;
@@ -115,6 +117,8 @@ export function KeysPage() {
   const [formAlias, setFormAlias] = useState("");
   const [selectedModels, setSelectedModels] = useState<string[]>([]);
   const [formBudget, setFormBudget] = useState("");
+  const [formBudgetDuration, setFormBudgetDuration] = useState("");
+  const [formSoftBudget, setFormSoftBudget] = useState("");
   const [formTPM, setFormTPM] = useState("");
   const [formRPM, setFormRPM] = useState("");
   const [formExpires, setFormExpires] = useState("");
@@ -236,6 +240,8 @@ export function KeysPage() {
     setFormAlias("");
     setSelectedModels([]);
     setFormBudget("");
+    setFormBudgetDuration("");
+    setFormSoftBudget("");
     setFormTPM("");
     setFormRPM("");
     setFormExpires("");
@@ -253,6 +259,8 @@ export function KeysPage() {
       setSelectedModels(["*"]);
     }
     setFormBudget(key.max_budget?.toString() ?? "");
+    setFormBudgetDuration(key.budget_duration ?? "");
+    setFormSoftBudget(key.soft_budget?.toString() ?? "");
     setFormTPM(key.tpm_limit?.toString() ?? "");
     setFormRPM(key.rpm_limit?.toString() ?? "");
     setFormExpires(key.expires ?? "");
@@ -278,6 +286,8 @@ export function KeysPage() {
       body.models = selectedModels;
     }
     if (formBudget.trim()) body.max_budget = parseFloat(formBudget);
+    if (formBudgetDuration.trim()) body.budget_duration = formBudgetDuration.trim();
+    if (formSoftBudget.trim()) body.soft_budget = parseFloat(formSoftBudget);
     if (formTPM.trim()) body.tpm_limit = parseInt(formTPM);
     if (formRPM.trim()) body.rpm_limit = parseInt(formRPM);
     if (formExpires.trim()) body.expires = formExpires.trim();
@@ -298,6 +308,8 @@ export function KeysPage() {
         ? { models: [] }
         : selectedModels.length > 0 && { models: selectedModels }),
       ...(formBudget.trim() && { max_budget: parseFloat(formBudget) }),
+      ...(formBudgetDuration.trim() && { budget_duration: formBudgetDuration.trim() }),
+      ...(formSoftBudget.trim() && { soft_budget: parseFloat(formSoftBudget) }),
       ...(formTPM.trim() && { tpm_limit: parseInt(formTPM) }),
       ...(formRPM.trim() && { rpm_limit: parseInt(formRPM) }),
       ...(formExpires.trim() && { expires: formExpires.trim() }),
@@ -591,7 +603,7 @@ export function KeysPage() {
                             </TableCell>
                             <TableCell className="text-right text-sm">
                               {key.max_budget != null
-                                ? `$${key.max_budget.toFixed(2)}`
+                                ? `$${key.max_budget.toFixed(2)}${key.budget_duration ? ` / ${key.budget_duration}` : ""}`
                                 : "∞"}
                             </TableCell>
                             <TableCell className="text-xs text-muted-foreground">
@@ -717,7 +729,7 @@ export function KeysPage() {
                               Spent ${key.spend.toFixed(4)}
                               {" / "}
                               {key.max_budget != null
-                                ? `$${key.max_budget.toFixed(2)}`
+                                ? `$${key.max_budget.toFixed(2)}${key.budget_duration ? ` / ${key.budget_duration}` : ""}`
                                 : "∞"}
                             </span>
                           </div>
@@ -872,6 +884,36 @@ export function KeysPage() {
                     />
                   </div>
                 </div>
+                <div className="grid grid-cols-2 gap-4">
+                  {/* Budget Duration */}
+                  <div className="space-y-2">
+                    <Label htmlFor="budget-duration">Reset Cycle</Label>
+                    <select
+                      id="budget-duration"
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                      value={formBudgetDuration}
+                      onChange={(e) => setFormBudgetDuration(e.target.value)}
+                    >
+                      <option value="">None (no reset)</option>
+                      <option value="24h">Daily (24h)</option>
+                      <option value="7d">Weekly (7d)</option>
+                      <option value="30d">Monthly (30d)</option>
+                    </select>
+                  </div>
+
+                  {/* Soft Budget */}
+                  <div className="space-y-2">
+                    <Label htmlFor="soft-budget">Soft Budget Alert ($)</Label>
+                    <Input
+                      id="soft-budget"
+                      type="number"
+                      step="0.0001"
+                      placeholder="0.00 — warn but don't block"
+                      value={formSoftBudget}
+                      onChange={(e) => setFormSoftBudget(e.target.value)}
+                    />
+                  </div>
+                </div>
                 <div>
                   <Label htmlFor="expires">{t('keys.createDialog.expiresLabel')}</Label>
                   <Input
@@ -964,6 +1006,36 @@ export function KeysPage() {
                   type="number"
                   value={formRPM}
                   onChange={(e) => setFormRPM(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              {/* Budget Duration */}
+              <div className="space-y-2">
+                <Label htmlFor="edit-budget-duration">Reset Cycle</Label>
+                <select
+                  id="edit-budget-duration"
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                  value={formBudgetDuration}
+                  onChange={(e) => setFormBudgetDuration(e.target.value)}
+                >
+                  <option value="">None (no reset)</option>
+                  <option value="24h">Daily (24h)</option>
+                  <option value="7d">Weekly (7d)</option>
+                  <option value="30d">Monthly (30d)</option>
+                </select>
+              </div>
+
+              {/* Soft Budget */}
+              <div className="space-y-2">
+                <Label htmlFor="edit-soft-budget">Soft Budget Alert ($)</Label>
+                <Input
+                  id="edit-soft-budget"
+                  type="number"
+                  step="0.0001"
+                  placeholder="0.00 — warn but don't block"
+                  value={formSoftBudget}
+                  onChange={(e) => setFormSoftBudget(e.target.value)}
                 />
               </div>
             </div>

@@ -6,10 +6,11 @@ import {
   stepTypeLabel,
   formatCount,
   displayJobStatus,
+  triggerJob,
   KNOWN_STEP_TYPES,
 } from "@/lib/api/jobs";
-import type { JobItem, JobStats, ArchiveStats } from "@/lib/api/jobs";
-import { useState, useEffect, useCallback } from "react";
+import type { JobItem, JobStats, ArchiveStats, TriggerJobResponse } from "@/lib/api/jobs";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -23,7 +24,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 import { TriggerDialog } from "./components/trigger-dialog";
 import { toast } from "sonner";
 
@@ -242,15 +243,222 @@ function ArchiveStatsCard({ archiveStats }: { archiveStats: ArchiveStats }) {
   );
 }
 
-// ── Budget Reset Placeholder ──
-function BudgetResetPlaceholder() {
+// ── Budget Reset Panel ──
+
+const BUDGET_RESET_CHECK_INTERVAL_SEC = 60; // matches BudgetResetter::tick_interval()
+
+const ENTITY_TYPE_OPTIONS = [
+  { value: "all", labelKey: "jobs.budgetReset.entityTypes.all" },
+  { value: "key", labelKey: "jobs.budgetReset.entityTypes.keys" },
+  { value: "user", labelKey: "jobs.budgetReset.entityTypes.users" },
+  { value: "team", labelKey: "jobs.budgetReset.entityTypes.teams" },
+  { value: "org", labelKey: "jobs.budgetReset.entityTypes.orgs" },
+];
+
+function BudgetResetPanel({
+  jobs,
+  stats,
+  onTrigger,
+}: {
+  jobs: JobItem[];
+  stats: JobStats | null;
+  onTrigger: () => void;
+}) {
   const { t } = useTranslation();
+  const [entityType, setEntityType] = useState("all");
+  const [triggerLoading, setTriggerLoading] = useState(false);
+
+  // Countdown timer for next periodic check.
+  const [countdown, setCountdown] = useState(BUDGET_RESET_CHECK_INTERVAL_SEC);
+  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    countdownRef.current = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev <= 1) {
+          return BUDGET_RESET_CHECK_INTERVAL_SEC;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => {
+      if (countdownRef.current) clearInterval(countdownRef.current);
+    };
+  }, []);
+
+  // Derive stats from the budget_reset jobs list and global stats.
+  const budgetQueue = stats?.["budget_reset"]?.queue ?? { pending: 0, running: 0, completed: 0, failed: 0 };
+  const lastCompleted = useMemo(() => jobs.find((j) => j.status === "completed"), [jobs]);
+
+  // "Ready to Reset": sum of completed_steps across completed/partially_failed jobs
+  // gives the historical total of entities reset; also show pending jobs that are queued.
+  const entitiesResetTotal = useMemo(
+    () =>
+      jobs
+        .filter((j) => j.status === "completed" || j.status === "partially_failed")
+        .reduce((sum, j) => sum + j.completed_steps, 0),
+    [jobs]
+  );
+
+  // Most recent running/pending job shows how many entities are queued for reset.
+  const mostRecentPending = useMemo(
+    () => jobs.find((j) => j.status === "pending" || j.status === "running"),
+    [jobs]
+  );
+
+  const handleTrigger = async () => {
+    setTriggerLoading(true);
+    try {
+      const result: TriggerJobResponse = await triggerJob({
+        step_type: "budget_reset",
+        payload: entityType === "all" ? {} : { entity_type: entityType },
+      });
+      toast.success(
+        t("jobs.triggerToast", {
+          jobId: result.job_id.slice(0, 12),
+          totalSteps: result.total_steps,
+        })
+      );
+      onTrigger();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error(`${t("jobs.toast.triggerFailed")}: ${msg}`);
+    } finally {
+      setTriggerLoading(false);
+    }
+  };
+
+  const formatCountdown = (s: number): string => {
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    if (m > 0) return `${m}m ${sec.toString().padStart(2, "0")}s`;
+    return `${sec}s`;
+  };
+
   return (
-    <Card>
-      <CardContent className="py-12">
-        <p className="text-muted-foreground text-center">{t("jobs.noJobsYet")}</p>
-      </CardContent>
-    </Card>
+    <div className="space-y-4">
+      {/* Stats Card */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">{t("jobs.budgetReset.overview")}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
+            <div>
+              <div className="text-muted-foreground">{t("jobs.budgetReset.readyToReset")}</div>
+              <div className="font-medium text-lg">
+                {mostRecentPending
+                  ? mostRecentPending.total_steps
+                  : budgetQueue.pending > 0
+                    ? budgetQueue.pending
+                    : "—"}
+              </div>
+            </div>
+            <div>
+              <div className="text-muted-foreground">{t("jobs.budgetReset.lastReset")}</div>
+              <div className="font-medium">
+                {lastCompleted
+                  ? new Date(lastCompleted.updated_at).toLocaleString()
+                  : t("jobs.budgetReset.neverReset")}
+              </div>
+            </div>
+            <div>
+              <div className="text-muted-foreground">{t("jobs.budgetReset.nextCheck")}</div>
+              <div className="font-medium flex items-center gap-1">
+                <RefreshCw className="h-3 w-3" />
+                <span>{formatCountdown(countdown)}</span>
+              </div>
+            </div>
+          </div>
+          {entitiesResetTotal > 0 && (
+            <div className="mt-3 text-xs text-muted-foreground border-t pt-3">
+              {t("jobs.budgetReset.entitiesReset", { count: entitiesResetTotal })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Trigger Card */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">{t("jobs.budgetReset.triggerReset")}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-xs text-muted-foreground mb-3">
+            {t("jobs.budgetReset.triggerDesc")}
+          </p>
+          <div className="flex items-center gap-3">
+            <Select value={entityType} onValueChange={setEntityType}>
+              <SelectTrigger className="w-[180px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {ENTITY_TYPE_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>
+                    {t(opt.labelKey)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button onClick={handleTrigger} disabled={triggerLoading}>
+              <RefreshCw className={`h-4 w-4 mr-1 ${triggerLoading ? "animate-spin" : ""}`} />
+              {t("jobs.budgetReset.triggerReset")}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Recent Resets */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">{t("jobs.budgetReset.recentResets")}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {jobs.length === 0 ? (
+            <p className="text-muted-foreground text-center py-4">{t("jobs.budgetReset.noRecentResets")}</p>
+          ) : (
+            <div className="border rounded overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-muted">
+                  <tr>
+                    <th className="text-left p-2">{t("jobs.table.id")}</th>
+                    <th className="text-left p-2">{t("jobs.table.status")}</th>
+                    <th className="text-left p-2">{t("jobs.budgetReset.entityType")}</th>
+                    <th className="text-left p-2">{t("jobs.table.progress")}</th>
+                    <th className="text-left p-2">{t("jobs.table.created")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {jobs.map((job) => {
+                    const ds = displayJobStatus(job.status);
+                    return (
+                      <tr key={job.id} className="border-t text-xs">
+                        <td className="p-2 font-mono truncate max-w-[120px]" title={job.id}>
+                          {job.id.slice(0, 16)}...
+                        </td>
+                        <td className="p-2"><StatusBadge status={ds} /></td>
+                        <td className="p-2 text-muted-foreground">
+                          {job.completed_steps > 0 && t("jobs.budgetReset.entitiesReset", { count: job.completed_steps })}
+                        </td>
+                        <td className="p-2">
+                          {job.completed_steps + job.failed_steps}/{job.total_steps}
+                          {job.failed_steps > 0 && (
+                            <span className="text-red-500 ml-1">{t("jobs.failedSteps", { count: job.failed_steps })}</span>
+                          )}
+                        </td>
+                        <td className="p-2 text-muted-foreground">
+                          {new Date(job.created_at).toLocaleString()}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 
@@ -330,6 +538,9 @@ export function JobsPage() {
   const [loading, setLoading] = useState(false);
   const [triggerOpen, setTriggerOpen] = useState(false);
 
+  // Budget-reset-specific: always fetch last 10 regardless of status filter
+  const [budgetResetJobs, setBudgetResetJobs] = useState<JobItem[]>([]);
+
   // Tabs represent *registered* async-task types, not just types that have run. The backend
   // `GET /admin/jobs/stats` only reports step_types that already have rows in async_job_steps,
   // so on a fresh DB it returns `{}` and the implemented AsyncTask UI would be invisible. Seed
@@ -398,18 +609,29 @@ export function JobsPage() {
     }
   }, []);
 
+  const loadBudgetResetJobs = useCallback(async () => {
+    try {
+      const data = await fetchJobs({ step_type: "budget_reset", limit: 10, page: 1 });
+      setBudgetResetJobs(data.jobs || []);
+    } catch {
+      // silently ignore
+    }
+  }, []);
+
   // Auto-refresh
   useEffect(() => {
     loadStats();
     loadJobs();
     loadArchiveStats();
+    loadBudgetResetJobs();
     const timer = setInterval(() => {
       loadStats();
       loadJobs();
       loadArchiveStats();
+      loadBudgetResetJobs();
     }, 30000);
     return () => clearInterval(timer);
-  }, [loadStats, loadJobs, loadArchiveStats]);
+  }, [loadStats, loadJobs, loadArchiveStats, loadBudgetResetJobs]);
 
   // Re-fetch when tab/status/page changes
   useEffect(() => {
@@ -495,8 +717,8 @@ export function JobsPage() {
               <ArchiveStatsCard archiveStats={archiveStats} />
             )}
 
-            {/* Budget Reset placeholder */}
-            {st === "budget_reset" && <BudgetResetPlaceholder />}
+            {/* Budget Reset panel */}
+            {st === "budget_reset" && <BudgetResetPanel jobs={budgetResetJobs} stats={stats} onTrigger={() => { loadBudgetResetJobs(); loadJobs(); loadStats(); }} />}
 
             {/* Filtered Jobs */}
             <Card>

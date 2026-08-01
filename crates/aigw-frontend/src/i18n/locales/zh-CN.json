@@ -76,7 +76,8 @@
       "teams": "团队管理",
       "organizations": "组织管理",
       "routerSettings": "路由设置",
-      "jobs": "任务管理"
+      "jobs": "任务管理",
+      "budgets": "预算管理"
     },
     "expandSidebar": "展开侧边栏",
     "collapseSidebar": "折叠侧边栏"
@@ -822,6 +823,26 @@
     "storageNotConfigured": "存储未配置",
     "triggerArchive": "触发归档",
     "triggerArchiveDesc": "归档指定日期范围内的 spend_logs body 数据。每小时的数据生成一个任务步骤。",
+    "budgetReset": {
+      "overview": "预算重置概览",
+      "readyToReset": "待重置数量",
+      "lastReset": "上次重置",
+      "nextCheck": "下次检查",
+      "triggerReset": "触发重置",
+      "triggerDesc": "扫描所有实体，对预算周期已过的实体进行支出重置。",
+      "entityType": "实体类型",
+      "entityTypes": {
+        "all": "所有实体",
+        "keys": "密钥",
+        "users": "用户",
+        "teams": "团队",
+        "orgs": "组织"
+      },
+      "recentResets": "最近重置记录",
+      "entitiesReset": "{{count}} 个实体已重置",
+      "neverReset": "从未重置",
+      "noRecentResets": "暂无预算重置记录"
+    },
     "startDate": "开始日期",
     "endDate": "结束日期",
     "batchSize": "批量大小",

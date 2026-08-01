@@ -35,6 +35,8 @@ interface UserItem {
   user_role: string | null;
   spend: number;
   max_budget: number | null;
+  budget_duration: string | null;
+  soft_budget: number | null;
   tpm_limit: number | null;
   rpm_limit: number | null;
   organization_id: string | null;
@@ -79,6 +81,8 @@ export function UsersPage() {
   const [formAlias, setFormAlias] = useState("");
   const [formRole, setFormRole] = useState("internal_user");
   const [formBudget, setFormBudget] = useState("");
+  const [formBudgetDuration, setFormBudgetDuration] = useState("");
+  const [formSoftBudget, setFormSoftBudget] = useState("");
   const [formTPM, setFormTPM] = useState("");
   const [formRPM, setFormRPM] = useState("");
 
@@ -143,7 +147,7 @@ export function UsersPage() {
 
   function openCreate() {
     setFormEmail(""); setFormPassword(""); setFormAlias("");
-    setFormRole("internal_user"); setFormBudget(""); setFormTPM(""); setFormRPM("");
+    setFormRole("internal_user"); setFormBudget(""); setFormBudgetDuration(""); setFormSoftBudget(""); setFormTPM(""); setFormRPM("");
     setCreateOpen(true);
   }
 
@@ -153,6 +157,8 @@ export function UsersPage() {
     setFormEmail(u.user_email ?? "");
     setFormRole(u.user_role ?? "internal_user");
     setFormBudget(u.max_budget?.toString() ?? "");
+    setFormBudgetDuration(u.budget_duration ?? "");
+    setFormSoftBudget(u.soft_budget?.toString() ?? "");
     setFormTPM(u.tpm_limit?.toString() ?? "");
     setFormRPM(u.rpm_limit?.toString() ?? "");
     setEditOpen(true);
@@ -320,7 +326,7 @@ export function UsersPage() {
                             </TableCell>
                             <TableCell className="text-right text-sm">${u.spend.toFixed(4)}</TableCell>
                             <TableCell className="text-right text-sm">
-                              {u.max_budget != null ? `$${u.max_budget.toFixed(2)}` : "∞"}
+                              {u.max_budget != null ? `$${u.max_budget.toFixed(2)}${u.budget_duration ? ` / ${u.budget_duration}` : ""}` : "∞"}
                             </TableCell>
                             <TableCell className="text-right text-sm">
                               {(u.virtual_keys_count ?? 0) > 0 ? (
@@ -379,7 +385,7 @@ export function UsersPage() {
                           <div className="text-xs text-muted-foreground">{u.user_email ?? "—"}</div>
                           <div className="flex items-center justify-between text-xs text-muted-foreground">
                             <span>{t("users.mobile.spent")} ${u.spend.toFixed(4)}</span>
-                            <span>{u.max_budget != null ? `${t("users.mobile.budget")} $${u.max_budget.toFixed(2)}` : t("users.mobile.noBudget")}</span>
+                            <span>{u.max_budget != null ? `${t("users.mobile.budget")} $${u.max_budget.toFixed(2)}${u.budget_duration ? ` / ${u.budget_duration}` : ""}` : t("users.mobile.noBudget")}</span>
                           </div>
                           <div className="text-xs text-muted-foreground">{t("users.mobile.created")}: {u.created_at ? formatDate(u.created_at) : "—"}</div>
                           <div className="flex justify-end gap-1 pt-1">
@@ -464,6 +470,26 @@ export function UsersPage() {
                 <Input id="u-rpm" type="number" value={formRPM} onChange={(e) => setFormRPM(e.target.value)} placeholder="100" />
               </div>
             </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="u-budget-duration">Reset Cycle</Label>
+                <select
+                  id="u-budget-duration"
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                  value={formBudgetDuration}
+                  onChange={(e) => setFormBudgetDuration(e.target.value)}
+                >
+                  <option value="">None (no reset)</option>
+                  <option value="24h">Daily (24h)</option>
+                  <option value="7d">Weekly (7d)</option>
+                  <option value="30d">Monthly (30d)</option>
+                </select>
+              </div>
+              <div>
+                <Label htmlFor="u-soft-budget">Soft Budget Alert ($)</Label>
+                <Input id="u-soft-budget" type="number" step="0.0001" value={formSoftBudget} onChange={(e) => setFormSoftBudget(e.target.value)} placeholder="0.00 — warn but don't block" />
+              </div>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateOpen(false)}>{t("common.cancel")}</Button>
@@ -473,6 +499,8 @@ export function UsersPage() {
               user_alias: formAlias || undefined,
               user_role: formRole,
               ...(formBudget && { max_budget: parseFloat(formBudget) }),
+              ...(formBudgetDuration.trim() && { budget_duration: formBudgetDuration.trim() }),
+              ...(formSoftBudget.trim() && { soft_budget: parseFloat(formSoftBudget) }),
               ...(formTPM && { tpm_limit: parseInt(formTPM) }),
               ...(formRPM && { rpm_limit: parseInt(formRPM) }),
             })} disabled={createMutation.isPending || !formEmail.trim() || !formPassword.trim()}>
@@ -525,6 +553,26 @@ export function UsersPage() {
                 <Input id="ue-rpm" type="number" value={formRPM} onChange={(e) => setFormRPM(e.target.value)} />
               </div>
             </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="ue-budget-duration">Reset Cycle</Label>
+                <select
+                  id="ue-budget-duration"
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                  value={formBudgetDuration}
+                  onChange={(e) => setFormBudgetDuration(e.target.value)}
+                >
+                  <option value="">None (no reset)</option>
+                  <option value="24h">Daily (24h)</option>
+                  <option value="7d">Weekly (7d)</option>
+                  <option value="30d">Monthly (30d)</option>
+                </select>
+              </div>
+              <div>
+                <Label htmlFor="ue-soft-budget">Soft Budget Alert ($)</Label>
+                <Input id="ue-soft-budget" type="number" step="0.0001" value={formSoftBudget} onChange={(e) => setFormSoftBudget(e.target.value)} placeholder="0.00 — warn but don't block" />
+              </div>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditOpen(false)}>{t("common.cancel")}</Button>
@@ -534,6 +582,8 @@ export function UsersPage() {
               ...(formEmail && { user_email: formEmail }),
               ...(formRole && { user_role: formRole }),
               ...(formBudget && { max_budget: parseFloat(formBudget) }),
+              ...(formBudgetDuration.trim() && { budget_duration: formBudgetDuration.trim() }),
+              ...(formSoftBudget.trim() && { soft_budget: parseFloat(formSoftBudget) }),
               ...(formTPM && { tpm_limit: parseInt(formTPM) }),
               ...(formRPM && { rpm_limit: parseInt(formRPM) }),
             })} disabled={editMutation.isPending}>
