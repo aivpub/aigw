@@ -134,7 +134,7 @@ function truncateEndUser(s: string): string {
   return s.length > 30 ? s.slice(0, 30) + "…" : s;
 }
 
-function exportToCSV(logs: SpendLog[], startDate: string, endDate: string, csvHeaders: string[]) {
+function exportToCSV(logs: SpendLog[], startDate: string, endDate: string) {
   const headers = ["Call ID","Request ID","Time","Type","Model","Status","Prompt Tokens","Completion Tokens","Total Tokens","TTFT (ms)","Duration (ms)","Cost","User","End User","API Key"];
   const rows = logs.map(l => [l.call_id,l.request_id ?? "",l.start_time,l.call_type,l.model,l.status??"",l.prompt_tokens,l.completion_tokens,l.total_tokens,l.ttft_ms??"",l.request_duration_ms??"",l.spend,l.user??"",l.end_user??"",l.api_key.slice(0,12)+"…"]);
   const csv = [headers,...rows].map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
