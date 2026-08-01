@@ -1553,7 +1553,23 @@ pub async fn chat_completions(
                     failed_requests: 0,
                     kind: DailySpendKind::User,
                 };
-                queue.queue(ds_log);
+                queue.queue(ds_log.clone());
+
+                // Queue additional daily_spend dimensions for streaming path
+                let team_tid = team_id.clone();
+                let team_oid = organization_id.clone();
+                if let Some(ref tid) = team_tid {
+                    let mut ds_team = ds_log.clone();
+                    ds_team.entity_id = tid.clone();
+                    ds_team.kind = DailySpendKind::Team;
+                    queue.queue(ds_team);
+                }
+                if let Some(ref oid) = team_oid {
+                    let mut ds_org = ds_log.clone();
+                    ds_org.entity_id = oid.clone();
+                    ds_org.kind = DailySpendKind::Organization;
+                    queue.queue(ds_org);
+                }
             }
         });
 
