@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
 import { format } from "date-fns";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -101,6 +102,7 @@ function extractCost(info: Record<string, unknown>): { input: number | null; out
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 export function ModelsPage() {
+  const { t } = useTranslation();
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = searchParams.get("tab") || "model-groups";
   const queryClient = useQueryClient();
@@ -213,9 +215,9 @@ export function ModelsPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Models</h1>
+          <h1 className="text-2xl font-bold tracking-tight">{t('models.title')}</h1>
           <p className="text-sm text-muted-foreground">
-            Proxy model configurations, credentials, and system health
+            {t('models.description')}
           </p>
         </div>
         <Tabs
@@ -224,9 +226,9 @@ export function ModelsPage() {
           onValueChange={(v) => setSearchParams({ tab: v }, { replace: true })}
         >
           <TabsList>
-            <TabsTrigger value="model-groups">Model Groups</TabsTrigger>
-            <TabsTrigger value="credentials">Credentials</TabsTrigger>
-            <TabsTrigger value="health">Health</TabsTrigger>
+            <TabsTrigger value="model-groups">{t('models.tabModelGroups')}</TabsTrigger>
+            <TabsTrigger value="credentials">{t('models.tabCredentials')}</TabsTrigger>
+            <TabsTrigger value="health">{t('models.tabHealth')}</TabsTrigger>
           </TabsList>
         </Tabs>
       </div>
@@ -259,7 +261,7 @@ export function ModelsPage() {
           <div className="relative flex-1 max-w-sm">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
-              placeholder="Search by name, provider..."
+              placeholder={t('models.searchPlaceholder')}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="pl-9"
@@ -268,27 +270,27 @@ export function ModelsPage() {
         )}
         {viewMode === "active" && (
           <Button size="sm" onClick={handleAdd}>
-            <Plus className="h-4 w-4" /> Add Model
+            <Plus className="h-4 w-4" /> {t('models.newModel')}
           </Button>
         )}
         <div className="flex-1" />
         <div className="flex items-center rounded-md border p-0.5">
           <button type="button" onClick={() => setViewMode("active")}
-            className={`px-3 py-1 text-sm rounded-sm font-medium transition-colors ${viewMode === "active" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>Active</button>
+            className={`px-3 py-1 text-sm rounded-sm font-medium transition-colors ${viewMode === "active" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>{t('keys.viewMode.active')}</button>
           <button type="button" onClick={() => setViewMode("deleted")}
-            className={`px-3 py-1 text-sm rounded-sm font-medium transition-colors ${viewMode === "deleted" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>Deleted</button>
+            className={`px-3 py-1 text-sm rounded-sm font-medium transition-colors ${viewMode === "deleted" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>{t('keys.viewMode.deleted')}</button>
         </div>
       </div>
 
       {/* Deleted view */}
       {viewMode === "deleted" && (
         <Card>
-          <CardHeader className="pb-2"><CardTitle>Deleted Models ({deletedTotalCount})</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><CardTitle>{t('models.deletedModels')} ({deletedTotalCount})</CardTitle></CardHeader>
           <CardContent>
             {deletedLoading ? (
               Array.from({ length: 3 }).map((_, i) => <div key={i} className="py-2"><Skeleton className="h-4 w-full" /></div>)
             ) : deletedModels.length === 0 ? (
-              <div className="text-center text-muted-foreground py-8">No deleted records</div>
+              <div className="text-center text-muted-foreground py-8">{t('models.noDeletedRecords')}</div>
             ) : (
               <>
                 <PaginationBar
@@ -302,10 +304,10 @@ export function ModelsPage() {
                 <div className="hidden md:block">
                   <Table>
                     <TableHeader><TableRow>
-                      <TableHead>Model Name</TableHead>
-                      <TableHead>Model ID</TableHead>
-                      <TableHead>Provider</TableHead>
-                      <TableHead className="text-right">Deleted At</TableHead>
+                      <TableHead>{t('models.table.modelName')}</TableHead>
+                      <TableHead>{t('models.table.modelId')}</TableHead>
+                      <TableHead>{t('models.table.provider')}</TableHead>
+                      <TableHead className="text-right">{t('models.table.deletedAt')}</TableHead>
                     </TableRow></TableHeader>
                     <TableBody>
                       {deletedModels.map((m) => {
@@ -332,8 +334,8 @@ export function ModelsPage() {
                     return (
                       <Card key={m.id}><CardContent className="p-4 space-y-2">
                         <div className="font-medium text-sm">{m.model_name}</div>
-                        <div className="text-xs text-muted-foreground">ID: {m.model_id} | Provider: {provider}</div>
-                        <div className="text-xs text-muted-foreground">Deleted: {formatDate(m.deleted_at)}</div>
+                        <div className="text-xs text-muted-foreground">{t('models.detailId')} {m.model_id} | {t('models.mobileProvider')} {provider}</div>
+                        <div className="text-xs text-muted-foreground">{t('models.table.deletedAt')}: {formatDate(m.deleted_at)}</div>
                       </CardContent></Card>
                     );
                   })}
@@ -359,7 +361,7 @@ export function ModelsPage() {
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center gap-2">
             <Box className="h-4 w-4" />
-            All Models ({totalCount})
+            {t('models.allModels')} ({totalCount})
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -377,13 +379,13 @@ export function ModelsPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-8" />
-                  <TableHead>Model Name</TableHead>
-                  <TableHead>Provider</TableHead>
-                  <TableHead>Upstream Model</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Cost (Per 1M)</TableHead>
-                  <TableHead>Created</TableHead>
-                  <TableHead className="w-20">Actions</TableHead>
+                  <TableHead>{t('models.table.modelName')}</TableHead>
+                  <TableHead>{t('models.table.provider')}</TableHead>
+                  <TableHead>{t('models.table.upstreamModel')}</TableHead>
+                  <TableHead>{t('models.table.status')}</TableHead>
+                  <TableHead>{t('models.table.cost')}</TableHead>
+                  <TableHead>{t('models.table.created')}</TableHead>
+                  <TableHead className="w-20">{t('common.actions')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -446,7 +448,7 @@ export function ModelsPage() {
                                   }}
                                 />
                                 <Badge variant={active ? "default" : "secondary"}>
-                                  {active ? "active" : "inactive"}
+                                  {active ? t('keys.active') : t('common.inactive')}
                                 </Badge>
                               </div>
                             </TableCell>
@@ -456,27 +458,27 @@ export function ModelsPage() {
                                   <div>
                                     <span className="text-muted-foreground">$</span>
                                     {cost.input.toFixed(4)}{" "}
-                                    <span className="text-muted-foreground">Input</span>
+                                    <span className="text-muted-foreground">{t('models.costInput')}</span>
                                   </div>
                                   {cost.output !== null && (
                                     <div>
                                       <span className="text-muted-foreground">$</span>
                                       {cost.output.toFixed(4)}{" "}
-                                      <span className="text-muted-foreground">Output</span>
+                                      <span className="text-muted-foreground">{t('models.costOutput')}</span>
                                     </div>
                                   )}
                                   {cost.cacheRead !== null && (
                                     <div>
                                       <span className="text-muted-foreground">$</span>
                                       {cost.cacheRead.toFixed(4)}{" "}
-                                      <span className="text-muted-foreground">Cache Read</span>
+                                      <span className="text-muted-foreground">{t('models.costCacheRead')}</span>
                                     </div>
                                   )}
                                   {cost.cacheCreate !== null && (
                                     <div>
                                       <span className="text-muted-foreground">$</span>
                                       {cost.cacheCreate.toFixed(4)}{" "}
-                                      <span className="text-muted-foreground">Cache Write</span>
+                                      <span className="text-muted-foreground">{t('models.costCacheWrite')}</span>
                                     </div>
                                   )}
                                 </div>
@@ -520,7 +522,7 @@ export function ModelsPage() {
                                     </h4>
                                     <div className="rounded-md border bg-card p-3 font-mono text-xs leading-relaxed overflow-auto max-h-64">
                                       {Object.entries(model.litellm_params).length === 0
-                                        ? "(empty)"
+                                        ? t('models.empty')
                                         : Object.entries(model.litellm_params).map(
                                             ([key, value]) => (
                                               <div key={key} className="flex gap-2">
@@ -539,7 +541,7 @@ export function ModelsPage() {
                                     </h4>
                                     <div className="rounded-md border bg-card p-3 font-mono text-xs leading-relaxed overflow-auto max-h-64">
                                       {Object.entries(model.model_info).length === 0
-                                        ? "(empty)"
+                                        ? t('models.empty')
                                         : Object.entries(model.model_info).map(
                                             ([key, value]) => (
                                               <div key={key} className="flex gap-2">
@@ -555,14 +557,14 @@ export function ModelsPage() {
                                 </div>
                                 <div className="mt-3 flex gap-4 text-xs text-muted-foreground">
                                   <span>
-                                    ID:{" "}
+                                    {t('models.detailId')}:{" "}
                                     <code className="text-foreground">
                                       {model.model_id}
                                     </code>
                                   </span>
                                   {model.created_by && (
                                     <span>
-                                      Created by:{" "}
+                                      {t('models.detailCreatedBy')}:{" "}
                                       <span className="text-foreground">
                                         {model.created_by}
                                       </span>
@@ -570,7 +572,7 @@ export function ModelsPage() {
                                   )}
                                   {model.updated_by && (
                                     <span>
-                                      Updated by:{" "}
+                                      {t('models.detailUpdatedBy')}:{" "}
                                       <span className="text-foreground">
                                         {model.updated_by}
                                       </span>
@@ -589,7 +591,7 @@ export function ModelsPage() {
                       colSpan={9}
                       className="text-center text-muted-foreground py-8"
                     >
-                      {search ? "No models match your search" : "No models configured"}
+                      {search ? t('models.noMatch') : t('models.noModels')}
                     </TableCell>
                   </TableRow>
                 )}
@@ -634,23 +636,23 @@ export function ModelsPage() {
                             </span>
                           </div>
                           <Badge variant={active ? "default" : "secondary"} className="text-xs shrink-0 ml-2">
-                            {active ? "active" : "inactive"}
+                            {active ? t('keys.active') : t('common.inactive')}
                           </Badge>
                         </div>
                         <div className="flex items-center justify-between text-xs text-muted-foreground">
-                          <span>Provider: {provider}</span>
-                          <span>Upstream: {upstream}</span>
+                          <span>{t('models.mobileProvider')} {provider}</span>
+                          <span>{t('models.mobileUpstream')} {upstream}</span>
                         </div>
                         {cost.input !== null && (
                           <div className="text-xs text-muted-foreground">
-                            Cost: ${cost.input.toFixed(4)} Input
-                            {cost.output !== null && ` / $${cost.output.toFixed(4)} Output`}
+                            {t('models.mobileCost')}: ${cost.input.toFixed(4)} {t('models.costInput')}
+                            {cost.output !== null && ` / $${cost.output.toFixed(4)} ${t('models.costOutput')}`}
                           </div>
                         )}
                         <div className="flex items-center justify-between">
                           <span className="text-xs text-muted-foreground">
                             {model.created_at
-                              ? `Created ${new Date(model.created_at).toLocaleDateString()}`
+                              ? `${t('models.mobileCreated')} ${new Date(model.created_at).toLocaleDateString()}`
                               : "—"}
                           </span>
                           <div className="flex items-center gap-1">
@@ -680,7 +682,7 @@ export function ModelsPage() {
                               </h4>
                               <div className="rounded-md border bg-muted/30 p-2 font-mono text-xs leading-relaxed max-h-40 overflow-auto">
                                 {Object.entries(model.litellm_params).length === 0
-                                  ? "(empty)"
+                                  ? t('models.empty')
                                   : Object.entries(model.litellm_params).map(
                                       ([key, value]) => (
                                         <div key={key} className="flex gap-2">
@@ -697,7 +699,7 @@ export function ModelsPage() {
                               </h4>
                               <div className="rounded-md border bg-muted/30 p-2 font-mono text-xs leading-relaxed max-h-40 overflow-auto">
                                 {Object.entries(model.model_info).length === 0
-                                  ? "(empty)"
+                                  ? t('models.empty')
                                   : Object.entries(model.model_info).map(
                                       ([key, value]) => (
                                         <div key={key} className="flex gap-2">
@@ -709,7 +711,7 @@ export function ModelsPage() {
                               </div>
                             </div>
                             <div className="text-xs text-muted-foreground">
-                              ID: <code className="text-foreground break-all">{model.model_id}</code>
+                              {t('models.detailId')}: <code className="text-foreground break-all">{model.model_id}</code>
                             </div>
                           </div>
                         )}
@@ -719,7 +721,7 @@ export function ModelsPage() {
                 })}
             {!isLoading && filteredModels.length === 0 && (
               <div className="text-center text-muted-foreground py-8">
-                {search ? "No models match your search" : "No models configured"}
+                {search ? t('models.noMatch') : t('models.noModels')}
               </div>
             )}
           </div>

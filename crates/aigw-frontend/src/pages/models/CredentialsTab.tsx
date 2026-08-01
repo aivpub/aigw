@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Trans, useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiPost, apiPut, apiDelete } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -33,6 +34,7 @@ function maskApiKey(raw: string): string {
 }
 
 export function CredentialsTab() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(30);
@@ -92,7 +94,7 @@ export function CredentialsTab() {
     try {
       let valuesJson: Record<string, unknown>;
       if (showAdvanced) {
-        try { valuesJson = JSON.parse(advancedJson); } catch { throw new Error("Advanced JSON is not valid"); }
+        try { valuesJson = JSON.parse(advancedJson); } catch { throw new Error(t("models.credentials.form.advancedJsonInvalid")); }
       } else {
         valuesJson = {
           api_base: apiBase || undefined,
@@ -105,7 +107,7 @@ export function CredentialsTab() {
 
       let infoJson: Record<string, unknown>;
       const infoStr = showAdvanced ? advancedInfo : credInfo;
-      try { infoJson = JSON.parse(infoStr || "{}"); } catch { throw new Error("Credential Info is not valid JSON"); }
+      try { infoJson = JSON.parse(infoStr || "{}"); } catch { throw new Error(t("models.credentials.form.credInfoJsonInvalid")); }
 
       const body = {
         credential_name: credName,
@@ -121,9 +123,9 @@ export function CredentialsTab() {
 
       queryClient.invalidateQueries({ queryKey: ["credentials-list"] });
       setDialogOpen(false);
-      toast.success(editing ? "Credential updated" : "Credential created");
+      toast.success(editing ? t("models.credentials.toast.updated") : t("models.credentials.toast.created"));
     } catch (e) {
-      toast.error("Save failed", { description: (e as Error).message });
+      toast.error(t("models.credentials.toast.saveFailed"), { description: (e as Error).message });
     } finally {
       setSaving(false);
     }
@@ -136,9 +138,9 @@ export function CredentialsTab() {
       await apiDelete(`/credential/delete?credential_name=${encodeURIComponent(deleting.credential_name)}`);
       queryClient.invalidateQueries({ queryKey: ["credentials-list"] });
       setDeleteOpen(false);
-      toast.success("Credential deleted");
+      toast.success(t("models.credentials.toast.deleted"));
     } catch (e) {
-      toast.error("Delete failed", { description: (e as Error).message });
+      toast.error(t("models.credentials.toast.deleteFailed"), { description: (e as Error).message });
     } finally {
       setDeleteLoading(false);
     }
@@ -165,13 +167,13 @@ export function CredentialsTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
-          Stored credentials that models can reference via <code className="text-xs bg-muted px-1 rounded">litellm_credential_name</code>.
+          <Trans i18nKey="models.credentials.description" components={{ code: <code className="text-xs bg-muted px-1 rounded" /> }} />
         </p>
-        <Button size="sm" onClick={openNew}><Plus className="mr-1 h-4 w-4" /> New</Button>
+        <Button size="sm" onClick={openNew}><Plus className="mr-1 h-4 w-4" /> {t("models.credentials.new")}</Button>
       </div>
 
       <Card>
-        <CardHeader className="pb-2"><CardTitle>All Credentials ({totalCount})</CardTitle></CardHeader>
+        <CardHeader className="pb-2"><CardTitle>{t("models.credentials.allCredentials")} ({totalCount})</CardTitle></CardHeader>
         <CardContent>
       <PaginationBar
         page={page}
@@ -184,16 +186,16 @@ export function CredentialsTab() {
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>Name</TableHead>
-            <TableHead>Provider</TableHead>
-            <TableHead>API Base</TableHead>
-            <TableHead>API Key</TableHead>
-            <TableHead className="w-20">Actions</TableHead>
+            <TableHead>{t("models.credentials.name")}</TableHead>
+            <TableHead>{t("models.credentials.provider")}</TableHead>
+            <TableHead>{t("models.credentials.apiBase")}</TableHead>
+            <TableHead>{t("models.credentials.apiKey")}</TableHead>
+            <TableHead className="w-20">{t("models.credentials.actions")}</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {credentials.length === 0 ? (
-            <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">No credentials found</TableCell></TableRow>
+            <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-8">{t("models.credentials.empty")}</TableCell></TableRow>
           ) : credentials.map((c) => (
             <TableRow key={c.credential_id}>
               <TableCell className="font-medium">{c.credential_name}</TableCell>
@@ -229,36 +231,36 @@ export function CredentialsTab() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>{editing ? "Edit Credential" : "New Credential"}</DialogTitle>
+            <DialogTitle>{editing ? t("models.credentials.editCredential") : t("models.credentials.newCredential")}</DialogTitle>
             <DialogDescription>
-              API keys are encrypted at rest using AIGW_MASTER_KEY. Toggle advanced mode to edit raw JSON.
+              {t("models.credentials.encryptDesc")}
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 max-h-[60vh] overflow-y-auto">
             <div className="space-y-2">
-              <Label htmlFor="cred-name">Credential Name *</Label>
+              <Label htmlFor="cred-name">{t("models.credentials.form.nameLabel")}</Label>
               <Input id="cred-name" value={credName} disabled={!!editing}
-                onChange={(e) => setCredName(e.target.value)} placeholder="e.g. openai-prod" />
+                onChange={(e) => setCredName(e.target.value)} placeholder={t("models.credentials.form.namePlaceholder")} />
             </div>
 
             {/* Toggle */}
             <div className="flex items-center gap-2">
               <Switch checked={showAdvanced} onCheckedChange={setShowAdvanced} />
               <Label className="text-xs cursor-pointer flex items-center gap-1" onClick={() => setShowAdvanced(!showAdvanced)}>
-                <Code className="h-3 w-3" /> Advanced (raw JSON)
+                <Code className="h-3 w-3" /> {t("models.credentials.form.advancedToggle")}
               </Label>
             </div>
 
             {showAdvanced ? (
               <>
                 <div className="space-y-2">
-                  <Label htmlFor="cred-values-adv">Credential Values (JSON)</Label>
+                  <Label htmlFor="cred-values-adv">{t("models.credentials.form.valuesJsonLabel")}</Label>
                   <Textarea id="cred-values-adv" rows={6} className="font-mono text-xs"
                     value={advancedJson} onChange={(e) => setAdvancedJson(e.target.value)} />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="cred-info-adv">Credential Info (JSON)</Label>
+                  <Label htmlFor="cred-info-adv">{t("models.credentials.form.infoJsonLabel")}</Label>
                   <Textarea id="cred-info-adv" rows={4} className="font-mono text-xs"
                     value={advancedInfo} onChange={(e) => setAdvancedInfo(e.target.value)} />
                 </div>
@@ -266,32 +268,32 @@ export function CredentialsTab() {
             ) : (
               <>
                 <div className="space-y-2">
-                  <Label htmlFor="cred-provider">Provider</Label>
+                  <Label htmlFor="cred-provider">{t("models.credentials.form.providerLabel")}</Label>
                   <Input id="cred-provider" value={provider}
-                    onChange={(e) => setProvider(e.target.value)} placeholder="e.g. openai, anthropic, deepseek" />
+                    onChange={(e) => setProvider(e.target.value)} placeholder={t("models.credentials.form.providerPlaceholder")} />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="cred-apibase">API Base URL</Label>
+                  <Label htmlFor="cred-apibase">{t("models.credentials.form.apiBaseLabel")}</Label>
                   <Input id="cred-apibase" value={apiBase}
-                    onChange={(e) => setApiBase(e.target.value)} placeholder="https://api.openai.com/v1" />
+                    onChange={(e) => setApiBase(e.target.value)} placeholder={t("models.credentials.form.apiBasePlaceholder")} />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="cred-apikey">API Key</Label>
+                  <Label htmlFor="cred-apikey">{t("models.credentials.form.apiKeyLabel")}</Label>
                   <Input id="cred-apikey" value={apiKey} type="password"
-                    onChange={(e) => setApiKey(e.target.value)} placeholder="sk-..." />
+                    onChange={(e) => setApiKey(e.target.value)} placeholder={t("models.credentials.form.apiKeyPlaceholder")} />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="cred-info-vis">Credential Info (JSON, optional)</Label>
+                  <Label htmlFor="cred-info-vis">{t("models.credentials.form.credInfoLabel")}</Label>
                   <Textarea id="cred-info-vis" rows={3} className="font-mono text-xs"
-                    value={credInfo} onChange={(e) => setCredInfo(e.target.value)} placeholder='{"description":"..."}' />
+                    value={credInfo} onChange={(e) => setCredInfo(e.target.value)} placeholder={t("models.credentials.form.credInfoPlaceholder")} />
                 </div>
               </>
             )}
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleSave} disabled={saving || !credName}>{saving ? "Saving…" : "Save"}</Button>
+            <Button variant="outline" onClick={() => setDialogOpen(false)}>{t("common.cancel")}</Button>
+            <Button onClick={handleSave} disabled={saving || !credName}>{saving ? t("common.saving") : t("common.save")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -300,15 +302,15 @@ export function CredentialsTab() {
       <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete Credential</DialogTitle>
+            <DialogTitle>{t("models.credentials.deleteDialog.title")}</DialogTitle>
             <DialogDescription>
-              This will permanently remove <strong>{deleting?.credential_name}</strong>. Models referencing it will lose their API authentication.
+              {t("models.credentials.deleteDescription", { credentialName: deleting?.credential_name })}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteOpen(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setDeleteOpen(false)}>{t("common.cancel")}</Button>
             <Button variant="destructive" onClick={handleDelete} disabled={deleteLoading}>
-              {deleteLoading ? "Deleting…" : "Delete"}
+              {deleteLoading ? t("common.deleting") : t("common.delete")}
             </Button>
           </DialogFooter>
         </DialogContent>

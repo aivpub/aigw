@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiPost, apiPut, apiDelete } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -94,6 +95,7 @@ function maskToken(token: string): string {
 }
 
 export function KeysPage() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [visibleTokens, setVisibleTokens] = useState<Set<string>>(new Set());
@@ -157,9 +159,8 @@ export function KeysPage() {
     mutationFn: (body: Record<string, unknown>) =>
       apiPost<KeyItem>("/key/generate", body),
     onSuccess: (resp) => {
-      // Set token FIRST so the dialog shows it; keep dialog open
       setGeneratedToken(resp.key ?? null);
-      toast.success("Key created. Please save your API key.");
+      toast.success(t('keys.toast.created'));
     },
     onError: (err: Error) => toast.error(err.message),
   });
@@ -170,7 +171,7 @@ export function KeysPage() {
       queryClient.invalidateQueries({ queryKey: ["virtual-keys"] });
       setEditOpen(false);
       setSelectedKey(null);
-      toast.success("Key updated");
+      toast.success(t('keys.toast.updated'));
     },
     onError: (err: Error) => toast.error(err.message),
   });
@@ -182,7 +183,7 @@ export function KeysPage() {
       queryClient.invalidateQueries({ queryKey: ["virtual-keys"] });
       setDeleteOpen(false);
       setSelectedKey(null);
-      toast.success("Key deleted");
+      toast.success(t('keys.toast.deleted'));
     },
     onError: (err: Error) => toast.error(err.message),
   });
@@ -203,7 +204,7 @@ export function KeysPage() {
         typeof navigator.clipboard?.writeText === "function"
       ) {
         navigator.clipboard.writeText(text).then(
-          () => toast.success("Copied to clipboard"),
+          () => toast.success(t('keys.toast.copied')),
           () => fallbackCopyToClipboard(text),
         );
       } else {
@@ -213,18 +214,18 @@ export function KeysPage() {
       fallbackCopyToClipboard(text);
     }
 
-    function fallbackCopyToClipboard(t: string) {
+    function fallbackCopyToClipboard(textToCopy: string) {
       const textarea = document.createElement("textarea");
-      textarea.value = t;
+      textarea.value = textToCopy;
       textarea.style.position = "fixed";
       textarea.style.opacity = "0";
       document.body.appendChild(textarea);
       textarea.select();
       try {
         document.execCommand("copy");
-        toast.success("Copied to clipboard");
+        toast.success(t('keys.toast.copied'));
       } catch {
-        toast.error("Copy failed — clipboard unavailable");
+        toast.error(t('keys.toast.copyFailed'));
       }
       document.body.removeChild(textarea);
     }
@@ -307,15 +308,15 @@ export function KeysPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">API Keys</h1>
+          <h1 className="text-2xl font-bold tracking-tight">{t('keys.title')}</h1>
           <p className="text-sm text-muted-foreground">
-            Manage virtual keys for LLM access
+            {t('keys.description')}
           </p>
         </div>
         {viewMode === "active" && (
           <Button onClick={openCreate}>
             <Plus className="h-4 w-4" />
-            New Key
+            {t('keys.newKey')}
           </Button>
         )}
       </div>
@@ -325,7 +326,7 @@ export function KeysPage() {
           <div className="relative flex-1 max-w-sm">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
-              placeholder="Search by alias, name, user, or email..."
+              placeholder={t('keys.searchPlaceholder')}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="pl-9"
@@ -341,7 +342,7 @@ export function KeysPage() {
               viewMode === "active" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
             }`}
           >
-            Active
+            {t('keys.viewMode.active')}
           </button>
           <button
             type="button"
@@ -350,7 +351,7 @@ export function KeysPage() {
               viewMode === "deleted" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
             }`}
           >
-            Deleted
+            {t('keys.viewMode.deleted')}
           </button>
         </div>
       </div>
@@ -359,7 +360,7 @@ export function KeysPage() {
       {viewMode === "deleted" && (
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle>Deleted Keys ({deletedTotalCount})</CardTitle>
+            <CardTitle>{t('keys.deletedKeys', { count: deletedTotalCount })}</CardTitle>
           </CardHeader>
           <CardContent>
             {deletedLoading ? (
@@ -367,7 +368,7 @@ export function KeysPage() {
                 <div key={i} className="py-2"><Skeleton className="h-4 w-full" /></div>
               ))
             ) : deletedKeys.length === 0 ? (
-              <div className="text-center text-muted-foreground py-8">No deleted records</div>
+              <div className="text-center text-muted-foreground py-8">{t('keys.noDeletedRecords')}</div>
             ) : (
               <>
                 <PaginationBar
@@ -382,12 +383,12 @@ export function KeysPage() {
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Alias</TableHead>
-                        <TableHead>Token</TableHead>
-                        <TableHead>User</TableHead>
-                        <TableHead className="text-right">Spend</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead className="text-right">Deleted At</TableHead>
+                        <TableHead>{t('keys.table.alias')}</TableHead>
+                        <TableHead>{t('keys.table.token')}</TableHead>
+                        <TableHead>{t('keys.table.user')}</TableHead>
+                        <TableHead className="text-right">{t('keys.table.spend')}</TableHead>
+                        <TableHead>{t('keys.table.status')}</TableHead>
+                        <TableHead className="text-right">{t('keys.table.deletedAt')}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -397,7 +398,7 @@ export function KeysPage() {
                           <TableCell className="font-mono text-xs">{maskToken(k.token)}</TableCell>
                           <TableCell className="text-sm">{k.user_id ?? "—"}</TableCell>
                           <TableCell className="text-right text-sm">${k.spend.toFixed(4)}</TableCell>
-                          <TableCell>{k.blocked ? <Badge variant="destructive">blocked</Badge> : <Badge variant="secondary">active</Badge>}</TableCell>
+                          <TableCell>{k.blocked ? <Badge variant="destructive">{t('keys.blocked')}</Badge> : <Badge variant="secondary">{t('keys.active')}</Badge>}</TableCell>
                           <TableCell className="text-right text-sm text-muted-foreground">{k.updated_at ? formatDate(k.updated_at) : "—"}</TableCell>
                         </TableRow>
                       ))}
@@ -439,7 +440,7 @@ export function KeysPage() {
         <>
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle>All Keys ({totalCount})</CardTitle>
+              <CardTitle>{t('keys.allKeys', { count: totalCount })}</CardTitle>
             </CardHeader>
             <CardContent>
           {error ? (
@@ -461,17 +462,17 @@ export function KeysPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Alias</TableHead>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Token</TableHead>
-                      <TableHead>User</TableHead>
-                      <TableHead>Models</TableHead>
-                      <TableHead className="text-right">Spend</TableHead>
-                      <TableHead className="text-right">Budget</TableHead>
-                      <TableHead>Expires</TableHead>
-                      <TableHead>Created</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
+                      <TableHead>{t('keys.table.alias')}</TableHead>
+                      <TableHead>{t('keys.table.name')}</TableHead>
+                      <TableHead>{t('keys.table.token')}</TableHead>
+                      <TableHead>{t('keys.table.user')}</TableHead>
+                      <TableHead>{t('keys.table.models')}</TableHead>
+                      <TableHead className="text-right">{t('keys.table.spend')}</TableHead>
+                      <TableHead className="text-right">{t('keys.table.budget')}</TableHead>
+                      <TableHead>{t('keys.table.expires')}</TableHead>
+                      <TableHead>{t('keys.table.created')}</TableHead>
+                      <TableHead>{t('keys.table.status')}</TableHead>
+                      <TableHead className="text-right">{t('keys.table.actions')}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -529,7 +530,7 @@ export function KeysPage() {
                                     </TooltipTrigger>
                                     <TooltipContent side="bottom" className="max-w-xs space-y-1.5 p-2.5 text-xs">
                                       <div className="flex items-center justify-between gap-3">
-                                        <span className="text-muted-foreground whitespace-nowrap">User ID:</span>
+                                        <span className="text-muted-foreground whitespace-nowrap">{t('keys.userTooltip.userId')}</span>
                                         <span className="flex items-center gap-1.5">
                                           <code className="text-[11px]">{key.user_id}</code>
                                           <button
@@ -543,7 +544,7 @@ export function KeysPage() {
                                       </div>
                                       {key.user_alias && (
                                         <div className="flex items-center justify-between gap-3">
-                                          <span className="text-muted-foreground whitespace-nowrap">Alias:</span>
+                                          <span className="text-muted-foreground whitespace-nowrap">{t('keys.userTooltip.alias')}</span>
                                           <span className="flex items-center gap-1.5">
                                             <code className="text-[11px]">{key.user_alias}</code>
                                             <button
@@ -558,7 +559,7 @@ export function KeysPage() {
                                       )}
                                       {key.user_email && key.user_alias && (
                                         <div className="flex items-center justify-between gap-3">
-                                          <span className="text-muted-foreground whitespace-nowrap">Email:</span>
+                                          <span className="text-muted-foreground whitespace-nowrap">{t('keys.userTooltip.email')}</span>
                                           <span className="flex items-center gap-1.5">
                                             <code className="text-[11px]">{key.user_email}</code>
                                             <button
@@ -580,7 +581,7 @@ export function KeysPage() {
                             </TableCell>
                             <TableCell className="text-sm">
                               {!Array.isArray(key.models) || key.models.length === 0
-                                ? "All Models"
+                                ? t('keys.allModels')
                                 : key.models.length > 3
                                   ? key.models.slice(0, 3).join(", ") + " ..."
                                   : key.models.join(", ")}
@@ -613,16 +614,16 @@ export function KeysPage() {
                                         await apiPost("/key/block", { key: key.token });
                                       }
                                       queryClient.invalidateQueries({ queryKey: ["virtual-keys"] });
-                                      toast.success(checked ? "Key unblocked" : "Key blocked");
+                                      toast.success(checked ? t('keys.toast.unblocked') : t('keys.toast.blocked'));
                                     } catch (err) {
                                       toast.error((err as Error).message);
                                     }
                                   }}
                                 />
                                 {key.blocked ? (
-                                  <Badge variant="destructive">blocked</Badge>
+                                  <Badge variant="destructive">{t('keys.blocked')}</Badge>
                                 ) : (
-                                  <Badge variant="default">active</Badge>
+                                  <Badge variant="default">{t('keys.active')}</Badge>
                                 )}
                               </div>
                             </TableCell>
@@ -650,7 +651,7 @@ export function KeysPage() {
                 </Table>
                 {!isLoading && filteredKeys.length === 0 && (
                   <div className="text-center text-muted-foreground py-8">
-                    {search ? "No keys match your search" : "No keys yet"}
+                    {search ? t('keys.noMatch') : t('keys.noKeys')}
                   </div>
                 )}
               </div>
@@ -675,9 +676,9 @@ export function KeysPage() {
                               {key.key_alias ?? key.key_name ?? "—"}
                             </span>
                             {key.blocked ? (
-                              <Badge variant="destructive" className="text-xs">blocked</Badge>
+                              <Badge variant="destructive" className="text-xs">{t('keys.blocked')}</Badge>
                             ) : (
-                              <Badge variant="default" className="text-xs">active</Badge>
+                              <Badge variant="default" className="text-xs">{t('keys.active')}</Badge>
                             )}
                           </div>
                           {key.key_name && key.key_alias && (
@@ -721,13 +722,13 @@ export function KeysPage() {
                             </span>
                           </div>
                           <div className="text-xs text-muted-foreground">
-                            Expires:{" "}
+                            {t('keys.mobile.expires')}{" "}
                             {key.expires
                               ? new Date(key.expires).toLocaleDateString()
                               : "∞"}
                           </div>
                           <div className="text-xs text-muted-foreground whitespace-nowrap">
-                            Created: {key.created_at ? formatDate(key.created_at) : "—"}
+                            {t('keys.mobile.created')}{" "}{key.created_at ? formatDate(key.created_at) : "—"}
                           </div>
                           <div className="flex justify-end gap-1 pt-1">
                             <Button
@@ -736,7 +737,7 @@ export function KeysPage() {
                               onClick={() => openEdit(key)}
                             >
                               <Pencil className="h-3.5 w-3.5 mr-1" />
-                              Edit
+                              {t('common.edit')}
                             </Button>
                             <Button
                               variant="ghost"
@@ -744,7 +745,7 @@ export function KeysPage() {
                               onClick={() => openDelete(key)}
                             >
                               <Trash2 className="h-3.5 w-3.5 mr-1 text-destructive" />
-                              Delete
+                              {t('common.delete')}
                             </Button>
                           </div>
                         </CardContent>
@@ -752,7 +753,7 @@ export function KeysPage() {
                     ))}
                 {!isLoading && filteredKeys.length === 0 && (
                   <div className="text-center text-muted-foreground py-8">
-                    {search ? "No keys match your search" : "No keys yet"}
+                    {search ? t('keys.noMatch') : t('keys.noKeys')}
                   </div>
                 )}
               </div>
@@ -777,16 +778,16 @@ export function KeysPage() {
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Create API Key</DialogTitle>
+            <DialogTitle>{t('keys.createDialog.title')}</DialogTitle>
             <DialogDescription>
-              Generate a new virtual key for LLM access.
+              {t('keys.createDialog.description')}
             </DialogDescription>
           </DialogHeader>
 
           {generatedToken ? (
             <div className="space-y-4">
               <p className="text-sm font-medium text-green-600">
-                Key created! Copy it now — it won't be shown again.
+                {t('keys.createDialog.created')}
               </p>
               <div className="flex items-center gap-2 rounded-md border bg-muted p-3">
                 <code className="flex-1 break-all text-sm font-mono">
@@ -808,32 +809,32 @@ export function KeysPage() {
                   queryClient.invalidateQueries({ queryKey: ["virtual-keys"] });
                 }}
               >
-                I've saved my key
+                {t('keys.createDialog.savedBtn')}
               </Button>
             </div>
           ) : (
             <>
               <div className="space-y-4">
                 <div>
-                  <Label htmlFor="name">Name</Label>
+                  <Label htmlFor="name">{t('keys.createDialog.nameLabel')}</Label>
                   <Input
                     id="name"
                     value={formName}
                     onChange={(e) => setFormName(e.target.value)}
-                    placeholder="e.g. Production GPT-4 Key"
+                    placeholder={t('keys.createDialog.namePlaceholder')}
                   />
                 </div>
                 <div>
-                  <Label htmlFor="alias">Alias</Label>
+                  <Label htmlFor="alias">{t('keys.createDialog.aliasLabel')}</Label>
                   <Input
                     id="alias"
                     value={formAlias}
                     onChange={(e) => setFormAlias(e.target.value)}
-                    placeholder="my-app-key"
+                    placeholder={t('keys.createDialog.aliasPlaceholder')}
                   />
                 </div>
                 <div>
-                  <Label>Models</Label>
+                  <Label>{t('keys.createDialog.modelsLabel')}</Label>
                   <MultiModelSelect
                     selected={selectedModels}
                     onChange={setSelectedModels}
@@ -841,7 +842,7 @@ export function KeysPage() {
                 </div>
                 <div className="grid grid-cols-3 gap-4">
                   <div>
-                    <Label htmlFor="budget">Max Budget ($)</Label>
+                    <Label htmlFor="budget">{t('keys.createDialog.budgetLabel')}</Label>
                     <Input
                       id="budget"
                       type="number"
@@ -851,7 +852,7 @@ export function KeysPage() {
                     />
                   </div>
                   <div>
-                    <Label htmlFor="tpm">TPM Limit</Label>
+                    <Label htmlFor="tpm">{t('keys.createDialog.tpmLabel')}</Label>
                     <Input
                       id="tpm"
                       type="number"
@@ -861,7 +862,7 @@ export function KeysPage() {
                     />
                   </div>
                   <div>
-                    <Label htmlFor="rpm">RPM Limit</Label>
+                    <Label htmlFor="rpm">{t('keys.createDialog.rpmLabel')}</Label>
                     <Input
                       id="rpm"
                       type="number"
@@ -872,7 +873,7 @@ export function KeysPage() {
                   </div>
                 </div>
                 <div>
-                  <Label htmlFor="expires">Expires</Label>
+                  <Label htmlFor="expires">{t('keys.createDialog.expiresLabel')}</Label>
                   <Input
                     id="expires"
                     type="date"
@@ -886,7 +887,7 @@ export function KeysPage() {
                   variant="outline"
                   onClick={() => setCreateOpen(false)}
                 >
-                  Cancel
+                  {t('common.cancel')}
                 </Button>
                 <Button
                   onClick={handleCreate}
@@ -895,7 +896,7 @@ export function KeysPage() {
                   {createMutation.isPending && (
                     <Spinner className="mr-2" />
                   )}
-                  Generate Key
+                  {t('keys.createDialog.generateBtn')}
                 </Button>
               </DialogFooter>
             </>
@@ -907,23 +908,23 @@ export function KeysPage() {
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Edit Key</DialogTitle>
+            <DialogTitle>{t('keys.editDialog.title')}</DialogTitle>
             <DialogDescription>
-              Update {selectedKey?.key_alias ?? selectedKey?.token.slice(0, 8)}
+              {t('keys.editDialog.description', { name: selectedKey?.key_alias ?? selectedKey?.token.slice(0, 8) })}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <Label htmlFor="edit-name">Name</Label>
+              <Label htmlFor="edit-name">{t('keys.createDialog.nameLabel')}</Label>
               <Input
                 id="edit-name"
                 value={formName}
                 onChange={(e) => setFormName(e.target.value)}
-                placeholder="e.g. Production GPT-4 Key"
+                placeholder={t('keys.createDialog.namePlaceholder')}
               />
             </div>
             <div>
-              <Label htmlFor="edit-alias">Alias</Label>
+              <Label htmlFor="edit-alias">{t('keys.createDialog.aliasLabel')}</Label>
               <Input
                 id="edit-alias"
                 value={formAlias}
@@ -931,7 +932,7 @@ export function KeysPage() {
               />
             </div>
             <div>
-              <Label>Models</Label>
+              <Label>{t('keys.createDialog.modelsLabel')}</Label>
               <MultiModelSelect
                 selected={selectedModels}
                 onChange={setSelectedModels}
@@ -939,7 +940,7 @@ export function KeysPage() {
             </div>
             <div className="grid grid-cols-3 gap-4">
               <div>
-                <Label htmlFor="edit-budget">Max Budget ($)</Label>
+                <Label htmlFor="edit-budget">{t('keys.createDialog.budgetLabel')}</Label>
                 <Input
                   id="edit-budget"
                   type="number"
@@ -948,7 +949,7 @@ export function KeysPage() {
                 />
               </div>
               <div>
-                <Label htmlFor="edit-tpm">TPM Limit</Label>
+                <Label htmlFor="edit-tpm">{t('keys.createDialog.tpmLabel')}</Label>
                 <Input
                   id="edit-tpm"
                   type="number"
@@ -957,7 +958,7 @@ export function KeysPage() {
                 />
               </div>
               <div>
-                <Label htmlFor="edit-rpm">RPM Limit</Label>
+                <Label htmlFor="edit-rpm">{t('keys.createDialog.rpmLabel')}</Label>
                 <Input
                   id="edit-rpm"
                   type="number"
@@ -967,7 +968,7 @@ export function KeysPage() {
               </div>
             </div>
             <div>
-              <Label htmlFor="edit-expires">Expires</Label>
+              <Label htmlFor="edit-expires">{t('keys.createDialog.expiresLabel')}</Label>
               <Input
                 id="edit-expires"
                 type="date"
@@ -978,14 +979,14 @@ export function KeysPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditOpen(false)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button
               onClick={handleEdit}
               disabled={editMutation.isPending}
             >
               {editMutation.isPending && <Spinner className="mr-2" />}
-              Save Changes
+              {t('keys.editDialog.saveBtn')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -995,18 +996,14 @@ export function KeysPage() {
       <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete Key</DialogTitle>
+            <DialogTitle>{t('keys.deleteDialog.title')}</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete{" "}
-              <strong>
-                {selectedKey?.key_alias ?? selectedKey?.token.slice(0, 8)}
-              </strong>
-              ? This key will be archived and viewable in the Deleted tab.
+              {t('keys.deleteDialog.description', { name: selectedKey?.key_alias ?? selectedKey?.token.slice(0, 8) })}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteOpen(false)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button
               variant="destructive"
@@ -1016,7 +1013,7 @@ export function KeysPage() {
               disabled={deleteMutation.isPending}
             >
               {deleteMutation.isPending && <Spinner className="mr-2" />}
-              Delete
+              {t('common.delete')}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -53,15 +53,15 @@ export function Header({ onMenuClick, collapsed, onToggleCollapse }: HeaderProps
         <DropdownMenuTrigger asChild>
           <Button variant="ghost" size="sm" aria-label={t('header.switchLanguage')}>
             <Languages className="h-4 w-4" />
-            <span className="ml-1.5 hidden sm:inline">{currentLang === 'zh-CN' ? '中文' : 'EN'}</span>
+            <span className="ml-1.5 hidden sm:inline">{currentLang === 'zh-CN' ? '中文' : 'English'}</span>
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
           <DropdownMenuItem onClick={() => switchLanguage('zh-CN')}>
-            <span className="mr-2">🇨🇳</span> 中文 {currentLang === 'zh-CN' && '✓'}
+            中文 {currentLang === 'zh-CN' && '✓'}
           </DropdownMenuItem>
           <DropdownMenuItem onClick={() => switchLanguage('en')}>
-            <span className="mr-2">🇺🇸</span> English {currentLang === 'en' && '✓'}
+            English {currentLang === 'en' && '✓'}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

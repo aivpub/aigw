@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiPost } from "@/lib/api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -47,6 +48,7 @@ function fmtRelative(iso: string | undefined): string {
 }
 
 export function HealthTab() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [checking, setChecking] = useState(false);
 
@@ -98,21 +100,21 @@ export function HealthTab() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <Activity className="h-5 w-5" /> Model Health
+            <Activity className="h-5 w-5" /> {t('models.health.title')}
           </CardTitle>
           <CardDescription>
-            Ping each model's upstream endpoint to verify connectivity.
+            {t('models.health.description')}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center gap-3">
             <Button onClick={runCheckAll} disabled={isRunning}>
               {isRunning ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
-              {isRunning ? "Checking…" : "Check All Models"}
+              {isRunning ? t('models.health.checking') : t('models.health.checkAll')}
             </Button>
             {latestCheck && !isRunning && (
               <span className="text-xs text-muted-foreground">
-                Last run: {fmtRelative(latestCheck)}
+                {t('models.health.lastRun')} {fmtRelative(latestCheck)}
               </span>
             )}
           </div>
@@ -128,8 +130,8 @@ export function HealthTab() {
           ) : checks.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-sm text-muted-foreground gap-2">
               <Activity className="h-8 w-8" />
-              <p>No health checks run yet.</p>
-              <p>Click "Check All Models" to run diagnostics.</p>
+              <p>{t('models.health.noRuns')}</p>
+              <p>{t('models.health.noRunsHint')}</p>
             </div>
           ) : (
             <>
@@ -137,12 +139,12 @@ export function HealthTab() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="w-8">Status</TableHead>
-                      <TableHead>Model</TableHead>
-                      <TableHead>Latency</TableHead>
-                      <TableHead>Last Success</TableHead>
-                      <TableHead>Error</TableHead>
-                      <TableHead className="w-20">Action</TableHead>
+                      <TableHead className="w-8">{t('models.health.status')}</TableHead>
+                      <TableHead>{t('models.health.model')}</TableHead>
+                      <TableHead>{t('models.health.latency')}</TableHead>
+                      <TableHead>{t('models.health.lastSuccess')}</TableHead>
+                      <TableHead>{t('models.health.error')}</TableHead>
+                      <TableHead className="w-20">{t('models.health.action')}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -166,9 +168,9 @@ export function HealthTab() {
                         </TableCell>
                         <TableCell className="max-w-[220px] truncate text-xs">
                           {c.status === "healthy" ? (
-                            <span className="text-green-600">no errors</span>
+                            <span className="text-green-600">{t('models.health.noErrors')}</span>
                           ) : c.status === "checking" ? (
-                            <span className="text-blue-500 italic">checking…</span>
+                            <span className="text-blue-500 italic">{t('models.health.checkingStatus')}</span>
                           ) : c.error_message && c.error_message.length > 40 ? (
                             <Tooltip>
                               <TooltipTrigger asChild>
@@ -181,13 +183,13 @@ export function HealthTab() {
                               </TooltipContent>
                             </Tooltip>
                           ) : (
-                            <span className="text-destructive">{c.error_message || "unknown error"}</span>
+                            <span className="text-destructive">{c.error_message || t('models.health.unknownError')}</span>
                           )}
                         </TableCell>
                         <TableCell>
                           <Button variant="ghost" size="sm" className="h-7 text-xs" disabled={c.status === "checking"}
                             onClick={() => c.model_id && checkOne(c.model_id)}>
-                            <RefreshCw className="h-3 w-3 mr-1" />Check
+                            <RefreshCw className="h-3 w-3 mr-1" />{t('models.health.checkBtn')}
                           </Button>
                         </TableCell>
                       </TableRow>
@@ -214,12 +216,12 @@ export function HealthTab() {
                           <div className="font-mono text-sm truncate">{c.model_name}</div>
                           <div className="text-xs text-muted-foreground flex gap-3">
                             <span>{fmtLatency(c.response_time_ms)}</span>
-                            {lastOk && <span>Last OK: {fmtRelative(lastOk)}</span>}
+                            {lastOk && <span>{t('models.health.lastOk')} {fmtRelative(lastOk)}</span>}
                           </div>
                         </div>
                       </div>
                       {c.status === "checking" ? (
-                        <div className="text-xs text-blue-500 italic">checking…</div>
+                        <div className="text-xs text-blue-500 italic">{t('models.health.checkingStatus')}</div>
                       ) : c.error_message && (
                         <div className="text-xs text-destructive bg-destructive/5 rounded px-2 py-1 break-all">
                           {c.error_message}
@@ -227,7 +229,7 @@ export function HealthTab() {
                       )}
                       <Button variant="outline" size="sm" className="h-7 text-xs w-full" disabled={c.status === "checking"}
                         onClick={() => c.model_id && checkOne(c.model_id)}>
-                        <RefreshCw className="h-3 w-3 mr-1" />Re-check
+                        <RefreshCw className="h-3 w-3 mr-1" />{t('models.health.reCheck')}
                       </Button>
                     </CardContent>
                   </Card>

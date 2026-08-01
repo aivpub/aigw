@@ -46,7 +46,7 @@
     "brand": "aigw",
     "admin": "管理",
     "groups": { "aiGateway": "AI 网关", "observability": "可观测性", "accessControl": "访问控制", "settings": "设置" },
-    "nav": { "keys": "API 密钥", "models": "模型管理", "playground": "调试", "usage": "用量", "spendLogs": "消费日志", "users": "用户管理", "teams": "团队管理", "organizations": "组织管理", "routerSettings": "路由设置", "jobs": "任务管理" },
+    "nav": { "keys": "API 密钥", "models": "模型管理", "playground": "体验", "usage": "用量", "spendLogs": "消费日志", "users": "用户管理", "teams": "团队管理", "organizations": "组织管理", "routerSettings": "路由设置", "jobs": "任务管理" },
     "expandSidebar": "展开侧边栏",
     "collapseSidebar": "折叠侧边栏"
   },
@@ -63,7 +63,8 @@
   "header": {
     "expandSidebar": "展开侧边栏",
     "collapseSidebar": "折叠侧边栏",
-    "logout": "退出登录"
+    "logout": "退出登录",
+    "switchLanguage": "切换语言"
   },
   "usage": {
     "title": "用量",
@@ -120,18 +121,154 @@
     "title": "模型管理",
     "description": "代理模型配置、凭证与系统健康",
     "searchPlaceholder": "按名称、供应商搜索...",
-    "activeModels": "活跃模型",
+    "tabModelGroups": "模型组",
+    "tabCredentials": "凭证",
+    "tabHealth": "健康",
+    "allModels": "所有模型",
     "deletedModels": "已删除模型",
-    "credentials": "凭证",
-    "health": "健康",
     "newModel": "新建模型",
     "noModels": "暂无模型",
+    "noMatch": "没有匹配的模型",
     "noDeletedRecords": "暂无已删除记录",
-    "table": { "modelName": "模型名称", "modelId": "模型 ID", "provider": "供应商", "upstreamModel": "上游模型", "status": "状态", "cost": "费用 (每 1M)", "created": "创建", "actions": "操作", "deletedAt": "删除时间" },
-    "dialog": { "title": { "create": "新建模型", "edit": "编辑模型" }, "modelName": { "label": "模型名称", "description": "通过 /v1/models 暴露的代理模型组名称" }, "upstreamModel": { "label": "上游模型", "description": "随模型名称自动填充。可编辑以覆盖" }, "provider": { "label": "供应商", "description": "上游 LLM 供应商" }, "credential": { "label": "凭证", "description": "选择存储的凭证", "new": "新建凭证" }, "apiKey": { "label": "API 密钥", "description": "API 密钥代替凭证" }, "inputPrice": { "label": "输入价格 ($/1M)", "description": "例如 GPT-4 为 30" }, "outputPrice": { "label": "输出价格 ($/1M)", "description": "例如 GPT-4 为 60" }, "cacheReadPrice": { "label": "缓存读取价格 ($/1M)", "description": "提示缓存读取价格；通常为输入的 10%-50%" }, "cacheWritePrice": { "label": "缓存写入价格 ($/1M)", "description": "提示缓存写入价格；通常 ~输入的 125%" }, "rpm": { "label": "RPM", "description": "每分钟请求数" }, "tpm": { "label": "TPM", "description": "每分钟 Token 数" }, "systemMessage": { "label": "系统消息处理", "description": "将多个系统消息转换为上游格式" }, "selectProvider": "选择供应商...", "selectCredential": "选择凭证...", "autoDetect": "自动检测（推荐）" },
-    "deleteDialog": { "title": "删除模型", "description": "确定要删除", "confirm": "？该模型将被归档，可在已删除标签页查看。" },
-    "credentials": { "allCredentials": "所有凭证", "newCredential": "新建凭证", "editCredential": "编辑凭证", "deleteCredential": "删除凭证", "name": "名称", "provider": "供应商", "actions": "操作", "values": "值", "namePlaceholder": "例如 openai-production-key", "providerPlaceholder": "选择供应商...", "addValue": "增加值", "addValueDescription": "值集通过 {key}:{value} 格式添加", "keyPlaceholder": "键名", "valuePlaceholder": "值", "deleteConfirmTitle": "删除确认", "deleteConfirmDescription": "确定要删除", "deleteConfirmSuffix": "？此操作无法撤销。", "toast": { "created": "凭证已创建", "updated": "凭证已更新", "saved": "凭证已创建", "deleted": "凭证已删除", "saveFailed": "保存失败", "deleteFailed": "删除失败" } },
-    "health": { "checkBtn": "检查", "checkingBtn": "检查中...", "status": "状态", "model": "模型", "latency": "延迟", "lastSuccess": "最近成功", "error": "错误", "action": "操作" }
+    "empty": "（空）",
+    "costInput": "输入价格",
+    "costOutput": "输出价格",
+    "costCacheRead": "缓存读取",
+    "costCacheWrite": "缓存写入",
+    "detailId": "ID：",
+    "detailCreatedBy": "创建者：",
+    "detailUpdatedBy": "更新者：",
+    "mobileProvider": "供应商：",
+    "mobileUpstream": "上游：",
+    "mobileCost": "费用：",
+    "mobileCreated": "创建",
+    "table": {
+      "modelName": "模型名称",
+      "modelId": "模型 ID",
+      "provider": "供应商",
+      "upstreamModel": "上游模型",
+      "status": "状态",
+      "cost": "费用 (每 1M)",
+      "created": "创建",
+      "actions": "操作",
+      "deletedAt": "删除时间"
+    },
+    "dialog": {
+      "title": { "create": "新建模型", "edit": "编辑模型" },
+      "createDescription": "创建新的代理模型配置",
+      "editDescription": "更新代理模型配置",
+      "modelNameRequired": "模型名称为必填项",
+      "modelName": {
+        "label": "模型名称",
+        "description": "通过 /v1/models 暴露的代理模型组名称",
+        "placeholder": "my-gpt-4"
+      },
+      "upstreamModel": {
+        "label": "上游模型",
+        "description": "随模型名称自动填充。可编辑以覆盖（例如 openai/gpt-4）"
+      },
+      "provider": { "label": "供应商", "description": "上游 LLM 供应商" },
+      "authentication": "认证方式",
+      "apiKey": { "tab": "API 密钥", "label": "API 密钥", "placeholder": "sk-..." },
+      "apiBase": { "label": "API 基础地址", "placeholder": "https://api.openai.com/v1" },
+      "credential": {
+        "tab": "凭证",
+        "label": "凭证",
+        "description": "选择存储的凭证",
+        "new": "新建凭证",
+        "selectPlaceholder": "选择凭证…"
+      },
+      "pricingSection": "定价 ($/1M tokens)",
+      "inputPrice": { "label": "输入价格 ($/1M)", "description": "例如 GPT-4 为 30" },
+      "outputPrice": { "label": "输出价格 ($/1M)", "description": "例如 GPT-4 为 60" },
+      "cacheReadPrice": { "label": "缓存读取价格 ($/1M)", "description": "提示缓存读取价格；通常为输入的 10%-50%" },
+      "cacheWritePrice": { "label": "缓存写入价格 ($/1M)", "description": "提示缓存写入价格；通常 ~输入的 125%" },
+      "rateLimits": "速率限制",
+      "rpm": { "label": "RPM", "description": "每分钟请求数" },
+      "tpm": { "label": "TPM", "description": "每分钟 Token 数" },
+      "chatTemplateSection": "聊天模板兼容性",
+      "systemMessage": {
+        "label": "系统消息处理",
+        "description": "部分模型（如 Qwen）要求 system 消息只能在第 0 位，否则返回 400。根据模型名称自动检测；如检测错误可手动覆盖。"
+      },
+      "selectProvider": "选择供应商…",
+      "selectCredential": "选择凭证…",
+      "autoDetect": "自动检测",
+      "strictOption": "严格（类 Qwen 模板）",
+      "looseOption": "宽松（透传）",
+      "saveChanges": "保存更改",
+      "advancedSection": "高级：litellm_params（原始 JSON 覆盖）",
+      "advancedHint": "仅使用上表中未覆盖的字段。将与表单字段合并。",
+      "advancedPlaceholder": "{\"key\": \"value\"}"
+    },
+    "deleteDialog": {
+      "title": "删除模型",
+      "description": "删除代理模型 \"{{modelName}}\"？该模型将被归档，可在已删除视图中查看。引用此模型的现有 API 密钥将失去访问权限。"
+    },
+    "credentials": {
+      "new": "新建",
+      "allCredentials": "所有凭证",
+      "empty": "未找到凭证",
+      "newCredential": "新建凭证",
+      "editCredential": "编辑凭证",
+      "deleteCredential": "删除凭证",
+      "name": "名称",
+      "provider": "供应商",
+      "apiBase": "API 基础地址",
+      "apiKey": "API 密钥",
+      "actions": "操作",
+      "encryptDesc": "API 密钥使用 AIGW_MASTER_KEY 加密存储。切换高级模式可编辑原始 JSON。",
+      "deleteDescription": "将永久删除 {{credentialName}}。引用它的模型将失去 API 认证。",
+      "form": {
+        "nameLabel": "凭证名称 *",
+        "namePlaceholder": "例如 openai-prod",
+        "providerLabel": "供应商",
+        "providerPlaceholder": "例如 openai, anthropic, deepseek",
+        "apiBaseLabel": "API 基础地址 URL",
+        "apiBasePlaceholder": "https://api.openai.com/v1",
+        "apiKeyLabel": "API 密钥",
+        "apiKeyPlaceholder": "sk-...",
+        "credInfoLabel": "凭证信息（JSON，可选）",
+        "credInfoPlaceholder": "{\"description\":\"...\"}",
+        "valuesJsonLabel": "凭证值（JSON）",
+        "infoJsonLabel": "凭证信息（JSON）",
+        "advancedToggle": "高级（原始 JSON）",
+        "advancedJsonInvalid": "高级 JSON 格式无效",
+        "credInfoJsonInvalid": "凭证信息 JSON 格式无效"
+      },
+      "toast": {
+        "created": "凭证已创建",
+        "updated": "凭证已更新",
+        "saved": "凭证已创建",
+        "deleted": "凭证已删除",
+        "saveFailed": "保存失败",
+        "deleteFailed": "删除失败"
+      },
+      "deleteDialog": {
+        "title": "删除凭证"
+      }
+    },
+    "health": {
+      "title": "模型健康",
+      "description": "检测每个模型的上游端点连接状态。",
+      "checkBtn": "检测",
+      "checkAll": "检测所有模型",
+      "checking": "检测中…",
+      "reCheck": "重新检测",
+      "lastRun": "上次检测：",
+      "lastOk": "上次正常：",
+      "noRuns": "尚未运行健康检测。",
+      "noRunsHint": "点击「检测所有模型」以运行诊断。",
+      "noErrors": "无错误",
+      "checkingStatus": "检测中…",
+      "unknownError": "未知错误",
+      "status": "状态",
+      "model": "模型",
+      "latency": "延迟",
+      "lastSuccess": "最近成功",
+      "error": "错误",
+      "action": "操作"
+    }
   },
   "users": {
     "title": "用户管理",
@@ -190,7 +327,7 @@
     "search": { "placeholder": "搜索 call_id 或 request_id..." }
   },
   "playground": {
-    "title": "调试",
+    "title": "体验",
     "description": "交互式测试 AI 模型",
     "systemMessage": "System 消息",
     "userMessage": "User 消息",

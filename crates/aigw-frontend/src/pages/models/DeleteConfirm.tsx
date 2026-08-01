@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { useTranslation } from "react-i18next";
 import {
   Dialog,
   DialogContent,
@@ -17,24 +18,23 @@ interface DeleteConfirmProps {
 }
 
 export function DeleteConfirm({ open, onOpenChange, modelName, onConfirm, loading }: DeleteConfirmProps) {
+  const { t } = useTranslation();
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
-          <DialogTitle>Delete Model</DialogTitle>
+          <DialogTitle>{t('models.deleteDialog.title')}</DialogTitle>
           <DialogDescription>
-            Delete proxy model <strong>"{modelName}"</strong>?
-            It will be archived and viewable in the Deleted view.
-            Existing API keys that reference
-            this model will no longer have access.
+            {t('models.deleteDialog.description', { modelName })}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
-            Cancel
+            {t('common.cancel')}
           </Button>
           <Button variant="destructive" onClick={onConfirm} disabled={loading}>
-            {loading ? "Deleting…" : "Delete"}
+            {loading ? t('common.deleting') : t('common.delete')}
           </Button>
         </DialogFooter>
       </DialogContent>

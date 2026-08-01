@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { apiGet, apiPost, apiPut } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -209,6 +210,7 @@ interface ModelDialogProps {
 }
 
 export function ModelDialog({ open, onOpenChange, model, onSaved, onError }: ModelDialogProps) {
+  const { t } = useTranslation();
   const isEdit = model != null;
   const [form, setForm] = useState<ModelFormData>(emptyForm());
   const [upstreamManuallyEdited, setUpstreamManuallyEdited] = useState(false);
@@ -262,7 +264,7 @@ export function ModelDialog({ open, onOpenChange, model, onSaved, onError }: Mod
 
   async function handleSubmit() {
     if (!form.model_name.trim()) {
-      onError("Model name is required");
+      onError(t("models.dialog.modelNameRequired"));
       return;
     }
     setSubmitting(true);
@@ -286,28 +288,28 @@ export function ModelDialog({ open, onOpenChange, model, onSaved, onError }: Mod
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{isEdit ? "Edit Model" : "Add Model"}</DialogTitle>
+          <DialogTitle>{isEdit ? t("models.dialog.title.edit") : t("models.dialog.title.create")}</DialogTitle>
           <DialogDescription>
             {isEdit
-              ? `Update proxy model configuration for "${model!.model_name}"`
-              : "Create a new proxy model configuration"}
+              ? `${t("models.dialog.editDescription")} "${model!.model_name}"`
+              : t("models.dialog.createDescription")}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-2">
           {/* Model Name */}
-          <FormField label="Model Name" required htmlFor="model_name" description="Proxy model group name exposed via /v1/models">
+          <FormField label={t("models.dialog.modelName.label")} required htmlFor="model_name" description={t("models.dialog.modelName.description")}>
             <Input
               id="model_name"
               value={form.model_name}
               onChange={(e) => handleModelNameChange(e.target.value)}
-              placeholder="my-gpt-4"
+              placeholder={t("models.dialog.modelName.placeholder")}
               disabled={isEdit}
             />
           </FormField>
 
           {/* Upstream Model */}
-          <FormField label="Upstream Model" required htmlFor="upstream_model" description="Auto-fills from Model Name. Edit to override (e.g. openai/gpt-4)">
+          <FormField label={t("models.dialog.upstreamModel.label")} required htmlFor="upstream_model" description={t("models.dialog.upstreamModel.description")}>
             <Input
               id="upstream_model"
               value={form.upstream_model}
@@ -316,16 +318,16 @@ export function ModelDialog({ open, onOpenChange, model, onSaved, onError }: Mod
           </FormField>
 
           {/* Provider */}
-          <FormField label="Provider" description="Upstream LLM provider">
+          <FormField label={t("models.dialog.provider.label")} description={t("models.dialog.provider.description")}>
             <Select
               value={form.custom_llm_provider || "none"}
               onValueChange={(v) => update("custom_llm_provider", v === "none" ? "" : v)}
             >
               <SelectTrigger className="h-9">
-                <SelectValue placeholder="Select provider…" />
+                <SelectValue placeholder={t("models.dialog.selectProvider")} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="none">Auto-detect</SelectItem>
+                <SelectItem value="none">{t("models.dialog.autoDetect")}</SelectItem>
                 {PROVIDERS.map((p) => (
                   <SelectItem key={p.value} value={p.value}>
                     {p.label}
@@ -337,7 +339,7 @@ export function ModelDialog({ open, onOpenChange, model, onSaved, onError }: Mod
 
           {/* Authentication Mode */}
           <div className="space-y-1">
-            <Label className="text-xs font-medium">Authentication</Label>
+            <Label className="text-xs font-medium">{t("models.dialog.authentication")}</Label>
             <Tabs
               defaultValue={form.auth_mode}
               value={form.auth_mode}
@@ -345,10 +347,10 @@ export function ModelDialog({ open, onOpenChange, model, onSaved, onError }: Mod
             >
               <TabsList className="h-7">
                 <TabsTrigger value="api_key" className="text-xs h-6">
-                  API Key
+                  {t("models.dialog.apiKey.tab")}
                 </TabsTrigger>
                 <TabsTrigger value="credential" className="text-xs h-6">
-                  Credential
+                  {t("models.dialog.credential.tab")}
                 </TabsTrigger>
               </TabsList>
             </Tabs>
@@ -357,19 +359,19 @@ export function ModelDialog({ open, onOpenChange, model, onSaved, onError }: Mod
           {/* API Key fields */}
           {form.auth_mode === "api_key" && (
             <div className="space-y-3 pl-1 border-l-2 border-muted">
-              <FormField label="API Base">
+              <FormField label={t("models.dialog.apiBase.label")}>
                 <Input
                   value={form.api_base}
                   onChange={(e) => update("api_base", e.target.value)}
-                  placeholder="https://api.openai.com/v1"
+                  placeholder={t("models.dialog.apiBase.placeholder")}
                 />
               </FormField>
-              <FormField label="API Key">
+              <FormField label={t("models.dialog.apiKey.label")}>
                 <Input
                   type="password"
                   value={form.api_key}
                   onChange={(e) => update("api_key", e.target.value)}
-                  placeholder="sk-..."
+                  placeholder={t("models.dialog.apiKey.placeholder")}
                 />
               </FormField>
             </div>
@@ -378,7 +380,7 @@ export function ModelDialog({ open, onOpenChange, model, onSaved, onError }: Mod
           {/* Credential fields */}
           {form.auth_mode === "credential" && (
             <div className="pl-1 border-l-2 border-muted">
-              <FormField label="Credential" description="Select a stored credential">
+              <FormField label={t("models.dialog.credential.label")} description={t("models.dialog.credential.description")}>
                 <div className="flex items-end gap-2">
                   <div className="flex-1">
                     <Select
@@ -386,10 +388,10 @@ export function ModelDialog({ open, onOpenChange, model, onSaved, onError }: Mod
                       onValueChange={(v) => update("credential_name", v === "none" ? "" : v)}
                     >
                       <SelectTrigger className="h-9">
-                        <SelectValue placeholder="Select credential…" />
+                        <SelectValue placeholder={t("models.dialog.selectCredential")} />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="none">None</SelectItem>
+                        <SelectItem value="none">{t("common.none")}</SelectItem>
                         {credentials.map((c) => (
                           <SelectItem key={c.credential_name} value={c.credential_name}>
                             {c.credential_name}
@@ -402,7 +404,7 @@ export function ModelDialog({ open, onOpenChange, model, onSaved, onError }: Mod
                     variant="outline"
                     size="icon"
                     className="h-9 w-9 shrink-0"
-                    title="New credential"
+                    title={t("models.dialog.credential.new")}
                     onClick={() => window.open("/#/credentials", "_blank")}
                   >
                     <Plus className="h-4 w-4" />
@@ -415,10 +417,10 @@ export function ModelDialog({ open, onOpenChange, model, onSaved, onError }: Mod
           {/* Pricing */}
           <div className="space-y-3 pt-1 border-t">
             <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              Pricing ($/1M tokens)
+              {t("models.dialog.pricingSection")}
             </Label>
             <div className="grid grid-cols-2 gap-3">
-              <FormField label="Input Price ($/1M)" description="e.g. 30 for GPT-4">
+              <FormField label={t("models.dialog.inputPrice.label")} description={t("models.dialog.inputPrice.description")}>
                 <Input
                   type="number"
                   step="0.0001"
@@ -428,7 +430,7 @@ export function ModelDialog({ open, onOpenChange, model, onSaved, onError }: Mod
                   placeholder="30.00"
                 />
               </FormField>
-              <FormField label="Output Price ($/1M)" description="e.g. 60 for GPT-4">
+              <FormField label={t("models.dialog.outputPrice.label")} description={t("models.dialog.outputPrice.description")}>
                 <Input
                   type="number"
                   step="0.0001"
@@ -438,7 +440,7 @@ export function ModelDialog({ open, onOpenChange, model, onSaved, onError }: Mod
                   placeholder="60.00"
                 />
               </FormField>
-              <FormField label="Cache Read Price ($/1M)" description="Prompt caching read price; typically 10%-50% of Input">
+              <FormField label={t("models.dialog.cacheReadPrice.label")} description={t("models.dialog.cacheReadPrice.description")}>
                 <Input
                   type="number"
                   step="0.0001"
@@ -448,7 +450,7 @@ export function ModelDialog({ open, onOpenChange, model, onSaved, onError }: Mod
                   placeholder="3.00"
                 />
               </FormField>
-              <FormField label="Cache Write Price ($/1M)" description="Prompt caching write price; typically ~125% of Input">
+              <FormField label={t("models.dialog.cacheWritePrice.label")} description={t("models.dialog.cacheWritePrice.description")}>
                 <Input
                   type="number"
                   step="0.0001"
@@ -464,27 +466,27 @@ export function ModelDialog({ open, onOpenChange, model, onSaved, onError }: Mod
           {/* Rate Limits */}
           <div className="space-y-3 pt-1 border-t">
             <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              Rate Limits
+              {t("models.dialog.rateLimits")}
             </Label>
             <div className="grid grid-cols-2 gap-3">
-              <FormField label="RPM" description="Requests per minute">
+              <FormField label={t("models.dialog.rpm.label")} description={t("models.dialog.rpm.description")}>
                 <Input
                   type="number"
                   step="1"
                   min="0"
                   value={form.rpm}
                   onChange={(e) => update("rpm", e.target.value)}
-                  placeholder="Unlimited"
+                  placeholder={t("common.unlimited")}
                 />
               </FormField>
-              <FormField label="TPM" description="Tokens per minute">
+              <FormField label={t("models.dialog.tpm.label")} description={t("models.dialog.tpm.description")}>
                 <Input
                   type="number"
                   step="1"
                   min="0"
                   value={form.tpm}
                   onChange={(e) => update("tpm", e.target.value)}
-                  placeholder="Unlimited"
+                  placeholder={t("common.unlimited")}
                 />
               </FormField>
             </div>
@@ -493,23 +495,23 @@ export function ModelDialog({ open, onOpenChange, model, onSaved, onError }: Mod
           {/* Chat Template Compatibility */}
           <div className="space-y-3 pt-1 border-t">
             <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-              Chat Template Compatibility
+              {t("models.dialog.chatTemplateSection")}
             </Label>
             <FormField
-              label="System Message Handling"
-              description="Some models (e.g. Qwen) require system messages only at position 0, otherwise 400. Auto-detect by model name; override if misdetected."
+              label={t("models.dialog.systemMessage.label")}
+              description={t("models.dialog.systemMessage.description")}
             >
               <Select
                 value={form.chat_template_compat || "auto"}
                 onValueChange={(v) => update("chat_template_compat", v === "auto" ? "" : v)}
               >
                 <SelectTrigger className="h-9">
-                  <SelectValue placeholder="Auto-detect (recommended)" />
+                  <SelectValue placeholder={t("models.dialog.autoDetect")} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="auto">Auto-detect (recommended)</SelectItem>
-                  <SelectItem value="strict">Strict (Qwen-like templates)</SelectItem>
-                  <SelectItem value="loose">Loose (passthrough)</SelectItem>
+                  <SelectItem value="auto">{t("models.dialog.autoDetect")}</SelectItem>
+                  <SelectItem value="strict">{t("models.dialog.strictOption")}</SelectItem>
+                  <SelectItem value="loose">{t("models.dialog.looseOption")}</SelectItem>
                 </SelectContent>
               </Select>
             </FormField>
@@ -518,24 +520,24 @@ export function ModelDialog({ open, onOpenChange, model, onSaved, onError }: Mod
           {/* Advanced: litellm_params extra */}
           <details className="text-xs">
             <summary className="cursor-pointer text-muted-foreground hover:text-foreground select-none">
-              Advanced: litellm_params (raw JSON override)
+              {t("models.dialog.advancedSection")}
             </summary>
             <Textarea
               className="mt-2 font-mono text-xs h-24"
-              placeholder='{"key": "value"}'
+              placeholder={t("models.dialog.advancedPlaceholder")}
             />
             <p className="text-[10px] text-muted-foreground mt-1">
-              Use only fields not covered by the form above. Merged with form fields.
+              {t("models.dialog.advancedHint")}
             </p>
           </details>
         </div>
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
-            Cancel
+            {t("common.cancel")}
           </Button>
           <Button onClick={handleSubmit} disabled={submitting}>
-            {submitting ? "Saving…" : isEdit ? "Save Changes" : "Create Model"}
+            {submitting ? t("common.saving") : isEdit ? t("models.dialog.saveChanges") : t("models.dialog.title.create")}
           </Button>
         </DialogFooter>
       </DialogContent>
