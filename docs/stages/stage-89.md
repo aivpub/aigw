@@ -2,7 +2,7 @@
 
 **Phase**: 35 — Core Entity Soft-Delete
 **优先级**: P1
-**状态**: ⏳ 待开始
+**状态**: ✅ 完成
 **预估**: 6h
 **前置**: Stage 88（后端归档表 + API 全部就绪）
 **参考**: 现有 `keys/index.tsx` 删除确认 Dialog 模式；`models/DeleteConfirm.tsx` 可复用确认组件

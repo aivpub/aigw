@@ -2,7 +2,7 @@
 
 **Phase**: 36 — Upstream Prompt Cache Detection & Differentiated Billing
 **优先级**: P0
-**状态**: ⏳ 待开始
+**状态**: ✅ 完成
 **预估**: 10h
 **前置**: 无（独立改动，chat.rs / v1_messages.rs / deployment.rs / calc_spend）
 

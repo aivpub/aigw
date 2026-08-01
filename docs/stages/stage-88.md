@@ -2,7 +2,7 @@
 
 **Phase**: 35 — Core Entity Soft-Delete
 **优先级**: P1
-**状态**: ⏳ 待开始
+**状态**: ✅ 完成
 **预估**: 12h
 **前置**: Stage 87（Spend Logs UI 双 id + 模糊搜索）
 **参考**: litellm `LiteLLM_DeletedTeamTable` / `LiteLLM_DeletedVerificationToken` 独立归档表模式；aigw 现有 `deleted_keys` 实现（`db.rs:564`）
