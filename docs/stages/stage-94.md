@@ -1,47 +1,91 @@
-# Stage 94: 后端 — duration 解析 + BudgetResetter AsyncTask + Budget CRUD + 启动 backfill
+# Stage 94: 后端 — 实体 spend 异步增量更新 + daily_spend 全维度补全 + 失败路径修复
 
-**Phase**: 39 — Budget Reset 周期任务 + 配置
-**优先级**: P0
-**状态**: ⏳ 待开始（从原 Stage 91 推后）
-**预估**: 16h
-**前置**: Stage 90（已完成，无代码交集）、Stage 84（AsyncTask+Engine 已建成，本 Stage 复用）
+**Phase**: 39 — Budget Reset 周期任务 + 配置  
+**优先级**: P0  
+**状态**: ⏳ 待开始  
+**预估**: 12h  
+**前置**: Stage 93（已完成，无代码交集）、Stage 90（已完成）、Stage 84（AsyncTask+Engine 已建成）
 
 ---
 
 ## 核心预期
 
-1. **duration 解析 + 标准化 reset_at 计算**：新增 `crates/aigw-core/src/budget/duration.rs`，解析 `budget_duration`（`30s`/`1h`/`24h`/`7d`/`30d`/`1mo` + hourly/daily/weekly/monthly 词别名）为秒数；`compute_next_reset_at(duration, now, tz, reset_time)` 标准化对齐（24h→UTC 0 点、7d→周一 0 点、30d/1mo→月初 1 号 0 点、Nh/Nm/Ns→N 边界）。
+1. **DB 层 `increment_*_spend` 方法**：`Database` 新增 4 个 `increment_key/user/team/org_spend()` 方法 × 3 方言（SQLite/MySQL/PG），`UPDATE <table> SET spend = spend + ? WHERE <pk> = ?`，原子增量操作。
 
-2. **BudgetResetter AsyncTask**：新增 `crates/aigw-core/src/budget/resetter.rs`，`impl AsyncTask`，`step_type()="budget_reset"`。`tick(db)` 扫四表过期记录生成 step；`execute(db, step)` 批量 `UPDATE spend=0, budget_reset_at=compute_next(...)`；`tick_interval()`=60s；`steps_from_payload()` 支持手动 trigger。
+2. **chat.rs 接入增量更新**：所有成功路径（非 streaming + streaming）在 `insert_spend_log` 后，用 `tokio::spawn` 异步事务批量更新所有关联实体的 spend。按 auth 中实际关联实体决定更新哪些（key 始终更新，user/team/org 非 NULL 时才更新）。
 
-3. **DB 层批量 reset**：`reset_spend_for_keys/teams/users/orgs` × 3 方言，`WHERE <pk> IN (...) AND budget_duration IS NOT NULL`，返回 reset 行数。
+3. **v1_messages.rs 接入增量更新**：同 chat.rs。需要先从 key 查询中提取 `team_id` / `organization_id`（当前只提取 `token_hash` / `user_id`）。
 
-4. **Budget CRUD API**：`/budget/new|list|info|update|delete`（对齐 litellm）。keys/teams/users/orgs 创建更新端点透传 `budget_duration` + `soft_budget`，写入时若 duration 非 NULL 自动算 budget_reset_at。
+4. **daily_spend 全维度补全**：所有 queue 调用从仅 `DailySpendKind::User` 扩展到 User / Team / Organization / EndUser / Agent 五个维度（只对有值的维度 queue）。
 
-5. **启动期 backfill**：`main.rs` 调 `backfill_missing_reset_at(db)`，补算「duration 非 NULL 且 reset_at IS NULL」的行。
+5. **失败路径 team_id/org_id 修复**：chat.rs 约 6 处 + v1_messages.rs 约 4 处失败路径 spend_log 构造中 `team_id: None / organization_id: None` 改为使用 auth 中的实际值。
 
-6. **Engine 注册**：`main.rs` Engine 块新增 `engine.register(budget_resetter)`。
-
-7. **配置**：`GeneralSettings` 增 `budget_reset: Option<BudgetResetConfig>`（enabled 默认 true / interval_secs 默认 60 / timezone 默认 UTC / reset_time 默认 00:00）。
+6. **NaN 防御**：`BudgetEnforcer` 的 `max_budget_f64` 解析加 `f64::is_finite()` 检查。详见架构文档 §7。
 
 ---
 
-## 背景
+## 设计要点
 
-详见 `docs/research/2026-07-30-budget-reset-gap.md` §1-2。budgets 表 + 四实体表的 budget 列 Stage 1 就 schema 对齐，但从未实现周期 reset。Body Archive 的 AsyncTask+Engine（Stage 82-84）已建成可复用，前端 `KNOWN_STEP_TYPES` 已硬编码 `budget_reset` 但后端无实现。
+- **DB 增量用 `spend = spend + ?`**（非 `spend = ?` 赋绝对值），DB 层原子操作，无客户端读-改-写竞态。
+- **entity spend 用 `tokio::spawn` 异步更新**：请求路径不阻塞。spawn 任务内用一个事务包裹所有实体 UPDATE——要么全成功要么全失败。透支窗口 ~ms 级可忽略。崩溃时最多丢一个 spawned task（下次请求补上）。
+- **v1_messages.rs auth** 当前只有 `(token_hash, user_id)` 二元组，需改为 `(token_hash, user_id, team_id, organization_id)`。Key 对象已有 `key.team_id` / `key.organization_id`，只是没提取。
+- **daily_spend 多维度**：在已有 `queue.queue(ds_log)` 后追加 clone + 改 entity_id/kind 后 queue，无需改 `daily_spend_queue.rs` 本身。
+- **失败路径修复**：spend_log 构造时从 auth 取 team_id / org_id 替代硬编码 `None`。
+- **NaN 防御**：`mb.is_finite() && mb > 0.0` 替代原 `mb > 0.0`。背景：IEEE 754 规定 `NaN > 0.0 = false` 导致预算检查静默失效；`inf` 同理。对齐 litellm 安全公告 GHSA-2rv4-xv66-fpjg。
+
+---
+
+## 方言差异与 real BDD 必要性
+
+Stage 94 的核心变更 `UPDATE ... SET spend = spend + ?` 在三个方言中的语义一致（都是 DB 侧原子操作），但以下差异必须通过 real BDD 在三后端（SQLite/PG/MySQL）实际执行验证：
+
+| 差异点 | SQLite | MySQL | Postgres |
+|--------|--------|-------|----------|
+| `spend` 列类型 | `REAL` | `DOUBLE` | `DOUBLE PRECISION` |
+| 浮点精度 | 双精度 | 双精度 | 双精度 |
+| UPDATE 影响行数 | `changes()` | `affected_rows` | `GET DIAGNOSTICS` |
+| 主键定位方式 | B-tree | B-tree（InnoDB） | B-tree |
+| `f64::NAN` 行为 | `NaN = ?` 不匹配任何行 | 同 | 同 |
+
+虽然 `spend = spend + ?` 的基本语义一致，但浮点精度、零值边界、并发事务隔离级别在三方言中存在差异。mock BDD（sqlite::memory:）只能验证 SQLite，PG/MySQL 必须 real BDD。
 
 ---
 
 ## TDD
 
-- **UT（~18）**：duration 解析 8 + compute_next_reset_at 6 + reset_spend 4 + backfill 2 + NaN 防御 1 + 幂等 1
-- **BDD（mock）**：budget_reset.feature 6 场景
-- **real BDD**：三后端 budget_reset 场景
+- **UT（~22）**：increment_spend key/user/team/org 各 1 + BudgetEnforcer NaN/Inf 2 + spend_log consistency + daily_spend multi-kind 2
+- **BDD（mock）**：spend_tracking.feature 6 场景（key/user/team/org 增量、单 key 无关联实体、失败路径保留 ID、daily_spend 写入）
+- **real BDD**：三后端（SQLite/PG/MySQL）spend_tracking 场景
+
+---
+
+## real BDD 场景（概览）
+
+每个场景在 SQLite、PostgreSQL（testcontainers）、MySQL（testcontainers）三个后端各执行一遍。
+
+### 场景 1：key spend 增量
+创建带 spend=0 的 key → 发一次请求（cost=0.05）→ 验证 `key.spend = 0.05` → 再发一次 → 验证 `key.spend = 0.10`
+
+### 场景 2：key + user + team + org 关联层级增量
+创建 key（关联 user → team → org）→ 发请求 → 验证 key.spend/user.spend/team.spend/org.spend 都增加了相同 cost
+
+### 场景 3：单 key 无关联实体
+创建 key（user_id/team_id/org_id 均为 NULL）→ 发请求 → 验证只有 key.spend 增加，user/team/org 表无影响
+
+### 场景 4：缺失实体行 UPDATE 影响 0 行
+key 关联了一个不存在的 user_id → 发请求 → `UPDATE users SET spend = spend + ? WHERE user_id = ?` 影响 0 行但不报错（正确行为）→ 验证 key.spend 仍然正确更新
+
+### 场景 5：失败路径保留 team_id/org_id
+创建 key（关联 team）→ 发请求到无效 upstream → 4xx/5xx 失败 → 验证 spend_logs 中 team_id 为 key 的 team_id（非 NULL）
+
+### 场景 6：daily_spend 多维度写入
+创建 key（关联 user + team + org）→ 发请求 → 等待 daily_spend_queue drain → 验证 daily_user_spend / daily_team_spend / daily_organization_spend 三条记录都存在，end_user/agent 无记录因为未设置
 
 ---
 
 ## 验收门禁
 
-- aigw-core lib 全绿 + Stage 94 新增 UT 18 全绿
-- mock BDD budget_reset 6 场景全绿
-- real BDD 三后端 budget_reset 场景全绿
+- aigw-core lib 全绿 + Stage 94 新增 UT 22 全绿
+- mock BDD spend_tracking 6 场景全绿（sqlite::memory:）
+- **real BDD 三后端（SQLite/PG/MySQL）4 场景全部通过（硬性要求，任一失败不可交付）**
+- 手动 curl：发请求 → key.spend 增长 → 下次 BudgetEnforcer 读到非零值

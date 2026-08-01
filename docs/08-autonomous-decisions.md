@@ -407,3 +407,26 @@
   - 翻译文件懒加载、TypeScript 类型安全、后端 API 错误消息多语言、RTL 支持登记为 TD-008 a-d（P3）。
   - 语言切换器位于 Header 右侧，使用 DropdownMenu + Lucide Languages 图标。
   - `<html lang>` 属性随语言切换自动同步。
+
+## ADR-024: Budget Reset 架构与多层级配额约束
+
+- **Date**: 2026-08-01
+- **Status**: Approved（Phase 39，Stage 94-97）
+- **Decision**: Budget Reset 分为 4 个 Stage 交付（56h）。核心决策：
+  (1) entity spend 用 `tokio::spawn` 异步 + 事务批量更新，非同步非 channel 队列；
+  (2) 标准化对齐（UTC 0 点/周一/月初），非 now()+duration；
+  (3) 多层级独立检查——每层有自己的 spend 列独立与 max_budget 比较，非 Key 累加到上级；
+  (4) 配额层级约束在写入时校验（`Key.max_budget ≤ User.max_budget ≤ Team.max_budget ≤ Org.max_budget`），非请求时才报错；
+  (5) org 的配额从 budgets 表取，key/team/user 内联。
+- **Background**: aigw 的实体 spend 列从未更新（预算检查永远不触发），daily_spend 6 维度只写了 User，周期 reset 未实现，多层级检查缺失，且无层级约束导致可以配出"Key $100 挂 Team $50"的矛盾数据。
+- **Key decisions**:
+  - **异步事务而非同步**：`tokio::spawn` 消除请求路径延迟（spend_logs 返回后即响应），事务保证 key/user/team/org 一起更新或一起失败，透支窗口 ms 级可忽略。
+  - **标准化对齐而非 linear-add**：24h→UTC 0 点、7d→周一 0 点、30d→月初 1 号。重置时刻可预期可记忆，对齐 litellm。
+  - **写入时约束而非请求时报错**：在 POST/PUT 端点中校验 `child.max_budget ≤ parent.max_budget`。NULL 上级 = 无限，不约束。比用户请求被拒时才知道"上级超限"更友好。
+  - **多级检查集中在 Stage 97**：先让 Stage 94 打通 spend 写入（基础设施），Stage 95 做 reset + 写入约束（杜绝矛盾数据），Stage 97 接上多级 BudgetEnforcer。
+  - **NaN 防御**：`f64::is_finite()` 守卫，对齐 litellm 安全公告 GHSA-2rv4-xv66-fpjg（IEEE 754 NaN 所有比较返回 false 导致预算检查静默失效）。
+- **Consequences**:
+  - Phase 39 从原 3 Stage/40h → 4 Stage/56h（新增 Stage 94 spend 写入基础 + Stage 95 并入层级约束）。
+  - BudgetEnforcer 从单层 → 4 层逐级检查（Stage 97）。
+  - 架构文档（`docs/research/2026-08-01-budget-reset-architecture.md`）统一记录所有决策。
+  - soft_budget 告警（Slack/Email）推迟到 TD-007，budget_limits 多窗口推迟到后续。

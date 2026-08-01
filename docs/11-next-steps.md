@@ -1,7 +1,7 @@
 # aigw -- 下一步行动
 
 **上次更新**: 2026-08-01
-**当前阶段**: Phase 38 ✅（Stage 91-93 UI 多语言 i18n）；Phase 39 ⏳ 待开始（Stage 94-96 Budget Reset）
+**当前阶段**: Phase 38 ✅（Stage 91-93 UI 多语言 i18n）；Phase 39 ⏳ 待开始（Stage 94-97 Budget Reset）
 
 ---
 
@@ -52,11 +52,25 @@
 
 ---
 
-## Phase 39: Budget Reset 周期任务 + 配置 ⏳ 推后
+## Phase 39: Budget Reset 周期任务 + 配置 ⏳ 待开始
 
-> 原 Phase 37（Stage 91-93）的 Budget Reset 工作因 UI 多语言需求优先级更高而推后，重新编号为 Phase 39（Stage 94-96）。原设计文档和 planning 文件保留，stage 文档已重命名。
+> 原 Phase 37（Stage 91-93）的 Budget Reset 工作因 UI 多语言需求优先级更高而推后，重新编号为 Phase 39（Stage 94-97）。2026-08-01 经过深入调研后重写：新增 Stage 94 补实体 spend 写入基础（原计划缺失），原 Stage 94→95、95→96、96→97。
 
-**设计文档**: docs/stages/stage-94.md ~ stage-96.md + docs/plans/2026-07-30-budget-reset-phase-37.md + docs/research/2026-07-30-budget-reset-gap.md
+**工作量**: 52h，4 Stages。
+
+| Stage | 目标 | 类型 | 预估 | 状态 |
+|-------|------|------|------|------|
+| Stage 94 | 实体 spend 同步增量更新 + spend_logs 事务化 + daily_spend 全维度补全 + 失败路径修复 | 后端 | 12h | ⏳ 待开始 |
+| Stage 95 | duration 解析 + BudgetResetter AsyncTask + Budget CRUD + 启动 backfill | 后端+测试 | 16h | ⏳ 待开始 |
+| Stage 96 | 前端 — 实体表单内联 budget_duration/max_budget/soft_budget + budget_reset Job Tab 补全 | 前端+E2E | 16h | ⏳ 待开始 |
+| Stage 97 | 全栈联调 — soft/hard 双轨 + real BDD 三后端 + 收尾 | 全栈+测试 | 8h | ⏳ 待开始 |
+
+**依赖**: Stage 94 → 95（reset 依赖 spend 正确写入）；95 → 96（前端依赖后端 API）；94/95/96 → 97（联调依赖全部就绪）。
+
+**设计文档**: 
+- 架构总览: `docs/research/2026-08-01-budget-reset-architecture.md`
+- ADR-024: `docs/08-autonomous-decisions.md`
+- Stage 文档: `docs/stages/stage-94.md` ~ `stage-97.md`
 
 ---
 
@@ -140,7 +154,7 @@ Phase 34:   ████████████████████ 100% (1
 Phase 35:   ████████████████████ 100% (2/2)  ✅ Core Entity Soft-Delete (Stage 88-89)
 Phase 36:   ████████████████████ 100% (1/1)  ✅ Upstream Cache Detection & Billing (Stage 90)
 Phase 38:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3)  ⏳ UI 多语言 i18n 支持 (Stage 91-93)
-Phase 39:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3)  ⏳ Budget Reset 周期任务 + 配置 (Stage 94-96)
+Phase 39:   ░░░░░░░░░░░░░░░░░░░░   0% (0/4)  ⏳ Budget Reset 周期任务 + 配置 (Stage 94-97)
 ```
 
 ### 测试目标

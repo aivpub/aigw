@@ -46,7 +46,7 @@ Phase 34:   ████████████████████ 100% (1
 Phase 35:   ████████████████████ 100% (2/2 Stages) ✅ Core Entity Soft-Delete（Stage 88-89）
 Phase 36:   ████████████████████ 100% (1/1 Stage)  ✅ Upstream Cache Detection & Billing（Stage 90）
 Phase 38:   ████████████████████ 100% (3/3 Stages) ✅ UI 多语言 i18n 支持 (Stage 91-93)
-Phase 39:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3 Stages) ⏳ Budget Reset 周期任务 + 配置 (Stage 94-96)
+Phase 39:   ░░░░░░░░░░░░░░░░░░░░   0% (0/4 Stages) ⏳ Budget Reset 周期任务 + 配置 (Stage 94-97)
 ```
 
 ---
@@ -83,21 +83,22 @@ Phase 39:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 - **zod schema 不在定义时翻译**：语言切换需动态响应，render 时 `t()` 更安全。
 - **通用 UI 组件不改**：`components/ui/*` 保持纯净，文案由调用方传入。
 
-### Phase 39：Budget Reset 周期任务 + 配置 ⏳（从原 Phase 37 / Stage 91-93 推后）
+### Phase 39：Budget Reset 周期任务 + 配置 ⏳（2026-08-01 v3 最终版）
 
-**背景**: budgets 表 + 四实体表的 spend/max_budget/budget_duration/budget_reset_at 列 Stage 1 就 schema 对齐但从未实现周期 reset。复用 Stage 82-84 的 AsyncTask+Engine 框架。详见 docs/research/2026-07-30-budget-reset-gap.md。
+**背景**: budgets 表 + 四实体表的 spend/max_budget/budget_duration/budget_reset_at 列 Stage 1 就 schema 对齐但从未实现周期 reset。2026-08-01 深入调研后重写 Phase 39：新增 Stage 94 补实体 spend 写入基础（原规划缺失），Stage 95 并入配额层级约束（施工防历史债务），多级 BudgetEnforcer 集中在 Stage 97。详见 `docs/research/2026-08-01-budget-reset-architecture.md` 和 `docs/08-autonomous-decisions.md` ADR-024。
 
-**核心预期**: 配置了 budget_duration 的 key/team/user/org 到周期点后 spend 自动清零、budget_reset_at 自动滚动。用户能在实体表单内联配置，管理员在 Jobs 页查看/手动 trigger。
+**核心预期**: 每次请求完成后异步事务更新所有关联实体的 spend；所有 daily_*_spend 维度正确写入；配置写入时强制执行 child.max_budget ≤ parent.max_budget 约束；周期点后 spend 自动清零、budget_reset_at 自动滚动；请求时逐级检查 key→user→team→org。
 
 | Stage | 状态 | 目标 | 类型 | 预估 |
 |-------|------|------|------|------|
-| Stage 94 | ⏳ 待开始 | **后端** — duration 解析 + BudgetResetter AsyncTask + DB 层 4 reset × 3 方言 + Budget CRUD + backfill + Engine 注册 + config。TDD: ~18 UT + 6 BDD + real BDD 三后端 | 后端+测试 | 16h |
-| Stage 95 | ⏳ 待开始 | **前端** — keys/teams/users/orgs 表单内联 budget_duration 下拉 + soft_budget + 列展示；budget_reset Job Tab 补全。TDD: budgets.feature 8 + jobs 增 3 × 3 viewports | 前端+测试 | 16h |
-| Stage 96 | ⏳ 待开始 | **全栈联调** — soft/hard 双轨检查 + 端到端联调 + real BDD 三后端 + 文档收尾。TDD: 3 UT + real BDD 3×3 | 全栈+测试 | 8h |
+| Stage 94 | ⏳ 待开始 | **后端** — entity spend 异步增量更新 + DB 层 increment_*_spend × 3 方言 + daily_spend 全5维度 + 失败路径 team_id/org_id 修复 + NaN 防御。TDD: ~22 UT + 6 BDD + real BDD 三后端 | 后端 | 12h |
+| Stage 95 | ⏳ 待开始 | **后端** — duration 解析 + BudgetResetter AsyncTask + 批量 reset × 3 方言 + Budget CRUD + **配额层级约束**（写入时校验 child.max_budget ≤ parent.max_budget）+ backfill + Engine + config。TDD: ~22 UT + 9 BDD + real BDD 三后端 | 后端+测试 | 20h |
+| Stage 96 | ⏳ 待开始 | **前端** — keys/teams/users/orgs 表单内联 budget_duration 下拉 + soft_budget + 列展示；budget_reset Job Tab 补全。TDD: budgets.feature 8 + jobs 增 3 × 3 viewports | 前端+E2E | 16h |
+| Stage 97 | ⏳ 待开始 | **全栈联调** — 多级 BudgetEnforcer（key→user→team→org 逐级）+ soft_budget 记日志 + 历史用量 team/org 聚合补全 + real BDD 三后端 + ADR-024 + TD-007 | 全栈+测试 | 8h |
 
-**Phase 39 合计**: 40h，3 Stages。原编号 Stage 91-93 → 94-96。
+**Phase 39 合计**: 56h，4 Stages。
 
-**设计文档**: `docs/stages/stage-94.md` / `stage-95.md` / `stage-96.md` / `docs/plans/2026-07-30-budget-reset-phase-37.md` / `docs/research/2026-07-30-budget-reset-gap.md`
+**设计文档**: `docs/stages/stage-94.md` ~ `stage-97.md` / `docs/research/2026-08-01-budget-reset-architecture.md` / `docs/08-autonomous-decisions.md` ADR-024
 
 ### Phase 36：Upstream Prompt Cache Detection & Differentiated Billing ✅ 已完成
 
