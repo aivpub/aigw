@@ -507,10 +507,10 @@ export function UsagePage() {
                       const item = dailyChartData.find((d) => d.date === label);
                       if (!item) return label;
                       if (globalChartMode === "tokens") {
-                        return `${label}\n  Prompt: ${fmtTokens(item.prompt_tokens)}  |  Completion: ${fmtTokens(item.completion_tokens)}\n  Total: ${fmtTokens(item.tokens)}`;
+                        return `${label}\n  ${t('usage.chart.promptTokens')}: ${fmtTokens(item.prompt_tokens)}  |  ${t('usage.chart.completionTokens')}: ${fmtTokens(item.completion_tokens)}\n  ${t('usage.chart.totalTokens')}: ${fmtTokens(item.tokens)}`;
                       }
                       if (globalChartMode === "requests") {
-                        return `${label}\n  Success: ${item.successful_requests}  |  Failed: ${item.failed_requests}\n  Total: ${item.requests}`;
+                        return `${label}\n  ${t('usage.chart.successCount')}: ${item.successful_requests}  |  ${t('usage.chart.failedCount')}: ${item.failed_requests}\n  ${t('usage.chart.totalRequests')}: ${item.requests}`;
                       }
                       return `${label}  |  ${fmtSpend(item.spend)}`;
                     }}

@@ -42,7 +42,16 @@
     "optionalField": "Optional",
     "unlimited": "Unlimited",
     "settings": "Settings",
-    "retry": "Retry"
+    "retry": "Retry",
+    "min": "Min",
+    "max": "Max",
+    "alias": "Alias",
+    "name": "Name",
+    "token": "Token",
+    "user": "User",
+    "spend": "Spend",
+    "deletedAt": "Deleted At",
+    "deleted": "Deleted"
   },
   "sidebar": {
     "brand": "aigw",
@@ -390,7 +399,8 @@
       },
       "deleteDialog": {
         "title": "Delete Credential"
-      }
+      },
+      "description": "Stored credentials that models can reference via <code>litellm_credential_name</code>."
     },
     "health": {
       "title": "Model Health",
@@ -771,7 +781,8 @@
     "trigger": "Manual Trigger",
     "noJobs": "No jobs found",
     "subTabs": {
-      "bodyArchive": "Body Archive"
+      "bodyArchive": "Body Archive",
+      "budgetReset": "Budget Reset"
     },
     "overview": "Overview",
     "archiveOverview": "Archive Overview",
@@ -806,7 +817,8 @@
       "result": "Result",
       "error": "Error",
       "rowsArchived": "Rows",
-      "duration": "Duration"
+      "duration": "Duration",
+      "expandPayload": "Expand payload"
     },
     "progress": "Progress",
     "noLogs": "No logs for this step.",
@@ -912,8 +924,8 @@
     "copy": "Copy"
   },
   "pagination": {
-    "page": "Page",
-    "of": "of",
+    "showing": "Showing {{from}}–{{to}} of {{total}}",
+    "pageInfo": "Page {{page}} of {{total}}",
     "rows": "rows",
     "perPage": "Per page"
   },

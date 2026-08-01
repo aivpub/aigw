@@ -42,7 +42,16 @@
     "optionalField": "可选",
     "unlimited": "无限制",
     "settings": "设置",
-    "retry": "重试"
+    "retry": "重试",
+    "min": "最小",
+    "max": "最大",
+    "alias": "别名",
+    "name": "名称",
+    "token": "密钥",
+    "user": "用户",
+    "spend": "消费",
+    "deletedAt": "删除时间",
+    "deleted": "已删除"
   },
   "sidebar": {
     "brand": "aigw",
@@ -390,7 +399,8 @@
       },
       "deleteDialog": {
         "title": "删除凭证"
-      }
+      },
+      "description": "模型可以通过 <code>litellm_credential_name</code> 引用的已存储凭证。"
     },
     "health": {
       "title": "模型健康",
@@ -771,7 +781,8 @@
     "trigger": "手动触发",
     "noJobs": "暂无任务",
     "subTabs": {
-      "bodyArchive": "Body Archive"
+      "bodyArchive": "Body Archive",
+      "budgetReset": "预算重置"
     },
     "overview": "概览",
     "archiveOverview": "归档概览",
@@ -806,7 +817,8 @@
       "result": "结果",
       "error": "错误",
       "rowsArchived": "行数",
-      "duration": "耗时"
+      "duration": "耗时",
+      "expandPayload": "展开负载"
     },
     "progress": "进度",
     "noLogs": "该步骤无日志。",
@@ -912,10 +924,10 @@
     "copy": "复制"
   },
   "pagination": {
-    "page": "页",
-    "of": "/",
-    "rows": "行",
-    "perPage": "每页行数"
+    "showing": "第 {{from}}–{{to}} 条，共 {{total}} 条",
+    "pageInfo": "第 {{page}} 页，共 {{total}} 页",
+    "rows": "条",
+    "perPage": "每页条数"
   },
   "auth": {
     "loginFailed": "登录失败"
