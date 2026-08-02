@@ -908,7 +908,12 @@
       "type": "Type",
       "status": "Status",
       "created": "Created",
-      "updated": "Updated"
+      "updated": "Updated",
+      "stepKey": "Step Key",
+      "payload": "Payload",
+      "result": "Result",
+      "duration": "Duration",
+      "expandPayload": "Expand payload"
     },
     "logs": {
       "stepKey": "Step Key",

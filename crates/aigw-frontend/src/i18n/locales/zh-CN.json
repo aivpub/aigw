@@ -908,7 +908,12 @@
       "type": "类型",
       "status": "状态",
       "created": "创建时间",
-      "updated": "更新时间"
+      "updated": "更新时间",
+      "stepKey": "步骤 Key",
+      "payload": "负载",
+      "result": "结果",
+      "duration": "耗时",
+      "expandPayload": "展开负载"
     },
     "logs": {
       "stepKey": "步骤 Key",

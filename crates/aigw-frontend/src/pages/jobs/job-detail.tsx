@@ -405,7 +405,7 @@ export function JobDetailPage() {
       {/* Steps Table */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">{t("jobs.steps")}</CardTitle>
+          <CardTitle className="text-base">{t("jobs.table.steps")}</CardTitle>
         </CardHeader>
         <CardContent>
           <StepsPagination
@@ -421,11 +421,11 @@ export function JobDetailPage() {
               <table className="w-full text-sm">
                 <thead className="bg-muted">
                   <tr>
-                    <th className="text-left p-2">{t("jobs.steps.stepKey")}</th>
-                    <th className="text-left p-2">{t("jobs.steps.status")}</th>
-                    <th className="text-left p-2">{t("jobs.steps.payload")}</th>
-                    <th className="text-left p-2">{t("jobs.steps.result")}</th>
-                    <th className="text-left p-2">{t("jobs.steps.duration")}</th>
+                    <th className="text-left p-2">{t("jobs.detail.stepsTitle")}</th>
+                  <th className="text-left p-2">{t("jobs.detail.status")}</th>
+                  <th className="text-left p-2">{t("jobs.detail.payload")}</th>
+                  <th className="text-left p-2">{t("jobs.detail.result")}</th>
+                  <th className="text-left p-2">{t("jobs.detail.duration")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -477,7 +477,7 @@ export function JobDetailPage() {
                                   setExpandedPayload(step.id);
                                 }
                               }}
-                              aria-label={t("jobs.steps.expandPayload")}
+                              aria-label={t("jobs.detail.expandPayload")}
                             >
                               {JSON.stringify(step.payload).slice(0, 40)}...
                             </span>

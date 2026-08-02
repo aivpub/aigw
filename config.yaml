@@ -1,0 +1,20 @@
+# aigw local development config
+# Loaded via `task dev` (--config config.yaml)
+
+body_archive:
+  auto_archive: false
+  storage:
+    type: fs
+    path: data/archived
+  archive:
+    archive_after_hours: 1
+    null_body_after_days: 7
+    null_body_after_archive: false
+    batch_size: 5000
+    bloom_min_rows: 100
+    compression_level: 6
+
+budget_reset:
+  enabled: true
+
+model_list: []
