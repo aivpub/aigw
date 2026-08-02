@@ -852,6 +852,7 @@
       },
       "recentResets": "Recent Resets",
       "entitiesReset": "{{count}} entities reset",
+      "nothingToReset": "No entities need budget reset right now",
       "neverReset": "Never",
       "noRecentResets": "No recent budget resets"
     },

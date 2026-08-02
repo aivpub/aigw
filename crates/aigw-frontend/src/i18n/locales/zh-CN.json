@@ -852,6 +852,7 @@
       },
       "recentResets": "最近重置记录",
       "entitiesReset": "{{count}} 个实体已重置",
+      "nothingToReset": "当前没有需要重置预算的实体",
       "neverReset": "从未重置",
       "noRecentResets": "暂无预算重置记录"
     },

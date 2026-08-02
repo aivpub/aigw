@@ -157,6 +157,13 @@ pub async fn trigger_job(
                     })?
                 }
             };
+
+            if candidates.is_empty() {
+                return Err((
+                    StatusCode::OK,
+                    Json(serde_json::json!({"message": "No entities need budget reset right now.", "total_steps": 0})),
+                ));
+            }
             budget_candidates_to_steps(candidates)
         }
         _ => {

@@ -268,13 +268,17 @@ function BudgetResetTrigger({ onTriggered }: { onTriggered: () => void }) {
         step_type: "budget_reset",
         payload: entityType === "all" ? {} : { entity_type: entityType },
       });
-      toast.success(
-        t("jobs.triggerToast", {
-          jobId: result.job_id.slice(0, 12),
-          totalSteps: result.total_steps,
-        })
-      );
-      onTriggered();
+      if (result.total_steps === 0) {
+        toast.info(t("jobs.budgetReset.nothingToReset"));
+      } else {
+        toast.success(
+          t("jobs.triggerToast", {
+            jobId: result.job_id.slice(0, 12),
+            totalSteps: result.total_steps,
+          })
+        );
+        onTriggered();
+      }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       toast.error(`${t("jobs.toast.triggerFailed")}: ${msg}`);
