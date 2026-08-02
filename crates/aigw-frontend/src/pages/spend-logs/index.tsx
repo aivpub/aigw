@@ -1261,12 +1261,14 @@ export function SpendLogsPage() {
                     const suffix = modelDisplaySuffix(m);
                     return (
                       <SelectItem key={m.model_id} value={m.model_name}>
-                        <span>{m.model_name}</span>
-                        {suffix && (
-                          <span className="text-muted-foreground ml-1.5 text-[11px]">
-                            {suffix}
-                          </span>
-                        )}
+                        <div className="flex flex-col leading-tight">
+                          <span className="text-xs">{m.model_name}</span>
+                          {suffix && (
+                            <span className="text-[10px] text-muted-foreground">
+                              {suffix}
+                            </span>
+                          )}
+                        </div>
                       </SelectItem>
                     );
                   })}
