@@ -286,9 +286,7 @@ pub enum StorageBackend {
     },
     /// Local filesystem (for testing).
     #[serde(rename = "fs")]
-    FileSystem {
-        path: PathBuf,
-    },
+    FileSystem { path: PathBuf },
 }
 
 impl Default for StorageBackend {
@@ -363,7 +361,10 @@ col_chunk_cache:
         assert_eq!(cfg.archive.batch_size, 5000);
         assert_eq!(cfg.archive.row_group_size, 10);
         match cfg.footer_cache {
-            FooterCacheConfig::Mem { max_capacity, ttl_secs } => {
+            FooterCacheConfig::Mem {
+                max_capacity,
+                ttl_secs,
+            } => {
                 assert_eq!(max_capacity, 10000);
                 assert_eq!(ttl_secs, 3600);
             }

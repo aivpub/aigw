@@ -45,8 +45,8 @@ pub fn decode_body_from_parquet(
 
     // Use Bytes for ChunkReader compatibility
     let bytes = bytes::Bytes::copy_from_slice(parquet_data);
-    let builder = SyncReaderBuilder::try_new(bytes)
-        .map_err(|e| format!("Parquet reader: {}", e))?;
+    let builder =
+        SyncReaderBuilder::try_new(bytes).map_err(|e| format!("Parquet reader: {}", e))?;
 
     // Resolve the row-key column name: prefer `call_id` (new schema),
     // fall back to `request_id` (pre-rename parquet files).
@@ -173,10 +173,13 @@ pub async fn query_parquet_with_cache(
         // Bloom filters populate lazily on first probe (see loop below).
         // We still insert the cache entry now so the metadata is cached;
         // bloom_filters HashMap will be populated in place later.
-        footer_cache.put(path_str, CachedMeta {
-            metadata: Arc::clone(&md),
-            bloom_filters: HashMap::new(),
-        });
+        footer_cache.put(
+            path_str,
+            CachedMeta {
+                metadata: Arc::clone(&md),
+                bloom_filters: HashMap::new(),
+            },
+        );
         (md, None)
     };
 
@@ -258,7 +261,9 @@ pub async fn query_parquet_with_cache(
                         // Re-acquire from cache (may have been updated by a
                         // concurrent reader, or we inserted an empty one above).
                         if let Some(mut cached) = footer_cache.get(path_str) {
-                            cached.bloom_filters.insert((rg_idx, key_col_idx), sbbf.clone());
+                            cached
+                                .bloom_filters
+                                .insert((rg_idx, key_col_idx), sbbf.clone());
                             footer_cache.put(path_str, cached);
                         }
                         Some(sbbf)
@@ -480,7 +485,7 @@ mod tests {
             cache_hit: None,
             session_id: None,
             messages: None, // null messages
-            response: None,  // null response
+            response: None, // null response
             proxy_server_request: None,
             request_id: None,
             spend: 0.0,

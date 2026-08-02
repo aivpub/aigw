@@ -36,7 +36,11 @@ impl ServerGuard {
             let workspace_root = find_workspace_root();
             let target_dir = std::env::var("CARGO_TARGET_DIR")
                 .unwrap_or_else(|_| format!("{workspace_root}/target"));
-            let profile = if cfg!(debug_assertions) { "debug" } else { "release" };
+            let profile = if cfg!(debug_assertions) {
+                "debug"
+            } else {
+                "release"
+            };
             format!("{target_dir}/{profile}/aigw")
         });
 

@@ -1,7 +1,7 @@
 //! Step bindings for error_handling.feature and auth.feature
 
-use cucumber::when;
 use axum::http::Method;
+use cucumber::when;
 
 use crate::TestWorld;
 
@@ -25,7 +25,8 @@ async fn when_chat_missing_model(world: &mut TestWorld, alias: String) {
     let token = world.created_keys.get(&alias).expect("key not found");
     let body = serde_json::json!({
         "messages": [{"role": "user", "content": "hi"}]
-    }).to_string();
+    })
+    .to_string();
 
     let req = axum::http::Request::builder()
         .method(Method::POST)
@@ -61,7 +62,8 @@ async fn when_chat_missing_messages(world: &mut TestWorld, alias: String) {
     let token = world.created_keys.get(&alias).expect("key not found");
     let body = serde_json::json!({
         "model": "gpt-4"
-    }).to_string();
+    })
+    .to_string();
 
     let req = axum::http::Request::builder()
         .method(Method::POST)
@@ -98,7 +100,8 @@ async fn when_chat_empty_messages(world: &mut TestWorld, alias: String) {
     let body = serde_json::json!({
         "model": "gpt-4",
         "messages": []
-    }).to_string();
+    })
+    .to_string();
 
     let req = axum::http::Request::builder()
         .method(Method::POST)
@@ -166,7 +169,8 @@ async fn when_invalid_key_list(world: &mut TestWorld) {
         "/key/list",
         Some("invalid-key-12345"),
         None,
-    ).await;
+    )
+    .await;
     world.last_status = Some(status);
     world.last_body = body;
 }
@@ -181,7 +185,8 @@ async fn when_invalid_key_info(world: &mut TestWorld) {
         "/key/info",
         Some("invalid-key-12345"),
         None,
-    ).await;
+    )
+    .await;
     world.last_status = Some(status);
     world.last_body = body;
 }
@@ -190,7 +195,8 @@ async fn when_invalid_key_info(world: &mut TestWorld) {
 async fn when_no_auth_list(world: &mut TestWorld) {
     let state = world.ensure_state().await;
     let router = super::common::build_key_router(state);
-    let (status, body) = super::common::make_request(&router, Method::GET, "/key/list", None, None).await;
+    let (status, body) =
+        super::common::make_request(&router, Method::GET, "/key/list", None, None).await;
     world.last_status = Some(status);
     world.last_body = body;
 }
@@ -199,7 +205,8 @@ async fn when_no_auth_list(world: &mut TestWorld) {
 async fn when_no_auth_info(world: &mut TestWorld) {
     let state = world.ensure_state().await;
     let router = super::common::build_key_router(state);
-    let (status, body) = super::common::make_request(&router, Method::GET, "/key/info", None, None).await;
+    let (status, body) =
+        super::common::make_request(&router, Method::GET, "/key/info", None, None).await;
     world.last_status = Some(status);
     world.last_body = body;
 }
@@ -236,7 +243,8 @@ async fn when_master_key_list_get(world: &mut TestWorld) {
         "/key/list",
         Some(&world.master_key),
         None,
-    ).await;
+    )
+    .await;
     world.last_status = Some(status);
     world.last_body = body;
 }

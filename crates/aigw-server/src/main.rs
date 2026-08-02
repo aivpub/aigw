@@ -53,18 +53,21 @@ use axum::http::HeaderName;
 use axum::{middleware, routing::get, Router};
 use clap::Parser;
 use routes::keys::{self, AppState, SharedState};
-use routes::{chat, cors_layer, credentials, docs, health, jobs, login, models, org, router_settings, spend, team, user, budget, v1_messages};
+use routes::{
+    budget, chat, cors_layer, credentials, docs, health, jobs, login, models, org, router_settings,
+    spend, team, user, v1_messages,
+};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tower_http::compression::CompressionLayer;
 use tower_http::request_id::{MakeRequestId, RequestId, SetRequestIdLayer};
 use tower_http::trace::{DefaultOnResponse, TraceLayer};
-use tower_http::compression::CompressionLayer;
 use tracing::Level;
 use tracing::Span;
-use tracing_subscriber::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
 /// AI Gateway — litellm-compatible LLM proxy in Rust
@@ -238,8 +241,10 @@ async fn main() -> anyhow::Result<()> {
         .as_ref()
         .and_then(|c| c.general_settings.as_ref())
         .and_then(|gs| gs.metrics_buckets.as_ref());
-    let metrics = Arc::new(aigw_core::metrics::MetricsRecorder::init("aigw", buckets_override)
-        .expect("Failed to initialize prometheus metrics"));
+    let metrics = Arc::new(
+        aigw_core::metrics::MetricsRecorder::init("aigw", buckets_override)
+            .expect("Failed to initialize prometheus metrics"),
+    );
     tracing::info!("Prometheus metrics initialized (namespace: aigw)");
 
     // Determine aigw master key for runtime decryption (CREDENTIALS/encrypted fields)
@@ -345,8 +350,7 @@ async fn main() -> anyhow::Result<()> {
         .as_ref()
         .and_then(|c| c.general_settings.as_ref())
         .and_then(|gs| gs.request_body_limit_mb);
-    let body_limit_bytes =
-        aigw_core::config::resolve_body_limit_bytes(request_body_limit_mb);
+    let body_limit_bytes = aigw_core::config::resolve_body_limit_bytes(request_body_limit_mb);
     match body_limit_bytes {
         Some(bytes) => tracing::info!(
             "Request body limit: {} MiB ({} bytes)",
@@ -369,8 +373,14 @@ async fn main() -> anyhow::Result<()> {
         // Prometheus metrics
         .route("/metrics", get(health::prometheus_metrics))
         // Model health checks
-        .route("/model/health-check", axum::routing::post(health::model_health_check))
-        .route("/model/health-check/all", axum::routing::post(health::model_health_check_all))
+        .route(
+            "/model/health-check",
+            axum::routing::post(health::model_health_check),
+        )
+        .route(
+            "/model/health-check/all",
+            axum::routing::post(health::model_health_check_all),
+        )
         // Frontend admin console (embedded SPA)
         .route("/dash", get(frontend::serve_frontend))
         .route("/dash/{*rest}", get(frontend::serve_frontend))
@@ -438,9 +448,18 @@ async fn main() -> anyhow::Result<()> {
         .route("/budget/update", axum::routing::post(budget::budget_update))
         .route("/budget/delete", axum::routing::post(budget::budget_delete))
         // Router settings endpoints (Phase 23)
-        .route("/router/settings", get(router_settings::get_global).put(router_settings::put_global))
-        .route("/key/{token}/router/settings", axum::routing::patch(router_settings::patch_key))
-        .route("/team/{id}/router/settings", axum::routing::patch(router_settings::patch_team))
+        .route(
+            "/router/settings",
+            get(router_settings::get_global).put(router_settings::put_global),
+        )
+        .route(
+            "/key/{token}/router/settings",
+            axum::routing::patch(router_settings::patch_key),
+        )
+        .route(
+            "/team/{id}/router/settings",
+            axum::routing::patch(router_settings::patch_team),
+        )
         // Spend/usage tracking routes
         .route("/spend/logs", get(spend::spend_logs))
         .route("/spend/keys", get(spend::spend_keys))
@@ -449,17 +468,32 @@ async fn main() -> anyhow::Result<()> {
         .route("/spend/models", get(spend::spend_models))
         .route("/spend/providers", get(spend::spend_providers))
         .route("/global/spend", get(spend::global_spend))
-        .route("/global/spend/logs/{call_id}", get(spend::global_spend_log_detail))
+        .route(
+            "/global/spend/logs/{call_id}",
+            get(spend::global_spend_log_detail),
+        )
         .route("/global/spend/logs", get(spend::global_spend_logs))
         .route("/global/spend/keys", get(spend::global_spend_keys))
         .route("/global/spend/models", get(spend::global_spend_models))
-        .route("/global/spend/providers", get(spend::global_spend_providers))
+        .route(
+            "/global/spend/providers",
+            get(spend::global_spend_providers),
+        )
         .route("/spend/model-groups", get(spend::spend_model_groups))
-        .route("/global/spend/model-groups", get(spend::global_spend_model_groups))
+        .route(
+            "/global/spend/model-groups",
+            get(spend::global_spend_model_groups),
+        )
         .route("/global/spend/activity", get(spend::global_spend_activity))
-        .route("/global/spend/keys/rankings", get(spend::global_spend_keys_rankings))
+        .route(
+            "/global/spend/keys/rankings",
+            get(spend::global_spend_keys_rankings),
+        )
         // Admin job management endpoints (Phase 30)
-        .route("/admin/jobs/trigger", axum::routing::post(jobs::trigger_job))
+        .route(
+            "/admin/jobs/trigger",
+            axum::routing::post(jobs::trigger_job),
+        )
         .route("/admin/jobs/stats", get(jobs::job_stats_handler))
         .route("/admin/jobs/{job_id}/logs", get(jobs::job_logs_handler))
         .route("/admin/jobs/{job_id}", get(jobs::job_detail_handler))
@@ -467,10 +501,16 @@ async fn main() -> anyhow::Result<()> {
         .route("/admin/archive/stats", get(jobs::archive_stats_handler))
         // Login/Logout endpoints (litellm-compatible /v2/login/*)
         .route("/v2/login", axum::routing::post(login::login))
-        .route("/v2/logout", axum::routing::post(login::logout_with_cleanup))
+        .route(
+            "/v2/logout",
+            axum::routing::post(login::logout_with_cleanup),
+        )
         .route("/v2/login/check", get(login::login_check))
         // Claude-compatible endpoint
-        .route("/v1/messages", axum::routing::post(v1_messages::messages_handler))
+        .route(
+            "/v1/messages",
+            axum::routing::post(v1_messages::messages_handler),
+        )
         .with_state(state)
         // HTTP request tracing — JSON logs with request_id, method, path, latency.
         // Must be INSIDE SetRequestIdLayer so RequestIdMakeSpan can read RequestId from extensions.
@@ -506,9 +546,12 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!("Server listening on {}", addr);
 
-    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
 
     Ok(())
 }
@@ -824,10 +867,7 @@ fn build_compression_layer(cfg: &CompressionConfig) -> CompressionLayer {
     use tower_http::compression::CompressionLevel;
 
     if !cfg.enabled {
-        return CompressionLayer::new()
-            .gzip(false)
-            .deflate(false)
-            .br(false);
+        return CompressionLayer::new().gzip(false).deflate(false).br(false);
     }
 
     let level = match cfg.level {

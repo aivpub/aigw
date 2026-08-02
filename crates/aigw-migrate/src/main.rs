@@ -349,7 +349,8 @@ async fn main() -> anyhow::Result<()> {
             if skip_body {
                 skip_columns_set.insert(("spend_logs".to_string(), "messages".to_string()));
                 skip_columns_set.insert(("spend_logs".to_string(), "response".to_string()));
-                skip_columns_set.insert(("spend_logs".to_string(), "proxy_server_request".to_string()));
+                skip_columns_set
+                    .insert(("spend_logs".to_string(), "proxy_server_request".to_string()));
             }
             for spec in &skip_columns {
                 if let Some((table, col)) = spec.split_once('.') {
@@ -373,9 +374,7 @@ async fn main() -> anyhow::Result<()> {
                     "Remote import: litellm ({source_url}) → aigw ({target_url}) [spend_logs limit={limit}]"
                 );
             } else {
-                println!(
-                    "Remote import: litellm ({source_url}) → aigw ({target_url})"
-                );
+                println!("Remote import: litellm ({source_url}) → aigw ({target_url})");
             }
             let all_match = remote_import::run_filtered(
                 &source_url,
@@ -442,7 +441,9 @@ async fn main() -> anyhow::Result<()> {
             let cursor = sync::resolve_cursor(days, hours, resume_after, end_before)?;
 
             if skip_body {
-                println!("  --skip-body: will null messages/response/proxy_server_request in spend_logs");
+                println!(
+                    "  --skip-body: will null messages/response/proxy_server_request in spend_logs"
+                );
             }
             if let Some(ref t) = cursor.resume_after {
                 println!("  --resume-after: \"{}\" (spend_logs only)", t);
@@ -471,22 +472,18 @@ async fn main() -> anyhow::Result<()> {
                 source_url,
                 target_url,
                 tables.len(),
-                if tables.len() == 1 && tables[0] == "config" { " (config explicit)" } else { "" }
+                if tables.len() == 1 && tables[0] == "config" {
+                    " (config explicit)"
+                } else {
+                    ""
+                }
             );
             println!("  tables: {:?}", tables);
 
             let stats = if test {
                 let (lo, hi) = sync::parse_test_range(&test_range)?;
-                sync::run_sync_test(
-                    &source_url,
-                    &target_url,
-                    &cursor,
-                    lo,
-                    hi,
-                    batch_size,
-                    debug,
-                )
-                .await?
+                sync::run_sync_test(&source_url, &target_url, &cursor, lo, hi, batch_size, debug)
+                    .await?
             } else {
                 sync::run_sync(
                     &source_url,

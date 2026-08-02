@@ -108,8 +108,14 @@ mod postgres_tests {
         .fetch_one(&pool)
         .await
         .expect("column type lookup");
-        assert_eq!(values_ty, "jsonb", "credential_values should be JSONB after 019");
-        assert_eq!(info_ty, "jsonb", "credential_info should be JSONB after 019");
+        assert_eq!(
+            values_ty, "jsonb",
+            "credential_values should be JSONB after 019"
+        );
+        assert_eq!(
+            info_ty, "jsonb",
+            "credential_info should be JSONB after 019"
+        );
 
         // Insert an opaque encrypted-blob credential.  This mirrors the
         // remote-import output when litellm's LiteLLM_CredentialsTable stores
@@ -138,141 +144,151 @@ mod postgres_tests {
         );
     }
 
-        /// Regression test for /global/spend/keys/rankings on PostgreSQL.
-        ///
-        /// `aggregate_spend_by_keys` selects `vk.key_alias` (from the LEFT JOIN on
-        /// virtual_keys) while grouping by `sl.api_key`. PostgreSQL enforces that every
-        /// non-aggregated SELECT column appears in GROUP BY, so the original SQL raised
-        /// `column "vk.key_alias" must appear in the GROUP BY clause`. SQLite/MySQL are
-        /// lenient and the bug only surfaced on the PG deployment.
-        #[tokio::test]
-        async fn test_postgres_aggregate_spend_by_keys() {
-            use aigw_core::crypto::hash_token;
-            use aigw_core::db::Database;
-            use aigw_core::models::{SpendLog, VirtualKey};
-            use chrono::Utc;
-            use uuid::Uuid;
+    /// Regression test for /global/spend/keys/rankings on PostgreSQL.
+    ///
+    /// `aggregate_spend_by_keys` selects `vk.key_alias` (from the LEFT JOIN on
+    /// virtual_keys) while grouping by `sl.api_key`. PostgreSQL enforces that every
+    /// non-aggregated SELECT column appears in GROUP BY, so the original SQL raised
+    /// `column "vk.key_alias" must appear in the GROUP BY clause`. SQLite/MySQL are
+    /// lenient and the bug only surfaced on the PG deployment.
+    #[tokio::test]
+    async fn test_postgres_aggregate_spend_by_keys() {
+        use aigw_core::crypto::hash_token;
+        use aigw_core::db::Database;
+        use aigw_core::models::{SpendLog, VirtualKey};
+        use chrono::Utc;
+        use uuid::Uuid;
 
-            let container = Postgres::default()
-                .start()
-                .await
-                .expect("failed to start postgres container");
-            let port = container
-                .get_host_port_ipv4(5432)
-                .await
-                .expect("failed to get host port");
-            let url = format!("postgresql://postgres:postgres@localhost:{}/postgres", port);
-            let db = Database::init(&url).await.expect("postgres init");
+        let container = Postgres::default()
+            .start()
+            .await
+            .expect("failed to start postgres container");
+        let port = container
+            .get_host_port_ipv4(5432)
+            .await
+            .expect("failed to get host port");
+        let url = format!("postgresql://postgres:postgres@localhost:{}/postgres", port);
+        let db = Database::init(&url).await.expect("postgres init");
 
-            // virtual_keys.token is the PK; key_alias is functionally dependent on it
-            // via the LEFT JOIN, so grouping by both keeps cardinality unchanged.
-            let key_a = hash_token("key-a");
-            let key_b = hash_token("key-b");
-            let make_key = |token: &str, alias: &str| VirtualKey {
-                token: token.to_string(),
-                key_name: Some(alias.to_string()),
-                key_alias: Some(alias.to_string()),
-                soft_budget_cooldown: "false".to_string(),
-                spend: 0.0,
-                expires: None,
-                models: serde_json::json!([]),
-                aliases: serde_json::json!({}),
-                config: serde_json::json!({}),
-                router_settings: None,
-                user_id: Some("user-1".to_string()),
-                team_id: None,
-                agent_id: None,
-                project_id: None,
-                permissions: serde_json::json!({}),
-                max_parallel_requests: None,
-                metadata: serde_json::json!({}),
-                blocked: None,
-                tpm_limit: None,
-                rpm_limit: None,
-                max_budget: None,
-                budget_duration: None,
-                budget_reset_at: None,
-                allowed_cache_controls: serde_json::json!([]),
-                allowed_routes: serde_json::json!([]),
-                policies: serde_json::json!([]),
-                access_group_ids: serde_json::json!([]),
-                model_spend: serde_json::json!({}),
-                model_max_budget: serde_json::json!({}),
-                budget_id: None,
-                organization_id: None,
-                object_permission_id: None,
-                created_at: Some(Utc::now()),
-                created_by: None,
-                updated_at: Some(Utc::now()),
-                updated_by: None,
-                last_active: None,
-                rotation_count: None,
-                auto_rotate: None,
-                rotation_interval: None,
-                last_rotation_at: None,
-                key_rotation_at: None,
-                budget_limits: None,
-                user_email: None,
-                user_alias: None,
-            };
-            db.insert_key(&make_key(&key_a, "alias-a")).await.expect("insert key a");
-            db.insert_key(&make_key(&key_b, "alias-b")).await.expect("insert key b");
+        // virtual_keys.token is the PK; key_alias is functionally dependent on it
+        // via the LEFT JOIN, so grouping by both keeps cardinality unchanged.
+        let key_a = hash_token("key-a");
+        let key_b = hash_token("key-b");
+        let make_key = |token: &str, alias: &str| VirtualKey {
+            token: token.to_string(),
+            key_name: Some(alias.to_string()),
+            key_alias: Some(alias.to_string()),
+            soft_budget_cooldown: "false".to_string(),
+            spend: 0.0,
+            expires: None,
+            models: serde_json::json!([]),
+            aliases: serde_json::json!({}),
+            config: serde_json::json!({}),
+            router_settings: None,
+            user_id: Some("user-1".to_string()),
+            team_id: None,
+            agent_id: None,
+            project_id: None,
+            permissions: serde_json::json!({}),
+            max_parallel_requests: None,
+            metadata: serde_json::json!({}),
+            blocked: None,
+            tpm_limit: None,
+            rpm_limit: None,
+            max_budget: None,
+            budget_duration: None,
+            budget_reset_at: None,
+            allowed_cache_controls: serde_json::json!([]),
+            allowed_routes: serde_json::json!([]),
+            policies: serde_json::json!([]),
+            access_group_ids: serde_json::json!([]),
+            model_spend: serde_json::json!({}),
+            model_max_budget: serde_json::json!({}),
+            budget_id: None,
+            organization_id: None,
+            object_permission_id: None,
+            created_at: Some(Utc::now()),
+            created_by: None,
+            updated_at: Some(Utc::now()),
+            updated_by: None,
+            last_active: None,
+            rotation_count: None,
+            auto_rotate: None,
+            rotation_interval: None,
+            last_rotation_at: None,
+            key_rotation_at: None,
+            budget_limits: None,
+            user_email: None,
+            user_alias: None,
+        };
+        db.insert_key(&make_key(&key_a, "alias-a"))
+            .await
+            .expect("insert key a");
+        db.insert_key(&make_key(&key_b, "alias-b"))
+            .await
+            .expect("insert key b");
 
-            let make_log = |api_key: &str, spend: f64, tokens: i32| SpendLog {
-                call_id: Uuid::new_v4().to_string(),
-                call_type: "completion".to_string(),
-                api_key: api_key.to_string(),
-                spend,
-                total_tokens: tokens,
-                prompt_tokens: tokens / 2,
-                completion_tokens: tokens - tokens / 2,
-                start_time: Utc::now(),
-                end_time: Utc::now(),
-                request_duration_ms: Some(500),
-                completion_start_time: None,
-                model: "gpt-4".to_string(),
-                model_id: None,
-                model_group: None,
-                custom_llm_provider: Some("openai".to_string()),
-                api_base: None,
-                user: Some("u1".to_string()),
-                metadata: None,
-                cache_hit: None,
-                cache_key: None,
-                request_tags: None,
-                team_id: None,
-                organization_id: None,
-                end_user: None,
-                requester_ip_address: None,
-                messages: None,
-                response: None,
-                session_id: None,
-                status: Some("success".to_string()),
-                mcp_namespaced_tool_name: None,
-                agent_id: None,
-                proxy_server_request: None,
-                body_archived: false,
-                parquet_path: None,
-                request_id: None,
-            };
-            db.insert_spend_log(&make_log(&key_a, 10.0, 100)).await.expect("insert log a1");
-            db.insert_spend_log(&make_log(&key_a, 3.0, 30)).await.expect("insert log a2");
-            db.insert_spend_log(&make_log(&key_b, 5.0, 50)).await.expect("insert log b");
+        let make_log = |api_key: &str, spend: f64, tokens: i32| SpendLog {
+            call_id: Uuid::new_v4().to_string(),
+            call_type: "completion".to_string(),
+            api_key: api_key.to_string(),
+            spend,
+            total_tokens: tokens,
+            prompt_tokens: tokens / 2,
+            completion_tokens: tokens - tokens / 2,
+            start_time: Utc::now(),
+            end_time: Utc::now(),
+            request_duration_ms: Some(500),
+            completion_start_time: None,
+            model: "gpt-4".to_string(),
+            model_id: None,
+            model_group: None,
+            custom_llm_provider: Some("openai".to_string()),
+            api_base: None,
+            user: Some("u1".to_string()),
+            metadata: None,
+            cache_hit: None,
+            cache_key: None,
+            request_tags: None,
+            team_id: None,
+            organization_id: None,
+            end_user: None,
+            requester_ip_address: None,
+            messages: None,
+            response: None,
+            session_id: None,
+            status: Some("success".to_string()),
+            mcp_namespaced_tool_name: None,
+            agent_id: None,
+            proxy_server_request: None,
+            body_archived: false,
+            parquet_path: None,
+            request_id: None,
+        };
+        db.insert_spend_log(&make_log(&key_a, 10.0, 100))
+            .await
+            .expect("insert log a1");
+        db.insert_spend_log(&make_log(&key_a, 3.0, 30))
+            .await
+            .expect("insert log a2");
+        db.insert_spend_log(&make_log(&key_b, 5.0, 50))
+            .await
+            .expect("insert log b");
 
-            // This call previously raised the GROUP BY error on PostgreSQL.
-            let rankings = db
-                .aggregate_spend_by_keys("2020-01-01", "2030-12-31", 10)
-                .await
-                .expect("aggregate_spend_by_keys on postgres");
+        // This call previously raised the GROUP BY error on PostgreSQL.
+        let rankings = db
+            .aggregate_spend_by_keys("2020-01-01", "2030-12-31", 10)
+            .await
+            .expect("aggregate_spend_by_keys on postgres");
 
-            assert!(rankings.len() >= 2, "should rank at least 2 keys");
-            // Descending by total_spend: key_a (13.0) before key_b (5.0).
-            assert_eq!(rankings[0].api_key, key_a);
-            assert_eq!(rankings[0].total_spend, 13.0);
-            assert_eq!(rankings[0].key_alias.as_deref(), Some("alias-a"));
-            assert_eq!(rankings[1].api_key, key_b);
-            assert_eq!(rankings[1].total_spend, 5.0);
-        }
+        assert!(rankings.len() >= 2, "should rank at least 2 keys");
+        // Descending by total_spend: key_a (13.0) before key_b (5.0).
+        assert_eq!(rankings[0].api_key, key_a);
+        assert_eq!(rankings[0].total_spend, 13.0);
+        assert_eq!(rankings[0].key_alias.as_deref(), Some("alias-a"));
+        assert_eq!(rankings[1].api_key, key_b);
+        assert_eq!(rankings[1].total_spend, 5.0);
+    }
 }
 
 #[cfg(feature = "integration")]

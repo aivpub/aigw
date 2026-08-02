@@ -42,7 +42,6 @@ fn build_snake_overrides(src_columns: &[String]) -> HashMap<String, String> {
         .collect()
 }
 
-
 /// Return a col-type string that forces JSON-literal coercion in
 /// `value_to_target_literal`, unless the target already advertises a JSON type.
 ///
@@ -227,7 +226,10 @@ async fn migrate_credentials(
                     // credential_values: same shape variance as litellm_params —
                     // PG jsonb → Object/Array, PG text / SQLite → String.
                     // Normalise to a JSON string before rotating.
-                    let raw = row_map.get(col_name.as_str()).copied().unwrap_or(&Value::Null);
+                    let raw = row_map
+                        .get(col_name.as_str())
+                        .copied()
+                        .unwrap_or(&Value::Null);
                     let encrypted_str: String = match raw {
                         Value::Null => String::new(),
                         Value::String(s) => s.clone(),
@@ -238,15 +240,19 @@ async fn migrate_credentials(
                     let v = if encrypted_str.is_empty() || encrypted_str == "{}" {
                         Value::String(encrypted_str)
                     } else {
-                        let rotated = rotate_field(&encrypted_str, source_key, target_key, &mut skipped);
+                        let rotated =
+                            rotate_field(&encrypted_str, source_key, target_key, &mut skipped);
                         Value::String(rotated.unwrap_or(encrypted_str))
                     };
                     native::value_to_target_literal(&v, &literal_type, target.kind(), false)
                 } else if info_col == Some(idx) {
                     let v = row_map
                         .get(col_name.as_str())
-                        .or_else(|| overrides.get(col_name.as_str())
-                            .and_then(|m| row_map.get(m.as_str())))
+                        .or_else(|| {
+                            overrides
+                                .get(col_name.as_str())
+                                .and_then(|m| row_map.get(m.as_str()))
+                        })
                         .copied()
                         .unwrap_or(&Value::Null);
                     let literal_type = json_column_type_for(col_type, target.kind());
@@ -254,8 +260,11 @@ async fn migrate_credentials(
                 } else {
                     let v = row_map
                         .get(col_name.as_str())
-                        .or_else(|| overrides.get(col_name.as_str())
-                            .and_then(|m| row_map.get(m.as_str())))
+                        .or_else(|| {
+                            overrides
+                                .get(col_name.as_str())
+                                .and_then(|m| row_map.get(m.as_str()))
+                        })
                         .copied()
                         .unwrap_or(&Value::Null);
                     native::value_to_target_literal(v, col_type, target.kind(), *is_nullable)
@@ -264,7 +273,10 @@ async fn migrate_credentials(
             .collect();
 
         let tbl_quoted = target.quote_ident("credentials");
-        let quoted_cols: Vec<String> = tgt_col_info.iter().map(|(n, _, _)| target.quote_ident(n)).collect();
+        let quoted_cols: Vec<String> = tgt_col_info
+            .iter()
+            .map(|(n, _, _)| target.quote_ident(n))
+            .collect();
         let sql = format!(
             "{}{} ({}) VALUES ({}){}",
             target.insert_prefix(),
@@ -278,12 +290,20 @@ async fn migrate_credentials(
     }
 
     if skipped > 0 {
-        eprintln!("  [WARN] Skipped {} credential rows due to crypto errors", skipped);
+        eprintln!(
+            "  [WARN] Skipped {} credential rows due to crypto errors",
+            skipped
+        );
     }
     Ok(inserted)
 }
 
-fn rotate_field(encrypted: &str, source_key: &str, target_key: &str, skipped: &mut usize) -> Option<String> {
+fn rotate_field(
+    encrypted: &str,
+    source_key: &str,
+    target_key: &str,
+    skipped: &mut usize,
+) -> Option<String> {
     // litellm MySQL deployments wrap the whole `litellm_params` JSON in a
     // `base64:type15:<encoded>` envelope. The payload inside is JSON
     // *plaintext* (not a NaCl-encrypted blob) — only the individual leaf
@@ -293,8 +313,11 @@ fn rotate_field(encrypted: &str, source_key: &str, target_key: &str, skipped: &m
     if encrypted.starts_with("base64:type15:") {
         match aigw_core::decode_base64_type15(encrypted) {
             Ok(plaintext) => {
-                eprintln!("  [ROTATE] base64:type15 envelope, {} bytes → {} bytes",
-                    encrypted.len(), plaintext.len());
+                eprintln!(
+                    "  [ROTATE] base64:type15 envelope, {} bytes → {} bytes",
+                    encrypted.len(),
+                    plaintext.len()
+                );
                 return rotate_field(&plaintext, source_key, target_key, skipped);
             }
             Err(e) => {
@@ -310,9 +333,13 @@ fn rotate_field(encrypted: &str, source_key: &str, target_key: &str, skipped: &m
         // so we return the rotated JSON string AS-IS — no outer encryption.
         match serde_json::from_str::<Value>(encrypted) {
             Ok(json_val) => {
-                eprintln!("  [ROTATE] JSON object, {} bytes, keys: {:?}",
+                eprintln!(
+                    "  [ROTATE] JSON object, {} bytes, keys: {:?}",
                     encrypted.len(),
-                    json_val.as_object().map(|o| o.keys().collect::<Vec<_>>()).unwrap_or_default()
+                    json_val
+                        .as_object()
+                        .map(|o| o.keys().collect::<Vec<_>>())
+                        .unwrap_or_default()
                 );
                 match aigw_core::rotate_json_fields(&json_val, source_key, target_key) {
                     Ok(rotated) => {
@@ -341,8 +368,11 @@ fn rotate_field(encrypted: &str, source_key: &str, target_key: &str, skipped: &m
         // outer-encryption storage format).
         eprintln!("  [ROTATE] whole-blob encrypted, {} bytes", encrypted.len());
         if let Ok(plaintext) = aigw_core::decrypt_litellm_value(encrypted, source_key) {
-            eprintln!("  [ROTATE] decrypted outer blob, {} bytes, starts_with_bracket={}",
-                plaintext.len(), plaintext.trim_start().starts_with('{'));
+            eprintln!(
+                "  [ROTATE] decrypted outer blob, {} bytes, starts_with_bracket={}",
+                plaintext.len(),
+                plaintext.trim_start().starts_with('{')
+            );
             // Check whether the decrypted payload is a JSON object with
             // individually-encrypted fields that also need rotation.
             let final_plaintext = if plaintext.trim_start().starts_with('{') {
@@ -350,7 +380,10 @@ fn rotate_field(encrypted: &str, source_key: &str, target_key: &str, skipped: &m
                     Ok(json_val) => {
                         match aigw_core::rotate_json_fields(&json_val, source_key, target_key) {
                             Ok(rotated) => {
-                                eprintln!("  [ROTATE] inner fields rotated, output {} bytes", rotated.len());
+                                eprintln!(
+                                    "  [ROTATE] inner fields rotated, output {} bytes",
+                                    rotated.len()
+                                );
                                 rotated
                             }
                             Err(e) => {
@@ -367,7 +400,8 @@ fn rotate_field(encrypted: &str, source_key: &str, target_key: &str, skipped: &m
             } else {
                 plaintext
             };
-            if let Ok(re_encrypted) = aigw_core::encrypt_litellm_value(&final_plaintext, target_key) {
+            if let Ok(re_encrypted) = aigw_core::encrypt_litellm_value(&final_plaintext, target_key)
+            {
                 return Some(re_encrypted);
             }
         } else {
@@ -408,7 +442,9 @@ async fn migrate_proxy_models(
         return Ok(0);
     }
 
-    let params_col = tgt_col_info.iter().position(|(n, _, _)| n == "litellm_params");
+    let params_col = tgt_col_info
+        .iter()
+        .position(|(n, _, _)| n == "litellm_params");
     // model_info is also a JSON payload the runtime decodes as serde_json::Value.
     let info_col = tgt_col_info.iter().position(|(n, _, _)| n == "model_info");
 
@@ -428,7 +464,10 @@ async fn migrate_proxy_models(
                     //   * SQLite TEXT  → decoded as `Value::String` or (via BLOB fallback) `Value::Object`
                     //   * whole-blob encrypted → `Value::String` not starting with `{`
                     // Normalise to a JSON string so `rotate_field` can walk it uniformly.
-                    let raw = row_map.get(col_name.as_str()).copied().unwrap_or(&Value::Null);
+                    let raw = row_map
+                        .get(col_name.as_str())
+                        .copied()
+                        .unwrap_or(&Value::Null);
                     let value_str: String = match raw {
                         Value::Null => String::new(),
                         Value::String(s) => s.clone(),
@@ -457,8 +496,11 @@ async fn migrate_proxy_models(
                 } else if info_col == Some(idx) {
                     let v = row_map
                         .get(col_name.as_str())
-                        .or_else(|| overrides.get(col_name.as_str())
-                            .and_then(|m| row_map.get(m.as_str())))
+                        .or_else(|| {
+                            overrides
+                                .get(col_name.as_str())
+                                .and_then(|m| row_map.get(m.as_str()))
+                        })
                         .copied()
                         .unwrap_or(&Value::Null);
                     let literal_type = json_column_type_for(col_type, target.kind());
@@ -466,8 +508,11 @@ async fn migrate_proxy_models(
                 } else {
                     let v = row_map
                         .get(col_name.as_str())
-                        .or_else(|| overrides.get(col_name.as_str())
-                            .and_then(|m| row_map.get(m.as_str())))
+                        .or_else(|| {
+                            overrides
+                                .get(col_name.as_str())
+                                .and_then(|m| row_map.get(m.as_str()))
+                        })
                         .copied()
                         .unwrap_or(&Value::Null);
                     native::value_to_target_literal(v, col_type, target.kind(), *is_nullable)
@@ -476,7 +521,10 @@ async fn migrate_proxy_models(
             .collect();
 
         let tbl_quoted = target.quote_ident("proxy_models");
-        let quoted_cols: Vec<String> = tgt_col_info.iter().map(|(n, _, _)| target.quote_ident(n)).collect();
+        let quoted_cols: Vec<String> = tgt_col_info
+            .iter()
+            .map(|(n, _, _)| target.quote_ident(n))
+            .collect();
         let sql = format!(
             "{}{} ({}) VALUES ({}){}",
             target.insert_prefix(),
@@ -490,7 +538,10 @@ async fn migrate_proxy_models(
     }
 
     if skipped > 0 {
-        eprintln!("  [WARN] Skipped {} model rows due to crypto errors", skipped);
+        eprintln!(
+            "  [WARN] Skipped {} model rows due to crypto errors",
+            skipped
+        );
     }
     Ok(inserted)
 }
@@ -539,8 +590,7 @@ async fn migrate_spend_logs(
     // SELECT itself, so they never leave the source DB.  `startTime` is
     // preserved unconditionally because pagination needs it.
     let src_col_info = source.column_types("LiteLLM_SpendLogs").await?;
-    let src_col_names_all: Vec<String> =
-        src_col_info.iter().map(|(n, _, _)| n.clone()).collect();
+    let src_col_names_all: Vec<String> = src_col_info.iter().map(|(n, _, _)| n.clone()).collect();
     let mut select_columns: Vec<String> = src_col_names_all
         .iter()
         .filter(|src_name| {
@@ -630,14 +680,9 @@ async fn migrate_spend_logs(
                 }
             }
 
-            let (ins, ign) = native::insert_rows_batch(
-                target,
-                "spend_logs",
-                &filtered_cols,
-                &batch,
-                &overrides,
-            )
-            .await?;
+            let (ins, ign) =
+                native::insert_rows_batch(target, "spend_logs", &filtered_cols, &batch, &overrides)
+                    .await?;
             inserted_total += ins;
             ignored_total += ign;
             since_last_log += batch.len();
@@ -733,7 +778,13 @@ pub async fn run_filtered(
         for &(src, tgt) in PLAIN_TABLES {
             let t_tbl = std::time::Instant::now();
             let count = migrate_plain_table(&source, &target, src, tgt).await?;
-            eprintln!("  {} -> {} ({} rows, {:?})", src, tgt, count, t_tbl.elapsed());
+            eprintln!(
+                "  {} -> {} ({} rows, {:?})",
+                src,
+                tgt,
+                count,
+                t_tbl.elapsed()
+            );
         }
         eprintln!("Step 2: plain tables done ({:?})", t0.elapsed());
     } else {
@@ -744,8 +795,13 @@ pub async fn run_filtered(
     if run_step(3) {
         eprintln!("Step 3: Migrating credentials (with key rotation)...");
         let t0 = std::time::Instant::now();
-        let cred_count = migrate_credentials(&source, &target, &source_key, target_master_key).await?;
-        eprintln!("  LiteLLM_CredentialsTable -> credentials ({} rows, {:?})", cred_count, t0.elapsed());
+        let cred_count =
+            migrate_credentials(&source, &target, &source_key, target_master_key).await?;
+        eprintln!(
+            "  LiteLLM_CredentialsTable -> credentials ({} rows, {:?})",
+            cred_count,
+            t0.elapsed()
+        );
     } else {
         eprintln!("Step 3: [SKIP]");
     }
@@ -754,8 +810,13 @@ pub async fn run_filtered(
     if run_step(4) {
         eprintln!("Step 4: Migrating proxy_models (with key rotation)...");
         let t0 = std::time::Instant::now();
-        let model_count = migrate_proxy_models(&source, &target, &source_key, target_master_key).await?;
-        eprintln!("  LiteLLM_ProxyModelTable -> proxy_models ({} rows, {:?})", model_count, t0.elapsed());
+        let model_count =
+            migrate_proxy_models(&source, &target, &source_key, target_master_key).await?;
+        eprintln!(
+            "  LiteLLM_ProxyModelTable -> proxy_models ({} rows, {:?})",
+            model_count,
+            t0.elapsed()
+        );
     } else {
         eprintln!("Step 4: [SKIP]");
     }
@@ -774,7 +835,11 @@ pub async fn run_filtered(
             batch_size,
         )
         .await?;
-        eprintln!("  LiteLLM_SpendLogs -> spend_logs ({} rows, {:?})", spend_count, t0.elapsed());
+        eprintln!(
+            "  LiteLLM_SpendLogs -> spend_logs ({} rows, {:?})",
+            spend_count,
+            t0.elapsed()
+        );
     } else {
         eprintln!("Step 5: [SKIP]");
     }
@@ -802,11 +867,18 @@ pub async fn run_filtered(
         let src_count = source.count_rows(src).await.unwrap_or(0);
         let tgt_count = target.count_rows(tgt).await.unwrap_or(-1);
 
-        let status = if src_count == tgt_count { "OK" } else { "MISMATCH" };
+        let status = if src_count == tgt_count {
+            "OK"
+        } else {
+            "MISMATCH"
+        };
         if src_count != tgt_count {
             all_match = false;
         }
-        eprintln!("  {} -> {}: src={} tgt={} [{}]", src, tgt, src_count, tgt_count, status);
+        eprintln!(
+            "  {} -> {}: src={} tgt={} [{}]",
+            src, tgt, src_count, tgt_count, status
+        );
     }
     eprintln!("Step 6: verify done ({:?})", t0.elapsed());
 
@@ -853,14 +925,20 @@ mod tests {
             r#"CREATE TABLE "LiteLLM_OrganizationTable" (
                 organization_id TEXT PRIMARY KEY, organization_alias TEXT, spend REAL DEFAULT 0
             )"#,
-        ).execute(&src_pool).await.unwrap();
+        )
+        .execute(&src_pool)
+        .await
+        .unwrap();
         sqlx::query(
             "INSERT INTO \"LiteLLM_OrganizationTable\" (organization_id, organization_alias, spend) VALUES ('org-1', 'test', 42.0)"
         ).execute(&src_pool).await.unwrap();
 
         sqlx::query(
             r#"CREATE TABLE "LiteLLM_Config" (param_name TEXT PRIMARY KEY, param_value TEXT)"#,
-        ).execute(&src_pool).await.unwrap();
+        )
+        .execute(&src_pool)
+        .await
+        .unwrap();
         sqlx::query(
             "INSERT INTO \"LiteLLM_Config\" (param_name, param_value) VALUES ('litellm_master_key', 'sk-test-source-key-12345')"
         ).execute(&src_pool).await.unwrap();
@@ -871,7 +949,10 @@ mod tests {
                 credential_id TEXT PRIMARY KEY, credential_name TEXT NOT NULL,
                 credential_values TEXT, credential_info TEXT
             )"#,
-        ).execute(&src_pool).await.unwrap();
+        )
+        .execute(&src_pool)
+        .await
+        .unwrap();
         let source_key = "sk-test-source-key-12345";
         let plain_cred = r#"{"api_key":"sk-secret-123","api_base":"https://api.openai.com"}"#;
         let encrypted_cred = aigw_core::encrypt_litellm_value(plain_cred, source_key).unwrap();
@@ -884,7 +965,10 @@ mod tests {
             r#"CREATE TABLE "LiteLLM_ProxyModelTable" (
                 model_id TEXT PRIMARY KEY, model_name TEXT, litellm_params TEXT, model_info TEXT
             )"#,
-        ).execute(&src_pool).await.unwrap();
+        )
+        .execute(&src_pool)
+        .await
+        .unwrap();
         let plain_params = r#"{"model":"gpt-4","api_key":"sk-model-key-456"}"#;
         let encrypted_params = aigw_core::encrypt_litellm_value(plain_params, source_key).unwrap();
         sqlx::query(
@@ -903,12 +987,28 @@ mod tests {
             r#"CREATE TABLE IF NOT EXISTS "organizations" (
                 organization_id TEXT PRIMARY KEY, organization_alias TEXT, spend REAL DEFAULT 0
             )"#,
-        ).execute(&tgt_pool).await.unwrap();
+        )
+        .execute(&tgt_pool)
+        .await
+        .unwrap();
 
-        for table in &["teams", "users", "projects", "budgets", "organization_memberships",
-            "team_memberships", "virtual_keys", "spend_logs"] {
-            sqlx::query(&format!("CREATE TABLE IF NOT EXISTS \"{}\" (id TEXT PRIMARY KEY)", table))
-                .execute(&tgt_pool).await.unwrap();
+        for table in &[
+            "teams",
+            "users",
+            "projects",
+            "budgets",
+            "organization_memberships",
+            "team_memberships",
+            "virtual_keys",
+            "spend_logs",
+        ] {
+            sqlx::query(&format!(
+                "CREATE TABLE IF NOT EXISTS \"{}\" (id TEXT PRIMARY KEY)",
+                table
+            ))
+            .execute(&tgt_pool)
+            .await
+            .unwrap();
         }
 
         sqlx::query(r#"CREATE TABLE IF NOT EXISTS "config" (param_name TEXT PRIMARY KEY, param_value TEXT)"#)
@@ -918,34 +1018,52 @@ mod tests {
                 credential_id TEXT PRIMARY KEY, credential_name TEXT NOT NULL,
                 credential_values TEXT, credential_info TEXT
             )"#,
-        ).execute(&tgt_pool).await.unwrap();
+        )
+        .execute(&tgt_pool)
+        .await
+        .unwrap();
         sqlx::query(
             r#"CREATE TABLE IF NOT EXISTS "proxy_models" (
                 model_id TEXT PRIMARY KEY, model_name TEXT, litellm_params TEXT, model_info TEXT
             )"#,
-        ).execute(&tgt_pool).await.unwrap();
+        )
+        .execute(&tgt_pool)
+        .await
+        .unwrap();
         tgt_pool.close().await;
 
         // Run
         let target_key = "sk-aigw-target-key-99999";
         let cursor = CursorRange::default();
         let result = run_filtered(
-            &src_str_sqlite, &tgt_str_sqlite,
-            None, target_key, None, &cursor, None, false,
+            &src_str_sqlite,
+            &tgt_str_sqlite,
+            None,
+            target_key,
+            None,
+            &cursor,
+            None,
+            false,
             &HashSet::new(),
             1000,
-        ).await;
+        )
+        .await;
         assert!(result.is_ok(), "remote_import failed: {:?}", result.err());
 
         // Verify re-encryption
         let tgt_pool = create_pool(tgt_str).await;
         let cred_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM credentials")
-            .fetch_one(&tgt_pool).await.unwrap();
+            .fetch_one(&tgt_pool)
+            .await
+            .unwrap();
         assert_eq!(cred_count.0, 1);
 
         let cred_row: (String,) = sqlx::query_as(
             "SELECT credential_values FROM credentials WHERE credential_id = 'cred-1'",
-        ).fetch_one(&tgt_pool).await.unwrap();
+        )
+        .fetch_one(&tgt_pool)
+        .await
+        .unwrap();
         // Storage format: opaque encrypted blobs are wrapped as JSON scalar
         // strings so runtime `serde_json::Value` decode round-trips as
         // `Value::String(_)` (see native.rs Postgres jsonb / SQLite json
@@ -960,12 +1078,16 @@ mod tests {
         assert_eq!(decrypted_json, expected_json);
 
         let model_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM proxy_models")
-            .fetch_one(&tgt_pool).await.unwrap();
+            .fetch_one(&tgt_pool)
+            .await
+            .unwrap();
         assert_eq!(model_count.0, 1);
 
-        let model_row: (String,) = sqlx::query_as(
-            "SELECT litellm_params FROM proxy_models WHERE model_id = 'model-1'",
-        ).fetch_one(&tgt_pool).await.unwrap();
+        let model_row: (String,) =
+            sqlx::query_as("SELECT litellm_params FROM proxy_models WHERE model_id = 'model-1'")
+                .fetch_one(&tgt_pool)
+                .await
+                .unwrap();
         let raw_params = serde_json::from_str::<String>(&model_row.0).unwrap_or(model_row.0);
         let decrypted_params = aigw_core::decrypt_litellm_value(&raw_params, target_key).unwrap();
         let decrypted_json: Value = serde_json::from_str(&decrypted_params).unwrap();
@@ -985,7 +1107,10 @@ mod tests {
         let pool = create_pool(db_str).await;
         sqlx::query(
             r#"CREATE TABLE "LiteLLM_Config" (param_name TEXT PRIMARY KEY, param_value TEXT)"#,
-        ).execute(&pool).await.unwrap();
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         sqlx::query(
             "INSERT INTO \"LiteLLM_Config\" (param_name, param_value) VALUES ('litellm_master_key', 'sk-extracted-key')"
         ).execute(&pool).await.unwrap();
@@ -1007,17 +1132,28 @@ mod tests {
 
         let src_pool = create_pool(src_path.to_str().unwrap()).await;
         sqlx::query(r#"CREATE TABLE "LiteLLM_OrganizationTable" (organization_id TEXT)"#)
-            .execute(&src_pool).await.unwrap();
+            .execute(&src_pool)
+            .await
+            .unwrap();
         src_pool.close().await;
 
         let tgt_pool = create_pool(tgt_path.to_str().unwrap()).await;
         sqlx::query(r#"CREATE TABLE "organizations" (organization_id TEXT)"#)
-            .execute(&tgt_pool).await.unwrap();
+            .execute(&tgt_pool)
+            .await
+            .unwrap();
         tgt_pool.close().await;
 
         let source = SourcePool::connect(&src_str).await.unwrap();
         let target = SourcePool::connect(&tgt_str).await.unwrap();
-        let count = migrate_plain_table(&source, &target, "LiteLLM_OrganizationTable", "organizations").await.unwrap();
+        let count = migrate_plain_table(
+            &source,
+            &target,
+            "LiteLLM_OrganizationTable",
+            "organizations",
+        )
+        .await
+        .unwrap();
         assert_eq!(count, 0, "empty table should migrate 0 rows");
     }
 
@@ -1056,7 +1192,10 @@ mod tests {
                 total_tokens INTEGER DEFAULT 0, prompt_tokens INTEGER DEFAULT 0,
                 completion_tokens INTEGER DEFAULT 0, endTime TEXT DEFAULT ''
             )"#,
-        ).execute(&pool).await.unwrap();
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
 
         // Insert rows with sequential timestamps (1 second apart)
         for i in 0..n {
@@ -1064,10 +1203,7 @@ mod tests {
             let hour = 10 + (i / 3600) % 24;
             let minute = (i / 60) % 60;
             let second = i % 60;
-            let ts = format!(
-                "2026-07-20 {:02}:{:02}:{:02}",
-                hour, minute, second
-            );
+            let ts = format!("2026-07-20 {:02}:{:02}:{:02}", hour, minute, second);
             sqlx::query(
                 "INSERT INTO \"LiteLLM_SpendLogs\" (request_id, model, startTime) VALUES (?, 'gpt-4', ?)",
             )
@@ -1091,7 +1227,9 @@ mod tests {
         sqlx::any::install_default_drivers();
         let pool = setup_spend_logs_db(3).await;
 
-        let source = SourcePool::connect(&format!("sqlite://{}", pool.db_path)).await.unwrap();
+        let source = SourcePool::connect(&format!("sqlite://{}", pool.db_path))
+            .await
+            .unwrap();
         let cursor = CursorRange::default();
         let rows = source
             .read_rows_with_cursor("LiteLLM_SpendLogs", &cursor, None)
@@ -1109,8 +1247,10 @@ mod tests {
                     .unwrap()
             })
             .collect();
-        assert!(times[0] <= times[1] && times[1] <= times[2],
-            "rows should be ordered by startTime ASC");
+        assert!(
+            times[0] <= times[1] && times[1] <= times[2],
+            "rows should be ordered by startTime ASC"
+        );
     }
 
     #[tokio::test]
@@ -1118,7 +1258,9 @@ mod tests {
         sqlx::any::install_default_drivers();
         let pool = setup_spend_logs_db(5).await;
 
-        let source = SourcePool::connect(&format!("sqlite://{}", pool.db_path)).await.unwrap();
+        let source = SourcePool::connect(&format!("sqlite://{}", pool.db_path))
+            .await
+            .unwrap();
 
         // Read all rows first to find the middle timestamp
         let all = source
@@ -1158,7 +1300,9 @@ mod tests {
         sqlx::any::install_default_drivers();
         let pool = setup_spend_logs_db(6).await;
 
-        let source = SourcePool::connect(&format!("sqlite://{}", pool.db_path)).await.unwrap();
+        let source = SourcePool::connect(&format!("sqlite://{}", pool.db_path))
+            .await
+            .unwrap();
 
         // Read all rows to find middle timestamps
         let all = source
@@ -1194,8 +1338,18 @@ mod tests {
                 .find(|(col, _)| col == "startTime")
                 .and_then(|(_, v)| v.as_str().map(|s| s.to_string()))
                 .unwrap();
-            assert!(ts >= start_time, "row time {} < start boundary {}", ts, start_time);
-            assert!(ts < end_time, "row time {} >= end boundary {}", ts, end_time);
+            assert!(
+                ts >= start_time,
+                "row time {} < start boundary {}",
+                ts,
+                start_time
+            );
+            assert!(
+                ts < end_time,
+                "row time {} >= end boundary {}",
+                ts,
+                end_time
+            );
         }
     }
 
@@ -1204,7 +1358,9 @@ mod tests {
         sqlx::any::install_default_drivers();
         let pool = setup_spend_logs_db(10).await;
 
-        let source = SourcePool::connect(&format!("sqlite://{}", pool.db_path)).await.unwrap();
+        let source = SourcePool::connect(&format!("sqlite://{}", pool.db_path))
+            .await
+            .unwrap();
 
         let cursor = CursorRange::default();
         let rows = source
@@ -1233,7 +1389,10 @@ mod tests {
                 total_tokens INTEGER DEFAULT 0, prompt_tokens INTEGER DEFAULT 0,
                 completion_tokens INTEGER DEFAULT 0, endTime TEXT DEFAULT ''
             )"#,
-        ).execute(&src_pool).await.unwrap();
+        )
+        .execute(&src_pool)
+        .await
+        .unwrap();
         // Insert 5 rows with distinct timestamps
         for i in 0..5 {
             let rid = format!("rid-{:02}", i);
@@ -1271,7 +1430,10 @@ mod tests {
                 body_archived BOOLEAN DEFAULT FALSE, parquet_path TEXT,
                 request_id TEXT
             )"#,
-        ).execute(&tgt_pool).await.unwrap();
+        )
+        .execute(&tgt_pool)
+        .await
+        .unwrap();
         tgt_pool.close().await;
 
         let source = SourcePool::connect(src_str).await.unwrap();
@@ -1280,16 +1442,35 @@ mod tests {
         let skip_set = HashSet::new();
 
         // First: migrate all
-        let count1 = migrate_spend_logs(&source, &target, None, &CursorRange::default(), false, &skip_set, 1000)
-            .await
-            .unwrap();
+        let count1 = migrate_spend_logs(
+            &source,
+            &target,
+            None,
+            &CursorRange::default(),
+            false,
+            &skip_set,
+            1000,
+        )
+        .await
+        .unwrap();
         assert_eq!(count1, 5, "first migration should insert 5 rows");
 
         // Second: "resume" with the same cursor (simulating restart from earliest)
-        let count2 = migrate_spend_logs(&source, &target, None, &CursorRange::default(), false, &skip_set, 1000)
-            .await
-            .unwrap();
-        assert_eq!(count2, 0, "second migration should insert 0 rows (all conflict)");
+        let count2 = migrate_spend_logs(
+            &source,
+            &target,
+            None,
+            &CursorRange::default(),
+            false,
+            &skip_set,
+            1000,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            count2, 0,
+            "second migration should insert 0 rows (all conflict)"
+        );
 
         // Verify target still has 5 rows
         let tgt_pool2 = create_pool(tgt_str).await;
@@ -1297,7 +1478,10 @@ mod tests {
             .fetch_one(&tgt_pool2)
             .await
             .unwrap();
-        assert_eq!(row.0, 5, "target should still have 5 rows after idempotent resume");
+        assert_eq!(
+            row.0, 5,
+            "target should still have 5 rows after idempotent resume"
+        );
 
         // Stage 85 (v6.1 §4.5): verify the import override redirected litellm's
         // source `request_id` into aigw's `call_id` PK (not NULL). Without the
@@ -1305,12 +1489,14 @@ mod tests {
         // 5-row count above already proves the override works, but we also
         // assert the value is the expected litellm id to catch silent misroutes
         // (e.g. PK populated from a different source column).
-        let pk_row: (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM spend_logs WHERE call_id IS NULL OR call_id = ''",
-        )
-        .fetch_one(&tgt_pool2)
-        .await
-        .unwrap();
-        assert_eq!(pk_row.0, 0, "no target row should have a NULL/empty call_id PK (import override broken)");
+        let pk_row: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM spend_logs WHERE call_id IS NULL OR call_id = ''")
+                .fetch_one(&tgt_pool2)
+                .await
+                .unwrap();
+        assert_eq!(
+            pk_row.0, 0,
+            "no target row should have a NULL/empty call_id PK (import override broken)"
+        );
     }
 }

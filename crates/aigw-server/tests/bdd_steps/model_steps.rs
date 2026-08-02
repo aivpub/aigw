@@ -1,18 +1,16 @@
 //! Step bindings for models.feature
 
-use cucumber::{given, then, when};
-use cucumber::gherkin::Step;
 use axum::http::Method;
 use axum::Router;
+use cucumber::gherkin::Step;
+use cucumber::{given, then, when};
 use std::sync::Arc;
 
 use super::common::make_request;
 use crate::TestWorld;
 
 /// Build a router with only model routes
-fn build_model_router(
-    state: aigw_server::routes::keys::SharedState,
-) -> Router {
+fn build_model_router(state: aigw_server::routes::keys::SharedState) -> Router {
     Router::new()
         .route(
             "/model/new",
@@ -38,11 +36,7 @@ fn build_model_router(
 }
 
 /// Helper: create a model and return (status, body)
-async fn create_model(
-    router: &Router,
-    mk: &str,
-    name: &str,
-) -> (u16, Option<serde_json::Value>) {
+async fn create_model(router: &Router, mk: &str, name: &str) -> (u16, Option<serde_json::Value>) {
     let body = serde_json::json!({
         "model_name": name,
         "litellm_params": {"model": format!("openai/{}", name)},
@@ -258,7 +252,11 @@ async fn then_model_name_is(world: &mut TestWorld, expected: String) {
         .get("model_name")
         .and_then(|v| v.as_str())
         .expect("no model_name");
-    assert_eq!(name, expected, "Expected model_name '{}', got '{}'", expected, name);
+    assert_eq!(
+        name, expected,
+        "Expected model_name '{}', got '{}'",
+        expected, name
+    );
 }
 
 #[then(regex = "^响应中的 data 包含 (\\d+) 个模型$")]
@@ -310,9 +308,11 @@ async fn ensure_decrypt_state() -> aigw_server::routes::keys::SharedState {
     if let Some(s) = DECRYPT_STATE.get() {
         return s.clone();
     }
-    let db = aigw_core::db::Database::init("sqlite::memory:").await.expect("db init");
-    let state: aigw_server::routes::keys::SharedState = Arc::new(
-        aigw_server::routes::keys::AppState {
+    let db = aigw_core::db::Database::init("sqlite::memory:")
+        .await
+        .expect("db init");
+    let state: aigw_server::routes::keys::SharedState =
+        Arc::new(aigw_server::routes::keys::AppState {
             resolver: aigw_core::resolver::ModelResolver::new(db.clone(), None, "onprem"),
             router: aigw_core::router::Router::default(),
             db,
@@ -324,10 +324,10 @@ async fn ensure_decrypt_state() -> aigw_server::routes::keys::SharedState {
             deployment_mode: "test".to_string(),
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
-  otel_active: false,
-            body_archiver: None,            metrics: None,
-        },
-    );
+            otel_active: false,
+            body_archiver: None,
+            metrics: None,
+        });
     let _ = DECRYPT_STATE.set(state.clone());
     state
 }
@@ -335,9 +335,11 @@ async fn ensure_decrypt_state() -> aigw_server::routes::keys::SharedState {
 #[given(expr = "已存在一个模型其 litellm_params 包含加密的 api_base 和 api_key")]
 async fn existing_model_with_encrypted_fields(_world: &mut TestWorld) {
     let state = ensure_decrypt_state().await;
-    let encrypted_api_base =
-        aigw_core::crypto::encrypt_litellm_value("https://decrypted-api.example.com", DECRYPT_MASTER_KEY)
-            .expect("encrypt api_base");
+    let encrypted_api_base = aigw_core::crypto::encrypt_litellm_value(
+        "https://decrypted-api.example.com",
+        DECRYPT_MASTER_KEY,
+    )
+    .expect("encrypt api_base");
     let encrypted_api_key =
         aigw_core::crypto::encrypt_litellm_value("sk-decrypted-secret", DECRYPT_MASTER_KEY)
             .expect("encrypt api_key");
@@ -359,33 +361,51 @@ async fn existing_model_with_encrypted_fields(_world: &mut TestWorld) {
         updated_at: now,
         updated_by: None,
     };
-    state.db.insert_model(&model).await.expect("insert model with encrypted fields");
+    state
+        .db
+        .insert_model(&model)
+        .await
+        .expect("insert model with encrypted fields");
 }
 
 #[then(regex = r#"^响应中首个模型的 api_base 已解密为 "([^"]+)"$"#)]
 async fn then_first_model_api_base_decrypted(world: &mut TestWorld, expected: String) {
     let body = world.last_body.as_ref().expect("no response body");
-    let data = body.get("data").and_then(|v| v.as_array()).expect("no data array");
+    let data = body
+        .get("data")
+        .and_then(|v| v.as_array())
+        .expect("no data array");
     let first = &data[0];
     let api_base = first
         .get("litellm_params")
         .and_then(|v| v.get("api_base"))
         .and_then(|v| v.as_str())
         .expect("no api_base in first model");
-    assert_eq!(api_base, expected, "expected decrypted api_base '{}', got '{}'", expected, api_base);
+    assert_eq!(
+        api_base, expected,
+        "expected decrypted api_base '{}', got '{}'",
+        expected, api_base
+    );
 }
 
 #[then(regex = r#"^响应中首个模型的 api_key 已解密为 "([^"]+)"$"#)]
 async fn then_first_model_api_key_decrypted(world: &mut TestWorld, expected: String) {
     let body = world.last_body.as_ref().expect("no response body");
-    let data = body.get("data").and_then(|v| v.as_array()).expect("no data array");
+    let data = body
+        .get("data")
+        .and_then(|v| v.as_array())
+        .expect("no data array");
     let first = &data[0];
     let api_key = first
         .get("litellm_params")
         .and_then(|v| v.get("api_key"))
         .and_then(|v| v.as_str())
         .expect("no api_key in first model");
-    assert_eq!(api_key, expected, "expected decrypted api_key '{}', got '{}'", expected, api_key);
+    assert_eq!(
+        api_key, expected,
+        "expected decrypted api_key '{}', got '{}'",
+        expected, api_key
+    );
 }
 
 #[when(expr = "通过解密路由发送 GET \\/model\\/list")]
@@ -393,14 +413,7 @@ async fn when_get_model_list_with_decrypt(world: &mut TestWorld) {
     let state = ensure_decrypt_state().await;
     let router = build_model_router(state);
     let mk = "sk-decrypt-test".to_string();
-    let (s, b) = make_request(
-        &router,
-        Method::GET,
-        "/model/list",
-        Some(&mk),
-        None,
-    )
-    .await;
+    let (s, b) = make_request(&router, Method::GET, "/model/list", Some(&mk), None).await;
     world.last_status = Some(s);
     world.last_body = b;
 }

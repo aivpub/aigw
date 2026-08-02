@@ -27,14 +27,11 @@ pub async fn run(source_db: &str, target_db: &str) -> anyhow::Result<bool> {
     let mut all_match = true;
 
     for &(litellm_table, aigw_table) in TABLE_MAPPINGS {
-        let src_count: i64 = sqlx::query(&format!(
-            "SELECT COUNT(*) FROM \"{}\"",
-            litellm_table
-        ))
-        .fetch_one(&source)
-        .await
-        .map(|row| row.get(0))
-        .unwrap_or(0);
+        let src_count: i64 = sqlx::query(&format!("SELECT COUNT(*) FROM \"{}\"", litellm_table))
+            .fetch_one(&source)
+            .await
+            .map(|row| row.get(0))
+            .unwrap_or(0);
 
         let tgt_count: i64 = sqlx::query(&format!("SELECT COUNT(*) FROM \"{}\"", aigw_table))
             .fetch_one(&target)

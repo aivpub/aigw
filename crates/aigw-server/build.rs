@@ -25,8 +25,8 @@ fn run_cmd(args: &[&str]) -> Option<String> {
 
 fn main() {
     // ── Git commit hash (short) ──
-    let git_hash = run_cmd(&["git", "rev-parse", "--short", "HEAD"])
-        .unwrap_or_else(|| "unknown".to_string());
+    let git_hash =
+        run_cmd(&["git", "rev-parse", "--short", "HEAD"]).unwrap_or_else(|| "unknown".to_string());
     println!("cargo:rustc-env=GIT_COMMIT_HASH={}", git_hash);
 
     // ── Git dirty status ──
@@ -44,8 +44,7 @@ fn main() {
     println!("cargo:rustc-env=GIT_DESCRIBE={}", git_describe);
 
     // ── Build date (UTC) ──
-    let build_date = run_cmd(&["date", "-u", "+%Y-%m-%d"])
-        .unwrap_or_else(|| "unknown".to_string());
+    let build_date = run_cmd(&["date", "-u", "+%Y-%m-%d"]).unwrap_or_else(|| "unknown".to_string());
     println!("cargo:rustc-env=BUILD_DATE={}", build_date);
 
     // Re-run build.rs when git HEAD or index changes.

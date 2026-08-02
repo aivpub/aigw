@@ -15,16 +15,16 @@
 
 use aigw_core::auth::decode_jwt;
 use aigw_core::crypto::{decrypt_litellm_value, hash_token};
+use aigw_core::db::{Database, DbError};
 use aigw_core::middleware::{AuthError, KeyIdentity};
 use axum::{
     extract::{FromRequestParts, Path, Query, State},
     http::{self, request::Parts, StatusCode},
     Json,
 };
+use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use aigw_core::db::{Database, DbError};
-use chrono::NaiveDate;
 use std::collections::HashMap;
 
 use super::keys::SharedState;
@@ -161,10 +161,7 @@ impl SpendAuth {
 
     /// Try HttpOnly cookie JWT
     async fn try_cookie_jwt(state: &SharedState, parts: &Parts) -> Result<SpendAuth, AuthError> {
-        let master_key = state
-            .master_key
-            .as_ref()
-            .ok_or(AuthError::MissingHeader)?;
+        let master_key = state.master_key.as_ref().ok_or(AuthError::MissingHeader)?;
 
         // Extract cookie named "token"
         let cookie_value = parts
@@ -172,18 +169,19 @@ impl SpendAuth {
             .get(http::header::COOKIE)
             .and_then(|v| v.to_str().ok())
             .and_then(|s| {
-                s.split(';')
-                    .map(|c| c.trim())
-                    .find_map(|c| {
-                        let (k, v) = c.split_once('=')?;
-                        if k == "token" { Some(v.to_string()) } else { None }
-                    })
+                s.split(';').map(|c| c.trim()).find_map(|c| {
+                    let (k, v) = c.split_once('=')?;
+                    if k == "token" {
+                        Some(v.to_string())
+                    } else {
+                        None
+                    }
+                })
             })
             .ok_or(AuthError::MissingHeader)?;
 
         // Decode JWT
-        let claims = decode_jwt(&cookie_value, master_key)
-            .map_err(|_| AuthError::TokenNotFound)?;
+        let claims = decode_jwt(&cookie_value, master_key).map_err(|_| AuthError::TokenNotFound)?;
 
         // Hash the key from JWT claims and look up in DB
         let token_hash = hash_token(&claims.key);
@@ -274,8 +272,14 @@ pub async fn spend_logs(
     };
 
     // Resolve key_alias names for display
-    let distinct_keys: Vec<String> = logs.iter().map(|l| l.api_key.clone()).collect::<std::collections::HashSet<_>>().into_iter().collect();
-    let mut key_map: std::collections::HashMap<String, Option<String>> = std::collections::HashMap::new();
+    let distinct_keys: Vec<String> = logs
+        .iter()
+        .map(|l| l.api_key.clone())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    let mut key_map: std::collections::HashMap<String, Option<String>> =
+        std::collections::HashMap::new();
     for key_hash in &distinct_keys {
         if key_hash == "master_key" {
             key_map.insert(key_hash.clone(), Some("master".to_string()));
@@ -406,7 +410,10 @@ pub async fn global_spend_log_detail(
                         proxy_server_request: None,
                     }
                 } else {
-                    match archiver.read_body_from_parquet_path(parquet_path, &call_id).await {
+                    match archiver
+                        .read_body_from_parquet_path(parquet_path, &call_id)
+                        .await
+                    {
                         Ok(Some(body)) => {
                             #[cfg(debug_assertions)]
                             {
@@ -679,8 +686,14 @@ pub async fn global_spend_logs(
     };
 
     // Resolve key_alias names for display
-    let distinct_keys: Vec<String> = logs.iter().map(|l| l.api_key.clone()).collect::<std::collections::HashSet<_>>().into_iter().collect();
-    let mut key_map: std::collections::HashMap<String, Option<String>> = std::collections::HashMap::new();
+    let distinct_keys: Vec<String> = logs
+        .iter()
+        .map(|l| l.api_key.clone())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    let mut key_map: std::collections::HashMap<String, Option<String>> =
+        std::collections::HashMap::new();
     for key_hash in &distinct_keys {
         if key_hash == "master_key" {
             key_map.insert(key_hash.clone(), Some("master".to_string()));
@@ -824,7 +837,8 @@ pub async fn spend_providers(
         &state,
         query.start_date.as_deref(),
         query.end_date.as_deref(),
-    ).await
+    )
+    .await
 }
 
 /// GET /global/spend/providers — Spend by provider (admin only)
@@ -838,7 +852,8 @@ pub async fn global_spend_providers(
         &state,
         query.start_date.as_deref(),
         query.end_date.as_deref(),
-    ).await
+    )
+    .await
 }
 
 /// Shared implementation: aggregate spend by provider, post-process with decrypted
@@ -886,9 +901,7 @@ async fn spend_providers_inner(
 
 /// Build a map from model_name → decrypted provider name by listing proxy_models
 /// and decrypting their litellm_params.
-async fn build_decrypted_provider_map(
-    state: &SharedState,
-) -> HashMap<String, String> {
+async fn build_decrypted_provider_map(state: &SharedState) -> HashMap<String, String> {
     let mk = match state.aigw_master_key.as_deref() {
         Some(k) => k,
         None => {
@@ -909,9 +922,7 @@ async fn build_decrypted_provider_map(
             // Encrypted string — decrypt first, then parse JSON
             decrypt_litellm_value(s, mk)
                 .ok()
-                .and_then(|decrypted| {
-                    serde_json::from_str::<Value>(&decrypted).ok()
-                })
+                .and_then(|decrypted| serde_json::from_str::<Value>(&decrypted).ok())
                 .and_then(|v| {
                     // litellm_params.custom_llm_provider is the actual provider name
                     // (e.g. "openai", "deepseek"), NOT the model field.
@@ -943,11 +954,7 @@ pub async fn global_spend_models(
 
     let aggs = state
         .db
-        .aggregate_spend_by_model(
-            None,
-            query.start_date.as_deref(),
-            query.end_date.as_deref(),
-        )
+        .aggregate_spend_by_model(None, query.start_date.as_deref(), query.end_date.as_deref())
         .await
         .map_err(|e| {
             (
@@ -1139,27 +1146,45 @@ struct ActivityResult {
 /// Check whether start_date → end_date is 3 days or less (≤72h).
 /// Returns true for hourly aggregation, false for daily.
 fn is_hourly_range(start_date: &str, end_date: &str) -> bool {
-    if let (Ok(s), Ok(e)) = (NaiveDate::parse_from_str(start_date, "%Y-%m-%d"), NaiveDate::parse_from_str(end_date, "%Y-%m-%d")) {
+    if let (Ok(s), Ok(e)) = (
+        NaiveDate::parse_from_str(start_date, "%Y-%m-%d"),
+        NaiveDate::parse_from_str(end_date, "%Y-%m-%d"),
+    ) {
         let days = (e - s).num_days();
         // 3 days or fewer → hourly
         days <= 3
     } else {
         // If parsing fails (e.g. ISO datetime string from API), fall back to daily.
         // We log a warning but recover gracefully.
-        tracing::warn!("Could not parse dates as YYYY-MM-DD: start={}, end={}; falling back to daily", start_date, end_date);
+        tracing::warn!(
+            "Could not parse dates as YYYY-MM-DD: start={}, end={}; falling back to daily",
+            start_date,
+            end_date
+        );
         false
     }
 }
 
-async fn query_activity(
-    db: &Database,
-    query: &ActivityQuery,
-) -> Result<Value, DbError> {
+async fn query_activity(db: &Database, query: &ActivityQuery) -> Result<Value, DbError> {
     let use_hourly = is_hourly_range(&query.start_date, &query.end_date);
 
     let (metadata, rows): (
         (f64, i64, i64, i64, i64, i64, i64, i64, i64, i64, f64, f64),
-        Vec<(String, f64, i64, i64, i64, i64, i64, i64, i64, i64, i64, f64, f64)>,
+        Vec<(
+            String,
+            f64,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            f64,
+            f64,
+        )>,
     ) = if use_hourly {
         tokio::try_join!(
             db.query_activity_metadata(
@@ -1218,27 +1243,47 @@ async fn query_activity(
 
     let daily_vals: Vec<DailyRow> = rows
         .iter()
-        .map(|(date, spend, tokens, requests, prompt_tokens, completion_tokens, successful_requests, failed_requests, cache_read, cache_creation, regular_input, cache_read_spend, cache_create_spend)| DailyRow {
-            date: date.clone(),
-            spend: *spend,
-            tokens: *tokens,
-            requests: *requests,
-            prompt_tokens: *prompt_tokens,
-            completion_tokens: *completion_tokens,
-            successful_requests: *successful_requests,
-            failed_requests: *failed_requests,
-            cache_read_tokens: *cache_read,
-            cache_creation_tokens: *cache_creation,
-            regular_input_tokens: *regular_input,
-            cache_read_spend: *cache_read_spend,
-            cache_create_spend: *cache_create_spend,
-        })
+        .map(
+            |(
+                date,
+                spend,
+                tokens,
+                requests,
+                prompt_tokens,
+                completion_tokens,
+                successful_requests,
+                failed_requests,
+                cache_read,
+                cache_creation,
+                regular_input,
+                cache_read_spend,
+                cache_create_spend,
+            )| DailyRow {
+                date: date.clone(),
+                spend: *spend,
+                tokens: *tokens,
+                requests: *requests,
+                prompt_tokens: *prompt_tokens,
+                completion_tokens: *completion_tokens,
+                successful_requests: *successful_requests,
+                failed_requests: *failed_requests,
+                cache_read_tokens: *cache_read,
+                cache_creation_tokens: *cache_creation,
+                regular_input_tokens: *regular_input,
+                cache_read_spend: *cache_read_spend,
+                cache_create_spend: *cache_create_spend,
+            },
+        )
         .collect();
 
     Ok(serde_json::to_value(ActivityResult {
         metadata: metadata_val,
         daily: daily_vals,
-        granularity: if use_hourly { "hourly".to_string() } else { "daily".to_string() },
+        granularity: if use_hourly {
+            "hourly".to_string()
+        } else {
+            "daily".to_string()
+        },
     })
     .unwrap_or(json!({})))
 }
@@ -1254,7 +1299,9 @@ pub struct KeyRankingsQuery {
     pub limit: u32,
 }
 
-fn default_limit() -> u32 { 10 }
+fn default_limit() -> u32 {
+    10
+}
 
 pub async fn global_spend_keys_rankings(
     State(state): State<SharedState>,
@@ -1263,16 +1310,16 @@ pub async fn global_spend_keys_rankings(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&auth)?;
 
-    let rankings = state.db.aggregate_spend_by_keys(
-        &query.start_date,
-        &query.end_date,
-        query.limit,
-    ).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
-        )
-    })?;
+    let rankings = state
+        .db
+        .aggregate_spend_by_keys(&query.start_date, &query.end_date, query.limit)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
+            )
+        })?;
 
     Ok(Json(serde_json::to_value(rankings).unwrap_or(json!([]))))
 }
@@ -1286,11 +1333,11 @@ mod tests {
     use super::*;
     use crate::routes::keys::AppState;
     use aigw_core::db::Database;
+    use aigw_core::models::SpendLog;
     use aigw_core::provider::ProviderRegistry;
     use aigw_core::rate_limiter::RateLimiter;
+    use aigw_core::resolver::ModelResolver;
     use aigw_core::router::{Router as AigwRouter, RouterState};
-use aigw_core::resolver::ModelResolver;
-use aigw_core::models::SpendLog;
     use axum::{
         body::Body,
         http::{header, Method, Request},
@@ -1315,8 +1362,9 @@ use aigw_core::models::SpendLog;
             deployment_mode: "onprem".to_string(),
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
-  otel_active: false,
-            body_archiver: None,            metrics: None,
+            otel_active: false,
+            body_archiver: None,
+            metrics: None,
         });
         Router::new()
             .route("/spend/logs", axum::routing::get(spend_logs))
@@ -1324,10 +1372,16 @@ use aigw_core::models::SpendLog;
             .route("/spend/users", axum::routing::get(spend_users))
             .route("/spend/tags", axum::routing::get(spend_tags))
             .route("/global/spend", axum::routing::get(global_spend))
-            .route("/global/spend/logs/{call_id}", axum::routing::get(global_spend_log_detail))
+            .route(
+                "/global/spend/logs/{call_id}",
+                axum::routing::get(global_spend_log_detail),
+            )
             .route("/global/spend/logs", axum::routing::get(global_spend_logs))
             .route("/global/spend/keys", axum::routing::get(global_spend_keys))
-            .route("/global/spend/activity", axum::routing::get(global_spend_activity))
+            .route(
+                "/global/spend/activity",
+                axum::routing::get(global_spend_activity),
+            )
             .with_state(state)
     }
 
@@ -1471,12 +1525,16 @@ use aigw_core::models::SpendLog;
             deployment_mode: "onprem".to_string(),
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
-  otel_active: false,
-            body_archiver: None,            metrics: None,
+            otel_active: false,
+            body_archiver: None,
+            metrics: None,
         });
 
         let app = Router::new()
-            .route("/global/spend/logs/{call_id}", axum::routing::get(global_spend_log_detail))
+            .route(
+                "/global/spend/logs/{call_id}",
+                axum::routing::get(global_spend_log_detail),
+            )
             .with_state(state);
 
         let request = Request::builder()
@@ -1492,7 +1550,10 @@ use aigw_core::models::SpendLog;
             .await
             .unwrap();
         let val: Value = serde_json::from_slice(&body_bytes).unwrap();
-        assert_eq!(val.get("call_id").and_then(|v| v.as_str()), Some("test-req-001"));
+        assert_eq!(
+            val.get("call_id").and_then(|v| v.as_str()),
+            Some("test-req-001")
+        );
         assert_eq!(val.get("model").and_then(|v| v.as_str()), Some("gpt-4"));
         assert_eq!(val.get("spend").and_then(|v| v.as_f64()), Some(0.05));
         // Body blobs should be present
@@ -1557,8 +1618,9 @@ use aigw_core::models::SpendLog;
             deployment_mode: "onprem".to_string(),
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
-  otel_active: false,
-            body_archiver: None,            metrics: None,
+            otel_active: false,
+            body_archiver: None,
+            metrics: None,
         });
 
         let app = Router::new()
@@ -1582,7 +1644,13 @@ use aigw_core::models::SpendLog;
         assert!(!data.is_empty());
         let first = &data[0];
         // messages and response should NOT be present in the list response
-        assert!(first.get("messages").is_none(), "List endpoint must not include messages field");
-        assert!(first.get("response").is_none(), "List endpoint must not include response field");
+        assert!(
+            first.get("messages").is_none(),
+            "List endpoint must not include messages field"
+        );
+        assert!(
+            first.get("response").is_none(),
+            "List endpoint must not include response field"
+        );
     }
 }

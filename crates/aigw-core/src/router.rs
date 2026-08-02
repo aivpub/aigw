@@ -12,9 +12,9 @@ use rand::Rng;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Instant;
 #[cfg(feature = "reqwest")]
 use std::time::Duration;
+use std::time::Instant;
 use tokio::sync::Mutex;
 
 /// Track per-instance state for routing decisions
@@ -234,8 +234,18 @@ impl Default for Router {
 }
 
 impl Router {
-    pub fn new(strategy: RouterStrategy, allowed_fails: u32, cooldown_time: f64, num_retries: u32) -> Self {
-        Self { strategy, allowed_fails, cooldown_time, num_retries }
+    pub fn new(
+        strategy: RouterStrategy,
+        allowed_fails: u32,
+        cooldown_time: f64,
+        num_retries: u32,
+    ) -> Self {
+        Self {
+            strategy,
+            allowed_fails,
+            cooldown_time,
+            num_retries,
+        }
     }
 
     pub fn from_config(cfg: &RouterConfig) -> Self {
@@ -258,19 +268,14 @@ impl Router {
 
         // 1. Filter out cooldown deployments
         let active: Vec<usize> = (0..deployments.len())
-            .filter(|&i| {
-                deployments[i]
-                    .cooldown_until
-                    .map_or(true, |t| now >= t)
-            })
+            .filter(|&i| deployments[i].cooldown_until.map_or(true, |t| now >= t))
             .collect();
 
         if active.is_empty() {
             // All are in cooldown — return the one that recovers earliest
             tracing::warn!("All deployments in cooldown, picking earliest recovery");
-            return (0..deployments.len()).min_by_key(|&i| {
-                deployments[i].cooldown_until.unwrap_or(Instant::now())
-            });
+            return (0..deployments.len())
+                .min_by_key(|&i| deployments[i].cooldown_until.unwrap_or(Instant::now()));
         }
 
         // 2. Shuffle and pick
@@ -313,8 +318,7 @@ impl Router {
         use reqwest_retry::policies::ExponentialBackoff;
         use reqwest_retry::RetryTransientMiddleware;
 
-        let retry_policy = ExponentialBackoff::builder()
-            .build_with_max_retries(self.num_retries);
+        let retry_policy = ExponentialBackoff::builder().build_with_max_retries(self.num_retries);
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(600))
             .build()
@@ -425,17 +429,18 @@ mod router_tests {
             deps[idx].fail_count = 0;
             deps[idx].cooldown_until = None;
         }
-        assert!(seen.len() >= 2, "expected at least 2 different indices, got {}", seen.len());
+        assert!(
+            seen.len() >= 2,
+            "expected at least 2 different indices, got {}",
+            seen.len()
+        );
     }
 
     // UT-3: cooldown filtering — cooldowned deployment is skipped
     #[test]
     fn test_pick_cooldown_skip() {
         let router = Router::new(RouterStrategy::SimpleShuffle, 3, 5.0, 0);
-        let mut deps = vec![
-            make_deployment("gpt-4-a"),
-            make_deployment("gpt-4-b"),
-        ];
+        let mut deps = vec![make_deployment("gpt-4-a"), make_deployment("gpt-4-b")];
         // Put gpt-4-a in cooldown
         deps[0].cooldown_until = Some(Instant::now() + std::time::Duration::from_secs(300));
         // Only gpt-4-b should be picked
@@ -471,7 +476,10 @@ mod router_tests {
         dep.fail_count = 1;
         router.report_failure(&mut dep);
         assert_eq!(dep.fail_count, 2);
-        assert!(dep.cooldown_until.is_none(), "should not enter cooldown below threshold");
+        assert!(
+            dep.cooldown_until.is_none(),
+            "should not enter cooldown below threshold"
+        );
     }
 
     // UT-6: report_failure reaches threshold
@@ -482,7 +490,10 @@ mod router_tests {
         dep.fail_count = 2;
         router.report_failure(&mut dep);
         assert_eq!(dep.fail_count, 3);
-        assert!(dep.cooldown_until.is_some(), "should enter cooldown at threshold");
+        assert!(
+            dep.cooldown_until.is_some(),
+            "should enter cooldown at threshold"
+        );
     }
 
     // UT-7: report_success clears state
@@ -510,7 +521,8 @@ mod router_tests {
     // UT-9: RouterConfig from JSON
     #[test]
     fn test_router_config_from_json() {
-        let json = json!({"routing_strategy": "simple-shuffle", "num_retries": 2, "allowed_fails": 5});
+        let json =
+            json!({"routing_strategy": "simple-shuffle", "num_retries": 2, "allowed_fails": 5});
         let cfg: RouterConfig = serde_json::from_value(json).unwrap();
         assert_eq!(cfg.num_retries, 2);
         assert_eq!(cfg.allowed_fails, 5);

@@ -31,11 +31,7 @@ where
         }
 
         // Layer 2: X-Real-IP header (nginx convention)
-        if let Some(real_ip) = parts
-            .headers
-            .get("x-real-ip")
-            .and_then(|v| v.to_str().ok())
-        {
+        if let Some(real_ip) = parts.headers.get("x-real-ip").and_then(|v| v.to_str().ok()) {
             if let Ok(addr) = real_ip.parse::<IpAddr>() {
                 return Ok(OptionalClientIp(Some(RightmostXForwardedFor(addr))));
             }
@@ -64,7 +60,10 @@ mod tests {
         header_name: &str,
         header_value: &str,
     ) -> Request<Body> {
-        let mut req = Request::get("/").header(header_name, header_value).body(Body::empty()).unwrap();
+        let mut req = Request::get("/")
+            .header(header_name, header_value)
+            .body(Body::empty())
+            .unwrap();
         if let Some(addr) = addr {
             req.extensions_mut().insert(ConnectInfo(addr));
         }
@@ -185,4 +184,3 @@ mod tests {
         assert!(result.unwrap().0.is_none());
     }
 }
-

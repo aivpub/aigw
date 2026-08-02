@@ -32,7 +32,13 @@ pub async fn write_parquet_to_store(
         return Ok(0);
     }
 
-    let data = write_parquet_to_buffer(rows, row_group_size, bloom_min_rows, compression, compression_level)?;
+    let data = write_parquet_to_buffer(
+        rows,
+        row_group_size,
+        bloom_min_rows,
+        compression,
+        compression_level,
+    )?;
     let bytes = data.len();
 
     let path_obj = object_store::path::Path::from(path);
@@ -54,13 +60,20 @@ pub fn write_parquet_to_file(
     compression_level: u32,
 ) -> Result<usize, String> {
     use std::io::Write;
-    let data = write_parquet_to_buffer(rows, row_group_size, bloom_min_rows, compression, compression_level)?;
+    let data = write_parquet_to_buffer(
+        rows,
+        row_group_size,
+        bloom_min_rows,
+        compression,
+        compression_level,
+    )?;
 
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("mkdir: {}", e))?;
     }
     let mut file = std::fs::File::create(path).map_err(|e| format!("create file: {}", e))?;
-    file.write_all(&data).map_err(|e| format!("write file: {}", e))?;
+    file.write_all(&data)
+        .map_err(|e| format!("write file: {}", e))?;
     Ok(data.len())
 }
 
@@ -78,7 +91,11 @@ pub fn write_parquet_to_buffer(
 
     let schema = Arc::new(Schema::new(vec![
         Field::new("call_id", DataType::Utf8, false),
-        Field::new("start_time", DataType::Timestamp(TimeUnit::Millisecond, None), false),
+        Field::new(
+            "start_time",
+            DataType::Timestamp(TimeUnit::Millisecond, None),
+            false,
+        ),
         Field::new("model", DataType::Utf8, false),
         Field::new("status", DataType::Utf8, true),
         Field::new("cache_hit", DataType::Boolean, true),
@@ -91,7 +108,11 @@ pub fn write_parquet_to_buffer(
         Field::new("total_tokens", DataType::Int32, false),
         Field::new("prompt_tokens", DataType::Int32, false),
         Field::new("completion_tokens", DataType::Int32, false),
-        Field::new("end_time", DataType::Timestamp(TimeUnit::Millisecond, None), false),
+        Field::new(
+            "end_time",
+            DataType::Timestamp(TimeUnit::Millisecond, None),
+            false,
+        ),
         Field::new("model_group", DataType::Utf8, true),
     ]));
 
@@ -157,13 +178,17 @@ pub fn write_parquet_to_buffer(
 
     let comp = match compression {
         "snappy" => Compression::SNAPPY,
-        "gzip" => Compression::GZIP(parquet::basic::GzipLevel::try_new(compression_level)
-            .map_err(|e| format!("GzipLevel: {}", e))?),
+        "gzip" => Compression::GZIP(
+            parquet::basic::GzipLevel::try_new(compression_level)
+                .map_err(|e| format!("GzipLevel: {}", e))?,
+        ),
         "lz4" => Compression::LZ4,
         "none" | "uncompressed" => Compression::UNCOMPRESSED,
         // default to zstd
-        _ => Compression::ZSTD(ZstdLevel::try_new(compression_level as i32)
-            .map_err(|e| format!("ZstdLevel: {}", e))?),
+        _ => Compression::ZSTD(
+            ZstdLevel::try_new(compression_level as i32)
+                .map_err(|e| format!("ZstdLevel: {}", e))?,
+        ),
     };
     let mut props_builder = WriterProperties::builder()
         .set_compression(comp)
@@ -182,7 +207,9 @@ pub fn write_parquet_to_buffer(
     {
         let mut writer = ArrowWriter::try_new(&mut buffer, schema, Some(props))
             .map_err(|e| format!("ArrowWriter: {}", e))?;
-        writer.write(&batch).map_err(|e| format!("write batch: {}", e))?;
+        writer
+            .write(&batch)
+            .map_err(|e| format!("write batch: {}", e))?;
         writer.close().map_err(|e| format!("close writer: {}", e))?;
     }
 
@@ -252,30 +279,41 @@ mod tests {
 
     #[test]
     fn test_write_multiple_rows_to_file() {
-        let rows: Vec<BodyRow> = (0..100).map(|i| BodyRow {
-            call_id: format!("req-{:04}", i),
-            start_time: format!("2026-07-22T{:02}:00:00+00:00", i % 24),
-            model: if i % 2 == 0 { "gpt-4".into() } else { "claude-3".into() },
-            status: Some("success".into()),
-            cache_hit: if i % 10 == 0 { Some("true".into()) } else { None },
-            session_id: Some(format!("sess-{}", i / 10)),
-            messages: Some(format!(r#"{{"content":"message {}"}}"#, i)),
-            response: Some(format!(r#"{{"content":"response {}"}}"#, i)),
-            proxy_server_request: None,
-            request_id: None,
-            spend: i as f64 * 0.001,
-            total_tokens: 100,
-            prompt_tokens: 30,
-            completion_tokens: 70,
-            end_time: format!("2026-07-22T{:02}:01:00+00:00", i % 24),
-            model_group: None,
-        }).collect();
+        let rows: Vec<BodyRow> = (0..100)
+            .map(|i| BodyRow {
+                call_id: format!("req-{:04}", i),
+                start_time: format!("2026-07-22T{:02}:00:00+00:00", i % 24),
+                model: if i % 2 == 0 {
+                    "gpt-4".into()
+                } else {
+                    "claude-3".into()
+                },
+                status: Some("success".into()),
+                cache_hit: if i % 10 == 0 {
+                    Some("true".into())
+                } else {
+                    None
+                },
+                session_id: Some(format!("sess-{}", i / 10)),
+                messages: Some(format!(r#"{{"content":"message {}"}}"#, i)),
+                response: Some(format!(r#"{{"content":"response {}"}}"#, i)),
+                proxy_server_request: None,
+                request_id: None,
+                spend: i as f64 * 0.001,
+                total_tokens: 100,
+                prompt_tokens: 30,
+                completion_tokens: 70,
+                end_time: format!("2026-07-22T{:02}:01:00+00:00", i % 24),
+                model_group: None,
+            })
+            .collect();
 
         let dir = std::env::temp_dir().join("aigw_parquet_test");
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("test.parquet");
 
-        let bytes = write_parquet_to_file(&path, &rows, 5000, 10, "zstd", 6).expect("write to file");
+        let bytes =
+            write_parquet_to_file(&path, &rows, 5000, 10, "zstd", 6).expect("write to file");
         assert!(bytes > 0);
         assert!(path.exists());
 
@@ -286,32 +324,34 @@ mod tests {
     #[test]
     fn test_bloom_skipped_below_threshold() {
         // 5 rows with bloom_min_rows=10 → no bloom filter columns
-        let rows: Vec<BodyRow> = (0..5).map(|i| BodyRow {
-            call_id: format!("req-{:04}", i),
-            start_time: "2026-07-22T14:00:00+00:00".into(),
-            model: "gpt-4".into(),
-            status: Some("success".into()),
-            cache_hit: None,
-            session_id: Some(format!("sess-{}", i)),
-            messages: Some(r#"{}"#.into()),
-            response: Some(r#"{}"#.into()),
-            proxy_server_request: None,
-            request_id: None,
-            spend: 0.01,
-            total_tokens: 10,
-            prompt_tokens: 5,
-            completion_tokens: 5,
-            end_time: "2026-07-22T14:01:00+00:00".into(),
-            model_group: None,
-        }).collect();
+        let rows: Vec<BodyRow> = (0..5)
+            .map(|i| BodyRow {
+                call_id: format!("req-{:04}", i),
+                start_time: "2026-07-22T14:00:00+00:00".into(),
+                model: "gpt-4".into(),
+                status: Some("success".into()),
+                cache_hit: None,
+                session_id: Some(format!("sess-{}", i)),
+                messages: Some(r#"{}"#.into()),
+                response: Some(r#"{}"#.into()),
+                proxy_server_request: None,
+                request_id: None,
+                spend: 0.01,
+                total_tokens: 10,
+                prompt_tokens: 5,
+                completion_tokens: 5,
+                end_time: "2026-07-22T14:01:00+00:00".into(),
+                model_group: None,
+            })
+            .collect();
 
         let data = write_parquet_to_buffer(&rows, 5000, 10, "zstd", 6).expect("write parquet");
 
         // Parse metadata and verify no bloom filter is present
         use parquet::arrow::arrow_reader::ArrowReaderMetadata;
         let bytes = bytes::Bytes::copy_from_slice(&data);
-        let metadata = ArrowReaderMetadata::load(&bytes, Default::default())
-            .expect("load metadata");
+        let metadata =
+            ArrowReaderMetadata::load(&bytes, Default::default()).expect("load metadata");
         let parquet_meta = metadata.metadata();
         // None of the row groups should have bloom filter columns
         for rg_idx in 0..parquet_meta.num_row_groups() {

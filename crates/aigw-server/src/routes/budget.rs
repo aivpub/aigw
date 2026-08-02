@@ -117,10 +117,7 @@ pub async fn budget_new(
             .get("rpm_limit")
             .and_then(|v| v.as_i64())
             .map(|v| v.to_string()),
-        model_max_budget: body
-            .get("model_max_budget")
-            .cloned()
-            .unwrap_or(json!({})),
+        model_max_budget: body.get("model_max_budget").cloned().unwrap_or(json!({})),
         budget_duration: body
             .get("budget_duration")
             .and_then(|v| v.as_str())
@@ -129,10 +126,7 @@ pub async fn budget_new(
             .get("budget_reset_at")
             .and_then(|v| v.as_str())
             .and_then(super::keys::parse_rfc3339),
-        allowed_models: body
-            .get("allowed_models")
-            .cloned()
-            .unwrap_or(json!([])),
+        allowed_models: body.get("allowed_models").cloned().unwrap_or(json!([])),
         created_at: now,
         created_by: auth.key_alias.clone().unwrap_or_default(),
         updated_at: now,
@@ -146,7 +140,9 @@ pub async fn budget_new(
         )
     })?;
 
-    Ok(Json(serde_json::to_value(&budget).unwrap_or(json!({"budget_id": budget_id}))))
+    Ok(Json(
+        serde_json::to_value(&budget).unwrap_or(json!({"budget_id": budget_id})),
+    ))
 }
 
 /// GET /budget/info?budget_id=...
@@ -188,13 +184,10 @@ pub async fn budget_update(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&auth)?;
 
-    let budget_id = body
-        .get("budget_id")
-        .and_then(|v| v.as_str())
-        .ok_or((
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": {"message": "budget_id is required", "type": "bad_request"}})),
-        ))?;
+    let budget_id = body.get("budget_id").and_then(|v| v.as_str()).ok_or((
+        StatusCode::BAD_REQUEST,
+        Json(json!({"error": {"message": "budget_id is required", "type": "bad_request"}})),
+    ))?;
 
     let mut existing = state
         .db

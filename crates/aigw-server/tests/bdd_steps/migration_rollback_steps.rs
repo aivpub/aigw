@@ -4,19 +4,23 @@
 //! Uses aigw-migrate remote_export to sync data from aigw back to the
 //! upstream litellm database.
 
+use crate::TestWorld;
 use cucumber::{then, when};
 #[allow(unused_imports)]
 use sqlx::any::AnyPoolOptions;
 #[allow(unused_imports)]
 use sqlx::Row as _;
-use crate::TestWorld;
 
 fn real_api_enabled() -> bool {
-    std::env::var("AIGW_REAL_API").map(|v| v == "1").unwrap_or(false)
+    std::env::var("AIGW_REAL_API")
+        .map(|v| v == "1")
+        .unwrap_or(false)
 }
 
 fn upstream_db_url() -> Option<String> {
-    std::env::var("AIGW_UPSTREAM_DB_URL").ok().filter(|s| !s.is_empty())
+    std::env::var("AIGW_UPSTREAM_DB_URL")
+        .ok()
+        .filter(|s| !s.is_empty())
 }
 
 /// Returns true when migration tests are fully configured.
@@ -25,8 +29,7 @@ fn migration_enabled() -> bool {
 }
 
 fn target_db_url() -> String {
-    std::env::var("AIGW_TEST_DB_URL")
-        .expect("AIGW_TEST_DB_URL must be set by the BDD test harness")
+    std::env::var("AIGW_TEST_DB_URL").expect("AIGW_TEST_DB_URL must be set by the BDD test harness")
 }
 
 fn source_master_key() -> String {
@@ -165,7 +168,9 @@ async fn when_rollback_credentials(world: &mut TestWorld) {
     match result {
         Ok(_all_match) => {
             let src_count = get_row_count(&aigw_url, "credentials").await.unwrap_or(-1);
-            let tgt_count = get_row_count(&upstream_url, "LiteLLM_CredentialsTable").await.unwrap_or(-1);
+            let tgt_count = get_row_count(&upstream_url, "LiteLLM_CredentialsTable")
+                .await
+                .unwrap_or(-1);
             world.last_body = Some(serde_json::json!({
                 "success": true,
                 "credentials_count": src_count,
@@ -186,7 +191,10 @@ async fn when_rollback_credentials(world: &mut TestWorld) {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 fn assert_success(body: &serde_json::Value) {
-    let success = body.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+    let success = body
+        .get("success")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     assert!(success, "Expected success=true, got: {:?}", body);
 }
 
@@ -220,8 +228,13 @@ fn then_rollback_plain_match(world: &mut TestWorld) {
     // Exclude shared tables (virtual_keys, config) that are mutated by
     // server-side operations during real API tests.
     for tbl in &[
-        "organizations", "teams", "users", "projects", "budgets",
-        "organization_memberships", "team_memberships",
+        "organizations",
+        "teams",
+        "users",
+        "projects",
+        "budgets",
+        "organization_memberships",
+        "team_memberships",
     ] {
         assert_counts_match(body, tbl);
     }

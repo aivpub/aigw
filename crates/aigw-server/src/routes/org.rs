@@ -79,18 +79,16 @@ pub async fn org_new(
         updated_by: auth.key_alias.unwrap_or_default(),
     };
 
-    state
-        .db
-        .insert_organization(&org)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": {"message": format!("{}", e), "type": "internal"}})),
-            )
-        })?;
+    state.db.insert_organization(&org).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {"message": format!("{}", e), "type": "internal"}})),
+        )
+    })?;
 
-    Ok(Json(serde_json::to_value(&org).unwrap_or(json!({"organization_id": org_id}))))
+    Ok(Json(
+        serde_json::to_value(&org).unwrap_or(json!({"organization_id": org_id})),
+    ))
 }
 
 /// GET /org/info?organization_id=...
@@ -176,7 +174,9 @@ pub async fn org_update(
         .and_then(|v| v.as_str())
         .ok_or((
             StatusCode::BAD_REQUEST,
-            Json(json!({"error": {"message": "organization_id is required", "type": "bad_request"}})),
+            Json(
+                json!({"error": {"message": "organization_id is required", "type": "bad_request"}}),
+            ),
         ))?;
 
     let mut existing = state
@@ -215,16 +215,12 @@ pub async fn org_update(
     existing.updated_at = chrono::Utc::now();
     existing.updated_by = auth.key_alias.unwrap_or_default();
 
-    state
-        .db
-        .update_organization(&existing)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": {"message": format!("{}", e), "type": "internal"}})),
-            )
-        })?;
+    state.db.update_organization(&existing).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {"message": format!("{}", e), "type": "internal"}})),
+        )
+    })?;
 
     Ok(Json(serde_json::to_value(&existing).unwrap_or(json!({}))))
 }

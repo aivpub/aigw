@@ -75,7 +75,10 @@ pub(crate) async fn cleanup_by_prefix(db_url: &str, prefix: &str) -> anyhow::Res
 /// Clean up virtual keys with the given key_alias prefix.
 pub(crate) async fn cleanup_keys_by_alias(db_url: &str, alias_prefix: &str) -> anyhow::Result<()> {
     let pool = aigw_migrate::native::SourcePool::connect(db_url).await?;
-    let sql = format!("DELETE FROM virtual_keys WHERE key_alias LIKE '{}%'", alias_prefix);
+    let sql = format!(
+        "DELETE FROM virtual_keys WHERE key_alias LIKE '{}%'",
+        alias_prefix
+    );
     pool.execute_raw(&sql).await?;
     Ok(())
 }
@@ -84,10 +87,7 @@ pub(crate) async fn cleanup_keys_by_alias(db_url: &str, alias_prefix: &str) -> a
 ///
 /// Handles cross-DB differences: time literals use `time_literal()`,
 /// request_tags serialized as proper JSON. NULL columns use NULL (not empty strings).
-pub(crate) async fn seed_spend_logs(
-    db_url: &str,
-    rows: &[SeedRow],
-) -> anyhow::Result<()> {
+pub(crate) async fn seed_spend_logs(db_url: &str, rows: &[SeedRow]) -> anyhow::Result<()> {
     let pool = aigw_migrate::native::SourcePool::connect(db_url).await?;
 
     for row in rows {
@@ -172,9 +172,7 @@ pub(crate) async fn ensure_virtual_key(
                 '{{}}', '{{}}',
                 {}, NULL, NULL, NULL, NULL,
                 'false', {}, {})"#,
-        token_hash, alias, alias,
-        user_val,
-        now, now,
+        token_hash, alias, alias, user_val, now, now,
     );
 
     pool.execute_raw(&sql).await?;
@@ -201,8 +199,8 @@ fn encode_tags_literal(tags: &Option<String>) -> String {
         _ => return "NULL".to_string(),
     };
     // Already looks like JSON object/array/string → use as-is
-    let looks_json = s.starts_with('{') || s.starts_with('[')
-        || (s.starts_with('"') && s.ends_with('"'));
+    let looks_json =
+        s.starts_with('{') || s.starts_with('[') || (s.starts_with('"') && s.ends_with('"'));
     let escaped = s.replace('\'', "''");
     if looks_json {
         format!("'{}'", escaped)

@@ -134,7 +134,14 @@ pub async fn create_job(
     steps: &[NewStep],
     max_retries: i32,
 ) -> Result<String> {
-    let job_id = format!("job-{}", Uuid::new_v4().to_string().split('-').next().unwrap_or("0000"));
+    let job_id = format!(
+        "job-{}",
+        Uuid::new_v4()
+            .to_string()
+            .split('-')
+            .next()
+            .unwrap_or("0000")
+    );
     let now = chrono::Utc::now().to_rfc3339();
 
     // Deduplicate: filter out steps whose keys already exist in active jobs
@@ -144,23 +151,58 @@ pub async fn create_job(
     } else {
         let skipped = active_keys.len();
         warn!(step_type, %trigger_type, skipped, "create_job: skipping duplicate steps already in active jobs");
-        steps.iter().filter(|s| !active_keys.contains(&s.key)).collect()
+        steps
+            .iter()
+            .filter(|s| !active_keys.contains(&s.key))
+            .collect()
     };
 
     if steps.is_empty() {
-        return Err(DbError::Other("all steps are already queued in active jobs".into()));
+        return Err(DbError::Other(
+            "all steps are already queued in active jobs".into(),
+        ));
     }
 
     // Recompute total from deduplicated steps
     match db {
         Database::Sqlite(pool) => {
-            create_job_sqlite(pool, &job_id, step_type, trigger_type, triggered_by, &steps, max_retries, &now).await
+            create_job_sqlite(
+                pool,
+                &job_id,
+                step_type,
+                trigger_type,
+                triggered_by,
+                &steps,
+                max_retries,
+                &now,
+            )
+            .await
         }
         Database::Mysql(pool) => {
-            create_job_mysql(pool, &job_id, step_type, trigger_type, triggered_by, &steps, max_retries, &now).await
+            create_job_mysql(
+                pool,
+                &job_id,
+                step_type,
+                trigger_type,
+                triggered_by,
+                &steps,
+                max_retries,
+                &now,
+            )
+            .await
         }
         Database::Postgres(pool) => {
-            create_job_pg(pool, &job_id, step_type, trigger_type, triggered_by, &steps, max_retries, &now).await
+            create_job_pg(
+                pool,
+                &job_id,
+                step_type,
+                trigger_type,
+                triggered_by,
+                &steps,
+                max_retries,
+                &now,
+            )
+            .await
         }
     }
 }
@@ -186,7 +228,9 @@ async fn find_active_step_keys(
                 placeholders
             );
             let mut q = sqlx::query_scalar::<_, String>(&sql).bind(step_type);
-            for k in &step_keys { q = q.bind(k); }
+            for k in &step_keys {
+                q = q.bind(k);
+            }
             let keys: Vec<String> = q.fetch_all(pool).await?;
             Ok(keys.into_iter().collect())
         }
@@ -199,12 +243,18 @@ async fn find_active_step_keys(
                 placeholders
             );
             let mut q = sqlx::query_scalar::<_, String>(&sql).bind(step_type);
-            for k in &step_keys { q = q.bind(k); }
+            for k in &step_keys {
+                q = q.bind(k);
+            }
             let keys: Vec<String> = q.fetch_all(pool).await?;
             Ok(keys.into_iter().collect())
         }
         Database::Postgres(pool) => {
-            let pg_placeholders: Vec<String> = step_keys.iter().enumerate().map(|(i, _)| format!("${}", i + 2)).collect();
+            let pg_placeholders: Vec<String> = step_keys
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("${}", i + 2))
+                .collect();
             let sql = format!(
                 "SELECT DISTINCT s.step_key FROM async_job_steps s
                  JOIN async_jobs j ON s.job_id = j.id
@@ -212,7 +262,9 @@ async fn find_active_step_keys(
                 pg_placeholders.join(",")
             );
             let mut q = sqlx::query_scalar::<_, String>(&sql).bind(step_type);
-            for k in &step_keys { q = q.bind(k); }
+            for k in &step_keys {
+                q = q.bind(k);
+            }
             let keys: Vec<String> = q.fetch_all(pool).await?;
             Ok(keys.into_iter().collect())
         }
@@ -242,10 +294,15 @@ async fn create_job_sqlite(
         let step_id = format!("{}-{}", job_id, step.key);
         sqlx::query(
             "INSERT INTO async_job_steps (id, job_id, step_key, step_type, status, payload)
-             VALUES (?, ?, ?, ?, 'pending', ?)"
+             VALUES (?, ?, ?, ?, 'pending', ?)",
         )
-        .bind(&step_id).bind(job_id).bind(&step.key).bind(step_type).bind(&step.payload)
-        .execute(pool).await?;
+        .bind(&step_id)
+        .bind(job_id)
+        .bind(&step.key)
+        .bind(step_type)
+        .bind(&step.payload)
+        .execute(pool)
+        .await?;
     }
     Ok(job_id.to_string())
 }
@@ -273,10 +330,15 @@ async fn create_job_mysql(
         let step_id = format!("{}-{}", job_id, step.key);
         sqlx::query(
             "INSERT INTO async_job_steps (id, job_id, step_key, step_type, status, payload)
-             VALUES (?, ?, ?, ?, 'pending', ?)"
+             VALUES (?, ?, ?, ?, 'pending', ?)",
         )
-        .bind(&step_id).bind(job_id).bind(&step.key).bind(step_type).bind(sqlx::types::Json(&step.payload))
-        .execute(pool).await?;
+        .bind(&step_id)
+        .bind(job_id)
+        .bind(&step.key)
+        .bind(step_type)
+        .bind(sqlx::types::Json(&step.payload))
+        .execute(pool)
+        .await?;
     }
     Ok(job_id.to_string())
 }
@@ -304,10 +366,15 @@ async fn create_job_pg(
         let step_id = format!("{}-{}", job_id, step.key);
         sqlx::query(
             "INSERT INTO async_job_steps (id, job_id, step_key, step_type, status, payload)
-             VALUES ($1, $2, $3, $4, 'pending', $5)"
+             VALUES ($1, $2, $3, $4, 'pending', $5)",
         )
-        .bind(&step_id).bind(job_id).bind(&step.key).bind(step_type).bind(&step.payload)
-        .execute(pool).await?;
+        .bind(&step_id)
+        .bind(job_id)
+        .bind(&step.key)
+        .bind(step_type)
+        .bind(&step.payload)
+        .execute(pool)
+        .await?;
     }
     Ok(job_id.to_string())
 }
@@ -321,27 +388,39 @@ pub async fn append_log(
     message: &str,
 ) {
     let result: std::result::Result<(), DbError> = match db {
-        Database::Sqlite(pool) => {
-            sqlx::query(
-                "INSERT INTO async_job_logs (job_id, step_key, level, message) VALUES (?, ?, ?, ?)"
-            )
-            .bind(job_id).bind(step_key).bind(level).bind(message)
-            .execute(pool).await.map(|_| ()).map_err(DbError::from)
-        }
-        Database::Mysql(pool) => {
-            sqlx::query(
-                "INSERT INTO async_job_logs (job_id, step_key, level, message) VALUES (?, ?, ?, ?)"
-            )
-            .bind(job_id).bind(step_key).bind(level).bind(message)
-            .execute(pool).await.map(|_| ()).map_err(DbError::from)
-        }
-        Database::Postgres(pool) => {
-            sqlx::query(
-                "INSERT INTO async_job_logs (job_id, step_key, level, message) VALUES ($1, $2, $3, $4)"
-            )
-            .bind(job_id).bind(step_key).bind(level).bind(message)
-            .execute(pool).await.map(|_| ()).map_err(DbError::from)
-        }
+        Database::Sqlite(pool) => sqlx::query(
+            "INSERT INTO async_job_logs (job_id, step_key, level, message) VALUES (?, ?, ?, ?)",
+        )
+        .bind(job_id)
+        .bind(step_key)
+        .bind(level)
+        .bind(message)
+        .execute(pool)
+        .await
+        .map(|_| ())
+        .map_err(DbError::from),
+        Database::Mysql(pool) => sqlx::query(
+            "INSERT INTO async_job_logs (job_id, step_key, level, message) VALUES (?, ?, ?, ?)",
+        )
+        .bind(job_id)
+        .bind(step_key)
+        .bind(level)
+        .bind(message)
+        .execute(pool)
+        .await
+        .map(|_| ())
+        .map_err(DbError::from),
+        Database::Postgres(pool) => sqlx::query(
+            "INSERT INTO async_job_logs (job_id, step_key, level, message) VALUES ($1, $2, $3, $4)",
+        )
+        .bind(job_id)
+        .bind(step_key)
+        .bind(level)
+        .bind(message)
+        .execute(pool)
+        .await
+        .map(|_| ())
+        .map_err(DbError::from),
     };
     if let Err(e) = result {
         warn!(%job_id, ?step_key, %level, %message, "failed to write job log: {}", e);
@@ -363,7 +442,10 @@ async fn tick_loop(db: Arc<Database>, task: Arc<dyn AsyncTask>, interval: Durati
                 if let Err(e) = create_job(&db, step_type, "cron", None, &steps, 3).await {
                     // Ignore unique constraint violations (concurrent tick)
                     let err_str = e.to_string();
-                    if err_str.contains("UNIQUE") || err_str.contains("unique") || err_str.contains("duplicate") {
+                    if err_str.contains("UNIQUE")
+                        || err_str.contains("unique")
+                        || err_str.contains("duplicate")
+                    {
                         debug!(step_type, "tick: concurrent job already created, skipping");
                     } else {
                         error!(step_type, %e, "tick: failed to create job");
@@ -563,7 +645,14 @@ pub async fn complete_step(
                     }
                 }
                 Ok(Some(ref status)) if status == "partially_failed" => {
-                    append_log(db, job_id, None, "warn", "all steps completed with some failures, finalizing").await;
+                    append_log(
+                        db,
+                        job_id,
+                        None,
+                        "warn",
+                        "all steps completed with some failures, finalizing",
+                    )
+                    .await;
                     if let Ok(Some(job)) = get_job_by_id(db, job_id).await {
                         if let Err(e) = task.finalize(db, &job).await {
                             error!(%job_id, %e, "finalize error on partially_failed job");
@@ -574,7 +663,14 @@ pub async fn complete_step(
                     }
                 }
                 Ok(Some(other)) => {
-                    append_log(db, job_id, None, "warn", &format!("unexpected terminal state: {}", other)).await;
+                    append_log(
+                        db,
+                        job_id,
+                        None,
+                        "warn",
+                        &format!("unexpected terminal state: {}", other),
+                    )
+                    .await;
                 }
                 Ok(None) => {} // More steps pending
                 Err(e) => error!(%job_id, %e, "increment_job_completed error"),
@@ -642,9 +738,19 @@ pub async fn fail_step(
 
     match result {
         Ok(_) => {
-            let level = if new_status == "failed" { "error" } else { "warn" };
-            append_log(db, job_id, Some(&step.step_key), level,
-                &format!("step {}: {}", new_status, error_msg)).await;
+            let level = if new_status == "failed" {
+                "error"
+            } else {
+                "warn"
+            };
+            append_log(
+                db,
+                job_id,
+                Some(&step.step_key),
+                level,
+                &format!("step {}: {}", new_status, error_msg),
+            )
+            .await;
 
             if new_status == "failed" {
                 // Atomically increment failed_steps and determine terminal state
@@ -659,7 +765,14 @@ pub async fn fail_step(
                         }
                     }
                     Ok(Some(ref status)) if status == "partially_failed" => {
-                        append_log(db, job_id, None, "warn", "all steps done with mixed results").await;
+                        append_log(
+                            db,
+                            job_id,
+                            None,
+                            "warn",
+                            "all steps done with mixed results",
+                        )
+                        .await;
                         if let Ok(Some(job)) = get_job_by_id(db, job_id).await {
                             if let Err(e) = task.finalize(db, &job).await {
                                 error!(%job_id, %e, "finalize error on partially_failed job");
@@ -670,7 +783,14 @@ pub async fn fail_step(
                         }
                     }
                     Ok(Some(other)) => {
-                        append_log(db, job_id, None, "warn", &format!("unexpected terminal state: {}", other)).await;
+                        append_log(
+                            db,
+                            job_id,
+                            None,
+                            "warn",
+                            &format!("unexpected terminal state: {}", other),
+                        )
+                        .await;
                     }
                     Ok(None) => {} // More steps pending
                     Err(e) => error!(%job_id, %e, "increment_job_failed error"),
@@ -685,32 +805,36 @@ pub async fn fail_step(
 
 /// Reclaim stale running steps (those that have been running longer than `timeout`).
 pub async fn cleanup_stale_steps(db: &Database, timeout: Duration) -> Result<()> {
-    let cutoff = (chrono::Utc::now() - chrono::Duration::from_std(timeout).unwrap_or_default()).to_rfc3339();
+    let cutoff =
+        (chrono::Utc::now() - chrono::Duration::from_std(timeout).unwrap_or_default()).to_rfc3339();
     match db {
-        Database::Sqlite(pool) => {
-            sqlx::query(
-                "UPDATE async_job_steps SET status = 'pending', started_at = NULL
-                 WHERE status = 'running' AND started_at IS NOT NULL AND started_at < ?"
-            )
-            .bind(&cutoff)
-            .execute(pool).await.map(|_| ()).map_err(DbError::from)
-        }
-        Database::Mysql(pool) => {
-            sqlx::query(
-                "UPDATE async_job_steps SET status = 'pending', started_at = NULL
-                 WHERE status = 'running' AND started_at IS NOT NULL AND started_at < ?"
-            )
-            .bind(&cutoff)
-            .execute(pool).await.map(|_| ()).map_err(DbError::from)
-        }
-        Database::Postgres(pool) => {
-            sqlx::query(
-                "UPDATE async_job_steps SET status = 'pending', started_at = NULL
-                 WHERE status = 'running' AND started_at IS NOT NULL AND started_at < $1"
-            )
-            .bind(&cutoff)
-            .execute(pool).await.map(|_| ()).map_err(DbError::from)
-        }
+        Database::Sqlite(pool) => sqlx::query(
+            "UPDATE async_job_steps SET status = 'pending', started_at = NULL
+                 WHERE status = 'running' AND started_at IS NOT NULL AND started_at < ?",
+        )
+        .bind(&cutoff)
+        .execute(pool)
+        .await
+        .map(|_| ())
+        .map_err(DbError::from),
+        Database::Mysql(pool) => sqlx::query(
+            "UPDATE async_job_steps SET status = 'pending', started_at = NULL
+                 WHERE status = 'running' AND started_at IS NOT NULL AND started_at < ?",
+        )
+        .bind(&cutoff)
+        .execute(pool)
+        .await
+        .map(|_| ())
+        .map_err(DbError::from),
+        Database::Postgres(pool) => sqlx::query(
+            "UPDATE async_job_steps SET status = 'pending', started_at = NULL
+                 WHERE status = 'running' AND started_at IS NOT NULL AND started_at < $1",
+        )
+        .bind(&cutoff)
+        .execute(pool)
+        .await
+        .map(|_| ())
+        .map_err(DbError::from),
     }
 }
 
@@ -727,15 +851,17 @@ async fn increment_job_completed(db: &Database, job_id: &str) -> Result<Option<S
         Database::Sqlite(pool) => {
             // SQLite: use BEGIN IMMEDIATE transaction for atomicity
             let mut tx = pool.begin().await?;
-            sqlx::query(
-                "UPDATE async_jobs SET completed_steps = completed_steps + 1 WHERE id = ?"
-            )
-            .bind(job_id).execute(&mut *tx).await?;
+            sqlx::query("UPDATE async_jobs SET completed_steps = completed_steps + 1 WHERE id = ?")
+                .bind(job_id)
+                .execute(&mut *tx)
+                .await?;
 
             let row: (i32, i32, i32) = sqlx::query_as(
-                "SELECT completed_steps, failed_steps, total_steps FROM async_jobs WHERE id = ?"
+                "SELECT completed_steps, failed_steps, total_steps FROM async_jobs WHERE id = ?",
             )
-            .bind(job_id).fetch_one(&mut *tx).await?;
+            .bind(job_id)
+            .fetch_one(&mut *tx)
+            .await?;
 
             tx.commit().await?;
 
@@ -754,7 +880,9 @@ async fn increment_job_completed(db: &Database, job_id: &str) -> Result<Option<S
             // MySQL: use transaction with SELECT FOR UPDATE
             let mut tx = pool.begin().await?;
             sqlx::query("UPDATE async_jobs SET completed_steps = completed_steps + 1 WHERE id = ?")
-            .bind(job_id).execute(&mut *tx).await?;
+                .bind(job_id)
+                .execute(&mut *tx)
+                .await?;
 
             let row: (i32, i32, i32) = sqlx::query_as(
                 "SELECT completed_steps, failed_steps, total_steps FROM async_jobs WHERE id = ? FOR UPDATE"
@@ -783,7 +911,7 @@ async fn increment_job_completed(db: &Database, job_id: &str) -> Result<Option<S
                    RETURNING
                      CASE WHEN completed_steps + failed_steps >= total_steps THEN
                        CASE WHEN failed_steps = 0 THEN 'completed' ELSE 'partially_failed' END
-                     ELSE NULL END"#
+                     ELSE NULL END"#,
             )
             .bind(job_id)
             .fetch_optional(pool)
@@ -803,12 +931,16 @@ async fn increment_job_failed(db: &Database, job_id: &str) -> Result<Option<Stri
         Database::Sqlite(pool) => {
             let mut tx = pool.begin().await?;
             sqlx::query("UPDATE async_jobs SET failed_steps = failed_steps + 1 WHERE id = ?")
-            .bind(job_id).execute(&mut *tx).await?;
+                .bind(job_id)
+                .execute(&mut *tx)
+                .await?;
 
             let row: (i32, i32, i32) = sqlx::query_as(
-                "SELECT completed_steps, failed_steps, total_steps FROM async_jobs WHERE id = ?"
+                "SELECT completed_steps, failed_steps, total_steps FROM async_jobs WHERE id = ?",
             )
-            .bind(job_id).fetch_one(&mut *tx).await?;
+            .bind(job_id)
+            .fetch_one(&mut *tx)
+            .await?;
 
             tx.commit().await?;
 
@@ -826,7 +958,9 @@ async fn increment_job_failed(db: &Database, job_id: &str) -> Result<Option<Stri
         Database::Mysql(pool) => {
             let mut tx = pool.begin().await?;
             sqlx::query("UPDATE async_jobs SET failed_steps = failed_steps + 1 WHERE id = ?")
-            .bind(job_id).execute(&mut *tx).await?;
+                .bind(job_id)
+                .execute(&mut *tx)
+                .await?;
 
             let row: (i32, i32, i32) = sqlx::query_as(
                 "SELECT completed_steps, failed_steps, total_steps FROM async_jobs WHERE id = ? FOR UPDATE"
@@ -854,7 +988,7 @@ async fn increment_job_failed(db: &Database, job_id: &str) -> Result<Option<Stri
                    RETURNING
                      CASE WHEN completed_steps + failed_steps >= total_steps THEN
                        CASE WHEN completed_steps = 0 THEN 'failed' ELSE 'partially_failed' END
-                     ELSE NULL END"#
+                     ELSE NULL END"#,
             )
             .bind(job_id)
             .fetch_optional(pool)
@@ -869,15 +1003,24 @@ async fn get_job_by_id(db: &Database, job_id: &str) -> Result<Option<JobRecord>>
     match db {
         Database::Sqlite(pool) => {
             sqlx::query_as::<_, JobRecord>("SELECT * FROM async_jobs WHERE id = ?")
-            .bind(job_id).fetch_optional(pool).await.map_err(DbError::from)
+                .bind(job_id)
+                .fetch_optional(pool)
+                .await
+                .map_err(DbError::from)
         }
         Database::Mysql(pool) => {
             sqlx::query_as::<_, JobRecord>("SELECT * FROM async_jobs WHERE id = ?")
-            .bind(job_id).fetch_optional(pool).await.map_err(DbError::from)
+                .bind(job_id)
+                .fetch_optional(pool)
+                .await
+                .map_err(DbError::from)
         }
         Database::Postgres(pool) => {
             sqlx::query_as::<_, JobRecord>("SELECT * FROM async_jobs WHERE id = $1")
-            .bind(job_id).fetch_optional(pool).await.map_err(DbError::from)
+                .bind(job_id)
+                .fetch_optional(pool)
+                .await
+                .map_err(DbError::from)
         }
     }
 }
@@ -886,17 +1029,23 @@ async fn get_job_max_retries(db: &Database, job_id: &str) -> Result<i32> {
     match db {
         Database::Sqlite(pool) => {
             let row: (i32,) = sqlx::query_as("SELECT max_retries FROM async_jobs WHERE id = ?")
-                .bind(job_id).fetch_one(pool).await?;
+                .bind(job_id)
+                .fetch_one(pool)
+                .await?;
             Ok(row.0)
         }
         Database::Mysql(pool) => {
             let row: (i32,) = sqlx::query_as("SELECT max_retries FROM async_jobs WHERE id = ?")
-                .bind(job_id).fetch_one(pool).await?;
+                .bind(job_id)
+                .fetch_one(pool)
+                .await?;
             Ok(row.0)
         }
         Database::Postgres(pool) => {
             let row: (i32,) = sqlx::query_as("SELECT max_retries FROM async_jobs WHERE id = $1")
-                .bind(job_id).fetch_one(pool).await?;
+                .bind(job_id)
+                .fetch_one(pool)
+                .await?;
             Ok(row.0)
         }
     }
@@ -949,15 +1098,27 @@ async fn mark_job_failed(db: &Database, job_id: &str, now: &str) {
     match db {
         Database::Sqlite(pool) => {
             sqlx::query("UPDATE async_jobs SET status = 'failed', completed_at = ? WHERE id = ?")
-            .bind(now).bind(job_id).execute(pool).await.ok();
+                .bind(now)
+                .bind(job_id)
+                .execute(pool)
+                .await
+                .ok();
         }
         Database::Mysql(pool) => {
             sqlx::query("UPDATE async_jobs SET status = 'failed', completed_at = ? WHERE id = ?")
-            .bind(now).bind(job_id).execute(pool).await.ok();
+                .bind(now)
+                .bind(job_id)
+                .execute(pool)
+                .await
+                .ok();
         }
         Database::Postgres(pool) => {
             sqlx::query("UPDATE async_jobs SET status = 'failed', completed_at = $1 WHERE id = $2")
-            .bind(now).bind(job_id).execute(pool).await.ok();
+                .bind(now)
+                .bind(job_id)
+                .execute(pool)
+                .await
+                .ok();
         }
     }
 }
@@ -966,12 +1127,24 @@ async fn mark_job_failed(db: &Database, job_id: &str, now: &str) {
 async fn mark_job_partially_failed(db: &Database, job_id: &str, now: &str) {
     match db {
         Database::Sqlite(pool) => {
-            sqlx::query("UPDATE async_jobs SET status = 'partially_failed', completed_at = ? WHERE id = ?")
-            .bind(now).bind(job_id).execute(pool).await.ok();
+            sqlx::query(
+                "UPDATE async_jobs SET status = 'partially_failed', completed_at = ? WHERE id = ?",
+            )
+            .bind(now)
+            .bind(job_id)
+            .execute(pool)
+            .await
+            .ok();
         }
         Database::Mysql(pool) => {
-            sqlx::query("UPDATE async_jobs SET status = 'partially_failed', completed_at = ? WHERE id = ?")
-            .bind(now).bind(job_id).execute(pool).await.ok();
+            sqlx::query(
+                "UPDATE async_jobs SET status = 'partially_failed', completed_at = ? WHERE id = ?",
+            )
+            .bind(now)
+            .bind(job_id)
+            .execute(pool)
+            .await
+            .ok();
         }
         Database::Postgres(pool) => {
             sqlx::query("UPDATE async_jobs SET status = 'partially_failed', completed_at = $1 WHERE id = $2")
@@ -994,9 +1167,15 @@ pub async fn list_jobs(
     offset: i32,
 ) -> Result<(Vec<JobRecord>, i64)> {
     match db {
-        Database::Sqlite(pool) => list_jobs_with_count_sqlite(pool, step_type, status, limit, offset).await,
-        Database::Mysql(pool) => list_jobs_with_count_mysql(pool, step_type, status, limit, offset).await,
-        Database::Postgres(pool) => list_jobs_with_count_pg(pool, step_type, status, limit, offset).await,
+        Database::Sqlite(pool) => {
+            list_jobs_with_count_sqlite(pool, step_type, status, limit, offset).await
+        }
+        Database::Mysql(pool) => {
+            list_jobs_with_count_mysql(pool, step_type, status, limit, offset).await
+        }
+        Database::Postgres(pool) => {
+            list_jobs_with_count_pg(pool, step_type, status, limit, offset).await
+        }
     }
 }
 
@@ -1011,15 +1190,31 @@ async fn list_jobs_with_count_sqlite(
 
     let count_sql = format!("SELECT COUNT(*) FROM async_jobs WHERE {}", where_clause);
     let mut cq = sqlx::query_as::<sqlx::Sqlite, (i64,)>(&count_sql);
-    if let Some(ref v) = st { cq = cq.bind(v.as_str()); }
-    if let Some(ref v) = s { cq = cq.bind(v.as_str()); }
+    if let Some(ref v) = st {
+        cq = cq.bind(v.as_str());
+    }
+    if let Some(ref v) = s {
+        cq = cq.bind(v.as_str());
+    }
     let (count,) = cq.fetch_one(pool).await?;
 
-    let list_sql = format!("SELECT * FROM async_jobs WHERE {} ORDER BY created_at DESC LIMIT ? OFFSET ?", where_clause);
+    let list_sql = format!(
+        "SELECT * FROM async_jobs WHERE {} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+        where_clause
+    );
     let mut lq = sqlx::query_as::<sqlx::Sqlite, JobRecord>(&list_sql);
-    if let Some(ref v) = st { lq = lq.bind(v.as_str()); }
-    if let Some(ref v) = s { lq = lq.bind(v.as_str()); }
-    let jobs = lq.bind(limit).bind(offset).fetch_all(pool).await.map_err(DbError::from)?;
+    if let Some(ref v) = st {
+        lq = lq.bind(v.as_str());
+    }
+    if let Some(ref v) = s {
+        lq = lq.bind(v.as_str());
+    }
+    let jobs = lq
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await
+        .map_err(DbError::from)?;
 
     Ok((jobs, count))
 }
@@ -1035,15 +1230,31 @@ async fn list_jobs_with_count_mysql(
 
     let count_sql = format!("SELECT COUNT(*) FROM async_jobs WHERE {}", where_clause);
     let mut cq = sqlx::query_as::<sqlx::MySql, (i64,)>(&count_sql);
-    if let Some(ref v) = st { cq = cq.bind(v.as_str()); }
-    if let Some(ref v) = s { cq = cq.bind(v.as_str()); }
+    if let Some(ref v) = st {
+        cq = cq.bind(v.as_str());
+    }
+    if let Some(ref v) = s {
+        cq = cq.bind(v.as_str());
+    }
     let (count,) = cq.fetch_one(pool).await?;
 
-    let list_sql = format!("SELECT * FROM async_jobs WHERE {} ORDER BY created_at DESC LIMIT ? OFFSET ?", where_clause);
+    let list_sql = format!(
+        "SELECT * FROM async_jobs WHERE {} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+        where_clause
+    );
     let mut lq = sqlx::query_as::<sqlx::MySql, JobRecord>(&list_sql);
-    if let Some(ref v) = st { lq = lq.bind(v.as_str()); }
-    if let Some(ref v) = s { lq = lq.bind(v.as_str()); }
-    let jobs = lq.bind(limit).bind(offset).fetch_all(pool).await.map_err(DbError::from)?;
+    if let Some(ref v) = st {
+        lq = lq.bind(v.as_str());
+    }
+    if let Some(ref v) = s {
+        lq = lq.bind(v.as_str());
+    }
+    let jobs = lq
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await
+        .map_err(DbError::from)?;
 
     Ok((jobs, count))
 }
@@ -1077,16 +1288,27 @@ async fn list_jobs_with_count_pg(
 
     let count_sql = format!("SELECT COUNT(*) FROM async_jobs WHERE {}", where_clause);
     let mut cq = sqlx::query_as::<sqlx::Postgres, (i64,)>(&count_sql);
-    for p in &params { cq = cq.bind(p.as_str()); }
+    for p in &params {
+        cq = cq.bind(p.as_str());
+    }
     let (count,) = cq.fetch_one(pool).await?;
 
     let list_sql = format!(
         "SELECT * FROM async_jobs WHERE {} ORDER BY created_at DESC LIMIT ${} OFFSET ${}",
-        where_clause, idx, idx + 1
+        where_clause,
+        idx,
+        idx + 1
     );
     let mut lq = sqlx::query_as::<sqlx::Postgres, JobRecord>(&list_sql);
-    for p in &params { lq = lq.bind(p.as_str()); }
-    let jobs = lq.bind(limit).bind(offset).fetch_all(pool).await.map_err(DbError::from)?;
+    for p in &params {
+        lq = lq.bind(p.as_str());
+    }
+    let jobs = lq
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await
+        .map_err(DbError::from)?;
 
     Ok((jobs, count))
 }
@@ -1098,8 +1320,12 @@ fn build_where_params(
     let mut conditions = Vec::new();
     let st = step_type.map(|s| s.to_string());
     let s = status.map(|s| s.to_string());
-    if st.is_some() { conditions.push("step_type = ?"); }
-    if s.is_some() { conditions.push("status = ?"); }
+    if st.is_some() {
+        conditions.push("step_type = ?");
+    }
+    if s.is_some() {
+        conditions.push("status = ?");
+    }
     let where_clause = if conditions.is_empty() {
         String::from("1=1")
     } else {
@@ -1187,8 +1413,7 @@ pub async fn get_job_logs(
                 "SELECT id, job_id, step_key, level, message, created_at FROM async_job_logs WHERE {} ORDER BY created_at DESC LIMIT ? OFFSET ?",
                 where_clause
             );
-            let mut q =
-                sqlx::query_as::<_, crate::async_task::JobLogEntry>(&sql);
+            let mut q = sqlx::query_as::<_, crate::async_task::JobLogEntry>(&sql);
             q = q.bind(job_id);
             if let Some(l) = level {
                 q = q.bind(l);
@@ -1209,8 +1434,7 @@ pub async fn get_job_logs(
                 "SELECT id, job_id, step_key, level, message, created_at FROM async_job_logs WHERE {} ORDER BY created_at DESC LIMIT ? OFFSET ?",
                 where_clause
             );
-            let mut q =
-                sqlx::query_as::<_, crate::async_task::JobLogEntry>(&sql);
+            let mut q = sqlx::query_as::<_, crate::async_task::JobLogEntry>(&sql);
             q = q.bind(job_id);
             if let Some(l) = level {
                 q = q.bind(l);
@@ -1236,8 +1460,7 @@ pub async fn get_job_logs(
                 idx,
                 idx + 1
             );
-            let mut q =
-                sqlx::query_as::<_, crate::async_task::JobLogEntry>(&pg_sql);
+            let mut q = sqlx::query_as::<_, crate::async_task::JobLogEntry>(&pg_sql);
             q = q.bind(job_id);
             if let Some(l) = level {
                 q = q.bind(l);
@@ -1258,41 +1481,29 @@ pub async fn get_job_stats(db: &Database) -> Result<serde_json::Value> {
     // Query unique step_types
     let step_types: Vec<String> = match db {
         Database::Sqlite(pool) => {
-            sqlx::query_scalar::<_, String>(
-                "SELECT DISTINCT step_type FROM async_job_steps",
-            )
-            .fetch_all(pool)
-            .await?
+            sqlx::query_scalar::<_, String>("SELECT DISTINCT step_type FROM async_job_steps")
+                .fetch_all(pool)
+                .await?
         }
         Database::Mysql(pool) => {
-            sqlx::query_scalar::<_, String>(
-                "SELECT DISTINCT step_type FROM async_job_steps",
-            )
-            .fetch_all(pool)
-            .await?
+            sqlx::query_scalar::<_, String>("SELECT DISTINCT step_type FROM async_job_steps")
+                .fetch_all(pool)
+                .await?
         }
         Database::Postgres(pool) => {
-            sqlx::query_scalar::<_, String>(
-                "SELECT DISTINCT step_type FROM async_job_steps",
-            )
-            .fetch_all(pool)
-            .await?
+            sqlx::query_scalar::<_, String>("SELECT DISTINCT step_type FROM async_job_steps")
+                .fetch_all(pool)
+                .await?
         }
     };
 
     for st in step_types {
-        let pending: i64 = count_steps_by_status(db, &st, "pending")
-            .await
-            .unwrap_or(0);
-        let running: i64 = count_steps_by_status(db, &st, "running")
-            .await
-            .unwrap_or(0);
+        let pending: i64 = count_steps_by_status(db, &st, "pending").await.unwrap_or(0);
+        let running: i64 = count_steps_by_status(db, &st, "running").await.unwrap_or(0);
         let completed: i64 = count_steps_by_status(db, &st, "completed")
             .await
             .unwrap_or(0);
-        let failed: i64 = count_steps_by_status(db, &st, "failed")
-            .await
-            .unwrap_or(0);
+        let failed: i64 = count_steps_by_status(db, &st, "failed").await.unwrap_or(0);
 
         stats.insert(
             st.clone(),
@@ -1370,30 +1581,47 @@ mod tests {
 
         sqlx::query(
             "INSERT INTO async_job_steps (id, job_id, step_key, step_type, status, started_at)
-             VALUES ('step-1', 'job-1', 'key1', 'test', 'running', ?)"
+             VALUES ('step-1', 'job-1', 'key1', 'test', 'running', ?)",
         )
         .bind(old_time)
-        .execute(match &db { Database::Sqlite(p) => p, _ => unreachable!() }).await.expect("insert step");
+        .execute(match &db {
+            Database::Sqlite(p) => p,
+            _ => unreachable!(),
+        })
+        .await
+        .expect("insert step");
 
         // Cleanup with a short timeout should reclaim the stale step
-        cleanup_stale_steps(&db, Duration::from_secs(1)).await.expect("cleanup");
+        cleanup_stale_steps(&db, Duration::from_secs(1))
+            .await
+            .expect("cleanup");
 
-        let step = sqlx::query_as::<_, StepRecord>(
-            "SELECT * FROM async_job_steps WHERE id = 'step-1'"
-        )
-        .fetch_one(match &db { Database::Sqlite(p) => p, _ => unreachable!() }).await.expect("fetch step");
+        let step =
+            sqlx::query_as::<_, StepRecord>("SELECT * FROM async_job_steps WHERE id = 'step-1'")
+                .fetch_one(match &db {
+                    Database::Sqlite(p) => p,
+                    _ => unreachable!(),
+                })
+                .await
+                .expect("fetch step");
 
-        assert_eq!(step.status, "pending", "stale step should be reset to pending");
+        assert_eq!(
+            step.status, "pending",
+            "stale step should be reset to pending"
+        );
         assert!(step.started_at.is_none(), "started_at should be cleared");
     }
 
     #[tokio::test]
     async fn test_create_job_and_claim_step() {
         let db = Database::init("sqlite::memory:").await.expect("db init");
-        let steps = vec![
-            NewStep { key: "hour=01".into(), payload: serde_json::json!({"hour": "2026-07-22T01"}) },
-        ];
-        let job_id = create_job(&db, "body_archive", "cron", None, &steps, 3).await.expect("create job");
+        let steps = vec![NewStep {
+            key: "hour=01".into(),
+            payload: serde_json::json!({"hour": "2026-07-22T01"}),
+        }];
+        let job_id = create_job(&db, "body_archive", "cron", None, &steps, 3)
+            .await
+            .expect("create job");
         assert!(!job_id.is_empty());
 
         let claimed = claim_next_step(&db, "body_archive").await.expect("claim");
@@ -1403,6 +1631,9 @@ mod tests {
 
         // Second claim should return None
         let second = claim_next_step(&db, "body_archive").await.expect("claim2");
-        assert!(second.is_none(), "should return None when all steps are claimed");
+        assert!(
+            second.is_none(),
+            "should return None when all steps are claimed"
+        );
     }
 }

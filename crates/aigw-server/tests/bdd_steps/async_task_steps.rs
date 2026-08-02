@@ -61,14 +61,13 @@ async fn job_counters(db: &Database, job_id: &str) -> (i32, i32, i32) {
 }
 
 async fn count_steps(db: &Database, step_type: &str, status: &str) -> i64 {
-    let row: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM async_job_steps WHERE step_type = ? AND status = ?",
-    )
-    .bind(step_type)
-    .bind(status)
-    .fetch_one(sqlite_pool(db))
-    .await
-    .expect("count steps");
+    let row: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM async_job_steps WHERE step_type = ? AND status = ?")
+            .bind(step_type)
+            .bind(status)
+            .fetch_one(sqlite_pool(db))
+            .await
+            .expect("count steps");
     row.0
 }
 
@@ -167,13 +166,13 @@ async fn given_n_pending_steps(world: &mut TestWorld, n: usize, step_type: Strin
 async fn when_claim_next_step(world: &mut TestWorld, step_type: String) {
     let state = world.ensure_state().await;
     let claimed = claim_next_step(&state.db, &step_type).await.expect("claim");
-    set_flag(
-        world,
-        "claimed",
-        &serde_json::json!(claimed.is_some()),
-    );
+    set_flag(world, "claimed", &serde_json::json!(claimed.is_some()));
     if let Some(step) = claimed {
-        set_flag(world, "claimed_step_id", &serde_json::Value::String(step.id));
+        set_flag(
+            world,
+            "claimed_step_id",
+            &serde_json::Value::String(step.id),
+        );
         set_flag(
             world,
             "claimed_step_type",
@@ -227,7 +226,11 @@ async fn given_n_pending_of_type(world: &mut TestWorld, n: usize, step_type: Str
 async fn when_loop_a_claim(world: &mut TestWorld, step_type: String) {
     let state = world.ensure_state().await;
     if let Some(step) = claim_next_step(&state.db, &step_type).await.expect("claim") {
-        set_flag(world, "loop_a_type", &serde_json::Value::String(step.step_type));
+        set_flag(
+            world,
+            "loop_a_type",
+            &serde_json::Value::String(step.step_type),
+        );
     }
 }
 
@@ -235,7 +238,11 @@ async fn when_loop_a_claim(world: &mut TestWorld, step_type: String) {
 async fn when_loop_b_claim(world: &mut TestWorld, step_type: String) {
     let state = world.ensure_state().await;
     if let Some(step) = claim_next_step(&state.db, &step_type).await.expect("claim") {
-        set_flag(world, "loop_b_type", &serde_json::Value::String(step.step_type));
+        set_flag(
+            world,
+            "loop_b_type",
+            &serde_json::Value::String(step.step_type),
+        );
     }
 }
 
@@ -268,9 +275,20 @@ async fn when_three_loops_claim(world: &mut TestWorld, step_type: String) {
             claimed_ids.push(step.id);
         }
     }
-    let distinct = claimed_ids.iter().collect::<std::collections::HashSet<_>>().len();
-    assert_eq!(distinct, claimed_ids.len(), "claimed steps must be distinct");
-    set_flag(world, "claimed_count", &serde_json::json!(claimed_ids.len()));
+    let distinct = claimed_ids
+        .iter()
+        .collect::<std::collections::HashSet<_>>()
+        .len();
+    assert_eq!(
+        distinct,
+        claimed_ids.len(),
+        "claimed steps must be distinct"
+    );
+    set_flag(
+        world,
+        "claimed_count",
+        &serde_json::json!(claimed_ids.len()),
+    );
 }
 
 #[then(expr = "3 个 exec loop 分别拿到不同的 step")]
@@ -355,18 +373,25 @@ async fn when_two_loops_insert_same(world: &mut TestWorld) {
 
 #[then(expr = "只有 1 条 INSERT 成功")]
 async fn then_one_insert_ok(world: &mut TestWorld) {
-    let first = get_flag(world, "first_ok").and_then(|v| v.as_bool()).expect("first_ok");
-    let second_failed =
-        get_flag(world, "second_failed").and_then(|v| v.as_bool()).expect("second_failed");
+    let first = get_flag(world, "first_ok")
+        .and_then(|v| v.as_bool())
+        .expect("first_ok");
+    let second_failed = get_flag(world, "second_failed")
+        .and_then(|v| v.as_bool())
+        .expect("second_failed");
     assert!(first, "first INSERT should succeed");
     assert!(second_failed, "second INSERT should fail (UNIQUE)");
 }
 
 #[then(expr = "另 1 条因 UNIQUE 约束静默失败")]
 async fn then_one_unique_failure(world: &mut TestWorld) {
-    let second_failed =
-        get_flag(world, "second_failed").and_then(|v| v.as_bool()).expect("second_failed");
-    assert!(second_failed, "expected UNIQUE constraint failure on duplicate");
+    let second_failed = get_flag(world, "second_failed")
+        .and_then(|v| v.as_bool())
+        .expect("second_failed");
+    assert!(
+        second_failed,
+        "expected UNIQUE constraint failure on duplicate"
+    );
 }
 
 // ── tick ──
@@ -437,15 +462,15 @@ async fn then_no_new(world: &mut TestWorld) {
 
 // ── complete ──
 
-#[given(regex = r"async_jobs 中有一个 job，total_steps=(\d+)，completed_steps=(\d+)，failed_steps=(\d+)")]
-async fn given_partial_job(
-    world: &mut TestWorld,
-    total: i64,
-    completed: i64,
-    failed: i64,
-) {
+#[given(
+    regex = r"async_jobs 中有一个 job，total_steps=(\d+)，completed_steps=(\d+)，failed_steps=(\d+)"
+)]
+async fn given_partial_job(world: &mut TestWorld, total: i64, completed: i64, failed: i64) {
     let state = world.ensure_state().await;
-    let job_id = format!("job-partial-{}", chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
+    let job_id = format!(
+        "job-partial-{}",
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    );
     let now = chrono::Utc::now().to_rfc3339();
     sqlx::query(
         "INSERT INTO async_jobs (id, step_type, trigger_type, status, total_steps, \
@@ -509,7 +534,11 @@ async fn then_job_status(world: &mut TestWorld, status: String) {
     let job_id = get_flag(world, "job_id")
         .and_then(|v| v.as_str().map(String::from))
         .expect("job_id");
-    assert_eq!(job_status(&state.db, &job_id).await, status, "job status mismatch");
+    assert_eq!(
+        job_status(&state.db, &job_id).await,
+        status,
+        "job status mismatch"
+    );
 }
 
 #[then(expr = r"AsyncTask.finalize\(\) 被调用 1 次")]
@@ -684,7 +713,11 @@ async fn when_call_steps_from_payload(world: &mut TestWorld) {
     let result = task.steps_from_payload(&payload).await;
     set_flag(world, "payload_err", &serde_json::json!(result.is_err()));
     if let Err(e) = result {
-        set_flag(world, "payload_err_msg", &serde_json::Value::String(e.to_string()));
+        set_flag(
+            world,
+            "payload_err_msg",
+            &serde_json::Value::String(e.to_string()),
+        );
     }
 }
 

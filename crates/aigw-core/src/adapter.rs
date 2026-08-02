@@ -9,14 +9,14 @@
 //! Client (Claude)  → AnthropicToOpenAI → Upstream (OpenAI)   [Claude→OpenAI]
 //! ```
 
+use crate::deployment::{Deployment, ProviderType};
 use crate::models::{
     AssistantMessage, ChatCompletionChunk, ChatCompletionRequest, ChatCompletionResponse,
-    ChatContent, ChatMessage, Choice, ChunkChoice, ClaudeContent, ClaudeContentBlock,
-    ClaudeDelta, ClaudeImageSource, ClaudeMessage, ClaudeMessageRequest, ClaudeMessageResponse,
-    ClaudeStreamEvent, ClaudeSystemMessage, ClaudeUsage, ContentPart, Delta, ImageUrl,
-    ToolCall, ToolCallFunction, Usage,
+    ChatContent, ChatMessage, Choice, ChunkChoice, ClaudeContent, ClaudeContentBlock, ClaudeDelta,
+    ClaudeImageSource, ClaudeMessage, ClaudeMessageRequest, ClaudeMessageResponse,
+    ClaudeStreamEvent, ClaudeSystemMessage, ClaudeUsage, ContentPart, Delta, ImageUrl, ToolCall,
+    ToolCallFunction, Usage,
 };
-use crate::deployment::{Deployment, ProviderType};
 use serde_json::{json, Value};
 
 /// The client-facing protocol of the request.
@@ -64,7 +64,10 @@ impl std::fmt::Display for AdapterError {
     }
 }
 
-pub fn select_adapter(client: ClientProtocol, provider: &ProviderType) -> Option<&'static dyn MessageAdapter> {
+pub fn select_adapter(
+    client: ClientProtocol,
+    provider: &ProviderType,
+) -> Option<&'static dyn MessageAdapter> {
     match (client, provider) {
         (ClientProtocol::OpenAI, ProviderType::OpenAICompatible) => Some(&OpenAIPassthrough),
         (ClientProtocol::Anthropic, ProviderType::OpenAICompatible) => Some(&AnthropicToOpenAI),
@@ -78,11 +81,21 @@ pub fn select_adapter(client: ClientProtocol, provider: &ProviderType) -> Option
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 pub trait ProviderAdapter {
-    fn openai_to_claude_request(req: &ChatCompletionRequest, max_tokens: i32) -> ClaudeMessageRequest;
-    fn claude_to_openai_response(resp: &ClaudeMessageResponse, model: &str) -> ChatCompletionResponse;
+    fn openai_to_claude_request(
+        req: &ChatCompletionRequest,
+        max_tokens: i32,
+    ) -> ClaudeMessageRequest;
+    fn claude_to_openai_response(
+        resp: &ClaudeMessageResponse,
+        model: &str,
+    ) -> ChatCompletionResponse;
     fn claude_to_openai_request(req: &ClaudeMessageRequest) -> ChatCompletionRequest;
     fn openai_to_claude_response(resp: &ChatCompletionResponse) -> ClaudeMessageResponse;
-    fn claude_stream_to_openai_chunk(event: &ClaudeStreamEvent, model: &str, request_id: &str) -> Option<ChatCompletionChunk>;
+    fn claude_stream_to_openai_chunk(
+        event: &ClaudeStreamEvent,
+        model: &str,
+        request_id: &str,
+    ) -> Option<ChatCompletionChunk>;
     fn openai_chunk_to_claude_stream(chunk: &ChatCompletionChunk) -> Option<ClaudeStreamEvent>;
 }
 
@@ -93,9 +106,15 @@ pub trait ProviderAdapter {
 pub struct OpenAIPassthrough;
 
 impl MessageAdapter for OpenAIPassthrough {
-    fn client_protocol(&self) -> ClientProtocol { ClientProtocol::OpenAI }
+    fn client_protocol(&self) -> ClientProtocol {
+        ClientProtocol::OpenAI
+    }
 
-    fn adapt_request(&self, mut body: Value, deployment: &Deployment) -> Result<Value, AdapterError> {
+    fn adapt_request(
+        &self,
+        mut body: Value,
+        deployment: &Deployment,
+    ) -> Result<Value, AdapterError> {
         body.as_object_mut().map(|obj| {
             obj.insert("model".to_string(), json!(deployment.upstream_model));
             // Inject stream_options so upstream returns token usage in the final SSE chunk
@@ -106,15 +125,23 @@ impl MessageAdapter for OpenAIPassthrough {
         Ok(body)
     }
 
-    fn adapt_response(&self, body: Value) -> Result<Value, AdapterError> { Ok(body) }
+    fn adapt_response(&self, body: Value) -> Result<Value, AdapterError> {
+        Ok(body)
+    }
 
-    fn stream_adapter(&self) -> Option<Box<dyn StreamAdapter>> { Some(Box::new(PassthroughStream)) }
+    fn stream_adapter(&self) -> Option<Box<dyn StreamAdapter>> {
+        Some(Box::new(PassthroughStream))
+    }
 }
 
 struct PassthroughStream;
 impl StreamAdapter for PassthroughStream {
-    fn next(&mut self, chunk: &[u8]) -> Option<Vec<u8>> { Some(chunk.to_vec()) }
-    fn finish(&mut self) -> Option<Vec<u8>> { None }
+    fn next(&mut self, chunk: &[u8]) -> Option<Vec<u8>> {
+        Some(chunk.to_vec())
+    }
+    fn finish(&mut self) -> Option<Vec<u8>> {
+        None
+    }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -124,7 +151,9 @@ impl StreamAdapter for PassthroughStream {
 pub struct AnthropicToOpenAI;
 
 impl MessageAdapter for AnthropicToOpenAI {
-    fn client_protocol(&self) -> ClientProtocol { ClientProtocol::Anthropic }
+    fn client_protocol(&self) -> ClientProtocol {
+        ClientProtocol::Anthropic
+    }
 
     fn adapt_request(&self, body: Value, deployment: &Deployment) -> Result<Value, AdapterError> {
         let req: ClaudeMessageRequest = serde_json::from_value(body)
@@ -136,7 +165,10 @@ impl MessageAdapter for AnthropicToOpenAI {
         let oai_req = match compat {
             ChatTemplateCompat::Strict => {
                 let messages = fold_extra_systems_into_adjacent_user(oai_req.messages);
-                ChatCompletionRequest { messages, ..oai_req }
+                ChatCompletionRequest {
+                    messages,
+                    ..oai_req
+                }
             }
             ChatTemplateCompat::Loose => oai_req,
             ChatTemplateCompat::Auto => {
@@ -146,7 +178,8 @@ impl MessageAdapter for AnthropicToOpenAI {
             }
         };
 
-        let mut json = serde_json::to_value(&oai_req).map_err(|e| AdapterError::Parse(e.to_string()))?;
+        let mut json =
+            serde_json::to_value(&oai_req).map_err(|e| AdapterError::Parse(e.to_string()))?;
         json.as_object_mut().map(|obj| {
             obj.insert("model".to_string(), json!(deployment.upstream_model));
             // Inject stream_options so upstream returns token usage in the final SSE chunk
@@ -174,22 +207,38 @@ fn oai_response_to_claude_messages(resp: &ChatCompletionResponse) -> ClaudeMessa
     if let Some(choice) = resp.choices.first() {
         if !choice.message.content.is_empty() {
             content.push(ClaudeContentBlock {
-                content_type: "text".to_string(), text: Some(choice.message.content.clone()), source: None,
-                id: None, name: None, input: None, tool_use_id: None, content: None,
+                content_type: "text".to_string(),
+                text: Some(choice.message.content.clone()),
+                source: None,
+                id: None,
+                name: None,
+                input: None,
+                tool_use_id: None,
+                content: None,
             });
         }
         if let Some(ref tool_calls) = choice.message.tool_calls {
             for tc in tool_calls {
-                let input: Value = serde_json::from_str(&tc.function.arguments).unwrap_or(Value::Null);
+                let input: Value =
+                    serde_json::from_str(&tc.function.arguments).unwrap_or(Value::Null);
                 content.push(ClaudeContentBlock {
-                    content_type: "tool_use".to_string(), text: None, source: None,
-                    id: Some(tc.id.clone()), name: Some(tc.function.name.clone()), input: Some(input),
-                    tool_use_id: None, content: None,
+                    content_type: "tool_use".to_string(),
+                    text: None,
+                    source: None,
+                    id: Some(tc.id.clone()),
+                    name: Some(tc.function.name.clone()),
+                    input: Some(input),
+                    tool_use_id: None,
+                    content: None,
                 });
             }
         }
     }
-    let stop_reason = match resp.choices.first().and_then(|c| c.finish_reason.as_deref()) {
+    let stop_reason = match resp
+        .choices
+        .first()
+        .and_then(|c| c.finish_reason.as_deref())
+    {
         Some("tool_calls") => Some("tool_use".to_string()),
         Some("stop") => Some("end_turn".to_string()),
         Some("length") => Some("max_tokens".to_string()),
@@ -197,9 +246,17 @@ fn oai_response_to_claude_messages(resp: &ChatCompletionResponse) -> ClaudeMessa
         None => None,
     };
     ClaudeMessageResponse {
-        id: resp.id.clone(), response_type: "message".to_string(), role: "assistant".to_string(),
-        content, model: resp.model.clone(), stop_reason, stop_sequence: None,
-        usage: ClaudeUsage { input_tokens: resp.usage.prompt_tokens, output_tokens: resp.usage.completion_tokens },
+        id: resp.id.clone(),
+        response_type: "message".to_string(),
+        role: "assistant".to_string(),
+        content,
+        model: resp.model.clone(),
+        stop_reason,
+        stop_sequence: None,
+        usage: ClaudeUsage {
+            input_tokens: resp.usage.prompt_tokens,
+            output_tokens: resp.usage.completion_tokens,
+        },
     }
 }
 
@@ -295,7 +352,9 @@ pub fn fold_extra_systems_into_adjacent_user(messages: Vec<ChatMessage>) -> Vec<
 
     // Post-condition: only index 0 can be system
     debug_assert!(
-        out.iter().enumerate().all(|(i, m)| i == 0 || m.role != "system"),
+        out.iter()
+            .enumerate()
+            .all(|(i, m)| i == 0 || m.role != "system"),
         "fold_extra_systems_into_adjacent_user: system message found beyond index 0"
     );
 
@@ -318,9 +377,7 @@ fn flatten_chat_content_to_text(content: &ChatContent) -> String {
 fn prepend_text_to_chat_message(msg: &ChatMessage, reminders: &[String]) -> ChatMessage {
     let reminder_text = reminders.join("\n\n");
     let new_content = match &msg.content {
-        ChatContent::Text(t) => {
-            ChatContent::Text(format!("{}\n\n{}", reminder_text, t))
-        }
+        ChatContent::Text(t) => ChatContent::Text(format!("{}\n\n{}", reminder_text, t)),
         ChatContent::Parts(parts) => {
             let mut new_parts = vec![ContentPart {
                 content_type: "text".to_string(),
@@ -343,9 +400,7 @@ fn prepend_text_to_chat_message(msg: &ChatMessage, reminders: &[String]) -> Chat
 /// Append text to a user ChatMessage's content (for tail system reminders).
 fn append_text_to_chat_message(msg: &ChatMessage, text: &str) -> ChatMessage {
     let new_content = match &msg.content {
-        ChatContent::Text(t) => {
-            ChatContent::Text(format!("{}\n\n{}", t, text))
-        }
+        ChatContent::Text(t) => ChatContent::Text(format!("{}\n\n{}", t, text)),
         ChatContent::Parts(parts) => {
             let mut new_parts = parts.clone();
             new_parts.push(ContentPart {
@@ -372,7 +427,10 @@ fn append_text_to_chat_message(msg: &ChatMessage, text: &str) -> ChatMessage {
 enum BlockType {
     Text,
     #[allow(dead_code)]
-    ToolUse { id: String, name: String },
+    ToolUse {
+        id: String,
+        name: String,
+    },
 }
 
 pub struct AnthropicToOpenAIStream {
@@ -385,8 +443,13 @@ pub struct AnthropicToOpenAIStream {
 
 impl AnthropicToOpenAIStream {
     pub fn new() -> Self {
-        Self { model: String::new(), message_id: format!("msg_{}", uuid::Uuid::new_v4()),
-               current_block_index: 0, current_block: None, started: false }
+        Self {
+            model: String::new(),
+            message_id: format!("msg_{}", uuid::Uuid::new_v4()),
+            current_block_index: 0,
+            current_block: None,
+            started: false,
+        }
     }
 
     fn emit_event(&self, event: &ClaudeStreamEvent) -> Option<Vec<u8>> {
@@ -403,21 +466,33 @@ impl AnthropicToOpenAIStream {
         let mut buf = Vec::new();
         if self.current_block.is_some() {
             if let Some(cbs) = self.emit_event(&ClaudeStreamEvent {
-                event_type: "content_block_stop".to_string(), index: Some(self.current_block_index - 1),
-                delta: None, content_block: None, message: None, usage: None,
+                event_type: "content_block_stop".to_string(),
+                index: Some(self.current_block_index - 1),
+                delta: None,
+                content_block: None,
+                message: None,
+                usage: None,
             }) {
                 buf.extend_from_slice(&cbs);
             }
             self.current_block = None;
         }
         if let Some(ms) = self.emit_event(&ClaudeStreamEvent {
-            event_type: "message_stop".to_string(), index: None, delta: None,
-            content_block: None, message: None, usage: None,
+            event_type: "message_stop".to_string(),
+            index: None,
+            delta: None,
+            content_block: None,
+            message: None,
+            usage: None,
         }) {
             buf.extend_from_slice(&ms);
         }
         self.current_block_index = -1; // mark as finished
-        if buf.is_empty() { None } else { Some(buf) }
+        if buf.is_empty() {
+            None
+        } else {
+            Some(buf)
+        }
     }
 }
 
@@ -426,49 +501,95 @@ impl StreamAdapter for AnthropicToOpenAIStream {
         let text = String::from_utf8_lossy(chunk);
         for line in text.lines() {
             let line = line.trim();
-            if line.is_empty() || line.starts_with(':') { continue; }
-            let data = line.strip_prefix("data: ").or_else(|| line.strip_prefix("data:")).unwrap_or(line);
-            if data == "[DONE]" { return None; }
+            if line.is_empty() || line.starts_with(':') {
+                continue;
+            }
+            let data = line
+                .strip_prefix("data: ")
+                .or_else(|| line.strip_prefix("data:"))
+                .unwrap_or(line);
+            if data == "[DONE]" {
+                return None;
+            }
             let chunk: ChatCompletionChunk = serde_json::from_str(data).ok()?;
 
-            if !self.started && !chunk.model.is_empty() { self.model = chunk.model.clone(); }
+            if !self.started && !chunk.model.is_empty() {
+                self.model = chunk.model.clone();
+            }
 
             for choice in &chunk.choices {
                 if !self.started {
                     self.started = true;
                     return self.emit_event(&ClaudeStreamEvent {
-                        event_type: "message_start".to_string(), index: None, delta: None, content_block: None,
+                        event_type: "message_start".to_string(),
+                        index: None,
+                        delta: None,
+                        content_block: None,
                         message: Some(ClaudeMessageResponse {
-                            id: self.message_id.clone(), response_type: "message".to_string(), role: "assistant".to_string(),
-                            content: vec![], model: self.model.clone(), stop_reason: None, stop_sequence: None,
-                            usage: ClaudeUsage { input_tokens: 0, output_tokens: 0 },
-                        }), usage: None,
+                            id: self.message_id.clone(),
+                            response_type: "message".to_string(),
+                            role: "assistant".to_string(),
+                            content: vec![],
+                            model: self.model.clone(),
+                            stop_reason: None,
+                            stop_sequence: None,
+                            usage: ClaudeUsage {
+                                input_tokens: 0,
+                                output_tokens: 0,
+                            },
+                        }),
+                        usage: None,
                     });
                 }
 
-                let has_tool_calls = choice.delta.tool_calls.as_ref()
-                    .map(|tc| tc.iter().any(|t| t.id.as_ref().map(|id| !id.is_empty()).unwrap_or(false)))
+                let has_tool_calls = choice
+                    .delta
+                    .tool_calls
+                    .as_ref()
+                    .map(|tc| {
+                        tc.iter()
+                            .any(|t| t.id.as_ref().map(|id| !id.is_empty()).unwrap_or(false))
+                    })
                     .unwrap_or(false);
 
                 if !has_tool_calls {
                     if let Some(ref text) = choice.delta.content {
                         if !text.is_empty() {
-                            let needs_new_block = !matches!(&self.current_block, Some(BlockType::Text));
+                            let needs_new_block =
+                                !matches!(&self.current_block, Some(BlockType::Text));
                             if needs_new_block {
                                 self.current_block = Some(BlockType::Text);
-                                let idx = self.current_block_index; self.current_block_index += 1;
+                                let idx = self.current_block_index;
+                                self.current_block_index += 1;
                                 return self.emit_event(&ClaudeStreamEvent {
-                                    event_type: "content_block_start".to_string(), index: Some(idx), delta: None,
+                                    event_type: "content_block_start".to_string(),
+                                    index: Some(idx),
+                                    delta: None,
                                     content_block: Some(ClaudeContentBlock {
-                                        content_type: "text".to_string(), text: None, source: None,
-                                        id: None, name: None, input: None, tool_use_id: None, content: None,
-                                    }), message: None, usage: None,
+                                        content_type: "text".to_string(),
+                                        text: None,
+                                        source: None,
+                                        id: None,
+                                        name: None,
+                                        input: None,
+                                        tool_use_id: None,
+                                        content: None,
+                                    }),
+                                    message: None,
+                                    usage: None,
                                 });
                             }
                             return self.emit_event(&ClaudeStreamEvent {
-                                event_type: "content_block_delta".to_string(), index: Some(self.current_block_index - 1),
-                                delta: Some(ClaudeDelta { delta_type: "text_delta".to_string(), text: Some(text.clone()), partial_json: None }),
-                                content_block: None, message: None, usage: None,
+                                event_type: "content_block_delta".to_string(),
+                                index: Some(self.current_block_index - 1),
+                                delta: Some(ClaudeDelta {
+                                    delta_type: "text_delta".to_string(),
+                                    text: Some(text.clone()),
+                                    partial_json: None,
+                                }),
+                                content_block: None,
+                                message: None,
+                                usage: None,
                             });
                         }
                     }
@@ -482,23 +603,43 @@ impl StreamAdapter for AnthropicToOpenAIStream {
                         if let Some(ref id) = tc.id {
                             if !id.is_empty() {
                                 let tc_name = tc.function.name.clone().unwrap_or_default();
-                                self.current_block = Some(BlockType::ToolUse { id: id.clone(), name: tc_name.clone() });
-                                let idx = self.current_block_index; self.current_block_index += 1;
+                                self.current_block = Some(BlockType::ToolUse {
+                                    id: id.clone(),
+                                    name: tc_name.clone(),
+                                });
+                                let idx = self.current_block_index;
+                                self.current_block_index += 1;
                                 return self.emit_event(&ClaudeStreamEvent {
-                                    event_type: "content_block_start".to_string(), index: Some(idx), delta: None,
+                                    event_type: "content_block_start".to_string(),
+                                    index: Some(idx),
+                                    delta: None,
                                     content_block: Some(ClaudeContentBlock {
-                                        content_type: "tool_use".to_string(), text: None, source: None,
-                                        id: Some(id.clone()), name: Some(tc_name), input: Some(json!({})),
-                                        tool_use_id: None, content: None,
-                                    }), message: None, usage: None,
+                                        content_type: "tool_use".to_string(),
+                                        text: None,
+                                        source: None,
+                                        id: Some(id.clone()),
+                                        name: Some(tc_name),
+                                        input: Some(json!({})),
+                                        tool_use_id: None,
+                                        content: None,
+                                    }),
+                                    message: None,
+                                    usage: None,
                                 });
                             }
                         }
                         if !tc.function.arguments.is_empty() {
                             return self.emit_event(&ClaudeStreamEvent {
-                                event_type: "content_block_delta".to_string(), index: Some(self.current_block_index - 1),
-                                delta: Some(ClaudeDelta { delta_type: "input_json_delta".to_string(), text: None, partial_json: Some(tc.function.arguments.clone()) }),
-                                content_block: None, message: None, usage: None,
+                                event_type: "content_block_delta".to_string(),
+                                index: Some(self.current_block_index - 1),
+                                delta: Some(ClaudeDelta {
+                                    delta_type: "input_json_delta".to_string(),
+                                    text: None,
+                                    partial_json: Some(tc.function.arguments.clone()),
+                                }),
+                                content_block: None,
+                                message: None,
+                                usage: None,
                             });
                         }
                     }
@@ -512,9 +653,16 @@ impl StreamAdapter for AnthropicToOpenAIStream {
                         s => Some(s.to_string()),
                     };
                     return self.emit_event(&ClaudeStreamEvent {
-                        event_type: "message_delta".to_string(), index: None,
-                        delta: Some(ClaudeDelta { delta_type: "stop_reason".to_string(), text: sr, partial_json: None }),
-                        content_block: None, message: None, usage: None,
+                        event_type: "message_delta".to_string(),
+                        index: None,
+                        delta: Some(ClaudeDelta {
+                            delta_type: "stop_reason".to_string(),
+                            text: sr,
+                            partial_json: None,
+                        }),
+                        content_block: None,
+                        message: None,
+                        usage: None,
                     });
                 }
             }
@@ -534,30 +682,56 @@ impl StreamAdapter for AnthropicToOpenAIStream {
 pub struct DefaultAdapter;
 
 impl ProviderAdapter for DefaultAdapter {
-    fn openai_to_claude_request(req: &ChatCompletionRequest, max_tokens: i32) -> ClaudeMessageRequest {
+    fn openai_to_claude_request(
+        req: &ChatCompletionRequest,
+        max_tokens: i32,
+    ) -> ClaudeMessageRequest {
         let system = extract_openai_system(&req.messages);
-        let messages: Vec<ClaudeMessage> = req.messages.iter()
-            .filter(|m| m.role != "system").map(openai_message_to_claude).collect();
+        let messages: Vec<ClaudeMessage> = req
+            .messages
+            .iter()
+            .filter(|m| m.role != "system")
+            .map(openai_message_to_claude)
+            .collect();
         ClaudeMessageRequest {
-            model: req.model.clone(), messages, max_tokens,
+            model: req.model.clone(),
+            messages,
+            max_tokens,
             stream: if req.stream { Some(true) } else { None },
-            system: system.map(ClaudeSystemMessage::Text), temperature: req.temperature,
-            top_p: req.top_p, top_k: None, stop_sequences: req.stop.clone(), metadata: None,
-            tools: None, tool_choice: None,
+            system: system.map(ClaudeSystemMessage::Text),
+            temperature: req.temperature,
+            top_p: req.top_p,
+            top_k: None,
+            stop_sequences: req.stop.clone(),
+            metadata: None,
+            tools: None,
+            tool_choice: None,
         }
     }
 
-    fn claude_to_openai_response(resp: &ClaudeMessageResponse, model: &str) -> ChatCompletionResponse {
+    fn claude_to_openai_response(
+        resp: &ClaudeMessageResponse,
+        model: &str,
+    ) -> ChatCompletionResponse {
         ChatCompletionResponse {
-            id: resp.id.clone(), object: "chat.completion".to_string(),
-            created: chrono::Utc::now().timestamp(), model: model.to_string(),
+            id: resp.id.clone(),
+            object: "chat.completion".to_string(),
+            created: chrono::Utc::now().timestamp(),
+            model: model.to_string(),
             choices: vec![Choice {
                 index: 0,
-                message: AssistantMessage { role: "assistant".to_string(), content: claude_content_to_text(&resp.content), tool_calls: None },
+                message: AssistantMessage {
+                    role: "assistant".to_string(),
+                    content: claude_content_to_text(&resp.content),
+                    tool_calls: None,
+                },
                 finish_reason: claude_stop_to_openai(&resp.stop_reason),
             }],
-            usage: Usage { prompt_tokens: resp.usage.input_tokens, completion_tokens: resp.usage.output_tokens,
-                           total_tokens: resp.usage.input_tokens + resp.usage.output_tokens },
+            usage: Usage {
+                prompt_tokens: resp.usage.input_tokens,
+                completion_tokens: resp.usage.output_tokens,
+                total_tokens: resp.usage.input_tokens + resp.usage.output_tokens,
+            },
         }
     }
 
@@ -566,32 +740,43 @@ impl ProviderAdapter for DefaultAdapter {
         if let Some(ref sys) = req.system {
             match sys {
                 ClaudeSystemMessage::Text(t) => messages.push(ChatMessage {
-                    role: "system".to_string(), content: ChatContent::Text(t.clone()),
-                    name: None, tool_calls: None, tool_call_id: None }),
+                    role: "system".to_string(),
+                    content: ChatContent::Text(t.clone()),
+                    name: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                }),
                 ClaudeSystemMessage::Blocks(blocks) => {
                     let text = claude_blocks_to_text(blocks);
                     if !text.is_empty() {
                         messages.push(ChatMessage {
-                            role: "system".to_string(), content: ChatContent::Text(text),
-                            name: None, tool_calls: None, tool_call_id: None });
+                            role: "system".to_string(),
+                            content: ChatContent::Text(text),
+                            name: None,
+                            tool_calls: None,
+                            tool_call_id: None,
+                        });
                     }
                 }
             }
         }
-        for msg in &req.messages { messages.extend(claude_message_to_openai(msg)); }
+        for msg in &req.messages {
+            messages.extend(claude_message_to_openai(msg));
+        }
 
         // Map Claude tools → OpenAI tools
         let tools = req.tools.as_ref().map(|claude_tools| {
-            claude_tools.iter().map(|ct| {
-                crate::models::ToolDef {
+            claude_tools
+                .iter()
+                .map(|ct| crate::models::ToolDef {
                     tool_type: "function".to_string(),
                     function: crate::models::ToolDefFunction {
                         name: ct.name.clone(),
                         description: ct.description.clone(),
                         parameters: Some(ct.input_schema.clone()),
                     },
-                }
-            }).collect()
+                })
+                .collect()
         });
 
         // Convert Claude tool_choice → OpenAI tool_choice:
@@ -609,68 +794,126 @@ impl ProviderAdapter for DefaultAdapter {
                 }
                 _ => {
                     // Already a string? Passthrough (e.g. "auto", "none")
-                    if tc.is_string() { tc.clone() } else { json!("auto") }
+                    if tc.is_string() {
+                        tc.clone()
+                    } else {
+                        json!("auto")
+                    }
                 }
             }
         });
 
         ChatCompletionRequest {
-            model: req.model.clone(), messages, stream: req.stream.unwrap_or(false),
-            temperature: req.temperature, max_tokens: Some(req.max_tokens), top_p: req.top_p,
-            frequency_penalty: None, presence_penalty: None, stop: req.stop_sequences.clone(), user: None,
+            model: req.model.clone(),
+            messages,
+            stream: req.stream.unwrap_or(false),
+            temperature: req.temperature,
+            max_tokens: Some(req.max_tokens),
+            top_p: req.top_p,
+            frequency_penalty: None,
+            presence_penalty: None,
+            stop: req.stop_sequences.clone(),
+            user: None,
             tools,
             tool_choice,
         }
     }
 
     fn openai_to_claude_response(resp: &ChatCompletionResponse) -> ClaudeMessageResponse {
-        let content_text = resp.choices.first().map(|c| c.message.content.clone()).unwrap_or_default();
+        let content_text = resp
+            .choices
+            .first()
+            .map(|c| c.message.content.clone())
+            .unwrap_or_default();
         ClaudeMessageResponse {
-            id: resp.id.clone(), response_type: "message".to_string(), role: "assistant".to_string(),
+            id: resp.id.clone(),
+            response_type: "message".to_string(),
+            role: "assistant".to_string(),
             content: vec![ClaudeContentBlock {
-                content_type: "text".to_string(), text: Some(content_text), source: None,
-                id: None, name: None, input: None, tool_use_id: None, content: None,
+                content_type: "text".to_string(),
+                text: Some(content_text),
+                source: None,
+                id: None,
+                name: None,
+                input: None,
+                tool_use_id: None,
+                content: None,
             }],
             model: resp.model.clone(),
-            stop_reason: openai_stop_to_claude(&resp.choices.first().and_then(|c| c.finish_reason.clone())),
+            stop_reason: openai_stop_to_claude(
+                &resp.choices.first().and_then(|c| c.finish_reason.clone()),
+            ),
             stop_sequence: None,
-            usage: ClaudeUsage { input_tokens: resp.usage.prompt_tokens, output_tokens: resp.usage.completion_tokens },
+            usage: ClaudeUsage {
+                input_tokens: resp.usage.prompt_tokens,
+                output_tokens: resp.usage.completion_tokens,
+            },
         }
     }
 
-    fn claude_stream_to_openai_chunk(event: &ClaudeStreamEvent, model: &str, request_id: &str) -> Option<ChatCompletionChunk> {
+    fn claude_stream_to_openai_chunk(
+        event: &ClaudeStreamEvent,
+        model: &str,
+        request_id: &str,
+    ) -> Option<ChatCompletionChunk> {
         let now = chrono::Utc::now().timestamp();
         match event.event_type.as_str() {
             "content_block_delta" => {
                 let delta = event.delta.as_ref()?;
-                if delta.delta_type != "text_delta" { return None; }
+                if delta.delta_type != "text_delta" {
+                    return None;
+                }
                 Some(ChatCompletionChunk {
-                    id: request_id.to_string(), object: "chat.completion.chunk".to_string(),
-                    created: now, model: model.to_string(),
+                    id: request_id.to_string(),
+                    object: "chat.completion.chunk".to_string(),
+                    created: now,
+                    model: model.to_string(),
                     choices: vec![ChunkChoice {
                         index: event.index.unwrap_or(0),
-                        delta: Delta { role: None, content: delta.text.clone(), tool_calls: None },
+                        delta: Delta {
+                            role: None,
+                            content: delta.text.clone(),
+                            tool_calls: None,
+                        },
                         finish_reason: None,
                     }],
                 })
             }
             "message_start" => Some(ChatCompletionChunk {
-                id: request_id.to_string(), object: "chat.completion.chunk".to_string(),
-                created: now, model: model.to_string(),
+                id: request_id.to_string(),
+                object: "chat.completion.chunk".to_string(),
+                created: now,
+                model: model.to_string(),
                 choices: vec![ChunkChoice {
                     index: 0,
-                    delta: Delta { role: Some("assistant".to_string()), content: None, tool_calls: None },
+                    delta: Delta {
+                        role: Some("assistant".to_string()),
+                        content: None,
+                        tool_calls: None,
+                    },
                     finish_reason: None,
                 }],
             }),
             "message_delta" => {
-                let stop_reason = event.delta.as_ref().and_then(|d| if d.delta_type == "stop_reason" { d.text.clone() } else { None });
+                let stop_reason = event.delta.as_ref().and_then(|d| {
+                    if d.delta_type == "stop_reason" {
+                        d.text.clone()
+                    } else {
+                        None
+                    }
+                });
                 claude_stop_to_openai(&stop_reason).map(|fr| ChatCompletionChunk {
-                    id: request_id.to_string(), object: "chat.completion.chunk".to_string(),
-                    created: now, model: model.to_string(),
+                    id: request_id.to_string(),
+                    object: "chat.completion.chunk".to_string(),
+                    created: now,
+                    model: model.to_string(),
                     choices: vec![ChunkChoice {
                         index: 0,
-                        delta: Delta { role: None, content: None, tool_calls: None },
+                        delta: Delta {
+                            role: None,
+                            content: None,
+                            tool_calls: None,
+                        },
                         finish_reason: Some(fr),
                     }],
                 })
@@ -683,27 +926,53 @@ impl ProviderAdapter for DefaultAdapter {
         for choice in &chunk.choices {
             if choice.delta.role.is_some() {
                 return Some(ClaudeStreamEvent {
-                    event_type: "message_start".to_string(), index: Some(choice.index), delta: None, content_block: None,
+                    event_type: "message_start".to_string(),
+                    index: Some(choice.index),
+                    delta: None,
+                    content_block: None,
                     message: Some(ClaudeMessageResponse {
-                        id: chunk.id.clone(), response_type: "message".to_string(), role: "assistant".to_string(),
-                        content: vec![], model: chunk.model.clone(), stop_reason: None, stop_sequence: None,
-                        usage: ClaudeUsage { input_tokens: 0, output_tokens: 0 },
-                    }), usage: None,
+                        id: chunk.id.clone(),
+                        response_type: "message".to_string(),
+                        role: "assistant".to_string(),
+                        content: vec![],
+                        model: chunk.model.clone(),
+                        stop_reason: None,
+                        stop_sequence: None,
+                        usage: ClaudeUsage {
+                            input_tokens: 0,
+                            output_tokens: 0,
+                        },
+                    }),
+                    usage: None,
                 });
             }
             if let Some(ref text) = choice.delta.content {
                 return Some(ClaudeStreamEvent {
-                    event_type: "content_block_delta".to_string(), index: Some(choice.index),
-                    delta: Some(ClaudeDelta { delta_type: "text_delta".to_string(), text: Some(text.clone()), partial_json: None }),
-                    content_block: None, message: None, usage: None,
+                    event_type: "content_block_delta".to_string(),
+                    index: Some(choice.index),
+                    delta: Some(ClaudeDelta {
+                        delta_type: "text_delta".to_string(),
+                        text: Some(text.clone()),
+                        partial_json: None,
+                    }),
+                    content_block: None,
+                    message: None,
+                    usage: None,
                 });
             }
             if let Some(ref finish) = choice.finish_reason {
                 let stop_reason = openai_stop_to_claude(&Some(finish.clone()));
                 return Some(ClaudeStreamEvent {
-                    event_type: "message_delta".to_string(), index: Some(choice.index),
-                    delta: Some(ClaudeDelta { delta_type: "stop_reason".to_string(), text: stop_reason, partial_json: None }),
-                    content_block: None, message: None, usage: None,
+                    event_type: "message_delta".to_string(),
+                    index: Some(choice.index),
+                    delta: Some(ClaudeDelta {
+                        delta_type: "stop_reason".to_string(),
+                        text: stop_reason,
+                        partial_json: None,
+                    }),
+                    content_block: None,
+                    message: None,
+                    usage: None,
                 });
             }
         }
@@ -716,15 +985,27 @@ impl ProviderAdapter for DefaultAdapter {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 fn extract_openai_system(messages: &[ChatMessage]) -> Option<String> {
-    let result: String = messages.iter().filter(|m| m.role == "system")
-        .map(|m| chat_content_to_string(&m.content)).collect::<Vec<_>>().join("\n");
-    if result.is_empty() { None } else { Some(result) }
+    let result: String = messages
+        .iter()
+        .filter(|m| m.role == "system")
+        .map(|m| chat_content_to_string(&m.content))
+        .collect::<Vec<_>>()
+        .join("\n");
+    if result.is_empty() {
+        None
+    } else {
+        Some(result)
+    }
 }
 
 fn chat_content_to_string(content: &ChatContent) -> String {
     match content {
         ChatContent::Text(t) => t.clone(),
-        ChatContent::Parts(parts) => parts.iter().filter_map(|p| p.text.clone()).collect::<Vec<_>>().join(""),
+        ChatContent::Parts(parts) => parts
+            .iter()
+            .filter_map(|p| p.text.clone())
+            .collect::<Vec<_>>()
+            .join(""),
     }
 }
 
@@ -736,8 +1017,14 @@ fn openai_message_to_claude(msg: &ChatMessage) -> ClaudeMessage {
         ChatContent::Text(t) => {
             if !t.is_empty() {
                 blocks.push(ClaudeContentBlock {
-                    content_type: "text".to_string(), text: Some(t.clone()), source: None,
-                    id: None, name: None, input: None, tool_use_id: None, content: None,
+                    content_type: "text".to_string(),
+                    text: Some(t.clone()),
+                    source: None,
+                    id: None,
+                    name: None,
+                    input: None,
+                    tool_use_id: None,
+                    content: None,
                 });
             }
         }
@@ -745,14 +1032,29 @@ fn openai_message_to_claude(msg: &ChatMessage) -> ClaudeMessage {
             blocks.extend(parts.iter().map(|p| {
                 if let Some(ref image_url) = p.image_url {
                     ClaudeContentBlock {
-                        content_type: "image".to_string(), text: None,
-                        source: Some(ClaudeImageSource { source_type: "base64".to_string(), media_type: "image/jpeg".to_string(), data: image_url.url.clone() }),
-                        id: None, name: None, input: None, tool_use_id: None, content: None,
+                        content_type: "image".to_string(),
+                        text: None,
+                        source: Some(ClaudeImageSource {
+                            source_type: "base64".to_string(),
+                            media_type: "image/jpeg".to_string(),
+                            data: image_url.url.clone(),
+                        }),
+                        id: None,
+                        name: None,
+                        input: None,
+                        tool_use_id: None,
+                        content: None,
                     }
                 } else {
                     ClaudeContentBlock {
-                        content_type: "text".to_string(), text: p.text.clone(), source: None,
-                        id: None, name: None, input: None, tool_use_id: None, content: None,
+                        content_type: "text".to_string(),
+                        text: p.text.clone(),
+                        source: None,
+                        id: None,
+                        name: None,
+                        input: None,
+                        tool_use_id: None,
+                        content: None,
                     }
                 }
             }));
@@ -764,45 +1066,73 @@ fn openai_message_to_claude(msg: &ChatMessage) -> ClaudeMessage {
         for tc in tool_calls {
             let input: Value = serde_json::from_str(&tc.function.arguments).unwrap_or(Value::Null);
             blocks.push(ClaudeContentBlock {
-                content_type: "tool_use".to_string(), text: None, source: None,
-                id: Some(tc.id.clone()), name: Some(tc.function.name.clone()),
-                input: Some(input), tool_use_id: None, content: None,
+                content_type: "tool_use".to_string(),
+                text: None,
+                source: None,
+                id: Some(tc.id.clone()),
+                name: Some(tc.function.name.clone()),
+                input: Some(input),
+                tool_use_id: None,
+                content: None,
             });
         }
     }
 
     if blocks.is_empty() {
-        ClaudeMessage { role: msg.role.clone(), content: ClaudeContent::Text(String::new()) }
+        ClaudeMessage {
+            role: msg.role.clone(),
+            content: ClaudeContent::Text(String::new()),
+        }
     } else {
-        ClaudeMessage { role: msg.role.clone(), content: ClaudeContent::Blocks(blocks) }
+        ClaudeMessage {
+            role: msg.role.clone(),
+            content: ClaudeContent::Blocks(blocks),
+        }
     }
 }
 
 fn claude_content_to_text(blocks: &[ClaudeContentBlock]) -> String {
-    blocks.iter().filter(|b| b.content_type == "text").filter_map(|b| b.text.clone()).collect::<Vec<_>>().join("")
+    blocks
+        .iter()
+        .filter(|b| b.content_type == "text")
+        .filter_map(|b| b.text.clone())
+        .collect::<Vec<_>>()
+        .join("")
 }
 
 fn claude_blocks_to_text(blocks: &[ClaudeContentBlock]) -> String {
-    blocks.iter().filter(|b| b.content_type == "text").filter_map(|b| b.text.clone()).collect::<Vec<_>>().join("")
+    blocks
+        .iter()
+        .filter(|b| b.content_type == "text")
+        .filter_map(|b| b.text.clone())
+        .collect::<Vec<_>>()
+        .join("")
 }
 
 fn claude_message_to_openai(msg: &ClaudeMessage) -> Vec<ChatMessage> {
     match &msg.content {
         ClaudeContent::Text(t) => vec![ChatMessage {
-            role: msg.role.clone(), content: ChatContent::Text(t.clone()),
-            name: None, tool_calls: None, tool_call_id: None,
+            role: msg.role.clone(),
+            content: ChatContent::Text(t.clone()),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
         }],
         ClaudeContent::Blocks(blocks) => {
-            let tool_results: Vec<(String, String)> = blocks.iter()
+            let tool_results: Vec<(String, String)> = blocks
+                .iter()
                 .filter(|b| b.content_type == "tool_result")
                 .filter_map(|b| {
                     let tui = b.tool_use_id.clone()?;
-                    let c = b.content.as_ref()
+                    let c = b
+                        .content
+                        .as_ref()
                         .and_then(|v| v.as_str().map(String::from))
                         .or_else(|| b.text.clone())
                         .unwrap_or_default();
                     Some((tui, c))
-                }).collect();
+                })
+                .collect();
 
             if !tool_results.is_empty() && msg.role == "user" {
                 let mut out = Vec::new();
@@ -821,19 +1151,28 @@ fn claude_message_to_openai(msg: &ClaudeMessage) -> Vec<ChatMessage> {
                 }
 
                 // Non-tool_result content parts (text/image) → user message AFTER tool messages
-                let non_tool_parts: Vec<ContentPart> = blocks.iter()
+                let non_tool_parts: Vec<ContentPart> = blocks
+                    .iter()
                     .filter(|b| b.content_type != "tool_result")
                     .filter(|b| b.content_type == "text" || b.content_type == "image")
                     .map(|b| {
                         if b.content_type == "image" {
                             ContentPart {
-                                content_type: "image_url".to_string(), text: None,
-                                image_url: b.source.as_ref().map(|s| ImageUrl { url: format!("data:{};base64,{}", s.media_type, s.data) }),
+                                content_type: "image_url".to_string(),
+                                text: None,
+                                image_url: b.source.as_ref().map(|s| ImageUrl {
+                                    url: format!("data:{};base64,{}", s.media_type, s.data),
+                                }),
                             }
                         } else {
-                            ContentPart { content_type: "text".to_string(), text: b.text.clone(), image_url: None }
+                            ContentPart {
+                                content_type: "text".to_string(),
+                                text: b.text.clone(),
+                                image_url: None,
+                            }
                         }
-                    }).collect();
+                    })
+                    .collect();
                 if !non_tool_parts.is_empty() {
                     out.push(ChatMessage {
                         role: "user".to_string(),
@@ -851,28 +1190,56 @@ fn claude_message_to_openai(msg: &ClaudeMessage) -> Vec<ChatMessage> {
                 // (tool_calls / tool_call_id); including them would produce
                 // ContentPart { type:"text", text:None } which upstream
                 // rejects as "missing field `text`".
-                let parts: Vec<ContentPart> = blocks.iter()
+                let parts: Vec<ContentPart> = blocks
+                    .iter()
                     .filter(|b| b.content_type == "text" || b.content_type == "image")
                     .map(|b| {
                         if b.content_type == "image" {
                             ContentPart {
-                                content_type: "image_url".to_string(), text: None,
-                                image_url: b.source.as_ref().map(|s| ImageUrl { url: format!("data:{};base64,{}", s.media_type, s.data) }),
+                                content_type: "image_url".to_string(),
+                                text: None,
+                                image_url: b.source.as_ref().map(|s| ImageUrl {
+                                    url: format!("data:{};base64,{}", s.media_type, s.data),
+                                }),
                             }
                         } else {
-                            ContentPart { content_type: "text".to_string(), text: b.text.clone(), image_url: None }
+                            ContentPart {
+                                content_type: "text".to_string(),
+                                text: b.text.clone(),
+                                image_url: None,
+                            }
                         }
-                    }).collect();
-                let tool_calls: Vec<ToolCall> = blocks.iter()
+                    })
+                    .collect();
+                let tool_calls: Vec<ToolCall> = blocks
+                    .iter()
                     .filter(|b| b.content_type == "tool_use")
                     .filter_map(|b| {
                         let id = b.id.clone()?;
                         let name = b.name.clone()?;
                         let input = b.input.clone().unwrap_or(json!({}));
-                        Some(ToolCall { id, call_type: "function".to_string(), function: ToolCallFunction { name, arguments: input.to_string() } })
-                    }).collect();
-                let tc = if tool_calls.is_empty() { None } else { Some(tool_calls) };
-                vec![ChatMessage { role: msg.role.clone(), content: ChatContent::Parts(parts), name: None, tool_calls: tc, tool_call_id: None }]
+                        Some(ToolCall {
+                            id,
+                            call_type: "function".to_string(),
+                            function: ToolCallFunction {
+                                name,
+                                arguments: input.to_string(),
+                            },
+                        })
+                    })
+                    .collect();
+                let tc = if tool_calls.is_empty() {
+                    None
+                } else {
+                    Some(tool_calls)
+                };
+                vec![ChatMessage {
+                    role: msg.role.clone(),
+                    content: ChatContent::Parts(parts),
+                    name: None,
+                    tool_calls: tc,
+                    tool_call_id: None,
+                }]
             }
         }
     }
@@ -952,9 +1319,14 @@ pub fn extract_and_merge_system_reminders(
 
         let blocks = match msg.content {
             ClaudeContent::Text(t) => vec![ClaudeContentBlock {
-                content_type: "text".to_string(), text: Some(t),
-                source: None, id: None, name: None, input: None,
-                tool_use_id: None, content: None,
+                content_type: "text".to_string(),
+                text: Some(t),
+                source: None,
+                id: None,
+                name: None,
+                input: None,
+                tool_use_id: None,
+                content: None,
             }],
             ClaudeContent::Blocks(b) => b,
         };
@@ -1012,7 +1384,9 @@ fn strip_system_reminder(text: &str) -> Option<String> {
 pub struct AnthropicPassthrough;
 
 impl MessageAdapter for AnthropicPassthrough {
-    fn client_protocol(&self) -> ClientProtocol { ClientProtocol::Anthropic }
+    fn client_protocol(&self) -> ClientProtocol {
+        ClientProtocol::Anthropic
+    }
 
     fn adapt_request(&self, body: Value, deployment: &Deployment) -> Result<Value, AdapterError> {
         let mut req: ClaudeMessageRequest = serde_json::from_value(body)
@@ -1023,9 +1397,8 @@ impl MessageAdapter for AnthropicPassthrough {
         // merging them into the top-level `system` field.
         let compat = resolve_chat_template_compat(deployment);
         if compat == ChatTemplateCompat::Strict {
-            let (cleaned, reminders) = extract_and_merge_system_reminders(
-                std::mem::take(&mut req.messages),
-            );
+            let (cleaned, reminders) =
+                extract_and_merge_system_reminders(std::mem::take(&mut req.messages));
             req.messages = cleaned;
 
             if !reminders.is_empty() {
@@ -1036,9 +1409,14 @@ impl MessageAdapter for AnthropicPassthrough {
                     }
                     Some(ClaudeSystemMessage::Blocks(mut blocks)) => {
                         blocks.extend(reminders.into_iter().map(|t| ClaudeContentBlock {
-                            content_type: "text".to_string(), text: Some(t),
-                            source: None, id: None, name: None, input: None,
-                            tool_use_id: None, content: None,
+                            content_type: "text".to_string(),
+                            text: Some(t),
+                            source: None,
+                            id: None,
+                            name: None,
+                            input: None,
+                            tool_use_id: None,
+                            content: None,
                         }));
                         ClaudeSystemMessage::Blocks(blocks)
                     }
@@ -1049,8 +1427,8 @@ impl MessageAdapter for AnthropicPassthrough {
 
         req.model = deployment.upstream_model.clone();
         let is_stream = req.stream.unwrap_or(false);
-        let mut json = serde_json::to_value(&req)
-            .map_err(|e| AdapterError::Parse(e.to_string()))?;
+        let mut json =
+            serde_json::to_value(&req).map_err(|e| AdapterError::Parse(e.to_string()))?;
         // Anthropic requires `include_usage` in body for streaming responses
         // to include usage.{input_tokens, output_tokens} in message_delta events
         if is_stream {
@@ -1061,7 +1439,9 @@ impl MessageAdapter for AnthropicPassthrough {
         Ok(json)
     }
 
-    fn adapt_response(&self, body: Value) -> Result<Value, AdapterError> { Ok(body) }
+    fn adapt_response(&self, body: Value) -> Result<Value, AdapterError> {
+        Ok(body)
+    }
 
     fn stream_adapter(&self) -> Option<Box<dyn StreamAdapter>> {
         Some(Box::new(AnthropicPassthroughStream))
@@ -1072,8 +1452,12 @@ impl MessageAdapter for AnthropicPassthrough {
 struct AnthropicPassthroughStream;
 
 impl StreamAdapter for AnthropicPassthroughStream {
-    fn next(&mut self, chunk: &[u8]) -> Option<Vec<u8>> { Some(chunk.to_vec()) }
-    fn finish(&mut self) -> Option<Vec<u8>> { None }
+    fn next(&mut self, chunk: &[u8]) -> Option<Vec<u8>> {
+        Some(chunk.to_vec())
+    }
+    fn finish(&mut self) -> Option<Vec<u8>> {
+        None
+    }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1086,15 +1470,17 @@ impl StreamAdapter for AnthropicPassthroughStream {
 pub struct OpenAIToAnthropic;
 
 impl MessageAdapter for OpenAIToAnthropic {
-    fn client_protocol(&self) -> ClientProtocol { ClientProtocol::OpenAI }
+    fn client_protocol(&self) -> ClientProtocol {
+        ClientProtocol::OpenAI
+    }
 
     fn adapt_request(&self, body: Value, deployment: &Deployment) -> Result<Value, AdapterError> {
         let oai_req: ChatCompletionRequest = serde_json::from_value(body)
             .map_err(|e| AdapterError::Parse(format!("Invalid OpenAI request: {}", e)))?;
         let max_tokens = oai_req.max_tokens.unwrap_or(4096);
         let claude_req = DefaultAdapter::openai_to_claude_request(&oai_req, max_tokens);
-        let mut json = serde_json::to_value(&claude_req)
-            .map_err(|e| AdapterError::Parse(e.to_string()))?;
+        let mut json =
+            serde_json::to_value(&claude_req).map_err(|e| AdapterError::Parse(e.to_string()))?;
         json.as_object_mut().map(|obj| {
             obj.insert("model".to_string(), json!(deployment.upstream_model));
         });
@@ -1133,7 +1519,10 @@ impl MessageAdapter for OpenAIToAnthropic {
 enum O2ABlockType {
     Text,
     #[allow(dead_code)]
-    ToolUse { id: String, name: String },
+    ToolUse {
+        id: String,
+        name: String,
+    },
 }
 
 pub struct OpenAIToAnthropicStream {
@@ -1173,7 +1562,10 @@ impl OpenAIToAnthropicStream {
             if let Some(cbs) = self.emit_event(&ClaudeStreamEvent {
                 event_type: "content_block_stop".to_string(),
                 index: Some(self.current_block_index.saturating_sub(1).max(0)),
-                delta: None, content_block: None, message: None, usage: None,
+                delta: None,
+                content_block: None,
+                message: None,
+                usage: None,
             }) {
                 buf.extend_from_slice(&cbs);
             }
@@ -1181,11 +1573,19 @@ impl OpenAIToAnthropicStream {
         }
         if let Some(ms) = self.emit_event(&ClaudeStreamEvent {
             event_type: "message_stop".to_string(),
-            index: None, delta: None, content_block: None, message: None, usage: None,
+            index: None,
+            delta: None,
+            content_block: None,
+            message: None,
+            usage: None,
         }) {
             buf.extend_from_slice(&ms);
         }
-        if buf.is_empty() { None } else { Some(buf) }
+        if buf.is_empty() {
+            None
+        } else {
+            Some(buf)
+        }
     }
 }
 
@@ -1197,8 +1597,11 @@ impl StreamAdapter for OpenAIToAnthropicStream {
         let text = String::from_utf8_lossy(chunk);
         for line in text.lines() {
             let line = line.trim();
-            if line.is_empty() || line.starts_with(':') { continue; }
-            let data = line.strip_prefix("data: ")
+            if line.is_empty() || line.starts_with(':') {
+                continue;
+            }
+            let data = line
+                .strip_prefix("data: ")
                 .or_else(|| line.strip_prefix("data:"))
                 .unwrap_or(line);
             if data == "[DONE]" {
@@ -1214,7 +1617,9 @@ impl StreamAdapter for OpenAIToAnthropicStream {
                 if !self.started {
                     self.started = true;
                     return self.emit_event(&ClaudeStreamEvent {
-                        event_type: "message_start".to_string(), index: None, delta: None,
+                        event_type: "message_start".to_string(),
+                        index: None,
+                        delta: None,
                         content_block: None,
                         message: Some(ClaudeMessageResponse {
                             id: self.message_id.clone(),
@@ -1224,7 +1629,10 @@ impl StreamAdapter for OpenAIToAnthropicStream {
                             model: self.model.clone(),
                             stop_reason: None,
                             stop_sequence: None,
-                            usage: ClaudeUsage { input_tokens: 0, output_tokens: 0 },
+                            usage: ClaudeUsage {
+                                input_tokens: 0,
+                                output_tokens: 0,
+                            },
                         }),
                         usage: None,
                     });
@@ -1245,14 +1653,20 @@ impl StreamAdapter for OpenAIToAnthropicStream {
                                 self.current_block_index += 1;
                                 return self.emit_event(&ClaudeStreamEvent {
                                     event_type: "content_block_start".to_string(),
-                                    index: Some(idx), delta: None,
+                                    index: Some(idx),
+                                    delta: None,
                                     content_block: Some(ClaudeContentBlock {
-                                        content_type: "tool_use".to_string(), text: None,
-                                        source: None, id: Some(id.clone()),
-                                        name: Some(tc_name), input: Some(json!({})),
-                                        tool_use_id: None, content: None,
+                                        content_type: "tool_use".to_string(),
+                                        text: None,
+                                        source: None,
+                                        id: Some(id.clone()),
+                                        name: Some(tc_name),
+                                        input: Some(json!({})),
+                                        tool_use_id: None,
+                                        content: None,
                                     }),
-                                    message: None, usage: None,
+                                    message: None,
+                                    usage: None,
                                 });
                             }
                         }
@@ -1265,7 +1679,9 @@ impl StreamAdapter for OpenAIToAnthropicStream {
                                     text: None,
                                     partial_json: Some(tc.function.arguments.clone()),
                                 }),
-                                content_block: None, message: None, usage: None,
+                                content_block: None,
+                                message: None,
+                                usage: None,
                             });
                         }
                     }
@@ -1274,20 +1690,28 @@ impl StreamAdapter for OpenAIToAnthropicStream {
                 // Text content
                 if let Some(ref text) = choice.delta.content {
                     if !text.is_empty() {
-                        let needs_new_block = !matches!(&self.current_block, Some(O2ABlockType::Text));
+                        let needs_new_block =
+                            !matches!(&self.current_block, Some(O2ABlockType::Text));
                         if needs_new_block {
                             self.current_block = Some(O2ABlockType::Text);
                             let idx = self.current_block_index;
                             self.current_block_index += 1;
                             return self.emit_event(&ClaudeStreamEvent {
                                 event_type: "content_block_start".to_string(),
-                                index: Some(idx), delta: None,
+                                index: Some(idx),
+                                delta: None,
                                 content_block: Some(ClaudeContentBlock {
-                                    content_type: "text".to_string(), text: None, source: None,
-                                    id: None, name: None, input: None,
-                                    tool_use_id: None, content: None,
+                                    content_type: "text".to_string(),
+                                    text: None,
+                                    source: None,
+                                    id: None,
+                                    name: None,
+                                    input: None,
+                                    tool_use_id: None,
+                                    content: None,
                                 }),
-                                message: None, usage: None,
+                                message: None,
+                                usage: None,
                             });
                         }
                         return self.emit_event(&ClaudeStreamEvent {
@@ -1298,7 +1722,9 @@ impl StreamAdapter for OpenAIToAnthropicStream {
                                 text: Some(text.clone()),
                                 partial_json: None,
                             }),
-                            content_block: None, message: None, usage: None,
+                            content_block: None,
+                            message: None,
+                            usage: None,
                         });
                     }
                 }
@@ -1312,16 +1738,18 @@ impl StreamAdapter for OpenAIToAnthropicStream {
                         s => Some(s.to_string()),
                     };
                     return self.emit_event(&ClaudeStreamEvent {
-                        event_type: "message_delta".to_string(), index: None,
+                        event_type: "message_delta".to_string(),
+                        index: None,
                         delta: Some(ClaudeDelta {
                             delta_type: "stop_reason".to_string(),
                             text: sr,
                             partial_json: None,
                         }),
-                        content_block: None, message: None, usage: None,
+                        content_block: None,
+                        message: None,
+                        usage: None,
                     });
                 }
-
             }
         }
         None
@@ -1339,27 +1767,41 @@ impl StreamAdapter for OpenAIToAnthropicStream {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{ChatMessage, ChatContent};
+    use crate::models::{ChatContent, ChatMessage};
 
     fn make_openai_req(text: &str) -> ChatCompletionRequest {
         ChatCompletionRequest {
             model: "gpt-4".to_string(),
             messages: vec![ChatMessage {
-                role: "user".to_string(), content: ChatContent::Text(text.to_string()),
-                name: None, tool_calls: None, tool_call_id: None,
+                role: "user".to_string(),
+                content: ChatContent::Text(text.to_string()),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
             }],
-            stream: false, temperature: Some(0.7), max_tokens: Some(1024),
-            top_p: None, frequency_penalty: None, presence_penalty: None, stop: None, user: None,
-            tools: None, tool_choice: None,
+            stream: false,
+            temperature: Some(0.7),
+            max_tokens: Some(1024),
+            top_p: None,
+            frequency_penalty: None,
+            presence_penalty: None,
+            stop: None,
+            user: None,
+            tools: None,
+            tool_choice: None,
         }
     }
 
     fn test_deployment() -> Deployment {
         Deployment {
-            api_base: "https://api.openai.com/v1".into(), api_key: None,
-            upstream_model: "gpt-4".into(), provider_type: ProviderType::OpenAICompatible,
-            input_cost_per_token: None, output_cost_per_token: None,
-            cache_read_input_token_cost: None, cache_creation_input_token_cost: None,
+            api_base: "https://api.openai.com/v1".into(),
+            api_key: None,
+            upstream_model: "gpt-4".into(),
+            provider_type: ProviderType::OpenAICompatible,
+            input_cost_per_token: None,
+            output_cost_per_token: None,
+            cache_read_input_token_cost: None,
+            cache_creation_input_token_cost: None,
             raw_params: json!({"custom_llm_provider": "openai"}),
             model_id: Some("test-model-id".into()),
             model_group: Some("gpt-4".into()),
@@ -1375,7 +1817,9 @@ mod tests {
     #[test]
     fn test_openai_passthrough_swaps_model() {
         let body = json!({"model": "gpt-4", "messages": [{"role": "user", "content": "Hello"}]});
-        let adapted = OpenAIPassthrough.adapt_request(body, &test_deployment()).unwrap();
+        let adapted = OpenAIPassthrough
+            .adapt_request(body, &test_deployment())
+            .unwrap();
         assert_eq!(adapted["model"].as_str(), Some("gpt-4"));
     }
 
@@ -1403,7 +1847,9 @@ mod tests {
         // With Stage 61, AnthropicNative is now supported.
         // Only truly unsupported combos return None.
         // For now there are no unsupported combos — the matrix is complete.
-        assert!(select_adapter(ClientProtocol::Anthropic, &ProviderType::AnthropicNative).is_some());
+        assert!(
+            select_adapter(ClientProtocol::Anthropic, &ProviderType::AnthropicNative).is_some()
+        );
         assert!(select_adapter(ClientProtocol::OpenAI, &ProviderType::AnthropicNative).is_some());
     }
 
@@ -1415,7 +1861,9 @@ mod tests {
             "model": "claude-sonnet", "max_tokens": 1024,
             "messages": [{"role": "assistant", "content": [{"type": "tool_use", "id": "toolu_01", "name": "get_weather", "input": {"city": "NYC"}}]}]
         });
-        let adapted = AnthropicToOpenAI.adapt_request(body, &test_deployment()).unwrap();
+        let adapted = AnthropicToOpenAI
+            .adapt_request(body, &test_deployment())
+            .unwrap();
         let msgs = adapted["messages"].as_array().unwrap();
         let assistant = msgs.iter().find(|m| m["role"] == "assistant").unwrap();
         let tc = assistant["tool_calls"].as_array().unwrap();
@@ -1430,7 +1878,9 @@ mod tests {
             "model": "claude-sonnet", "max_tokens": 1024,
             "messages": [{"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_01", "content": "72F, sunny"}]}]
         });
-        let adapted = AnthropicToOpenAI.adapt_request(body, &test_deployment()).unwrap();
+        let adapted = AnthropicToOpenAI
+            .adapt_request(body, &test_deployment())
+            .unwrap();
         let msgs = adapted["messages"].as_array().unwrap();
         assert_eq!(msgs[0]["role"].as_str(), Some("tool"));
         assert_eq!(msgs[0]["tool_call_id"].as_str(), Some("toolu_01"));
@@ -1487,7 +1937,16 @@ mod tests {
     #[test]
     fn test_openai_to_claude_request_with_system() {
         let mut req = make_openai_req("Hi");
-        req.messages.insert(0, ChatMessage { role: "system".to_string(), content: ChatContent::Text("Helpful".to_string()), name: None, tool_calls: None, tool_call_id: None });
+        req.messages.insert(
+            0,
+            ChatMessage {
+                role: "system".to_string(),
+                content: ChatContent::Text("Helpful".to_string()),
+                name: None,
+                tool_calls: None,
+                tool_call_id: None,
+            },
+        );
         let c = DefaultAdapter::openai_to_claude_request(&req, 512);
         assert!(c.system.is_some());
     }
@@ -1495,10 +1954,26 @@ mod tests {
     #[test]
     fn test_claude_to_openai_response() {
         let cr = ClaudeMessageResponse {
-            id: "1".into(), response_type: "message".into(), role: "assistant".into(),
-            content: vec![ClaudeContentBlock { content_type: "text".into(), text: Some("Hi".into()), source: None, id: None, name: None, input: None, tool_use_id: None, content: None }],
-            model: "claude-sonnet".into(), stop_reason: Some("end_turn".into()), stop_sequence: None,
-            usage: ClaudeUsage { input_tokens: 1, output_tokens: 1 },
+            id: "1".into(),
+            response_type: "message".into(),
+            role: "assistant".into(),
+            content: vec![ClaudeContentBlock {
+                content_type: "text".into(),
+                text: Some("Hi".into()),
+                source: None,
+                id: None,
+                name: None,
+                input: None,
+                tool_use_id: None,
+                content: None,
+            }],
+            model: "claude-sonnet".into(),
+            stop_reason: Some("end_turn".into()),
+            stop_sequence: None,
+            usage: ClaudeUsage {
+                input_tokens: 1,
+                output_tokens: 1,
+            },
         };
         let oai = DefaultAdapter::claude_to_openai_response(&cr, "claude");
         assert_eq!(oai.choices[0].message.content, "Hi");
@@ -1522,7 +1997,9 @@ mod tests {
             "tools": [{"name": "get_weather", "input_schema": {"type": "object", "properties": {}}}],
             "tool_choice": {"type": "auto"}
         });
-        let adapted = AnthropicToOpenAI.adapt_request(body, &test_deployment()).unwrap();
+        let adapted = AnthropicToOpenAI
+            .adapt_request(body, &test_deployment())
+            .unwrap();
         // Claude {"type":"auto"} → OpenAI "auto"
         assert_eq!(adapted["tool_choice"].as_str(), Some("auto"));
     }
@@ -1535,7 +2012,9 @@ mod tests {
             "tools": [{"name": "get_weather", "input_schema": {"type": "object", "properties": {}}}],
             "tool_choice": {"type": "any"}
         });
-        let adapted = AnthropicToOpenAI.adapt_request(body, &test_deployment()).unwrap();
+        let adapted = AnthropicToOpenAI
+            .adapt_request(body, &test_deployment())
+            .unwrap();
         // Claude {"type":"any"} → OpenAI "required"
         assert_eq!(adapted["tool_choice"].as_str(), Some("required"));
     }
@@ -1548,7 +2027,9 @@ mod tests {
             "tools": [{"name": "get_weather", "input_schema": {"type": "object", "properties": {}}}],
             "tool_choice": {"type": "tool", "name": "get_weather"}
         });
-        let adapted = AnthropicToOpenAI.adapt_request(body, &test_deployment()).unwrap();
+        let adapted = AnthropicToOpenAI
+            .adapt_request(body, &test_deployment())
+            .unwrap();
         // Claude {"type":"tool","name":"x"} → OpenAI {"type":"function","function":{"name":"x"}}
         let tc = &adapted["tool_choice"];
         assert_eq!(tc["type"].as_str(), Some("function"));
@@ -1563,7 +2044,9 @@ mod tests {
             "tools": [{"name": "get_weather", "input_schema": {"type": "object", "properties": {}}}],
             "tool_choice": "none"
         });
-        let adapted = AnthropicToOpenAI.adapt_request(body, &test_deployment()).unwrap();
+        let adapted = AnthropicToOpenAI
+            .adapt_request(body, &test_deployment())
+            .unwrap();
         assert_eq!(adapted["tool_choice"].as_str(), Some("none"));
     }
 
@@ -1579,7 +2062,9 @@ mod tests {
                 {"type": "tool_result", "tool_use_id": "toolu_01", "content": "output1"}
             ]}]
         });
-        let adapted = AnthropicToOpenAI.adapt_request(body, &test_deployment()).unwrap();
+        let adapted = AnthropicToOpenAI
+            .adapt_request(body, &test_deployment())
+            .unwrap();
         let msgs = adapted["messages"].as_array().unwrap();
         // Single tool_result → 1 tool message
         assert_eq!(msgs.len(), 1);
@@ -1596,10 +2081,17 @@ mod tests {
                 {"type": "tool_result", "tool_use_id": "toolu_02", "content": "Read output"}
             ]}]
         });
-        let adapted = AnthropicToOpenAI.adapt_request(body, &test_deployment()).unwrap();
+        let adapted = AnthropicToOpenAI
+            .adapt_request(body, &test_deployment())
+            .unwrap();
         let msgs = adapted["messages"].as_array().unwrap();
         // Two tool_results → 2 tool messages
-        assert_eq!(msgs.len(), 2, "expected 2 tool messages, got {}", msgs.len());
+        assert_eq!(
+            msgs.len(),
+            2,
+            "expected 2 tool messages, got {}",
+            msgs.len()
+        );
         assert_eq!(msgs[0]["role"].as_str(), Some("tool"));
         assert_eq!(msgs[0]["tool_call_id"].as_str(), Some("toolu_01"));
         assert_eq!(msgs[1]["role"].as_str(), Some("tool"));
@@ -1616,11 +2108,14 @@ mod tests {
                 {"type": "tool_result", "tool_use_id": "tc3", "content": "r3"}
             ]}]
         });
-        let adapted = AnthropicToOpenAI.adapt_request(body, &test_deployment()).unwrap();
+        let adapted = AnthropicToOpenAI
+            .adapt_request(body, &test_deployment())
+            .unwrap();
         let msgs = adapted["messages"].as_array().unwrap();
         assert_eq!(msgs.len(), 3);
         // Verify all three tool_call_ids are present and distinct
-        let ids: Vec<&str> = msgs.iter()
+        let ids: Vec<&str> = msgs
+            .iter()
             .filter_map(|m| m["tool_call_id"].as_str())
             .collect();
         assert_eq!(ids, vec!["tc1", "tc2", "tc3"]);
@@ -1639,7 +2134,9 @@ mod tests {
                 {"type": "tool_result", "tool_use_id": "toolu_01", "content": "output"}
             ]}]
         });
-        let adapted = AnthropicToOpenAI.adapt_request(body, &test_deployment()).unwrap();
+        let adapted = AnthropicToOpenAI
+            .adapt_request(body, &test_deployment())
+            .unwrap();
         let msgs = adapted["messages"].as_array().unwrap();
         // tool message MUST come before user text (OpenAI protocol:
         // tool messages must immediately follow the assistant tool_calls).
@@ -1647,7 +2144,10 @@ mod tests {
         assert_eq!(msgs[0]["role"].as_str(), Some("tool"));
         assert_eq!(msgs[0]["tool_call_id"].as_str(), Some("toolu_01"));
         assert_eq!(msgs[1]["role"].as_str(), Some("user"));
-        assert_eq!(msgs[1]["content"].as_array().unwrap()[0]["text"].as_str(), Some("here is the result"));
+        assert_eq!(
+            msgs[1]["content"].as_array().unwrap()[0]["text"].as_str(),
+            Some("here is the result")
+        );
     }
 
     #[test]
@@ -1659,11 +2159,16 @@ mod tests {
                 {"type": "text", "text": "hello world"}
             ]}]
         });
-        let adapted = AnthropicToOpenAI.adapt_request(body, &test_deployment()).unwrap();
+        let adapted = AnthropicToOpenAI
+            .adapt_request(body, &test_deployment())
+            .unwrap();
         let msgs = adapted["messages"].as_array().unwrap();
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0]["role"].as_str(), Some("user"));
-        assert_eq!(msgs[0]["content"].as_array().unwrap()[0]["text"].as_str(), Some("hello world"));
+        assert_eq!(
+            msgs[0]["content"].as_array().unwrap()[0]["text"].as_str(),
+            Some("hello world")
+        );
     }
 
     /// Regression: assistant message with tool_use block must NOT produce
@@ -1680,19 +2185,26 @@ mod tests {
                 ]}
             ],
         });
-        let adapted = AnthropicToOpenAI.adapt_request(body, &test_deployment()).unwrap();
+        let adapted = AnthropicToOpenAI
+            .adapt_request(body, &test_deployment())
+            .unwrap();
         let msgs = adapted["messages"].as_array().unwrap();
         let assistant = msgs.iter().find(|m| m["role"] == "assistant").unwrap();
         let content = assistant["content"].as_array().unwrap();
         // Must not contain a {"type":"text"} without text field
         for part in content {
             if part["type"] == "text" {
-                assert!(part.get("text").and_then(|v| v.as_str()).is_some(),
-                    "text ContentPart must have a non-null text field: {}", part);
+                assert!(
+                    part.get("text").and_then(|v| v.as_str()).is_some(),
+                    "text ContentPart must have a non-null text field: {}",
+                    part
+                );
             }
         }
-        assert!(assistant["tool_calls"].as_array().unwrap().len() > 0,
-            "tool_calls must be present");
+        assert!(
+            assistant["tool_calls"].as_array().unwrap().len() > 0,
+            "tool_calls must be present"
+        );
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1703,7 +2215,9 @@ mod tests {
         ChatMessage {
             role: "system".to_string(),
             content: ChatContent::Text(text.to_string()),
-            name: None, tool_calls: None, tool_call_id: None,
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
         }
     }
 
@@ -1711,7 +2225,9 @@ mod tests {
         ChatMessage {
             role: "user".to_string(),
             content: ChatContent::Text(text.to_string()),
-            name: None, tool_calls: None, tool_call_id: None,
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
         }
     }
 
@@ -1719,7 +2235,9 @@ mod tests {
         ChatMessage {
             role: "user".to_string(),
             content: ChatContent::Parts(parts),
-            name: None, tool_calls: None, tool_call_id: None,
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
         }
     }
 
@@ -1727,7 +2245,9 @@ mod tests {
         ChatMessage {
             role: "assistant".to_string(),
             content: ChatContent::Text(text.to_string()),
-            name: None, tool_calls: None, tool_call_id: None,
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
         }
     }
 
@@ -1744,14 +2264,24 @@ mod tests {
             make_system_msg("Available agent types for the Agent tool:..."),
         ];
         let folded = fold_extra_systems_into_adjacent_user(messages);
-        assert_eq!(folded.len(), 2, "expected 2 messages after fold: system + user");
+        assert_eq!(
+            folded.len(),
+            2,
+            "expected 2 messages after fold: system + user"
+        );
         assert_eq!(folded[0].role, "system");
         assert_eq!(folded[1].role, "user");
         // The user should now contain the system-reminder
         match &folded[1].content {
             ChatContent::Parts(parts) => {
-                assert!(parts.iter().any(|p| p.text.as_deref().unwrap_or("").contains("<system-reminder>")),
-                    "user Parts should contain <system-reminder>");
+                assert!(
+                    parts.iter().any(|p| p
+                        .text
+                        .as_deref()
+                        .unwrap_or("")
+                        .contains("<system-reminder>")),
+                    "user Parts should contain <system-reminder>"
+                );
             }
             _ => panic!("expected Parts content"),
         }
@@ -1776,15 +2306,26 @@ mod tests {
         let folded = fold_extra_systems_into_adjacent_user(messages);
         // Expected: [u1, a1, u2(with s1), u3(with s2+s3)] = 4 messages
         // s1, s2, s3 are NOT in the output — only reminders prepended to users
-        assert_eq!(folded.len(), 4, "expected 4 messages after fold: u1, a1, u2+reminder, u3+reminders");
+        assert_eq!(
+            folded.len(),
+            4,
+            "expected 4 messages after fold: u1, a1, u2+reminder, u3+reminders"
+        );
         assert_eq!(folded[0].role, "user");
         assert_eq!(folded[1].role, "assistant");
         // u2 now contains s1
         match &folded[2].content {
             ChatContent::Text(t) => {
-                assert!(t.contains("<system-reminder>"), "u2 should contain s1 reminder, got: {}", t);
+                assert!(
+                    t.contains("<system-reminder>"),
+                    "u2 should contain s1 reminder, got: {}",
+                    t
+                );
                 assert!(t.contains("system 1"), "u2 should contain s1 content");
-                assert!(t.contains("second question"), "original user text preserved");
+                assert!(
+                    t.contains("second question"),
+                    "original user text preserved"
+                );
             }
             _ => panic!("expected Text"),
         }
@@ -1811,7 +2352,10 @@ mod tests {
         assert_eq!(folded.len(), 2, "tail system folded into u2");
         match &folded[1].content {
             ChatContent::Text(t) => {
-                assert!(t.contains("<system-reminder>"), "u2 should contain reminder");
+                assert!(
+                    t.contains("<system-reminder>"),
+                    "u2 should contain reminder"
+                );
                 assert!(t.contains("tail system"), "u2 should contain tail system");
                 assert!(t.contains("question 2"), "original text preserved");
             }
@@ -1903,10 +2447,17 @@ mod tests {
         let msgs = adapted["messages"].as_array().unwrap();
         // In Loose mode, all messages are preserved (system messages at various positions)
         // top-level system → index 0, then messages array: user, system, assistant, user, system, system, user = 7
-        let systems: Vec<&str> = msgs.iter().map(|m| m["role"].as_str().unwrap_or("")).collect();
+        let systems: Vec<&str> = msgs
+            .iter()
+            .map(|m| m["role"].as_str().unwrap_or(""))
+            .collect();
         // Loose → passthrough, systems should exist at multiple positions
         let system_count = systems.iter().filter(|r| **r == "system").count();
-        assert!(system_count > 1, "Loose mode should preserve extra systems, got {} system messages", system_count);
+        assert!(
+            system_count > 1,
+            "Loose mode should preserve extra systems, got {} system messages",
+            system_count
+        );
     }
 
     #[test]
@@ -2003,7 +2554,9 @@ mod tests {
             "max_tokens": 1024,
             "messages": [{"role": "user", "content": "Hello"}]
         });
-        let adapted = AnthropicPassthrough.adapt_request(body, &anthropic_deployment()).unwrap();
+        let adapted = AnthropicPassthrough
+            .adapt_request(body, &anthropic_deployment())
+            .unwrap();
         // Model swapped
         assert_eq!(adapted["model"].as_str(), Some("claude-sonnet-4-20250514"));
         // Messages preserved
@@ -2017,7 +2570,9 @@ mod tests {
     #[test]
     fn test_s61_anthropic_passthrough_model_injection() {
         let body = json!({"model": "wrong-model", "max_tokens": 512, "messages": []});
-        let adapted = AnthropicPassthrough.adapt_request(body, &anthropic_deployment()).unwrap();
+        let adapted = AnthropicPassthrough
+            .adapt_request(body, &anthropic_deployment())
+            .unwrap();
         assert_eq!(adapted["model"].as_str(), Some("claude-sonnet-4-20250514"));
     }
 
@@ -2059,7 +2614,9 @@ mod tests {
                 {"role": "assistant", "content": "Rust is a systems programming language."}
             ]
         });
-        let adapted = OpenAIToAnthropic.adapt_request(body, &anthropic_deployment()).unwrap();
+        let adapted = OpenAIToAnthropic
+            .adapt_request(body, &anthropic_deployment())
+            .unwrap();
         // Model swapped to upstream
         assert_eq!(adapted["model"].as_str(), Some("claude-sonnet-4-20250514"));
         // System extracted to top-level field
@@ -2087,7 +2644,10 @@ mod tests {
         assert_eq!(adapted["object"].as_str(), Some("chat.completion"));
         assert_eq!(adapted["model"].as_str(), Some("claude-sonnet-4-20250514"));
         let choices = adapted["choices"].as_array().unwrap();
-        assert_eq!(choices[0]["message"]["content"].as_str(), Some("Rust is great!"));
+        assert_eq!(
+            choices[0]["message"]["content"].as_str(),
+            Some("Rust is great!")
+        );
         assert_eq!(choices[0]["finish_reason"].as_str(), Some("stop"));
         let usage = &adapted["usage"];
         assert_eq!(usage["prompt_tokens"].as_i64(), Some(15));
@@ -2107,7 +2667,9 @@ mod tests {
                 ]}
             ]
         });
-        let adapted = OpenAIToAnthropic.adapt_request(body, &anthropic_deployment()).unwrap();
+        let adapted = OpenAIToAnthropic
+            .adapt_request(body, &anthropic_deployment())
+            .unwrap();
         let msgs = adapted["messages"].as_array().unwrap();
         // User message + assistant with tool_use
         let assistant = msgs.iter().find(|m| m["role"] == "assistant").unwrap();
@@ -2128,7 +2690,11 @@ mod tests {
         assert!(result1.is_some());
         let s1_buf = result1.unwrap();
         let s1 = String::from_utf8_lossy(&s1_buf);
-        assert!(s1.contains("event: message_start"), "expected message_start, got: {}", s1);
+        assert!(
+            s1.contains("event: message_start"),
+            "expected message_start, got: {}",
+            s1
+        );
 
         // Second chunk: text content
         let result2 = stream.next(
@@ -2137,7 +2703,11 @@ mod tests {
         assert!(result2.is_some());
         let s2_buf = result2.unwrap();
         let s2 = String::from_utf8_lossy(&s2_buf);
-        assert!(s2.contains("content_block_start"), "expected content_block_start, got: {}", s2);
+        assert!(
+            s2.contains("content_block_start"),
+            "expected content_block_start, got: {}",
+            s2
+        );
         assert!(s2.contains("\"text\""), "expected text block");
     }
 
@@ -2156,8 +2726,16 @@ mod tests {
         assert!(result.is_some());
         let s_buf = result.unwrap();
         let s = String::from_utf8_lossy(&s_buf);
-        assert!(s.contains("content_block_start"), "expected content_block_start, got: {}", s);
-        assert!(s.contains("tool_use"), "expected tool_use block, got: {}", s);
+        assert!(
+            s.contains("content_block_start"),
+            "expected content_block_start, got: {}",
+            s
+        );
+        assert!(
+            s.contains("tool_use"),
+            "expected tool_use block, got: {}",
+            s
+        );
         assert!(s.contains("call_001"), "expected call_001 id, got: {}", s);
     }
 
@@ -2178,8 +2756,11 @@ mod tests {
         assert!(result.is_some());
         let s_buf = result.unwrap();
         let s = String::from_utf8_lossy(&s_buf);
-        assert!(s.contains("content_block_stop") || s.contains("message_stop"),
-            "expected stop events, got: {}", s);
+        assert!(
+            s.contains("content_block_stop") || s.contains("message_stop"),
+            "expected stop events, got: {}",
+            s
+        );
     }
 
     // UT-10b: OpenAIToAnthropicStream — finish() idempotent
@@ -2239,18 +2820,40 @@ mod tests {
             Some("Single line".to_string())
         );
         assert_eq!(strip_system_reminder("plain text"), None);
-        assert_eq!(strip_system_reminder("<system-reminder></system-reminder>"), None); // empty
+        assert_eq!(
+            strip_system_reminder("<system-reminder></system-reminder>"),
+            None
+        ); // empty
     }
 
     // UT-HF1: extract_and_merge_system_reminders — from user with text + reminder
     #[test]
     fn test_hf_extract_system_reminders_basic() {
-        let messages = vec![
-            ClaudeMessage { role: "user".to_string(), content: ClaudeContent::Blocks(vec![
-                ClaudeContentBlock { content_type: "text".to_string(), text: Some("<system-reminder>\nagent list\n</system-reminder>".to_string()), source: None, id: None, name: None, input: None, tool_use_id: None, content: None },
-                ClaudeContentBlock { content_type: "text".to_string(), text: Some("actual query".to_string()), source: None, id: None, name: None, input: None, tool_use_id: None, content: None },
-            ])},
-        ];
+        let messages = vec![ClaudeMessage {
+            role: "user".to_string(),
+            content: ClaudeContent::Blocks(vec![
+                ClaudeContentBlock {
+                    content_type: "text".to_string(),
+                    text: Some("<system-reminder>\nagent list\n</system-reminder>".to_string()),
+                    source: None,
+                    id: None,
+                    name: None,
+                    input: None,
+                    tool_use_id: None,
+                    content: None,
+                },
+                ClaudeContentBlock {
+                    content_type: "text".to_string(),
+                    text: Some("actual query".to_string()),
+                    source: None,
+                    id: None,
+                    name: None,
+                    input: None,
+                    tool_use_id: None,
+                    content: None,
+                },
+            ]),
+        }];
         let (cleaned, extra) = extract_and_merge_system_reminders(messages);
         assert_eq!(extra.len(), 1);
         assert_eq!(extra[0], "agent list");
@@ -2265,8 +2868,16 @@ mod tests {
     #[test]
     fn test_hf_extract_pure_reminder_dropped() {
         let messages = vec![
-            ClaudeMessage { role: "user".to_string(), content: ClaudeContent::Text("<system-reminder>\ncontext\n</system-reminder>".to_string()) },
-            ClaudeMessage { role: "assistant".to_string(), content: ClaudeContent::Text("ok".to_string()) },
+            ClaudeMessage {
+                role: "user".to_string(),
+                content: ClaudeContent::Text(
+                    "<system-reminder>\ncontext\n</system-reminder>".to_string(),
+                ),
+            },
+            ClaudeMessage {
+                role: "assistant".to_string(),
+                content: ClaudeContent::Text("ok".to_string()),
+            },
         ];
         let (cleaned, extra) = extract_and_merge_system_reminders(messages);
         assert_eq!(extra.len(), 1);
@@ -2279,18 +2890,38 @@ mod tests {
     #[test]
     fn test_hf_extract_role_system_message() {
         let messages = vec![
-            ClaudeMessage { role: "user".to_string(), content: ClaudeContent::Text("check hostname".to_string()) },
-            ClaudeMessage { role: "assistant".to_string(), content: ClaudeContent::Text("ok".to_string()) },
-            ClaudeMessage { role: "system".to_string(), content: ClaudeContent::Text("Extra system context".to_string()) },
-            ClaudeMessage { role: "user".to_string(), content: ClaudeContent::Text("do next task".to_string()) },
+            ClaudeMessage {
+                role: "user".to_string(),
+                content: ClaudeContent::Text("check hostname".to_string()),
+            },
+            ClaudeMessage {
+                role: "assistant".to_string(),
+                content: ClaudeContent::Text("ok".to_string()),
+            },
+            ClaudeMessage {
+                role: "system".to_string(),
+                content: ClaudeContent::Text("Extra system context".to_string()),
+            },
+            ClaudeMessage {
+                role: "user".to_string(),
+                content: ClaudeContent::Text("do next task".to_string()),
+            },
         ];
         let (cleaned, extra) = extract_and_merge_system_reminders(messages);
-        assert_eq!(extra.len(), 1, "role=system should be extracted, got {:?}", extra);
+        assert_eq!(
+            extra.len(),
+            1,
+            "role=system should be extracted, got {:?}",
+            extra
+        );
         assert_eq!(extra[0], "Extra system context");
         // No role="system" in output
         for msg in &cleaned {
-            assert!(matches!(msg.role.as_str(), "user" | "assistant"),
-                "role should not be 'system': {}", msg.role);
+            assert!(
+                matches!(msg.role.as_str(), "user" | "assistant"),
+                "role should not be 'system': {}",
+                msg.role
+            );
         }
         assert_eq!(cleaned.len(), 3); // user + assistant + user
     }
@@ -2302,11 +2933,32 @@ mod tests {
             ClaudeMessage {
                 role: "system".to_string(),
                 content: ClaudeContent::Blocks(vec![
-                    ClaudeContentBlock { content_type: "text".to_string(), text: Some("sys block A".to_string()), source: None, id: None, name: None, input: None, tool_use_id: None, content: None },
-                    ClaudeContentBlock { content_type: "text".to_string(), text: Some("sys block B".to_string()), source: None, id: None, name: None, input: None, tool_use_id: None, content: None },
+                    ClaudeContentBlock {
+                        content_type: "text".to_string(),
+                        text: Some("sys block A".to_string()),
+                        source: None,
+                        id: None,
+                        name: None,
+                        input: None,
+                        tool_use_id: None,
+                        content: None,
+                    },
+                    ClaudeContentBlock {
+                        content_type: "text".to_string(),
+                        text: Some("sys block B".to_string()),
+                        source: None,
+                        id: None,
+                        name: None,
+                        input: None,
+                        tool_use_id: None,
+                        content: None,
+                    },
                 ]),
             },
-            ClaudeMessage { role: "user".to_string(), content: ClaudeContent::Text("query".to_string()) },
+            ClaudeMessage {
+                role: "user".to_string(),
+                content: ClaudeContent::Text("query".to_string()),
+            },
         ];
         let (cleaned, extra) = extract_and_merge_system_reminders(messages);
         assert_eq!(extra.len(), 1);
@@ -2320,22 +2972,40 @@ mod tests {
     #[test]
     fn test_hf_passthrough_strict_fold() {
         let body = make_claude_code_qwen_body();
-        let adapted = AnthropicPassthrough.adapt_request(body, &make_strict_deployment()).unwrap();
+        let adapted = AnthropicPassthrough
+            .adapt_request(body, &make_strict_deployment())
+            .unwrap();
 
         // System must contain both original + extracted reminders
         let sys = adapted["system"].as_str().unwrap();
-        assert!(sys.contains("You are Claude Code"), "missing original system: {}", sys);
-        assert!(sys.contains("Available agent types"), "missing extracted reminder: {}", sys);
+        assert!(
+            sys.contains("You are Claude Code"),
+            "missing original system: {}",
+            sys
+        );
+        assert!(
+            sys.contains("Available agent types"),
+            "missing extracted reminder: {}",
+            sys
+        );
 
         // The last user message must NOT contain system-reminder tags
         let msgs = adapted["messages"].as_array().unwrap();
         let last_content = &msgs.last().unwrap()["content"];
         if let Some(t) = last_content.as_str() {
-            assert!(!t.contains("system-reminder"), "user text still has reminder: {}", t);
+            assert!(
+                !t.contains("system-reminder"),
+                "user text still has reminder: {}",
+                t
+            );
         } else if let Some(arr) = last_content.as_array() {
             for b in arr {
                 if let Some(t) = b["text"].as_str() {
-                    assert!(!t.contains("system-reminder"), "user block still has reminder: {}", t);
+                    assert!(
+                        !t.contains("system-reminder"),
+                        "user block still has reminder: {}",
+                        t
+                    );
                 }
             }
         }
@@ -2348,11 +3018,19 @@ mod tests {
             "model": "claude-sonnet", "max_tokens": 100,
             "messages": [{"role": "user", "content": [{"type": "text", "text": "<system-reminder>\nctx\n</system-reminder>"}]}]
         });
-        let deployment = Deployment { chat_template_compat: Some("loose".to_string()), ..make_strict_deployment() };
-        let adapted = AnthropicPassthrough.adapt_request(body, &deployment).unwrap();
+        let deployment = Deployment {
+            chat_template_compat: Some("loose".to_string()),
+            ..make_strict_deployment()
+        };
+        let adapted = AnthropicPassthrough
+            .adapt_request(body, &deployment)
+            .unwrap();
         let msgs = adapted["messages"].as_array().unwrap();
         assert_eq!(msgs.len(), 1);
-        assert!(adapted["system"].is_null(), "no system field should be added");
+        assert!(
+            adapted["system"].is_null(),
+            "no system field should be added"
+        );
     }
 
     // UT-HF5: non-qwen upstream — passthrough
@@ -2362,8 +3040,13 @@ mod tests {
             "model": "claude-sonnet", "max_tokens": 100,
             "messages": [{"role": "user", "content": [{"type": "text", "text": "<system-reminder>\nctx\n</system-reminder>"}]}]
         });
-        let deployment = Deployment { upstream_model: "gpt-4".into(), ..make_strict_deployment() };
-        let adapted = AnthropicPassthrough.adapt_request(body, &deployment).unwrap();
+        let deployment = Deployment {
+            upstream_model: "gpt-4".into(),
+            ..make_strict_deployment()
+        };
+        let adapted = AnthropicPassthrough
+            .adapt_request(body, &deployment)
+            .unwrap();
         let msgs = adapted["messages"].as_array().unwrap();
         assert_eq!(msgs.len(), 1);
     }
@@ -2392,7 +3075,9 @@ mod tests {
                 ]}
             ]
         });
-        let adapted = AnthropicPassthrough.adapt_request(body, &make_strict_deployment()).unwrap();
+        let adapted = AnthropicPassthrough
+            .adapt_request(body, &make_strict_deployment())
+            .unwrap();
         let msgs = adapted["messages"].as_array().unwrap();
 
         // Must NOT contain role="tool" (Anthropic protocol rejects it)
@@ -2400,7 +3085,8 @@ mod tests {
             let role = msg["role"].as_str().unwrap();
             assert!(
                 matches!(role, "user" | "assistant"),
-                "illegal role in Anthropic body: {}", role
+                "illegal role in Anthropic body: {}",
+                role
             );
         }
 

@@ -3,8 +3,7 @@
 //! 14 core metrics (Counter/Histogram/Gauge) with configurable namespace.
 
 use prometheus::{
-    register_counter_vec, register_histogram_vec,
-    register_gauge_vec, register_int_counter_vec,
+    register_counter_vec, register_gauge_vec, register_histogram_vec, register_int_counter_vec,
     CounterVec, GaugeVec, HistogramVec, IntCounterVec,
 };
 
@@ -56,10 +55,20 @@ pub struct MetricsRecorder {
 impl MetricsRecorder {
     /// Initialize all 14 metrics under the given namespace (e.g. "aigw").
     /// Accepts optional bucket overrides from config.
-    pub fn init(namespace: &str, buckets: Option<&MetricsBuckets>) -> Result<Self, prometheus::Error> {
-        let latency_buckets = resolve_buckets(buckets.and_then(|b| b.latency.as_ref()), DEFAULT_LATENCY_BUCKETS);
-        let ttft_buckets = resolve_buckets(buckets.and_then(|b| b.ttft.as_ref()), DEFAULT_TTFT_BUCKETS);
-        let queue_buckets = resolve_buckets(buckets.and_then(|b| b.queue_time.as_ref()), DEFAULT_QUEUE_BUCKETS);
+    pub fn init(
+        namespace: &str,
+        buckets: Option<&MetricsBuckets>,
+    ) -> Result<Self, prometheus::Error> {
+        let latency_buckets = resolve_buckets(
+            buckets.and_then(|b| b.latency.as_ref()),
+            DEFAULT_LATENCY_BUCKETS,
+        );
+        let ttft_buckets =
+            resolve_buckets(buckets.and_then(|b| b.ttft.as_ref()), DEFAULT_TTFT_BUCKETS);
+        let queue_buckets = resolve_buckets(
+            buckets.and_then(|b| b.queue_time.as_ref()),
+            DEFAULT_QUEUE_BUCKETS,
+        );
 
         let total_requests = register_counter_vec!(
             format!("{}_total_requests", namespace),
@@ -171,20 +180,46 @@ impl MetricsRecorder {
     /// even before the first real request hits (used only in tests).
     #[cfg(test)]
     pub fn seed_zero_values(&self) {
-        self.total_requests.with_label_values(&["_", "_", "_"]).inc_by(0.0);
-        self.failed_requests.with_label_values(&["_", "_", "_"]).inc_by(0.0);
-        self.request_latency_seconds.with_label_values(&["_", "_"]).observe(0.0);
-        self.llm_api_latency_seconds.with_label_values(&["_", "_"]).observe(0.0);
-        self.llm_api_ttft_seconds.with_label_values(&["_", "_"]).observe(0.0);
-        self.request_queue_time_seconds.with_label_values(&["_", "_"]).observe(0.0);
+        self.total_requests
+            .with_label_values(&["_", "_", "_"])
+            .inc_by(0.0);
+        self.failed_requests
+            .with_label_values(&["_", "_", "_"])
+            .inc_by(0.0);
+        self.request_latency_seconds
+            .with_label_values(&["_", "_"])
+            .observe(0.0);
+        self.llm_api_latency_seconds
+            .with_label_values(&["_", "_"])
+            .observe(0.0);
+        self.llm_api_ttft_seconds
+            .with_label_values(&["_", "_"])
+            .observe(0.0);
+        self.request_queue_time_seconds
+            .with_label_values(&["_", "_"])
+            .observe(0.0);
         self.spend_metric.with_label_values(&["_", "_"]).inc_by(0.0);
-        self.tokens_metric.with_label_values(&["_", "_", "_"]).inc_by(0);
-        self.deployment_state.with_label_values(&["_", "_"]).set(0.0);
-        self.deployment_tpm_limit.with_label_values(&["_", "_"]).set(0.0);
-        self.deployment_rpm_limit.with_label_values(&["_", "_"]).set(0.0);
-        self.deployment_cooled_down.with_label_values(&["_", "_"]).inc_by(0);
-        self.deployment_success_responses.with_label_values(&["_", "_"]).inc_by(0);
-        self.deployment_failure_responses.with_label_values(&["_", "_"]).inc_by(0);
+        self.tokens_metric
+            .with_label_values(&["_", "_", "_"])
+            .inc_by(0);
+        self.deployment_state
+            .with_label_values(&["_", "_"])
+            .set(0.0);
+        self.deployment_tpm_limit
+            .with_label_values(&["_", "_"])
+            .set(0.0);
+        self.deployment_rpm_limit
+            .with_label_values(&["_", "_"])
+            .set(0.0);
+        self.deployment_cooled_down
+            .with_label_values(&["_", "_"])
+            .inc_by(0);
+        self.deployment_success_responses
+            .with_label_values(&["_", "_"])
+            .inc_by(0);
+        self.deployment_failure_responses
+            .with_label_values(&["_", "_"])
+            .inc_by(0);
     }
 
     /// Record a completed request (success or failure).

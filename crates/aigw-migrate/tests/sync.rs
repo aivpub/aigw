@@ -18,19 +18,15 @@ async fn fresh_aigw_db(dir: &tempfile::TempDir, name: &str) -> String {
     // rename of spend_logs PK to `call_id` + nullable `request_id`.
     // sqlite:///abs/path is the canonical absolute form (3 slashes).
     let url = format!("sqlite://{}", path.display());
-    let db = aigw_core::db::Database::init(&url).await.expect("Database::init + migrations");
+    let db = aigw_core::db::Database::init(&url)
+        .await
+        .expect("Database::init + migrations");
     drop(db);
     url
 }
 
 /// Connect via SourcePool and seed spend_logs rows with explicit start_time.
-async fn seed_spend_log(
-    url: &str,
-    call_id: &str,
-    start_time: &str,
-    model: &str,
-    body: &str,
-) {
+async fn seed_spend_log(url: &str, call_id: &str, start_time: &str, model: &str, body: &str) {
     let pool = SourcePool::connect(url).await.unwrap();
     let sql = "INSERT INTO spend_logs \
         (call_id, call_type, api_key, spend, total_tokens, prompt_tokens, \
@@ -227,9 +223,15 @@ async fn test_days_filter_spend_logs_only() {
 
     // 3 rows: 1 within last 7 days, 2 older (30 days and 60 days ago).
     let now = chrono::Utc::now();
-    let recent = (now - chrono::Duration::days(1)).format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let old_30 = (now - chrono::Duration::days(30)).format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let old_60 = (now - chrono::Duration::days(60)).format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let recent = (now - chrono::Duration::days(1))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    let old_30 = (now - chrono::Duration::days(30))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    let old_60 = (now - chrono::Duration::days(60))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
     seed_spend_log(&source_url, "call-recent", &recent, "gpt-4", "r").await;
     seed_spend_log(&source_url, "call-30", &old_30, "gpt-4", "o30").await;
     seed_spend_log(&source_url, "call-60", &old_60, "gpt-4", "o60").await;
@@ -353,10 +355,16 @@ async fn test_skip_body_nulls_body_columns() {
     assert_eq!(count_rows(&target_url, "spend_logs").await, 1);
     let (messages, response) = read_spend_log_bodies(&target_url, "call-body").await;
     // Body columns must be NULL on target (never selected from source).
-    assert!(messages.is_none() || messages.as_deref() == Some(""),
-        "messages should be null/empty, got {:?}", messages);
-    assert!(response.is_none() || response.as_deref() == Some(""),
-        "response should be null/empty, got {:?}", response);
+    assert!(
+        messages.is_none() || messages.as_deref() == Some(""),
+        "messages should be null/empty, got {:?}",
+        messages
+    );
+    assert!(
+        response.is_none() || response.as_deref() == Some(""),
+        "response should be null/empty, got {:?}",
+        response
+    );
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -368,8 +376,16 @@ async fn test_illegal_table_name_errors() {
     let result = resolve_tables(Some("spend_logs,foo,teams"));
     assert!(result.is_err(), "should reject unknown table 'foo'");
     let err = result.unwrap_err().to_string();
-    assert!(err.contains("foo"), "error should name the bad table: {}", err);
-    assert!(err.contains("known"), "error should list known tables: {}", err);
+    assert!(
+        err.contains("foo"),
+        "error should name the bad table: {}",
+        err
+    );
+    assert!(
+        err.contains("known"),
+        "error should list known tables: {}",
+        err
+    );
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -426,7 +442,9 @@ async fn test_config_excluded_by_default_explicit_syncs() {
     let tgt_val = SourcePool::connect(&target_url)
         .await
         .unwrap()
-        .query_scalar_string("SELECT param_value FROM config WHERE param_name = 'litellm_master_key'")
+        .query_scalar_string(
+            "SELECT param_value FROM config WHERE param_name = 'litellm_master_key'",
+        )
         .await
         .unwrap();
     assert_eq!(tgt_val.as_deref(), Some("sk-TARGET"));
@@ -445,14 +463,24 @@ async fn test_config_excluded_by_default_explicit_syncs() {
     .await
     .unwrap();
     assert_eq!(count_rows(&target_url, "config").await, 1);
-    assert_eq!(stats.total_inserted(), 0, "existing config row should be ignored, not overwritten");
+    assert_eq!(
+        stats.total_inserted(),
+        0,
+        "existing config row should be ignored, not overwritten"
+    );
     let tgt_val2 = SourcePool::connect(&target_url)
         .await
         .unwrap()
-        .query_scalar_string("SELECT param_value FROM config WHERE param_name = 'litellm_master_key'")
+        .query_scalar_string(
+            "SELECT param_value FROM config WHERE param_name = 'litellm_master_key'",
+        )
         .await
         .unwrap();
-    assert_eq!(tgt_val2.as_deref(), Some("sk-TARGET"), "master_key must not be overwritten");
+    assert_eq!(
+        tgt_val2.as_deref(),
+        Some("sk-TARGET"),
+        "master_key must not be overwritten"
+    );
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

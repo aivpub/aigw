@@ -143,12 +143,15 @@ async fn migrate_credentials(
         return Ok(0);
     }
 
-    let values_col = tgt_col_info.iter().position(|(n, _, _)| n == "credential_values");
+    let values_col = tgt_col_info
+        .iter()
+        .position(|(n, _, _)| n == "credential_values");
 
     let mut inserted = 0usize;
     let mut skipped = 0usize;
     for row in &rows {
-        let row_map: HashMap<&str, &serde_json::Value> = row.iter().map(|(n, v)| (n.as_str(), v)).collect();
+        let row_map: HashMap<&str, &serde_json::Value> =
+            row.iter().map(|(n, v)| (n.as_str(), v)).collect();
         let tbl_quoted = target.quote_ident("LiteLLM_CredentialsTable");
 
         let values: Vec<String> = tgt_col_info
@@ -159,13 +162,16 @@ async fn migrate_credentials(
                     // credential_values: decrypt with source key, re-encrypt with target key.
                     // The plaintext may be a JSON object with individually encrypted
                     // fields that also need key rotation (e.g. `api_key`, `api_base`).
-                    let encrypted = row_map.get(col_name.as_str())
+                    let encrypted = row_map
+                        .get(col_name.as_str())
                         .and_then(|v| v.as_str())
                         .unwrap_or("");
                     if encrypted.is_empty() || encrypted == "{}" {
                         native::value_to_target_literal(
                             &serde_json::Value::String(encrypted.to_string()),
-                            col_type, target.kind(), false,
+                            col_type,
+                            target.kind(),
+                            false,
                         )
                     } else {
                         match aigw_core::decrypt_litellm_value(encrypted, source_key) {
@@ -174,10 +180,10 @@ async fn migrate_credentials(
                                 // individually encrypted fields inside it.
                                 let rotated_text = if plaintext.trim_start().starts_with('{') {
                                     match serde_json::from_str::<serde_json::Value>(&plaintext) {
-                                        Ok(json_val) => {
-                                            aigw_core::rotate_json_fields(&json_val, source_key, target_key)
-                                                .unwrap_or(plaintext)
-                                        }
+                                        Ok(json_val) => aigw_core::rotate_json_fields(
+                                            &json_val, source_key, target_key,
+                                        )
+                                        .unwrap_or(plaintext),
                                         Err(_) => plaintext,
                                     }
                                 } else {
@@ -186,14 +192,18 @@ async fn migrate_credentials(
                                 match aigw_core::encrypt_litellm_value(&rotated_text, target_key) {
                                     Ok(re_encrypted) => native::value_to_target_literal(
                                         &serde_json::Value::String(re_encrypted),
-                                        col_type, target.kind(), false,
+                                        col_type,
+                                        target.kind(),
+                                        false,
                                     ),
                                     Err(e) => {
                                         eprintln!("  [WARN] Re-encrypt: {}", e);
                                         skipped += 1;
                                         native::value_to_target_literal(
                                             &serde_json::Value::String(encrypted.to_string()),
-                                            col_type, target.kind(), false,
+                                            col_type,
+                                            target.kind(),
+                                            false,
                                         )
                                     }
                                 }
@@ -203,15 +213,21 @@ async fn migrate_credentials(
                                 skipped += 1;
                                 native::value_to_target_literal(
                                     &serde_json::Value::String(encrypted.to_string()),
-                                    col_type, target.kind(), false,
+                                    col_type,
+                                    target.kind(),
+                                    false,
                                 )
                             }
                         }
                     }
                 } else {
-                    let v = row_map.get(col_name.as_str())
-                        .or_else(|| overrides.get(col_name.as_str())
-                            .and_then(|m| row_map.get(m.as_str())))
+                    let v = row_map
+                        .get(col_name.as_str())
+                        .or_else(|| {
+                            overrides
+                                .get(col_name.as_str())
+                                .and_then(|m| row_map.get(m.as_str()))
+                        })
                         .copied()
                         .unwrap_or(&serde_json::Value::Null);
                     native::value_to_target_literal(v, col_type, target.kind(), *is_nullable)
@@ -219,11 +235,16 @@ async fn migrate_credentials(
             })
             .collect();
 
-        let quoted_cols: Vec<String> = tgt_col_info.iter().map(|(n, _, _)| target.quote_ident(n)).collect();
+        let quoted_cols: Vec<String> = tgt_col_info
+            .iter()
+            .map(|(n, _, _)| target.quote_ident(n))
+            .collect();
         let sql = format!(
             "{}{} ({}) VALUES ({}){}",
-            target.insert_prefix(), tbl_quoted,
-            quoted_cols.join(", "), values.join(", "),
+            target.insert_prefix(),
+            tbl_quoted,
+            quoted_cols.join(", "),
+            values.join(", "),
             target.conflict_clause(),
         );
         target.execute_raw(&sql).await?;
@@ -269,12 +290,15 @@ async fn migrate_proxy_models(
         return Ok(0);
     }
 
-    let params_col = tgt_col_info.iter().position(|(n, _, _)| n == "litellm_params");
+    let params_col = tgt_col_info
+        .iter()
+        .position(|(n, _, _)| n == "litellm_params");
 
     let mut inserted = 0usize;
     let mut skipped = 0usize;
     for row in &rows {
-        let row_map: HashMap<&str, &serde_json::Value> = row.iter().map(|(n, v)| (n.as_str(), v)).collect();
+        let row_map: HashMap<&str, &serde_json::Value> =
+            row.iter().map(|(n, v)| (n.as_str(), v)).collect();
         let tbl_quoted = target.quote_ident("LiteLLM_ProxyModelTable");
 
         let values: Vec<String> = tgt_col_info
@@ -282,14 +306,17 @@ async fn migrate_proxy_models(
             .enumerate()
             .map(|(idx, (col_name, col_type, is_nullable))| {
                 if params_col == Some(idx) {
-                    let value_str = row_map.get(col_name.as_str())
+                    let value_str = row_map
+                        .get(col_name.as_str())
                         .and_then(|v| v.as_str())
                         .unwrap_or("");
                     if value_str.is_empty() || value_str.starts_with('{') {
                         // JSON value, not encrypted
                         native::value_to_target_literal(
                             &serde_json::Value::String(value_str.to_string()),
-                            col_type, target.kind(), false,
+                            col_type,
+                            target.kind(),
+                            false,
                         )
                     } else {
                         match aigw_core::decrypt_litellm_value(value_str, source_key) {
@@ -298,10 +325,10 @@ async fn migrate_proxy_models(
                                 // individually encrypted fields inside it.
                                 let rotated_text = if plaintext.trim_start().starts_with('{') {
                                     match serde_json::from_str::<serde_json::Value>(&plaintext) {
-                                        Ok(json_val) => {
-                                            aigw_core::rotate_json_fields(&json_val, source_key, target_key)
-                                                .unwrap_or(plaintext)
-                                        }
+                                        Ok(json_val) => aigw_core::rotate_json_fields(
+                                            &json_val, source_key, target_key,
+                                        )
+                                        .unwrap_or(plaintext),
                                         Err(_) => plaintext,
                                     }
                                 } else {
@@ -310,14 +337,18 @@ async fn migrate_proxy_models(
                                 match aigw_core::encrypt_litellm_value(&rotated_text, target_key) {
                                     Ok(re_encrypted) => native::value_to_target_literal(
                                         &serde_json::Value::String(re_encrypted),
-                                        col_type, target.kind(), false,
+                                        col_type,
+                                        target.kind(),
+                                        false,
                                     ),
                                     Err(e) => {
                                         eprintln!("  [WARN] Re-encrypt: {}", e);
                                         skipped += 1;
                                         native::value_to_target_literal(
                                             &serde_json::Value::String(value_str.to_string()),
-                                            col_type, target.kind(), false,
+                                            col_type,
+                                            target.kind(),
+                                            false,
                                         )
                                     }
                                 }
@@ -327,15 +358,21 @@ async fn migrate_proxy_models(
                                 skipped += 1;
                                 native::value_to_target_literal(
                                     &serde_json::Value::String(value_str.to_string()),
-                                    col_type, target.kind(), false,
+                                    col_type,
+                                    target.kind(),
+                                    false,
                                 )
                             }
                         }
                     }
                 } else {
-                    let v = row_map.get(col_name.as_str())
-                        .or_else(|| overrides.get(col_name.as_str())
-                            .and_then(|m| row_map.get(m.as_str())))
+                    let v = row_map
+                        .get(col_name.as_str())
+                        .or_else(|| {
+                            overrides
+                                .get(col_name.as_str())
+                                .and_then(|m| row_map.get(m.as_str()))
+                        })
                         .copied()
                         .unwrap_or(&serde_json::Value::Null);
                     native::value_to_target_literal(v, col_type, target.kind(), *is_nullable)
@@ -343,11 +380,16 @@ async fn migrate_proxy_models(
             })
             .collect();
 
-        let quoted_cols: Vec<String> = tgt_col_info.iter().map(|(n, _, _)| target.quote_ident(n)).collect();
+        let quoted_cols: Vec<String> = tgt_col_info
+            .iter()
+            .map(|(n, _, _)| target.quote_ident(n))
+            .collect();
         let sql = format!(
             "{}{} ({}) VALUES ({}){}",
-            target.insert_prefix(), tbl_quoted,
-            quoted_cols.join(", "), values.join(", "),
+            target.insert_prefix(),
+            tbl_quoted,
+            quoted_cols.join(", "),
+            values.join(", "),
             target.conflict_clause(),
         );
         target.execute_raw(&sql).await?;
@@ -364,10 +406,7 @@ async fn migrate_proxy_models(
 // Spend logs migration
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-async fn migrate_spend_logs(
-    source: &SourcePool,
-    target: &SourcePool,
-) -> anyhow::Result<usize> {
+async fn migrate_spend_logs(source: &SourcePool, target: &SourcePool) -> anyhow::Result<usize> {
     let rows = match source.read_rows("spend_logs").await {
         Ok(r) => r,
         Err(e) => {
@@ -398,7 +437,12 @@ async fn migrate_spend_logs(
     overrides.insert("request_id".to_string(), "call_id".to_string());
     let rows_stripped: Vec<native::UnifiedRow> = rows
         .iter()
-        .map(|r| r.iter().filter(|(n, _)| n != "request_id").cloned().collect())
+        .map(|r| {
+            r.iter()
+                .filter(|(n, _)| n != "request_id")
+                .cloned()
+                .collect()
+        })
         .collect();
 
     if tgt_col_info.is_empty() {
@@ -406,7 +450,14 @@ async fn migrate_spend_logs(
         return Ok(0);
     }
 
-    native::insert_rows(target, "LiteLLM_SpendLogs", &tgt_col_info, &rows_stripped, &overrides).await
+    native::insert_rows(
+        target,
+        "LiteLLM_SpendLogs",
+        &tgt_col_info,
+        &rows_stripped,
+        &overrides,
+    )
+    .await
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -453,12 +504,19 @@ pub async fn run(
     // Step 3: Migrate credentials with key rotation
     println!("Step 3: Exporting credentials (with key rotation)...");
     let cred_count = migrate_credentials(&source, &target, source_master_key, &target_key).await?;
-    println!("  credentials -> LiteLLM_CredentialsTable ({} rows)", cred_count);
+    println!(
+        "  credentials -> LiteLLM_CredentialsTable ({} rows)",
+        cred_count
+    );
 
     // Step 4: Migrate proxy_models with key rotation
     println!("Step 4: Exporting proxy_models (with key rotation)...");
-    let model_count = migrate_proxy_models(&source, &target, source_master_key, &target_key).await?;
-    println!("  proxy_models -> LiteLLM_ProxyModelTable ({} rows)", model_count);
+    let model_count =
+        migrate_proxy_models(&source, &target, source_master_key, &target_key).await?;
+    println!(
+        "  proxy_models -> LiteLLM_ProxyModelTable ({} rows)",
+        model_count
+    );
 
     // Step 5: Migrate spend_logs
     println!("Step 5: Exporting spend_logs...");
@@ -487,11 +545,18 @@ pub async fn run(
         let src_count = source.count_rows(src).await.unwrap_or(0);
         let tgt_count = target.count_rows(tgt).await.unwrap_or(-1);
 
-        let status = if src_count == tgt_count { "OK" } else { "MISMATCH" };
+        let status = if src_count == tgt_count {
+            "OK"
+        } else {
+            "MISMATCH"
+        };
         if src_count != tgt_count {
             all_match = false;
         }
-        println!("  {} -> {}: src={} tgt={} [{}]", src, tgt, src_count, tgt_count, status);
+        println!(
+            "  {} -> {}: src={} tgt={} [{}]",
+            src, tgt, src_count, tgt_count, status
+        );
     }
 
     Ok(all_match)
@@ -520,14 +585,22 @@ mod tests {
         // Setup aigw source DB
         let src_pool = SqlitePoolOptions::new()
             .max_connections(1)
-            .connect_with(SqliteConnectOptions::new().filename(src_str).create_if_missing(true))
-            .await.unwrap();
+            .connect_with(
+                SqliteConnectOptions::new()
+                    .filename(src_str)
+                    .create_if_missing(true),
+            )
+            .await
+            .unwrap();
 
         sqlx::query(
             r#"CREATE TABLE "organizations" (
                 organization_id TEXT PRIMARY KEY, organization_alias TEXT, spend REAL DEFAULT 0
             )"#,
-        ).execute(&src_pool).await.unwrap();
+        )
+        .execute(&src_pool)
+        .await
+        .unwrap();
         sqlx::query(
             "INSERT INTO \"organizations\" (organization_id, organization_alias, spend) VALUES ('org-1', 'test-org', 42.0)"
         ).execute(&src_pool).await.unwrap();
@@ -550,7 +623,10 @@ mod tests {
             r#"CREATE TABLE "proxy_models" (
                 model_id TEXT PRIMARY KEY, model_name TEXT, litellm_params TEXT, model_info TEXT
             )"#,
-        ).execute(&src_pool).await.unwrap();
+        )
+        .execute(&src_pool)
+        .await
+        .unwrap();
         let plain_params = r#"{"model":"gpt-4","api_key":"sk-model-key"}"#;
         let encrypted_params = aigw_core::encrypt_litellm_value(plain_params, aigw_key).unwrap();
         sqlx::query(
@@ -574,14 +650,22 @@ mod tests {
         // Setup litellm target DB
         let tgt_pool = SqlitePoolOptions::new()
             .max_connections(1)
-            .connect_with(SqliteConnectOptions::new().filename(tgt_str).create_if_missing(true))
-            .await.unwrap();
+            .connect_with(
+                SqliteConnectOptions::new()
+                    .filename(tgt_str)
+                    .create_if_missing(true),
+            )
+            .await
+            .unwrap();
 
         sqlx::query(
             r#"CREATE TABLE "LiteLLM_OrganizationTable" (
                 organization_id TEXT PRIMARY KEY, organization_alias TEXT, spend REAL DEFAULT 0
             )"#,
-        ).execute(&tgt_pool).await.unwrap();
+        )
+        .execute(&tgt_pool)
+        .await
+        .unwrap();
         sqlx::query(
             r#"CREATE TABLE "LiteLLM_CredentialsTable" (
                 credential_id TEXT PRIMARY KEY, credential_name TEXT, credential_values TEXT, credential_info TEXT
@@ -591,12 +675,18 @@ mod tests {
             r#"CREATE TABLE "LiteLLM_ProxyModelTable" (
                 model_id TEXT PRIMARY KEY, model_name TEXT, litellm_params TEXT, model_info TEXT
             )"#,
-        ).execute(&tgt_pool).await.unwrap();
+        )
+        .execute(&tgt_pool)
+        .await
+        .unwrap();
         sqlx::query(
             r#"CREATE TABLE "LiteLLM_SpendLogs" (
                 request_id TEXT PRIMARY KEY, model TEXT, spend REAL DEFAULT 0
             )"#,
-        ).execute(&tgt_pool).await.unwrap();
+        )
+        .execute(&tgt_pool)
+        .await
+        .unwrap();
         tgt_pool.close().await;
 
         // Run
@@ -607,11 +697,19 @@ mod tests {
         // Verify re-encryption
         let tgt_pool = SqlitePoolOptions::new()
             .max_connections(1)
-            .connect_with(SqliteConnectOptions::new().filename(tgt_str).create_if_missing(true))
-            .await.unwrap();
+            .connect_with(
+                SqliteConnectOptions::new()
+                    .filename(tgt_str)
+                    .create_if_missing(true),
+            )
+            .await
+            .unwrap();
 
-        let cred_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM \"LiteLLM_CredentialsTable\"")
-            .fetch_one(&tgt_pool).await.unwrap();
+        let cred_count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM \"LiteLLM_CredentialsTable\"")
+                .fetch_one(&tgt_pool)
+                .await
+                .unwrap();
         assert_eq!(cred_count.0, 1);
 
         let cred_row: (String,) = sqlx::query_as(
@@ -624,22 +722,30 @@ mod tests {
         let expected_json: serde_json::Value = serde_json::from_str(plain_cred).unwrap();
         assert_eq!(decrypted_json, expected_json);
 
-        let model_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM \"LiteLLM_ProxyModelTable\"")
-            .fetch_one(&tgt_pool).await.unwrap();
+        let model_count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM \"LiteLLM_ProxyModelTable\"")
+                .fetch_one(&tgt_pool)
+                .await
+                .unwrap();
         assert_eq!(model_count.0, 1);
 
         // Stage 85 (v6.1 §11.1): verify the export reverse-override redirected
         // aigw's `call_id` PK into litellm's `request_id` PK — NOT the aigw
         // upstream `request_id` (which is NULL for this seeded row). Direct-match
         // would have written NULL → litellm PK NULL → data loss.
-        let spend_row: (String,) = sqlx::query_as(
-            "SELECT request_id FROM \"LiteLLM_SpendLogs\" WHERE model = 'gpt-4'",
-        ).fetch_one(&tgt_pool).await.unwrap();
+        let spend_row: (String,) =
+            sqlx::query_as("SELECT request_id FROM \"LiteLLM_SpendLogs\" WHERE model = 'gpt-4'")
+                .fetch_one(&tgt_pool)
+                .await
+                .unwrap();
         assert_eq!(spend_row.0, "aigw-call-001", "export must map aigw call_id → litellm request_id PK (direct-match would have written NULL)");
 
         let model_row: (String,) = sqlx::query_as(
             "SELECT litellm_params FROM \"LiteLLM_ProxyModelTable\" WHERE model_id = 'model-1'",
-        ).fetch_one(&tgt_pool).await.unwrap();
+        )
+        .fetch_one(&tgt_pool)
+        .await
+        .unwrap();
         let decrypted_params = aigw_core::decrypt_litellm_value(&model_row.0, litellm_key).unwrap();
         let decrypted_json: serde_json::Value = serde_json::from_str(&decrypted_params).unwrap();
         let expected_json: serde_json::Value = serde_json::from_str(plain_params).unwrap();

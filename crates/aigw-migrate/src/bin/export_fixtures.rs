@@ -137,10 +137,13 @@ async fn main() -> anyhow::Result<()> {
             .map_err(|e| anyhow::anyhow!("{}", e))?;
 
         // Round-trip check: decrypt with test key → must match original
-        let roundtrip =
-            decrypt_litellm_value(&encrypted_params, TEST_MASTER_KEY)
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
-        assert_eq!(roundtrip, params_str, "roundtrip mismatch for {}", model_name);
+        let roundtrip = decrypt_litellm_value(&encrypted_params, TEST_MASTER_KEY)
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+        assert_eq!(
+            roundtrip, params_str,
+            "roundtrip mismatch for {}",
+            model_name
+        );
 
         // Extract expected plaintext fields for sanity checks
         let expected_api_base = params_json

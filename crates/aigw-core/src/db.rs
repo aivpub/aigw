@@ -238,8 +238,16 @@ async fn clean_litellm_data(pool: &SqlitePool) -> Result<()> {
     }
 
     // ── Step 2: TEXT "false"/"true" → INTEGER 0/1 for blocked columns ──
-    let blocked_tables = ["teams", "virtual_keys", "deprecated_keys", "deleted_keys",
-        "deleted_organizations", "deleted_teams", "deleted_users", "deleted_models"];
+    let blocked_tables = [
+        "teams",
+        "virtual_keys",
+        "deprecated_keys",
+        "deleted_keys",
+        "deleted_organizations",
+        "deleted_teams",
+        "deleted_users",
+        "deleted_models",
+    ];
     for table in blocked_tables {
         for (text_val, int_val) in [("false", 0), ("true", 1), ("'false'", 0), ("'true'", 1)] {
             let sql = format!(
@@ -260,7 +268,10 @@ async fn clean_litellm_data(pool: &SqlitePool) -> Result<()> {
 
     // ── Step 2c: Empty-string TEXT → NULL for INTEGER columns (model_id in teams) ──
     for table in ["teams"] {
-        let sql = format!("UPDATE \"{}\" SET model_id = NULL WHERE typeof(model_id) = 'text' AND model_id = ''", table);
+        let sql = format!(
+            "UPDATE \"{}\" SET model_id = NULL WHERE typeof(model_id) = 'text' AND model_id = ''",
+            table
+        );
         sqlx::query(&sql).execute(pool).await.ok();
     }
 
@@ -739,18 +750,27 @@ impl KeyStore for SqlitePool {
     }
 
     async fn list_deleted_keys(&self) -> Result<Vec<VirtualKey>> {
-        sqlx::query_as(LIST_DELETED_KEYS_SQLITE).fetch_all(self).await.map_err(DbError::from)
+        sqlx::query_as(LIST_DELETED_KEYS_SQLITE)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
     }
 
     async fn list_deleted_keys_paged(&self, limit: i64, offset: i64) -> Result<Vec<VirtualKey>> {
         sqlx::query_as(LIST_DELETED_KEYS_PAGED_SQLITE)
-            .bind(limit).bind(offset)
-            .fetch_all(self).await.map_err(DbError::from)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
     }
 
     async fn count_deleted_keys(&self) -> Result<i64> {
         sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM deleted_keys")
-            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+            .fetch_one(self)
+            .await
+            .map(|r| r.0)
+            .map_err(DbError::from)
     }
 
     async fn list_keys_paged(
@@ -761,28 +781,68 @@ impl KeyStore for SqlitePool {
         offset: i64,
     ) -> Result<Vec<VirtualKey>> {
         let keys = match (team_id, user_id) {
-            (Some(tid), Some(uid)) => sqlx::query_as(LIST_KEYS_PAGED_TEAM_USER_SQLITE)
-                .bind(tid).bind(uid).bind(limit).bind(offset).fetch_all(self).await?,
-            (Some(tid), None) => sqlx::query_as(LIST_KEYS_PAGED_TEAM_SQLITE)
-                .bind(tid).bind(limit).bind(offset).fetch_all(self).await?,
-            (None, Some(uid)) => sqlx::query_as(LIST_KEYS_PAGED_USER_SQLITE)
-                .bind(uid).bind(limit).bind(offset).fetch_all(self).await?,
-            (None, None) => sqlx::query_as(LIST_KEYS_PAGED_SQLITE)
-                .bind(limit).bind(offset).fetch_all(self).await?,
+            (Some(tid), Some(uid)) => {
+                sqlx::query_as(LIST_KEYS_PAGED_TEAM_USER_SQLITE)
+                    .bind(tid)
+                    .bind(uid)
+                    .bind(limit)
+                    .bind(offset)
+                    .fetch_all(self)
+                    .await?
+            }
+            (Some(tid), None) => {
+                sqlx::query_as(LIST_KEYS_PAGED_TEAM_SQLITE)
+                    .bind(tid)
+                    .bind(limit)
+                    .bind(offset)
+                    .fetch_all(self)
+                    .await?
+            }
+            (None, Some(uid)) => {
+                sqlx::query_as(LIST_KEYS_PAGED_USER_SQLITE)
+                    .bind(uid)
+                    .bind(limit)
+                    .bind(offset)
+                    .fetch_all(self)
+                    .await?
+            }
+            (None, None) => {
+                sqlx::query_as(LIST_KEYS_PAGED_SQLITE)
+                    .bind(limit)
+                    .bind(offset)
+                    .fetch_all(self)
+                    .await?
+            }
         };
         Ok(keys)
     }
 
     async fn count_keys(&self, team_id: Option<&str>, user_id: Option<&str>) -> Result<i64> {
         let row: (i64,) = match (team_id, user_id) {
-            (Some(tid), Some(uid)) => sqlx::query_as::<_, (i64,)>(COUNT_KEYS_TEAM_USER_SQLITE)
-                .bind(tid).bind(uid).fetch_one(self).await?,
-            (Some(tid), None) => sqlx::query_as::<_, (i64,)>(COUNT_KEYS_TEAM_SQLITE)
-                .bind(tid).fetch_one(self).await?,
-            (None, Some(uid)) => sqlx::query_as::<_, (i64,)>(COUNT_KEYS_USER_SQLITE)
-                .bind(uid).fetch_one(self).await?,
-            (None, None) => sqlx::query_as::<_, (i64,)>(COUNT_KEYS_SQLITE)
-                .fetch_one(self).await?,
+            (Some(tid), Some(uid)) => {
+                sqlx::query_as::<_, (i64,)>(COUNT_KEYS_TEAM_USER_SQLITE)
+                    .bind(tid)
+                    .bind(uid)
+                    .fetch_one(self)
+                    .await?
+            }
+            (Some(tid), None) => {
+                sqlx::query_as::<_, (i64,)>(COUNT_KEYS_TEAM_SQLITE)
+                    .bind(tid)
+                    .fetch_one(self)
+                    .await?
+            }
+            (None, Some(uid)) => {
+                sqlx::query_as::<_, (i64,)>(COUNT_KEYS_USER_SQLITE)
+                    .bind(uid)
+                    .fetch_one(self)
+                    .await?
+            }
+            (None, None) => {
+                sqlx::query_as::<_, (i64,)>(COUNT_KEYS_SQLITE)
+                    .fetch_one(self)
+                    .await?
+            }
         };
         Ok(row.0)
     }
@@ -936,11 +996,13 @@ impl KeyStore for SqlitePool {
     ) -> Result<()> {
         match entity_type {
             "key" => {
-                sqlx::query("UPDATE virtual_keys SET spend = 0, budget_reset_at = ? WHERE token = ?")
-                    .bind(next_reset_at)
-                    .bind(entity_id)
-                    .execute(self)
-                    .await?;
+                sqlx::query(
+                    "UPDATE virtual_keys SET spend = 0, budget_reset_at = ? WHERE token = ?",
+                )
+                .bind(next_reset_at)
+                .bind(entity_id)
+                .execute(self)
+                .await?;
             }
             "user" => {
                 sqlx::query("UPDATE users SET spend = 0, budget_reset_at = ? WHERE user_id = ?")
@@ -1168,7 +1230,10 @@ impl KeyStore for MySqlPool {
 
     async fn count_deleted_keys(&self) -> Result<i64> {
         sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM deleted_keys")
-            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+            .fetch_one(self)
+            .await
+            .map(|r| r.0)
+            .map_err(DbError::from)
     }
 
     async fn list_keys_paged(
@@ -1179,28 +1244,68 @@ impl KeyStore for MySqlPool {
         offset: i64,
     ) -> Result<Vec<VirtualKey>> {
         let keys = match (team_id, user_id) {
-            (Some(tid), Some(uid)) => sqlx::query_as(LIST_KEYS_PAGED_TEAM_USER_SQLITE)
-                .bind(tid).bind(uid).bind(limit).bind(offset).fetch_all(self).await?,
-            (Some(tid), None) => sqlx::query_as(LIST_KEYS_PAGED_TEAM_SQLITE)
-                .bind(tid).bind(limit).bind(offset).fetch_all(self).await?,
-            (None, Some(uid)) => sqlx::query_as(LIST_KEYS_PAGED_USER_SQLITE)
-                .bind(uid).bind(limit).bind(offset).fetch_all(self).await?,
-            (None, None) => sqlx::query_as(LIST_KEYS_PAGED_SQLITE)
-                .bind(limit).bind(offset).fetch_all(self).await?,
+            (Some(tid), Some(uid)) => {
+                sqlx::query_as(LIST_KEYS_PAGED_TEAM_USER_SQLITE)
+                    .bind(tid)
+                    .bind(uid)
+                    .bind(limit)
+                    .bind(offset)
+                    .fetch_all(self)
+                    .await?
+            }
+            (Some(tid), None) => {
+                sqlx::query_as(LIST_KEYS_PAGED_TEAM_SQLITE)
+                    .bind(tid)
+                    .bind(limit)
+                    .bind(offset)
+                    .fetch_all(self)
+                    .await?
+            }
+            (None, Some(uid)) => {
+                sqlx::query_as(LIST_KEYS_PAGED_USER_SQLITE)
+                    .bind(uid)
+                    .bind(limit)
+                    .bind(offset)
+                    .fetch_all(self)
+                    .await?
+            }
+            (None, None) => {
+                sqlx::query_as(LIST_KEYS_PAGED_SQLITE)
+                    .bind(limit)
+                    .bind(offset)
+                    .fetch_all(self)
+                    .await?
+            }
         };
         Ok(keys)
     }
 
     async fn count_keys(&self, team_id: Option<&str>, user_id: Option<&str>) -> Result<i64> {
         let row: (i64,) = match (team_id, user_id) {
-            (Some(tid), Some(uid)) => sqlx::query_as::<_, (i64,)>(COUNT_KEYS_TEAM_USER_SQLITE)
-                .bind(tid).bind(uid).fetch_one(self).await?,
-            (Some(tid), None) => sqlx::query_as::<_, (i64,)>(COUNT_KEYS_TEAM_SQLITE)
-                .bind(tid).fetch_one(self).await?,
-            (None, Some(uid)) => sqlx::query_as::<_, (i64,)>(COUNT_KEYS_USER_SQLITE)
-                .bind(uid).fetch_one(self).await?,
-            (None, None) => sqlx::query_as::<_, (i64,)>(COUNT_KEYS_SQLITE)
-                .fetch_one(self).await?,
+            (Some(tid), Some(uid)) => {
+                sqlx::query_as::<_, (i64,)>(COUNT_KEYS_TEAM_USER_SQLITE)
+                    .bind(tid)
+                    .bind(uid)
+                    .fetch_one(self)
+                    .await?
+            }
+            (Some(tid), None) => {
+                sqlx::query_as::<_, (i64,)>(COUNT_KEYS_TEAM_SQLITE)
+                    .bind(tid)
+                    .fetch_one(self)
+                    .await?
+            }
+            (None, Some(uid)) => {
+                sqlx::query_as::<_, (i64,)>(COUNT_KEYS_USER_SQLITE)
+                    .bind(uid)
+                    .fetch_one(self)
+                    .await?
+            }
+            (None, None) => {
+                sqlx::query_as::<_, (i64,)>(COUNT_KEYS_SQLITE)
+                    .fetch_one(self)
+                    .await?
+            }
         };
         Ok(row.0)
     }
@@ -1328,11 +1433,13 @@ impl KeyStore for MySqlPool {
     ) -> Result<()> {
         match entity_type {
             "key" => {
-                sqlx::query("UPDATE virtual_keys SET spend = 0, budget_reset_at = ? WHERE token = ?")
-                    .bind(next_reset_at)
-                    .bind(entity_id)
-                    .execute(self)
-                    .await?;
+                sqlx::query(
+                    "UPDATE virtual_keys SET spend = 0, budget_reset_at = ? WHERE token = ?",
+                )
+                .bind(next_reset_at)
+                .bind(entity_id)
+                .execute(self)
+                .await?;
             }
             "user" => {
                 sqlx::query("UPDATE users SET spend = 0, budget_reset_at = ? WHERE user_id = ?")
@@ -1391,7 +1498,8 @@ impl KeyStore for MySqlPool {
     }
 
     async fn find_expired_resets_teams(
-        &self    ) -> Result<Vec<(String, Option<String>, Option<String>)>> {
+        &self,
+    ) -> Result<Vec<(String, Option<String>, Option<String>)>> {
         let rows = sqlx::query_as::<_, (String, Option<String>, Option<String>)>(
             r#"SELECT team_id, budget_reset_at, budget_duration FROM teams
                WHERE (budget_reset_at IS NOT NULL AND budget_reset_at < NOW())
@@ -1596,7 +1704,10 @@ impl KeyStore for PgPool {
 
     async fn count_deleted_keys(&self) -> Result<i64> {
         sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM deleted_keys")
-            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+            .fetch_one(self)
+            .await
+            .map(|r| r.0)
+            .map_err(DbError::from)
     }
 
     async fn list_keys_paged(
@@ -1764,11 +1875,13 @@ impl KeyStore for PgPool {
     ) -> Result<()> {
         match entity_type {
             "key" => {
-                sqlx::query("UPDATE virtual_keys SET spend = 0, budget_reset_at = $1 WHERE token = $2")
-                    .bind(next_reset_at)
-                    .bind(entity_id)
-                    .execute(self)
-                    .await?;
+                sqlx::query(
+                    "UPDATE virtual_keys SET spend = 0, budget_reset_at = $1 WHERE token = $2",
+                )
+                .bind(next_reset_at)
+                .bind(entity_id)
+                .execute(self)
+                .await?;
             }
             "user" => {
                 sqlx::query("UPDATE users SET spend = 0, budget_reset_at = $1 WHERE user_id = $2")
@@ -1927,7 +2040,11 @@ impl Database {
         }
     }
 
-    pub async fn list_deleted_keys_paged(&self, limit: i64, offset: i64) -> Result<Vec<VirtualKey>> {
+    pub async fn list_deleted_keys_paged(
+        &self,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<VirtualKey>> {
         match self {
             Database::Sqlite(pool) => pool.list_deleted_keys_paged(limit, offset).await,
             Database::Mysql(pool) => pool.list_deleted_keys_paged(limit, offset).await,
@@ -1998,9 +2115,18 @@ impl Database {
         next_reset_at: &str,
     ) -> Result<()> {
         match self {
-            Database::Sqlite(pool) => pool.reset_spend_and_update_reset_at(entity_type, entity_id, next_reset_at).await,
-            Database::Mysql(pool) => pool.reset_spend_and_update_reset_at(entity_type, entity_id, next_reset_at).await,
-            Database::Postgres(pool) => pool.reset_spend_and_update_reset_at(entity_type, entity_id, next_reset_at).await,
+            Database::Sqlite(pool) => {
+                pool.reset_spend_and_update_reset_at(entity_type, entity_id, next_reset_at)
+                    .await
+            }
+            Database::Mysql(pool) => {
+                pool.reset_spend_and_update_reset_at(entity_type, entity_id, next_reset_at)
+                    .await
+            }
+            Database::Postgres(pool) => {
+                pool.reset_spend_and_update_reset_at(entity_type, entity_id, next_reset_at)
+                    .await
+            }
         }
     }
 
@@ -2081,9 +2207,23 @@ pub trait SpendLogStore {
     async fn get_spend_by_user(&self, user_id: &str) -> Result<f64>;
     async fn get_spend_by_tag(&self, tag: &str) -> Result<f64>;
     async fn get_global_spend(&self) -> Result<f64>;
-    async fn aggregate_spend_by_model(&self, api_key: Option<&str>, start_date: Option<&str>, end_date: Option<&str>) -> Result<Vec<SpendModelAgg>>;
-    async fn aggregate_spend_by_model_group(&self, api_key: Option<&str>, start_date: Option<&str>, end_date: Option<&str>) -> Result<Vec<SpendModelGroupAgg>>;
-    async fn aggregate_spend_by_provider(&self, start_date: Option<&str>, end_date: Option<&str>) -> Result<Vec<SpendProviderAgg>>;
+    async fn aggregate_spend_by_model(
+        &self,
+        api_key: Option<&str>,
+        start_date: Option<&str>,
+        end_date: Option<&str>,
+    ) -> Result<Vec<SpendModelAgg>>;
+    async fn aggregate_spend_by_model_group(
+        &self,
+        api_key: Option<&str>,
+        start_date: Option<&str>,
+        end_date: Option<&str>,
+    ) -> Result<Vec<SpendModelGroupAgg>>;
+    async fn aggregate_spend_by_provider(
+        &self,
+        start_date: Option<&str>,
+        end_date: Option<&str>,
+    ) -> Result<Vec<SpendProviderAgg>>;
     async fn query_spend_logs_filtered(
         &self,
         api_key: Option<&str>,
@@ -2306,40 +2446,72 @@ impl SpendLogStore for SqlitePool {
         Ok(row.0.unwrap_or(0.0))
     }
 
-    async fn aggregate_spend_by_model(&self, api_key: Option<&str>, start_date: Option<&str>, end_date: Option<&str>) -> Result<Vec<SpendModelAgg>> {
+    async fn aggregate_spend_by_model(
+        &self,
+        api_key: Option<&str>,
+        start_date: Option<&str>,
+        end_date: Option<&str>,
+    ) -> Result<Vec<SpendModelAgg>> {
         let date_filter = if start_date.is_some() && end_date.is_some() {
             " AND start_time >= ? AND start_time <= ?"
-        } else { "" };
+        } else {
+            ""
+        };
         let sql = match api_key {
             Some(_) => format!("SELECT model, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE api_key = ?{date_filter} GROUP BY model ORDER BY total_tokens DESC"),
             None => format!("SELECT model, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE 1=1{date_filter} GROUP BY model ORDER BY total_tokens DESC"),
         };
         let mut q = sqlx::query_as(&sql);
-        if let Some(k) = api_key { q = q.bind(k); }
-        if let Some(s) = start_date { q = q.bind(s); }
-        if let Some(e) = end_date { q = q.bind(e); }
+        if let Some(k) = api_key {
+            q = q.bind(k);
+        }
+        if let Some(s) = start_date {
+            q = q.bind(s);
+        }
+        if let Some(e) = end_date {
+            q = q.bind(e);
+        }
         q.fetch_all(self).await.map_err(DbError::from)
     }
 
-    async fn aggregate_spend_by_model_group(&self, api_key: Option<&str>, start_date: Option<&str>, end_date: Option<&str>) -> Result<Vec<SpendModelGroupAgg>> {
+    async fn aggregate_spend_by_model_group(
+        &self,
+        api_key: Option<&str>,
+        start_date: Option<&str>,
+        end_date: Option<&str>,
+    ) -> Result<Vec<SpendModelGroupAgg>> {
         let date_filter = if start_date.is_some() && end_date.is_some() {
             " AND start_time >= ? AND start_time <= ?"
-        } else { "" };
+        } else {
+            ""
+        };
         let sql = match api_key {
             Some(_) => format!("SELECT COALESCE(model_group, 'unknown') as model_group, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE api_key = ?{date_filter} GROUP BY COALESCE(model_group, 'unknown') ORDER BY total_tokens DESC"),
             None => format!("SELECT COALESCE(model_group, 'unknown') as model_group, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE 1=1{date_filter} GROUP BY COALESCE(model_group, 'unknown') ORDER BY total_tokens DESC"),
         };
         let mut q = sqlx::query_as(&sql);
-        if let Some(k) = api_key { q = q.bind(k); }
-        if let Some(s) = start_date { q = q.bind(s); }
-        if let Some(e) = end_date { q = q.bind(e); }
+        if let Some(k) = api_key {
+            q = q.bind(k);
+        }
+        if let Some(s) = start_date {
+            q = q.bind(s);
+        }
+        if let Some(e) = end_date {
+            q = q.bind(e);
+        }
         q.fetch_all(self).await.map_err(DbError::from)
     }
 
-    async fn aggregate_spend_by_provider(&self, start_date: Option<&str>, end_date: Option<&str>) -> Result<Vec<SpendProviderAgg>> {
+    async fn aggregate_spend_by_provider(
+        &self,
+        start_date: Option<&str>,
+        end_date: Option<&str>,
+    ) -> Result<Vec<SpendProviderAgg>> {
         let date_filter = if start_date.is_some() && end_date.is_some() {
             " AND sl.start_time >= ? AND sl.start_time <= ?"
-        } else { "" };
+        } else {
+            ""
+        };
         let sql = format!(
             r#"SELECT COALESCE(NULLIF(sl.custom_llm_provider, ''), 'unknown') as provider,
                COALESCE(SUM(sl.total_tokens), 0) as total_tokens,
@@ -2351,13 +2523,27 @@ impl SpendLogStore for SqlitePool {
                ORDER BY total_tokens DESC"#
         );
         let mut q = sqlx::query_as(&sql);
-        if let Some(s) = start_date { q = q.bind(s); }
-        if let Some(e) = end_date { q = q.bind(e); }
-        q.fetch_all(self).await.map_err(DbError::from).map(|rows: Vec<(String, i64, f64, i64)>| {
-            rows.into_iter().map(|(provider, total_tokens, total_spend, requests)| {
-                SpendProviderAgg { provider, total_tokens, total_spend, requests }
-            }).collect()
-        })
+        if let Some(s) = start_date {
+            q = q.bind(s);
+        }
+        if let Some(e) = end_date {
+            q = q.bind(e);
+        }
+        q.fetch_all(self)
+            .await
+            .map_err(DbError::from)
+            .map(|rows: Vec<(String, i64, f64, i64)>| {
+                rows.into_iter()
+                    .map(
+                        |(provider, total_tokens, total_spend, requests)| SpendProviderAgg {
+                            provider,
+                            total_tokens,
+                            total_spend,
+                            requests,
+                        },
+                    )
+                    .collect()
+            })
     }
 
     async fn query_spend_logs_filtered(
@@ -2383,26 +2569,49 @@ impl SpendLogStore for SqlitePool {
                 end_user, requester_ip_address, messages, response,
                 session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request,
                 body_archived, parquet_path, request_id
-            FROM spend_logs WHERE 1=1"#
+            FROM spend_logs WHERE 1=1"#,
         );
 
-        if api_key.is_some() { sql.push_str(" AND api_key = ?"); }
-        if model.is_some() { sql.push_str(" AND model = ?"); }
-        if start_date.is_some() { sql.push_str(" AND start_time >= ?"); }
-        if end_date.is_some() { sql.push_str(" AND start_time <= ?"); }
+        if api_key.is_some() {
+            sql.push_str(" AND api_key = ?");
+        }
+        if model.is_some() {
+            sql.push_str(" AND model = ?");
+        }
+        if start_date.is_some() {
+            sql.push_str(" AND start_time >= ?");
+        }
+        if end_date.is_some() {
+            sql.push_str(" AND start_time <= ?");
+        }
         // Dual-column fuzzy search: match gateway call_id OR upstream request_id (LIKE '%X%').
-        if call_id.is_some() { sql.push_str(" AND (call_id LIKE ? ESCAPE '\\' OR request_id LIKE ? ESCAPE '\\')"); }
+        if call_id.is_some() {
+            sql.push_str(" AND (call_id LIKE ? ESCAPE '\\' OR request_id LIKE ? ESCAPE '\\')");
+        }
 
         sql.push_str(" ORDER BY start_time DESC LIMIT ? OFFSET ?");
 
         let mut query = sqlx::query_as(&sql);
-        if let Some(k) = api_key { query = query.bind(k); }
-        if let Some(m) = model { query = query.bind(m); }
-        if let Some(sd) = start_date { query = query.bind(sd); }
-        if let Some(ed) = end_date { query = query.bind(ed); }
+        if let Some(k) = api_key {
+            query = query.bind(k);
+        }
+        if let Some(m) = model {
+            query = query.bind(m);
+        }
+        if let Some(sd) = start_date {
+            query = query.bind(sd);
+        }
+        if let Some(ed) = end_date {
+            query = query.bind(ed);
+        }
         let _like_val;
         if let Some(rid) = call_id {
-            _like_val = format!("%{}%", rid.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
+            _like_val = format!(
+                "%{}%",
+                rid.replace('\\', "\\\\")
+                    .replace('%', "\\%")
+                    .replace('_', "\\_")
+            );
             query = query.bind(&_like_val);
             query = query.bind(&_like_val);
         }
@@ -2421,26 +2630,53 @@ impl SpendLogStore for SqlitePool {
         call_id: Option<&str>,
     ) -> Result<i64> {
         let mut sql = String::from("SELECT COUNT(*) FROM spend_logs WHERE 1=1");
-        if api_key.is_some() { sql.push_str(" AND api_key = ?"); }
-        if model.is_some() { sql.push_str(" AND model = ?"); }
-        if start_date.is_some() { sql.push_str(" AND start_time >= ?"); }
-        if end_date.is_some() { sql.push_str(" AND start_time <= ?"); }
+        if api_key.is_some() {
+            sql.push_str(" AND api_key = ?");
+        }
+        if model.is_some() {
+            sql.push_str(" AND model = ?");
+        }
+        if start_date.is_some() {
+            sql.push_str(" AND start_time >= ?");
+        }
+        if end_date.is_some() {
+            sql.push_str(" AND start_time <= ?");
+        }
         // Dual-column fuzzy search: match gateway call_id OR upstream request_id (LIKE '%X%').
-        if call_id.is_some() { sql.push_str(" AND (call_id LIKE ? ESCAPE '\\' OR request_id LIKE ? ESCAPE '\\')"); }
+        if call_id.is_some() {
+            sql.push_str(" AND (call_id LIKE ? ESCAPE '\\' OR request_id LIKE ? ESCAPE '\\')");
+        }
 
         let mut query = sqlx::query_as::<_, (i64,)>(&sql);
-        if let Some(k) = api_key { query = query.bind(k); }
-        if let Some(m) = model { query = query.bind(m); }
-        if let Some(sd) = start_date { query = query.bind(sd); }
-        if let Some(ed) = end_date { query = query.bind(ed); }
+        if let Some(k) = api_key {
+            query = query.bind(k);
+        }
+        if let Some(m) = model {
+            query = query.bind(m);
+        }
+        if let Some(sd) = start_date {
+            query = query.bind(sd);
+        }
+        if let Some(ed) = end_date {
+            query = query.bind(ed);
+        }
         let _like_val;
         if let Some(rid) = call_id {
-            _like_val = format!("%{}%", rid.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
+            _like_val = format!(
+                "%{}%",
+                rid.replace('\\', "\\\\")
+                    .replace('%', "\\%")
+                    .replace('_', "\\_")
+            );
             query = query.bind(&_like_val);
             query = query.bind(&_like_val);
         }
 
-        query.fetch_one(self).await.map(|row: (i64,)| row.0).map_err(DbError::from)
+        query
+            .fetch_one(self)
+            .await
+            .map(|row: (i64,)| row.0)
+            .map_err(DbError::from)
     }
 
     async fn get_spend_log_by_call_id(&self, call_id: &str) -> Result<Option<SpendLog>> {
@@ -2630,42 +2866,73 @@ impl SpendLogStore for MySqlPool {
         Ok(row.0.unwrap_or(0.0))
     }
 
-    async fn aggregate_spend_by_model(&self, api_key: Option<&str>, start_date: Option<&str>, end_date: Option<&str>) -> Result<Vec<SpendModelAgg>> {
+    async fn aggregate_spend_by_model(
+        &self,
+        api_key: Option<&str>,
+        start_date: Option<&str>,
+        end_date: Option<&str>,
+    ) -> Result<Vec<SpendModelAgg>> {
         let date_filter = if start_date.is_some() && end_date.is_some() {
             " AND start_time >= ? AND start_time <= ?"
-        } else { "" };
+        } else {
+            ""
+        };
         // MySQL CAST: SUM(total_tokens) returns DECIMAL, must CAST AS SIGNED
         let sql = match api_key {
             Some(_) => format!("SELECT model, CAST(SUM(total_tokens) AS SIGNED) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE api_key = ?{date_filter} GROUP BY model ORDER BY total_tokens DESC"),
             None => format!("SELECT model, CAST(SUM(total_tokens) AS SIGNED) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE 1=1{date_filter} GROUP BY model ORDER BY total_tokens DESC"),
         };
         let mut q = sqlx::query_as(&sql);
-        if let Some(k) = api_key { q = q.bind(k); }
-        if let Some(s) = start_date { q = q.bind(s); }
-        if let Some(e) = end_date { q = q.bind(e); }
+        if let Some(k) = api_key {
+            q = q.bind(k);
+        }
+        if let Some(s) = start_date {
+            q = q.bind(s);
+        }
+        if let Some(e) = end_date {
+            q = q.bind(e);
+        }
         q.fetch_all(self).await.map_err(DbError::from)
     }
 
-    async fn aggregate_spend_by_model_group(&self, api_key: Option<&str>, start_date: Option<&str>, end_date: Option<&str>) -> Result<Vec<SpendModelGroupAgg>> {
+    async fn aggregate_spend_by_model_group(
+        &self,
+        api_key: Option<&str>,
+        start_date: Option<&str>,
+        end_date: Option<&str>,
+    ) -> Result<Vec<SpendModelGroupAgg>> {
         let date_filter = if start_date.is_some() && end_date.is_some() {
             " AND start_time >= ? AND start_time <= ?"
-        } else { "" };
+        } else {
+            ""
+        };
         let sql = match api_key {
             Some(_) => format!("SELECT COALESCE(model_group, 'unknown') as model_group, CAST(SUM(total_tokens) AS SIGNED) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE api_key = ?{date_filter} GROUP BY COALESCE(model_group, 'unknown') ORDER BY total_tokens DESC"),
             None => format!("SELECT COALESCE(model_group, 'unknown') as model_group, CAST(SUM(total_tokens) AS SIGNED) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE 1=1{date_filter} GROUP BY COALESCE(model_group, 'unknown') ORDER BY total_tokens DESC"),
         };
         let mut q = sqlx::query_as(&sql);
-        if let Some(k) = api_key { q = q.bind(k); }
-        if let Some(s) = start_date { q = q.bind(s); }
-        if let Some(e) = end_date { q = q.bind(e); }
+        if let Some(k) = api_key {
+            q = q.bind(k);
+        }
+        if let Some(s) = start_date {
+            q = q.bind(s);
+        }
+        if let Some(e) = end_date {
+            q = q.bind(e);
+        }
         q.fetch_all(self).await.map_err(DbError::from)
     }
 
-
-    async fn aggregate_spend_by_provider(&self, start_date: Option<&str>, end_date: Option<&str>) -> Result<Vec<SpendProviderAgg>> {
+    async fn aggregate_spend_by_provider(
+        &self,
+        start_date: Option<&str>,
+        end_date: Option<&str>,
+    ) -> Result<Vec<SpendProviderAgg>> {
         let date_filter = if start_date.is_some() && end_date.is_some() {
             " AND sl.start_time >= ? AND sl.start_time <= ?"
-        } else { "" };
+        } else {
+            ""
+        };
         let sql = format!(
             r#"SELECT COALESCE(NULLIF(sl.custom_llm_provider, ''), 'unknown') as provider,
                CAST(COALESCE(SUM(sl.total_tokens), 0) AS SIGNED) as total_tokens,
@@ -2677,20 +2944,39 @@ impl SpendLogStore for MySqlPool {
                ORDER BY total_tokens DESC"#
         );
         let mut q = sqlx::query_as(&sql);
-        if let Some(s) = start_date { q = q.bind(s); }
-        if let Some(e) = end_date { q = q.bind(e); }
-        q.fetch_all(self).await.map_err(DbError::from).map(|rows: Vec<(String, i64, f64, i64)>| {
-            rows.into_iter().map(|(provider, total_tokens, total_spend, requests)| {
-                SpendProviderAgg { provider, total_tokens, total_spend, requests }
-            }).collect()
-        })
+        if let Some(s) = start_date {
+            q = q.bind(s);
+        }
+        if let Some(e) = end_date {
+            q = q.bind(e);
+        }
+        q.fetch_all(self)
+            .await
+            .map_err(DbError::from)
+            .map(|rows: Vec<(String, i64, f64, i64)>| {
+                rows.into_iter()
+                    .map(
+                        |(provider, total_tokens, total_spend, requests)| SpendProviderAgg {
+                            provider,
+                            total_tokens,
+                            total_spend,
+                            requests,
+                        },
+                    )
+                    .collect()
+            })
     }
 
     async fn query_spend_logs_filtered(
-        &self, api_key: Option<&str>, model: Option<&str>, _provider: Option<&str>,
-        start_date: Option<&str>, end_date: Option<&str>,
+        &self,
+        api_key: Option<&str>,
+        model: Option<&str>,
+        _provider: Option<&str>,
+        start_date: Option<&str>,
+        end_date: Option<&str>,
         call_id: Option<&str>,
-        limit: Option<i32>, offset: Option<i32>,
+        limit: Option<i32>,
+        offset: Option<i32>,
     ) -> Result<Vec<SpendLog>> {
         // Fallback: use basic query and do in-memory filter
         let limit_val = limit.unwrap_or(30);
@@ -2698,24 +2984,49 @@ impl SpendLogStore for MySqlPool {
         // MySQL fallback: fetch up to N rows + apply in-memory filter + pagination
         let fetch_limit = std::cmp::min(limit_val + offset_val, 10000);
         let result = self.query_spend_logs(api_key, Some(fetch_limit)).await?;
-        let filtered: Vec<SpendLog> = result.into_iter().filter(|log| {
-            if let Some(m) = model { if log.model != m { return false; } }
-            if let Some(sd) = start_date {
-                if let Ok(d) = chrono::NaiveDate::parse_from_str(sd, "%Y-%m-%d") {
-                    let dt = d.and_hms_opt(0, 0, 0).map(|t| chrono::DateTime::<chrono::Utc>::from_utc(t, chrono::Utc));
-                    if let Some(dt) = dt { if log.start_time < dt { return false; } }
+        let filtered: Vec<SpendLog> = result
+            .into_iter()
+            .filter(|log| {
+                if let Some(m) = model {
+                    if log.model != m {
+                        return false;
+                    }
                 }
-            }
-            if let Some(ed) = end_date {
-                if let Ok(d) = chrono::NaiveDate::parse_from_str(ed, "%Y-%m-%d") {
-                    let dt = d.and_hms_opt(23, 59, 59).map(|t| chrono::DateTime::<chrono::Utc>::from_utc(t, chrono::Utc));
-                    if let Some(dt) = dt { if log.start_time > dt { return false; } }
+                if let Some(sd) = start_date {
+                    if let Ok(d) = chrono::NaiveDate::parse_from_str(sd, "%Y-%m-%d") {
+                        let dt = d
+                            .and_hms_opt(0, 0, 0)
+                            .map(|t| chrono::DateTime::<chrono::Utc>::from_utc(t, chrono::Utc));
+                        if let Some(dt) = dt {
+                            if log.start_time < dt {
+                                return false;
+                            }
+                        }
+                    }
                 }
-            }
-            // Dual-column in-memory fuzzy search: match gateway call_id OR upstream request_id (substring).
-            if let Some(rid) = call_id { if !log.call_id.contains(rid) && !log.request_id.as_deref().map_or(false, |r| r.contains(rid)) { return false; } }
-            true
-        }).collect();
+                if let Some(ed) = end_date {
+                    if let Ok(d) = chrono::NaiveDate::parse_from_str(ed, "%Y-%m-%d") {
+                        let dt = d
+                            .and_hms_opt(23, 59, 59)
+                            .map(|t| chrono::DateTime::<chrono::Utc>::from_utc(t, chrono::Utc));
+                        if let Some(dt) = dt {
+                            if log.start_time > dt {
+                                return false;
+                            }
+                        }
+                    }
+                }
+                // Dual-column in-memory fuzzy search: match gateway call_id OR upstream request_id (substring).
+                if let Some(rid) = call_id {
+                    if !log.call_id.contains(rid)
+                        && !log.request_id.as_deref().map_or(false, |r| r.contains(rid))
+                    {
+                        return false;
+                    }
+                }
+                true
+            })
+            .collect();
         let start = offset_val as usize;
         let end = std::cmp::min(start + limit_val as usize, filtered.len());
         if start >= filtered.len() {
@@ -2734,26 +3045,53 @@ impl SpendLogStore for MySqlPool {
         call_id: Option<&str>,
     ) -> Result<i64> {
         let mut sql = String::from("SELECT COUNT(*) FROM spend_logs WHERE 1=1");
-        if api_key.is_some() { sql.push_str(" AND api_key = ?"); }
-        if model.is_some() { sql.push_str(" AND model = ?"); }
-        if start_date.is_some() { sql.push_str(" AND start_time >= ?"); }
-        if end_date.is_some() { sql.push_str(" AND start_time <= ?"); }
+        if api_key.is_some() {
+            sql.push_str(" AND api_key = ?");
+        }
+        if model.is_some() {
+            sql.push_str(" AND model = ?");
+        }
+        if start_date.is_some() {
+            sql.push_str(" AND start_time >= ?");
+        }
+        if end_date.is_some() {
+            sql.push_str(" AND start_time <= ?");
+        }
         // Dual-column fuzzy search: match gateway call_id OR upstream request_id (LIKE '%X%').
-        if call_id.is_some() { sql.push_str(" AND (call_id LIKE ? ESCAPE '\\' OR request_id LIKE ? ESCAPE '\\')"); }
+        if call_id.is_some() {
+            sql.push_str(" AND (call_id LIKE ? ESCAPE '\\' OR request_id LIKE ? ESCAPE '\\')");
+        }
 
         let mut query = sqlx::query_as::<_, (i64,)>(&sql);
-        if let Some(k) = api_key { query = query.bind(k); }
-        if let Some(m) = model { query = query.bind(m); }
-        if let Some(sd) = start_date { query = query.bind(sd); }
-        if let Some(ed) = end_date { query = query.bind(ed); }
+        if let Some(k) = api_key {
+            query = query.bind(k);
+        }
+        if let Some(m) = model {
+            query = query.bind(m);
+        }
+        if let Some(sd) = start_date {
+            query = query.bind(sd);
+        }
+        if let Some(ed) = end_date {
+            query = query.bind(ed);
+        }
         let _like_val;
         if let Some(rid) = call_id {
-            _like_val = format!("%{}%", rid.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
+            _like_val = format!(
+                "%{}%",
+                rid.replace('\\', "\\\\")
+                    .replace('%', "\\%")
+                    .replace('_', "\\_")
+            );
             query = query.bind(&_like_val);
             query = query.bind(&_like_val);
         }
 
-        query.fetch_one(self).await.map(|row: (i64,)| row.0).map_err(DbError::from)
+        query
+            .fetch_one(self)
+            .await
+            .map(|row: (i64,)| row.0)
+            .map_err(DbError::from)
     }
 
     async fn get_spend_log_by_call_id(&self, call_id: &str) -> Result<Option<SpendLog>> {
@@ -2844,9 +3182,7 @@ impl SpendLogStore for PgPool {
         if let Some(m) = metadata {
             q = q.bind(m);
         }
-        q.bind(call_id)
-        .execute(self)
-        .await?;
+        q.bind(call_id).execute(self).await?;
         Ok(())
     }
 
@@ -2919,50 +3255,74 @@ impl SpendLogStore for PgPool {
         Ok(row.0.unwrap_or(0.0))
     }
 
-    async fn aggregate_spend_by_model(&self, api_key: Option<&str>, start_date: Option<&str>, end_date: Option<&str>) -> Result<Vec<SpendModelAgg>> {
+    async fn aggregate_spend_by_model(
+        &self,
+        api_key: Option<&str>,
+        start_date: Option<&str>,
+        end_date: Option<&str>,
+    ) -> Result<Vec<SpendModelAgg>> {
         let date_filter = if start_date.is_some() && end_date.is_some() {
             format!(
                 " AND start_time >= '{}'::TIMESTAMPTZ AND start_time <= '{}'::TIMESTAMPTZ",
                 start_date.unwrap().replace('\'', "''"),
                 end_date.unwrap().replace('\'', "''")
             )
-        } else { String::new() };
+        } else {
+            String::new()
+        };
         let sql = match api_key {
             Some(_) => format!("SELECT model, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE api_key = $1{date_filter} GROUP BY model ORDER BY total_tokens DESC"),
             None => format!("SELECT model, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE 1=1{date_filter} GROUP BY model ORDER BY total_tokens DESC"),
         };
         let mut q = sqlx::query_as(&sql);
-        if let Some(k) = api_key { q = q.bind(k); }
+        if let Some(k) = api_key {
+            q = q.bind(k);
+        }
         // start_date / end_date already inlined with ::TIMESTAMPTZ cast above — no bind needed
         q.fetch_all(self).await.map_err(DbError::from)
     }
 
-    async fn aggregate_spend_by_model_group(&self, api_key: Option<&str>, start_date: Option<&str>, end_date: Option<&str>) -> Result<Vec<SpendModelGroupAgg>> {
+    async fn aggregate_spend_by_model_group(
+        &self,
+        api_key: Option<&str>,
+        start_date: Option<&str>,
+        end_date: Option<&str>,
+    ) -> Result<Vec<SpendModelGroupAgg>> {
         let date_filter = if start_date.is_some() && end_date.is_some() {
             format!(
                 " AND start_time >= '{}'::TIMESTAMPTZ AND start_time <= '{}'::TIMESTAMPTZ",
                 start_date.unwrap().replace('\'', "''"),
                 end_date.unwrap().replace('\'', "''")
             )
-        } else { String::new() };
+        } else {
+            String::new()
+        };
         let sql = match api_key {
             Some(_) => format!("SELECT COALESCE(model_group, 'unknown') as model_group, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE api_key = $1{date_filter} GROUP BY COALESCE(model_group, 'unknown') ORDER BY total_tokens DESC"),
             None => format!("SELECT COALESCE(model_group, 'unknown') as model_group, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE 1=1{date_filter} GROUP BY COALESCE(model_group, 'unknown') ORDER BY total_tokens DESC"),
         };
         let mut q = sqlx::query_as(&sql);
-        if let Some(k) = api_key { q = q.bind(k); }
+        if let Some(k) = api_key {
+            q = q.bind(k);
+        }
         // start_date / end_date already inlined with ::TIMESTAMPTZ cast above — no bind needed
         q.fetch_all(self).await.map_err(DbError::from)
     }
 
-    async fn aggregate_spend_by_provider(&self, start_date: Option<&str>, end_date: Option<&str>) -> Result<Vec<SpendProviderAgg>> {
+    async fn aggregate_spend_by_provider(
+        &self,
+        start_date: Option<&str>,
+        end_date: Option<&str>,
+    ) -> Result<Vec<SpendProviderAgg>> {
         let date_filter = if start_date.is_some() && end_date.is_some() {
             format!(
                 " AND sl.start_time >= '{}'::TIMESTAMPTZ AND sl.start_time <= '{}'::TIMESTAMPTZ",
                 start_date.unwrap().replace('\'', "''"),
                 end_date.unwrap().replace('\'', "''")
             )
-        } else { String::new() };
+        } else {
+            String::new()
+        };
         let sql = format!(
             r#"SELECT COALESCE(NULLIF(sl.custom_llm_provider, ''), 'unknown') as provider,
                COALESCE(SUM(sl.total_tokens), 0) as total_tokens,
@@ -2979,41 +3339,78 @@ impl SpendLogStore for PgPool {
             .await
             .map_err(DbError::from)
             .map(|rows: Vec<(String, i64, f64, i64)>| {
-                rows.into_iter().map(|(provider, total_tokens, total_spend, requests)| {
-                    SpendProviderAgg { provider, total_tokens, total_spend, requests }
-                }).collect()
+                rows.into_iter()
+                    .map(
+                        |(provider, total_tokens, total_spend, requests)| SpendProviderAgg {
+                            provider,
+                            total_tokens,
+                            total_spend,
+                            requests,
+                        },
+                    )
+                    .collect()
             })
     }
 
     async fn query_spend_logs_filtered(
-        &self, api_key: Option<&str>, model: Option<&str>, _provider: Option<&str>,
-        start_date: Option<&str>, end_date: Option<&str>,
+        &self,
+        api_key: Option<&str>,
+        model: Option<&str>,
+        _provider: Option<&str>,
+        start_date: Option<&str>,
+        end_date: Option<&str>,
         call_id: Option<&str>,
-        limit: Option<i32>, offset: Option<i32>,
+        limit: Option<i32>,
+        offset: Option<i32>,
     ) -> Result<Vec<SpendLog>> {
         let limit_val = limit.unwrap_or(30);
         let offset_val = offset.unwrap_or(0);
         // PG fallback: fetch up to N rows + in-memory filter + pagination
         let fetch_limit = std::cmp::min(limit_val + offset_val, 10000);
         let result = self.query_spend_logs(api_key, Some(fetch_limit)).await?;
-        let filtered: Vec<SpendLog> = result.into_iter().filter(|log| {
-            if let Some(m) = model { if log.model != m { return false; } }
-            if let Some(sd) = start_date {
-                if let Ok(d) = chrono::NaiveDate::parse_from_str(sd, "%Y-%m-%d") {
-                    let dt = d.and_hms_opt(0, 0, 0).map(|t| chrono::DateTime::<chrono::Utc>::from_utc(t, chrono::Utc));
-                    if let Some(dt) = dt { if log.start_time < dt { return false; } }
+        let filtered: Vec<SpendLog> = result
+            .into_iter()
+            .filter(|log| {
+                if let Some(m) = model {
+                    if log.model != m {
+                        return false;
+                    }
                 }
-            }
-            if let Some(ed) = end_date {
-                if let Ok(d) = chrono::NaiveDate::parse_from_str(ed, "%Y-%m-%d") {
-                    let dt = d.and_hms_opt(23, 59, 59).map(|t| chrono::DateTime::<chrono::Utc>::from_utc(t, chrono::Utc));
-                    if let Some(dt) = dt { if log.start_time > dt { return false; } }
+                if let Some(sd) = start_date {
+                    if let Ok(d) = chrono::NaiveDate::parse_from_str(sd, "%Y-%m-%d") {
+                        let dt = d
+                            .and_hms_opt(0, 0, 0)
+                            .map(|t| chrono::DateTime::<chrono::Utc>::from_utc(t, chrono::Utc));
+                        if let Some(dt) = dt {
+                            if log.start_time < dt {
+                                return false;
+                            }
+                        }
+                    }
                 }
-            }
-            // Dual-column in-memory fuzzy search: match gateway call_id OR upstream request_id (substring).
-            if let Some(rid) = call_id { if !log.call_id.contains(rid) && !log.request_id.as_deref().map_or(false, |r| r.contains(rid)) { return false; } }
-            true
-        }).collect();
+                if let Some(ed) = end_date {
+                    if let Ok(d) = chrono::NaiveDate::parse_from_str(ed, "%Y-%m-%d") {
+                        let dt = d
+                            .and_hms_opt(23, 59, 59)
+                            .map(|t| chrono::DateTime::<chrono::Utc>::from_utc(t, chrono::Utc));
+                        if let Some(dt) = dt {
+                            if log.start_time > dt {
+                                return false;
+                            }
+                        }
+                    }
+                }
+                // Dual-column in-memory fuzzy search: match gateway call_id OR upstream request_id (substring).
+                if let Some(rid) = call_id {
+                    if !log.call_id.contains(rid)
+                        && !log.request_id.as_deref().map_or(false, |r| r.contains(rid))
+                    {
+                        return false;
+                    }
+                }
+                true
+            })
+            .collect();
         let start = offset_val as usize;
         let end = std::cmp::min(start + limit_val as usize, filtered.len());
         if start >= filtered.len() {
@@ -3035,24 +3432,57 @@ impl SpendLogStore for PgPool {
 
         let mut sql = String::from("SELECT COUNT(*) FROM spend_logs WHERE 1=1");
         let mut i: usize = 1;
-        if api_key.is_some() { sql.push_str(&format!(" AND api_key = ${}", i)); i += 1; }
-        if model.is_some() { sql.push_str(&format!(" AND model = ${}", i)); i += 1; }
-        if start_date.is_some() { sql.push_str(&format!(" AND start_time >= '{}'{}", start_date.unwrap().replace('\'', "''"), ts_cast)); }
-        if end_date.is_some() { sql.push_str(&format!(" AND start_time <= '{}'{}", end_date.unwrap().replace('\'', "''"), ts_cast)); }
+        if api_key.is_some() {
+            sql.push_str(&format!(" AND api_key = ${}", i));
+            i += 1;
+        }
+        if model.is_some() {
+            sql.push_str(&format!(" AND model = ${}", i));
+            i += 1;
+        }
+        if start_date.is_some() {
+            sql.push_str(&format!(
+                " AND start_time >= '{}'{}",
+                start_date.unwrap().replace('\'', "''"),
+                ts_cast
+            ));
+        }
+        if end_date.is_some() {
+            sql.push_str(&format!(
+                " AND start_time <= '{}'{}",
+                end_date.unwrap().replace('\'', "''"),
+                ts_cast
+            ));
+        }
         // Dual-column search: match gateway call_id OR upstream request_id.
         // Two placeholders ($i and $i+1), both bound to the same search term.
         // (i is not read again after this branch — last conditional.)
         if call_id.is_some() {
-            sql.push_str(&format!(" AND (call_id = ${} OR request_id = ${})", i, i + 1));
+            sql.push_str(&format!(
+                " AND (call_id = ${} OR request_id = ${})",
+                i,
+                i + 1
+            ));
         }
 
         let mut query = sqlx::query_as::<_, (i64,)>(&sql);
-        if let Some(k) = api_key { query = query.bind(k); }
-        if let Some(m) = model { query = query.bind(m); }
+        if let Some(k) = api_key {
+            query = query.bind(k);
+        }
+        if let Some(m) = model {
+            query = query.bind(m);
+        }
         // start_date / end_date already inlined with ::TIMESTAMPTZ cast above — no bind needed
-        if let Some(rid) = call_id { query = query.bind(rid); query = query.bind(rid); }
+        if let Some(rid) = call_id {
+            query = query.bind(rid);
+            query = query.bind(rid);
+        }
 
-        query.fetch_one(self).await.map(|row: (i64,)| row.0).map_err(DbError::from)
+        query
+            .fetch_one(self)
+            .await
+            .map(|row: (i64,)| row.0)
+            .map_err(DbError::from)
     }
 
     async fn get_spend_log_by_call_id(&self, call_id: &str) -> Result<Option<SpendLog>> {
@@ -3103,9 +3533,57 @@ impl Database {
         metadata: Option<serde_json::Value>,
     ) -> Result<()> {
         match self {
-            Database::Sqlite(pool) => pool.update_spend_log(call_id, upstream_request_id, spend, total_tokens, prompt_tokens, completion_tokens, end_time, request_duration_ms, completion_start_time, response, status, metadata).await,
-            Database::Mysql(pool) => pool.update_spend_log(call_id, upstream_request_id, spend, total_tokens, prompt_tokens, completion_tokens, end_time, request_duration_ms, completion_start_time, response, status, metadata).await,
-            Database::Postgres(pool) => pool.update_spend_log(call_id, upstream_request_id, spend, total_tokens, prompt_tokens, completion_tokens, end_time, request_duration_ms, completion_start_time, response, status, metadata).await,
+            Database::Sqlite(pool) => {
+                pool.update_spend_log(
+                    call_id,
+                    upstream_request_id,
+                    spend,
+                    total_tokens,
+                    prompt_tokens,
+                    completion_tokens,
+                    end_time,
+                    request_duration_ms,
+                    completion_start_time,
+                    response,
+                    status,
+                    metadata,
+                )
+                .await
+            }
+            Database::Mysql(pool) => {
+                pool.update_spend_log(
+                    call_id,
+                    upstream_request_id,
+                    spend,
+                    total_tokens,
+                    prompt_tokens,
+                    completion_tokens,
+                    end_time,
+                    request_duration_ms,
+                    completion_start_time,
+                    response,
+                    status,
+                    metadata,
+                )
+                .await
+            }
+            Database::Postgres(pool) => {
+                pool.update_spend_log(
+                    call_id,
+                    upstream_request_id,
+                    spend,
+                    total_tokens,
+                    prompt_tokens,
+                    completion_tokens,
+                    end_time,
+                    request_duration_ms,
+                    completion_start_time,
+                    response,
+                    status,
+                    metadata,
+                )
+                .await
+            }
         }
     }
 
@@ -3160,9 +3638,18 @@ impl Database {
         end_date: Option<&str>,
     ) -> Result<Vec<SpendModelAgg>> {
         match self {
-            Database::Sqlite(pool) => pool.aggregate_spend_by_model(api_key, start_date, end_date).await,
-            Database::Mysql(pool) => pool.aggregate_spend_by_model(api_key, start_date, end_date).await,
-            Database::Postgres(pool) => pool.aggregate_spend_by_model(api_key, start_date, end_date).await,
+            Database::Sqlite(pool) => {
+                pool.aggregate_spend_by_model(api_key, start_date, end_date)
+                    .await
+            }
+            Database::Mysql(pool) => {
+                pool.aggregate_spend_by_model(api_key, start_date, end_date)
+                    .await
+            }
+            Database::Postgres(pool) => {
+                pool.aggregate_spend_by_model(api_key, start_date, end_date)
+                    .await
+            }
         }
     }
 
@@ -3173,9 +3660,18 @@ impl Database {
         end_date: Option<&str>,
     ) -> Result<Vec<SpendModelGroupAgg>> {
         match self {
-            Database::Sqlite(pool) => pool.aggregate_spend_by_model_group(api_key, start_date, end_date).await,
-            Database::Mysql(pool) => pool.aggregate_spend_by_model_group(api_key, start_date, end_date).await,
-            Database::Postgres(pool) => pool.aggregate_spend_by_model_group(api_key, start_date, end_date).await,
+            Database::Sqlite(pool) => {
+                pool.aggregate_spend_by_model_group(api_key, start_date, end_date)
+                    .await
+            }
+            Database::Mysql(pool) => {
+                pool.aggregate_spend_by_model_group(api_key, start_date, end_date)
+                    .await
+            }
+            Database::Postgres(pool) => {
+                pool.aggregate_spend_by_model_group(api_key, start_date, end_date)
+                    .await
+            }
         }
     }
 
@@ -3187,7 +3683,9 @@ impl Database {
         match self {
             Database::Sqlite(pool) => pool.aggregate_spend_by_provider(start_date, end_date).await,
             Database::Mysql(pool) => pool.aggregate_spend_by_provider(start_date, end_date).await,
-            Database::Postgres(pool) => pool.aggregate_spend_by_provider(start_date, end_date).await,
+            Database::Postgres(pool) => {
+                pool.aggregate_spend_by_provider(start_date, end_date).await
+            }
         }
     }
 
@@ -3206,16 +3704,22 @@ impl Database {
     ) -> Result<Vec<SpendLog>> {
         match self {
             Database::Sqlite(pool) => {
-                pool.query_spend_logs_filtered(api_key, model, provider, start_date, end_date, call_id, limit, offset)
-                    .await
+                pool.query_spend_logs_filtered(
+                    api_key, model, provider, start_date, end_date, call_id, limit, offset,
+                )
+                .await
             }
             Database::Mysql(pool) => {
-                pool.query_spend_logs_filtered(api_key, model, provider, start_date, end_date, call_id, limit, offset)
-                    .await
+                pool.query_spend_logs_filtered(
+                    api_key, model, provider, start_date, end_date, call_id, limit, offset,
+                )
+                .await
             }
             Database::Postgres(pool) => {
-                pool.query_spend_logs_filtered(api_key, model, provider, start_date, end_date, call_id, limit, offset)
-                    .await
+                pool.query_spend_logs_filtered(
+                    api_key, model, provider, start_date, end_date, call_id, limit, offset,
+                )
+                .await
             }
         }
     }
@@ -3229,9 +3733,18 @@ impl Database {
         call_id: Option<&str>,
     ) -> Result<i64> {
         match self {
-            Database::Sqlite(pool) => pool.query_spend_logs_count(api_key, model, start_date, end_date, call_id).await,
-            Database::Mysql(pool) => pool.query_spend_logs_count(api_key, model, start_date, end_date, call_id).await,
-            Database::Postgres(pool) => pool.query_spend_logs_count(api_key, model, start_date, end_date, call_id).await,
+            Database::Sqlite(pool) => {
+                pool.query_spend_logs_count(api_key, model, start_date, end_date, call_id)
+                    .await
+            }
+            Database::Mysql(pool) => {
+                pool.query_spend_logs_count(api_key, model, start_date, end_date, call_id)
+                    .await
+            }
+            Database::Postgres(pool) => {
+                pool.query_spend_logs_count(api_key, model, start_date, end_date, call_id)
+                    .await
+            }
         }
     }
 
@@ -3303,11 +3816,16 @@ impl Database {
             WHERE date(start_time) >= date({p1}) AND date(start_time) <= date({p2}) {filter}"#;
         match self {
             Database::Sqlite(pool) => {
-                let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false, false);
-                let sql = sql_base.replace("{p1}", "?").replace("{p2}", "?").replace("{filter}", &filter_clause);
-                let mut q = sqlx::query_as(&sql)
-                    .bind(start_date).bind(end_date);
-                for p in &params { q = q.bind(p); }
+                let (filter_clause, params) =
+                    build_activity_filter(user_id, team_id, organization_id, 0, false, false);
+                let sql = sql_base
+                    .replace("{p1}", "?")
+                    .replace("{p2}", "?")
+                    .replace("{filter}", &filter_clause);
+                let mut q = sqlx::query_as(&sql).bind(start_date).bind(end_date);
+                for p in &params {
+                    q = q.bind(p);
+                }
                 q.fetch_one(pool).await.map_err(DbError::from)
             }
             Database::Mysql(pool) => {
@@ -3330,11 +3848,13 @@ impl Database {
                     COALESCE(SUM(COALESCE(JSON_EXTRACT(metadata, '$.cache_create_spend'), 0.0)), 0)
                 FROM spend_logs
                 WHERE date(start_time) >= date(?) AND date(start_time) <= date(?) {filter}"#;
-                let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false, true);
+                let (filter_clause, params) =
+                    build_activity_filter(user_id, team_id, organization_id, 0, false, true);
                 let sql = sql_mysql.replace("{filter}", &filter_clause);
-                let mut q = sqlx::query_as(&sql)
-                    .bind(start_date).bind(end_date);
-                for p in &params { q = q.bind(p); }
+                let mut q = sqlx::query_as(&sql).bind(start_date).bind(end_date);
+                for p in &params {
+                    q = q.bind(p);
+                }
                 q.fetch_one(pool).await.map_err(DbError::from)
             }
             Database::Postgres(pool) => {
@@ -3359,11 +3879,13 @@ impl Database {
                     COALESCE(SUM(COALESCE((metadata->'cache_create_spend')::double precision, 0.0)), 0)
                 FROM spend_logs
                 WHERE date(start_time) >= date($1) AND date(start_time) <= date($2) {filter}"#;
-                let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 3, true, false);
+                let (filter_clause, params) =
+                    build_activity_filter(user_id, team_id, organization_id, 3, true, false);
                 let sql = sql_pg.replace("{filter}", &filter_clause);
-                let mut q = sqlx::query_as(&sql)
-                    .bind(start_date).bind(end_date);
-                for p in &params { q = q.bind(p); }
+                let mut q = sqlx::query_as(&sql).bind(start_date).bind(end_date);
+                for p in &params {
+                    q = q.bind(p);
+                }
                 q.fetch_one(pool).await.map_err(DbError::from)
             }
         }
@@ -3377,7 +3899,23 @@ impl Database {
         user_id: Option<&str>,
         team_id: Option<&str>,
         organization_id: Option<&str>,
-    ) -> Result<Vec<(String, f64, i64, i64, i64, i64, i64, i64, i64, i64, i64, f64, f64)>> {
+    ) -> Result<
+        Vec<(
+            String,
+            f64,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            f64,
+            f64,
+        )>,
+    > {
         match self {
             Database::Sqlite(pool) => {
                 // SQLite: DATE() already returns TEXT — no cast needed.
@@ -3394,11 +3932,13 @@ impl Database {
                     COALESCE(SUM(COALESCE(json_extract(metadata, '$.cache_create_spend'), 0.0)), 0) \
                     FROM spend_logs WHERE date(start_time) >= date(?) AND date(start_time) <= date(?) {filter} \
                     GROUP BY 1 ORDER BY 1 ASC";
-                let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false, false);
+                let (filter_clause, params) =
+                    build_activity_filter(user_id, team_id, organization_id, 0, false, false);
                 let sql = sql.replace("{filter}", &filter_clause);
-                let mut q = sqlx::query_as(&sql)
-                    .bind(start_date).bind(end_date);
-                for p in &params { q = q.bind(p); }
+                let mut q = sqlx::query_as(&sql).bind(start_date).bind(end_date);
+                for p in &params {
+                    q = q.bind(p);
+                }
                 q.fetch_all(pool).await.map_err(DbError::from)
             }
             Database::Mysql(pool) => {
@@ -3416,11 +3956,13 @@ impl Database {
                     COALESCE(SUM(COALESCE(JSON_EXTRACT(metadata, '$.cache_create_spend'), 0.0)), 0) \
                     FROM spend_logs WHERE date(start_time) >= date(?) AND date(start_time) <= date(?) {filter} \
                     GROUP BY 1 ORDER BY 1 ASC";
-                let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false, true);
+                let (filter_clause, params) =
+                    build_activity_filter(user_id, team_id, organization_id, 0, false, true);
                 let sql = sql.replace("{filter}", &filter_clause);
-                let mut q = sqlx::query_as(&sql)
-                    .bind(start_date).bind(end_date);
-                for p in &params { q = q.bind(p); }
+                let mut q = sqlx::query_as(&sql).bind(start_date).bind(end_date);
+                for p in &params {
+                    q = q.bind(p);
+                }
                 q.fetch_all(pool).await.map_err(DbError::from)
             }
             Database::Postgres(pool) => {
@@ -3439,11 +3981,13 @@ impl Database {
                     COALESCE(SUM(COALESCE((metadata->'cache_create_spend')::double precision, 0.0)), 0) \
                     FROM spend_logs WHERE date(start_time) >= date($1) AND date(start_time) <= date($2) {filter} \
                     GROUP BY 1 ORDER BY 1 ASC";
-                let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 3, true, false);
+                let (filter_clause, params) =
+                    build_activity_filter(user_id, team_id, organization_id, 3, true, false);
                 let sql = sql.replace("{filter}", &filter_clause);
-                let mut q = sqlx::query_as(&sql)
-                    .bind(start_date).bind(end_date);
-                for p in &params { q = q.bind(p); }
+                let mut q = sqlx::query_as(&sql).bind(start_date).bind(end_date);
+                for p in &params {
+                    q = q.bind(p);
+                }
                 q.fetch_all(pool).await.map_err(DbError::from)
             }
         }
@@ -3458,7 +4002,23 @@ impl Database {
         user_id: Option<&str>,
         team_id: Option<&str>,
         organization_id: Option<&str>,
-    ) -> Result<Vec<(String, f64, i64, i64, i64, i64, i64, i64, i64, i64, i64, f64, f64)>> {
+    ) -> Result<
+        Vec<(
+            String,
+            f64,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            i64,
+            f64,
+            f64,
+        )>,
+    > {
         // Use full datetime bounds for hourly queries (start of start_date, end of end_date)
         let start_ts = format!("{}T00:00:00", start_date);
         let end_ts = format!("{}T23:59:59", end_date);
@@ -3477,11 +4037,13 @@ impl Database {
                     COALESCE(SUM(COALESCE(json_extract(metadata, '$.cache_create_spend'), 0.0)), 0) \
                     FROM spend_logs WHERE start_time >= ? AND start_time <= ? {filter} \
                     GROUP BY 1 ORDER BY 1 ASC";
-                let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false, false);
+                let (filter_clause, params) =
+                    build_activity_filter(user_id, team_id, organization_id, 0, false, false);
                 let sql = sql.replace("{filter}", &filter_clause);
-                let mut q = sqlx::query_as(&sql)
-                    .bind(&start_ts).bind(&end_ts);
-                for p in &params { q = q.bind(p); }
+                let mut q = sqlx::query_as(&sql).bind(&start_ts).bind(&end_ts);
+                for p in &params {
+                    q = q.bind(p);
+                }
                 q.fetch_all(pool).await.map_err(DbError::from)
             }
             Database::Mysql(pool) => {
@@ -3498,11 +4060,13 @@ impl Database {
                     COALESCE(SUM(COALESCE(JSON_EXTRACT(metadata, '$.cache_create_spend'), 0.0)), 0) \
                     FROM spend_logs WHERE start_time >= ? AND start_time <= ? {filter} \
                     GROUP BY 1 ORDER BY 1 ASC";
-                let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 0, false, true);
+                let (filter_clause, params) =
+                    build_activity_filter(user_id, team_id, organization_id, 0, false, true);
                 let sql = sql.replace("{filter}", &filter_clause);
-                let mut q = sqlx::query_as(&sql)
-                    .bind(&start_ts).bind(&end_ts);
-                for p in &params { q = q.bind(p); }
+                let mut q = sqlx::query_as(&sql).bind(&start_ts).bind(&end_ts);
+                for p in &params {
+                    q = q.bind(p);
+                }
                 q.fetch_all(pool).await.map_err(DbError::from)
             }
             Database::Postgres(pool) => {
@@ -3519,11 +4083,13 @@ impl Database {
                     COALESCE(SUM(COALESCE((metadata->'cache_create_spend')::double precision, 0.0)), 0) \
                     FROM spend_logs WHERE start_time >= $1::TIMESTAMPTZ AND start_time <= $2::TIMESTAMPTZ {filter} \
                     GROUP BY 1 ORDER BY 1 ASC";
-                let (filter_clause, params) = build_activity_filter(user_id, team_id, organization_id, 3, true, false);
+                let (filter_clause, params) =
+                    build_activity_filter(user_id, team_id, organization_id, 3, true, false);
                 let sql = sql.replace("{filter}", &filter_clause);
-                let mut q = sqlx::query_as(&sql)
-                    .bind(&start_ts).bind(&end_ts);
-                for p in &params { q = q.bind(p); }
+                let mut q = sqlx::query_as(&sql).bind(&start_ts).bind(&end_ts);
+                for p in &params {
+                    q = q.bind(p);
+                }
                 q.fetch_all(pool).await.map_err(DbError::from)
             }
         }
@@ -3556,20 +4122,29 @@ impl Database {
             Database::Sqlite(pool) => {
                 let sql = sql.replace("{p1}", "?").replace("{p2}", "?");
                 sqlx::query_as(&sql)
-                    .bind(start_date).bind(end_date)
-                    .fetch_all(pool).await.map_err(DbError::from)
+                    .bind(start_date)
+                    .bind(end_date)
+                    .fetch_all(pool)
+                    .await
+                    .map_err(DbError::from)
             }
             Database::Mysql(pool) => {
                 let sql = sql_mysql.replace("{p1}", "?").replace("{p2}", "?");
                 sqlx::query_as(&sql)
-                    .bind(start_date).bind(end_date)
-                    .fetch_all(pool).await.map_err(DbError::from)
+                    .bind(start_date)
+                    .bind(end_date)
+                    .fetch_all(pool)
+                    .await
+                    .map_err(DbError::from)
             }
             Database::Postgres(pool) => {
                 let sql = sql.replace("{p1}", "$1").replace("{p2}", "$2");
                 sqlx::query_as(&sql)
-                    .bind(start_date).bind(end_date)
-                    .fetch_all(pool).await.map_err(DbError::from)
+                    .bind(start_date)
+                    .bind(end_date)
+                    .fetch_all(pool)
+                    .await
+                    .map_err(DbError::from)
             }
         }
     }
@@ -3642,7 +4217,8 @@ pub trait ProxyModelStore {
     async fn update_model(&self, m: &ProxyModel) -> Result<()>;
     async fn delete_model(&self, model_id: &str) -> Result<()>;
     async fn list_deleted_models(&self) -> Result<Vec<DeletedModel>>;
-    async fn list_deleted_models_paged(&self, limit: i64, offset: i64) -> Result<Vec<DeletedModel>>;
+    async fn list_deleted_models_paged(&self, limit: i64, offset: i64)
+        -> Result<Vec<DeletedModel>>;
     async fn count_deleted_models(&self) -> Result<i64>;
 }
 
@@ -3702,34 +4278,39 @@ impl ProxyModelStore for SqlitePool {
             .bind(&m.created_by)
             .bind(&m.updated_at)
             .bind(&m.updated_by)
-            .execute(self).await?;
+            .execute(self)
+            .await?;
         Ok(())
     }
 
     async fn get_model_by_id(&self, model_id: &str) -> Result<Option<ProxyModel>> {
         sqlx::query_as(GET_MODEL_SQLITE)
             .bind(model_id)
-            .fetch_optional(self).await
+            .fetch_optional(self)
+            .await
             .map_err(DbError::from)
     }
 
     async fn get_model_by_name(&self, model_name: &str) -> Result<Option<ProxyModel>> {
         sqlx::query_as(GET_MODEL_BY_NAME_SQLITE)
             .bind(model_name)
-            .fetch_optional(self).await
+            .fetch_optional(self)
+            .await
             .map_err(DbError::from)
     }
 
     async fn list_models_by_name(&self, model_name: &str) -> Result<Vec<ProxyModel>> {
         sqlx::query_as(LIST_MODELS_BY_NAME_SQLITE)
             .bind(model_name)
-            .fetch_all(self).await
+            .fetch_all(self)
+            .await
             .map_err(DbError::from)
     }
 
     async fn list_models(&self) -> Result<Vec<ProxyModel>> {
         sqlx::query_as(LIST_MODELS_SQLITE)
-            .fetch_all(self).await
+            .fetch_all(self)
+            .await
             .map_err(DbError::from)
     }
 
@@ -3741,7 +4322,8 @@ impl ProxyModelStore for SqlitePool {
             .bind(&m.updated_at)
             .bind(&m.updated_by)
             .bind(&m.model_id)
-            .execute(self).await?;
+            .execute(self)
+            .await?;
         Ok(())
     }
 
@@ -3758,16 +4340,21 @@ impl ProxyModelStore for SqlitePool {
                 .bind(&model.created_by)
                 .bind(&model.updated_at)
                 .bind(&model.updated_by)
-                .execute(self).await?;
+                .execute(self)
+                .await?;
         }
         sqlx::query("DELETE FROM proxy_models WHERE model_id = ?")
             .bind(model_id)
-            .execute(self).await?;
+            .execute(self)
+            .await?;
         Ok(())
     }
 
     async fn list_deleted_models(&self) -> Result<Vec<DeletedModel>> {
-        sqlx::query_as(LIST_DELETED_MODELS_SQLITE).fetch_all(self).await.map_err(DbError::from)
+        sqlx::query_as(LIST_DELETED_MODELS_SQLITE)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
     }
 
     async fn list_models_paged(&self, limit: i64, offset: i64) -> Result<Vec<ProxyModel>> {
@@ -3778,10 +4365,17 @@ impl ProxyModelStore for SqlitePool {
 
     async fn count_models(&self) -> Result<i64> {
         sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM proxy_models")
-            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+            .fetch_one(self)
+            .await
+            .map(|r| r.0)
+            .map_err(DbError::from)
     }
 
-    async fn list_deleted_models_paged(&self, limit: i64, offset: i64) -> Result<Vec<DeletedModel>> {
+    async fn list_deleted_models_paged(
+        &self,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<DeletedModel>> {
         sqlx::query_as("SELECT id, model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, deleted_at FROM deleted_models ORDER BY deleted_at DESC LIMIT ? OFFSET ?")
                     .bind(limit).bind(offset)
             .fetch_all(self).await.map_err(DbError::from)
@@ -3789,7 +4383,10 @@ impl ProxyModelStore for SqlitePool {
 
     async fn count_deleted_models(&self) -> Result<i64> {
         sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM deleted_models")
-            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+            .fetch_one(self)
+            .await
+            .map(|r| r.0)
+            .map_err(DbError::from)
     }
 }
 
@@ -3847,7 +4444,9 @@ impl ProxyModelStore for MySqlPool {
                 .execute(self).await?;
         }
         sqlx::query("DELETE FROM proxy_models WHERE model_id = ?")
-            .bind(model_id).execute(self).await?;
+            .bind(model_id)
+            .execute(self)
+            .await?;
         Ok(())
     }
 
@@ -3864,10 +4463,17 @@ impl ProxyModelStore for MySqlPool {
 
     async fn count_models(&self) -> Result<i64> {
         sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM proxy_models")
-            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+            .fetch_one(self)
+            .await
+            .map(|r| r.0)
+            .map_err(DbError::from)
     }
 
-    async fn list_deleted_models_paged(&self, limit: i64, offset: i64) -> Result<Vec<DeletedModel>> {
+    async fn list_deleted_models_paged(
+        &self,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<DeletedModel>> {
         sqlx::query_as("SELECT id, model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, deleted_at FROM deleted_models ORDER BY deleted_at DESC LIMIT ? OFFSET ?")
                     .bind(limit).bind(offset)
             .fetch_all(self).await.map_err(DbError::from)
@@ -3875,7 +4481,10 @@ impl ProxyModelStore for MySqlPool {
 
     async fn count_deleted_models(&self) -> Result<i64> {
         sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM deleted_models")
-            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+            .fetch_one(self)
+            .await
+            .map(|r| r.0)
+            .map_err(DbError::from)
     }
 }
 
@@ -3933,7 +4542,9 @@ impl ProxyModelStore for PgPool {
                 .execute(self).await?;
         }
         sqlx::query("DELETE FROM proxy_models WHERE model_id = $1")
-            .bind(model_id).execute(self).await?;
+            .bind(model_id)
+            .execute(self)
+            .await?;
         Ok(())
     }
 
@@ -3950,10 +4561,17 @@ impl ProxyModelStore for PgPool {
 
     async fn count_models(&self) -> Result<i64> {
         sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM proxy_models")
-            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+            .fetch_one(self)
+            .await
+            .map(|r| r.0)
+            .map_err(DbError::from)
     }
 
-    async fn list_deleted_models_paged(&self, limit: i64, offset: i64) -> Result<Vec<DeletedModel>> {
+    async fn list_deleted_models_paged(
+        &self,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<DeletedModel>> {
         sqlx::query_as("SELECT id, model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, deleted_at FROM deleted_models ORDER BY deleted_at DESC LIMIT $1 OFFSET $2")
                     .bind(limit).bind(offset)
             .fetch_all(self).await.map_err(DbError::from)
@@ -3961,7 +4579,10 @@ impl ProxyModelStore for PgPool {
 
     async fn count_deleted_models(&self) -> Result<i64> {
         sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM deleted_models")
-            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+            .fetch_one(self)
+            .await
+            .map(|r| r.0)
+            .map_err(DbError::from)
     }
 }
 
@@ -4046,7 +4667,11 @@ impl Database {
         }
     }
 
-    pub async fn list_deleted_models_paged(&self, limit: i64, offset: i64) -> Result<Vec<DeletedModel>> {
+    pub async fn list_deleted_models_paged(
+        &self,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<DeletedModel>> {
         match self {
             Database::Sqlite(pool) => pool.list_deleted_models_paged(limit, offset).await,
             Database::Mysql(pool) => pool.list_deleted_models_paged(limit, offset).await,
@@ -4143,7 +4768,10 @@ impl CredentialsStore for SqlitePool {
 
     async fn count_credentials(&self) -> Result<i64> {
         sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM credentials")
-            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+            .fetch_one(self)
+            .await
+            .map(|r| r.0)
+            .map_err(DbError::from)
     }
 
     async fn update_credential(&self, c: &Credential) -> Result<()> {
@@ -4201,7 +4829,10 @@ impl CredentialsStore for MySqlPool {
 
     async fn count_credentials(&self) -> Result<i64> {
         sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM credentials")
-            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+            .fetch_one(self)
+            .await
+            .map(|r| r.0)
+            .map_err(DbError::from)
     }
 
     async fn update_credential(&self, c: &Credential) -> Result<()> {
@@ -4213,7 +4844,9 @@ impl CredentialsStore for MySqlPool {
 
     async fn delete_credential(&self, name: &str) -> Result<()> {
         sqlx::query("DELETE FROM credentials WHERE credential_name = ?")
-            .bind(name).execute(self).await?;
+            .bind(name)
+            .execute(self)
+            .await?;
         Ok(())
     }
 }
@@ -4252,7 +4885,10 @@ impl CredentialsStore for PgPool {
 
     async fn count_credentials(&self) -> Result<i64> {
         sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM credentials")
-            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+            .fetch_one(self)
+            .await
+            .map(|r| r.0)
+            .map_err(DbError::from)
     }
 
     async fn update_credential(&self, c: &Credential) -> Result<()> {
@@ -4264,7 +4900,9 @@ impl CredentialsStore for PgPool {
 
     async fn delete_credential(&self, name: &str) -> Result<()> {
         sqlx::query("DELETE FROM credentials WHERE credential_name = $1")
-            .bind(name).execute(self).await?;
+            .bind(name)
+            .execute(self)
+            .await?;
         Ok(())
     }
 }
@@ -4343,7 +4981,11 @@ pub trait OrganizationStore {
     async fn list_organizations_paged(&self, limit: i64, offset: i64) -> Result<Vec<Organization>>;
     async fn count_organizations(&self) -> Result<i64>;
     async fn list_deleted_organizations(&self) -> Result<Vec<DeletedOrganization>>;
-    async fn list_deleted_organizations_paged(&self, limit: i64, offset: i64) -> Result<Vec<DeletedOrganization>>;
+    async fn list_deleted_organizations_paged(
+        &self,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<DeletedOrganization>>;
     async fn count_deleted_organizations(&self) -> Result<i64>;
     async fn update_organization(&self, o: &Organization) -> Result<()>;
     async fn delete_organization(&self, org_id: &str) -> Result<()>;
@@ -4390,24 +5032,43 @@ FROM deleted_organizations ORDER BY deleted_at DESC
 impl OrganizationStore for SqlitePool {
     async fn insert_organization(&self, o: &Organization) -> Result<()> {
         sqlx::query(INSERT_ORG_SQLITE)
-            .bind(&o.organization_id).bind(&o.organization_alias).bind(&o.budget_id)
-            .bind(&o.metadata).bind(&o.models).bind(o.spend).bind(&o.model_spend)
-            .bind(&o.object_permission_id).bind(o.created_at).bind(&o.created_by)
-            .bind(o.updated_at).bind(&o.updated_by)
-            .execute(self).await?;
+            .bind(&o.organization_id)
+            .bind(&o.organization_alias)
+            .bind(&o.budget_id)
+            .bind(&o.metadata)
+            .bind(&o.models)
+            .bind(o.spend)
+            .bind(&o.model_spend)
+            .bind(&o.object_permission_id)
+            .bind(o.created_at)
+            .bind(&o.created_by)
+            .bind(o.updated_at)
+            .bind(&o.updated_by)
+            .execute(self)
+            .await?;
         Ok(())
     }
 
     async fn get_organization_by_id(&self, org_id: &str) -> Result<Option<Organization>> {
-        sqlx::query_as(GET_ORG_SQLITE).bind(org_id).fetch_optional(self).await.map_err(DbError::from)
+        sqlx::query_as(GET_ORG_SQLITE)
+            .bind(org_id)
+            .fetch_optional(self)
+            .await
+            .map_err(DbError::from)
     }
 
     async fn list_organizations(&self) -> Result<Vec<Organization>> {
-        sqlx::query_as(LIST_ORGS_SQLITE).fetch_all(self).await.map_err(DbError::from)
+        sqlx::query_as(LIST_ORGS_SQLITE)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
     }
 
     async fn list_deleted_organizations(&self) -> Result<Vec<DeletedOrganization>> {
-        sqlx::query_as(LIST_DELETED_ORGS_SQLITE).fetch_all(self).await.map_err(DbError::from)
+        sqlx::query_as(LIST_DELETED_ORGS_SQLITE)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
     }
 
     async fn list_organizations_paged(&self, limit: i64, offset: i64) -> Result<Vec<Organization>> {
@@ -4418,10 +5079,17 @@ impl OrganizationStore for SqlitePool {
 
     async fn count_organizations(&self) -> Result<i64> {
         sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM organizations")
-            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+            .fetch_one(self)
+            .await
+            .map(|r| r.0)
+            .map_err(DbError::from)
     }
 
-    async fn list_deleted_organizations_paged(&self, limit: i64, offset: i64) -> Result<Vec<DeletedOrganization>> {
+    async fn list_deleted_organizations_paged(
+        &self,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<DeletedOrganization>> {
         sqlx::query_as("SELECT id, organization_id, organization_alias, budget_id, metadata, models, spend, model_spend, object_permission_id, created_at, created_by, updated_at, updated_by, deleted_at FROM deleted_organizations ORDER BY deleted_at DESC LIMIT ? OFFSET ?")
                     .bind(limit).bind(offset)
             .fetch_all(self).await.map_err(DbError::from)
@@ -4429,15 +5097,26 @@ impl OrganizationStore for SqlitePool {
 
     async fn count_deleted_organizations(&self) -> Result<i64> {
         sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM deleted_organizations")
-            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+            .fetch_one(self)
+            .await
+            .map(|r| r.0)
+            .map_err(DbError::from)
     }
 
     async fn update_organization(&self, o: &Organization) -> Result<()> {
         sqlx::query(UPDATE_ORG_SQLITE)
-            .bind(&o.organization_alias).bind(&o.budget_id).bind(&o.metadata).bind(&o.models)
-            .bind(o.spend).bind(&o.model_spend).bind(&o.object_permission_id)
-            .bind(o.updated_at).bind(&o.updated_by).bind(&o.organization_id)
-            .execute(self).await?;
+            .bind(&o.organization_alias)
+            .bind(&o.budget_id)
+            .bind(&o.metadata)
+            .bind(&o.models)
+            .bind(o.spend)
+            .bind(&o.model_spend)
+            .bind(&o.object_permission_id)
+            .bind(o.updated_at)
+            .bind(&o.updated_by)
+            .bind(&o.organization_id)
+            .execute(self)
+            .await?;
         Ok(())
     }
 
@@ -4446,14 +5125,25 @@ impl OrganizationStore for SqlitePool {
         let org = self.get_organization_by_id(org_id).await?;
         if let Some(o) = org {
             sqlx::query(INSERT_DELETED_ORG_SQLITE)
-                .bind(&o.organization_id).bind(&o.organization_alias).bind(&o.budget_id)
-                .bind(&o.metadata).bind(&o.models).bind(o.spend).bind(&o.model_spend)
-                .bind(&o.object_permission_id).bind(o.created_at).bind(&o.created_by)
-                .bind(o.updated_at).bind(&o.updated_by)
-                .execute(self).await?;
+                .bind(&o.organization_id)
+                .bind(&o.organization_alias)
+                .bind(&o.budget_id)
+                .bind(&o.metadata)
+                .bind(&o.models)
+                .bind(o.spend)
+                .bind(&o.model_spend)
+                .bind(&o.object_permission_id)
+                .bind(o.created_at)
+                .bind(&o.created_by)
+                .bind(o.updated_at)
+                .bind(&o.updated_by)
+                .execute(self)
+                .await?;
         }
         sqlx::query("DELETE FROM organizations WHERE organization_id = ?")
-            .bind(org_id).execute(self).await?;
+            .bind(org_id)
+            .execute(self)
+            .await?;
         Ok(())
     }
 }
@@ -4497,10 +5187,17 @@ impl OrganizationStore for MySqlPool {
 
     async fn count_organizations(&self) -> Result<i64> {
         sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM organizations")
-            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+            .fetch_one(self)
+            .await
+            .map(|r| r.0)
+            .map_err(DbError::from)
     }
 
-    async fn list_deleted_organizations_paged(&self, limit: i64, offset: i64) -> Result<Vec<DeletedOrganization>> {
+    async fn list_deleted_organizations_paged(
+        &self,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<DeletedOrganization>> {
         sqlx::query_as("SELECT id, organization_id, organization_alias, budget_id, metadata, models, spend, model_spend, object_permission_id, created_at, created_by, updated_at, updated_by, deleted_at FROM deleted_organizations ORDER BY deleted_at DESC LIMIT ? OFFSET ?")
                     .bind(limit).bind(offset)
             .fetch_all(self).await.map_err(DbError::from)
@@ -4508,7 +5205,10 @@ impl OrganizationStore for MySqlPool {
 
     async fn count_deleted_organizations(&self) -> Result<i64> {
         sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM deleted_organizations")
-            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+            .fetch_one(self)
+            .await
+            .map(|r| r.0)
+            .map_err(DbError::from)
     }
 
     async fn update_organization(&self, o: &Organization) -> Result<()> {
@@ -4532,7 +5232,9 @@ impl OrganizationStore for MySqlPool {
                 .execute(self).await?;
         }
         sqlx::query("DELETE FROM organizations WHERE organization_id = ?")
-            .bind(org_id).execute(self).await?;
+            .bind(org_id)
+            .execute(self)
+            .await?;
         Ok(())
     }
 }
@@ -4576,10 +5278,17 @@ impl OrganizationStore for PgPool {
 
     async fn count_organizations(&self) -> Result<i64> {
         sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM organizations")
-            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+            .fetch_one(self)
+            .await
+            .map(|r| r.0)
+            .map_err(DbError::from)
     }
 
-    async fn list_deleted_organizations_paged(&self, limit: i64, offset: i64) -> Result<Vec<DeletedOrganization>> {
+    async fn list_deleted_organizations_paged(
+        &self,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<DeletedOrganization>> {
         sqlx::query_as("SELECT id, organization_id, organization_alias, budget_id, metadata, models, spend, model_spend, object_permission_id, created_at, created_by, updated_at, updated_by, deleted_at FROM deleted_organizations ORDER BY deleted_at DESC LIMIT $1 OFFSET $2")
                     .bind(limit).bind(offset)
             .fetch_all(self).await.map_err(DbError::from)
@@ -4587,7 +5296,10 @@ impl OrganizationStore for PgPool {
 
     async fn count_deleted_organizations(&self) -> Result<i64> {
         sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM deleted_organizations")
-            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+            .fetch_one(self)
+            .await
+            .map(|r| r.0)
+            .map_err(DbError::from)
     }
 
     async fn update_organization(&self, o: &Organization) -> Result<()> {
@@ -4611,7 +5323,9 @@ impl OrganizationStore for PgPool {
                 .execute(self).await?;
         }
         sqlx::query("DELETE FROM organizations WHERE organization_id = $1")
-            .bind(org_id).execute(self).await?;
+            .bind(org_id)
+            .execute(self)
+            .await?;
         Ok(())
     }
 }
@@ -4625,7 +5339,12 @@ pub trait TeamStore {
     async fn insert_team(&self, t: &Team) -> Result<()>;
     async fn get_team_by_id(&self, team_id: &str) -> Result<Option<Team>>;
     async fn list_teams(&self, org_id: Option<&str>) -> Result<Vec<Team>>;
-    async fn list_teams_paged(&self, org_id: Option<&str>, limit: i64, offset: i64) -> Result<Vec<Team>>;
+    async fn list_teams_paged(
+        &self,
+        org_id: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<Team>>;
     async fn count_teams_store(&self, org_id: Option<&str>) -> Result<i64>;
     async fn list_deleted_teams(&self) -> Result<Vec<DeletedTeam>>;
     async fn list_deleted_teams_paged(&self, limit: i64, offset: i64) -> Result<Vec<DeletedTeam>>;
@@ -4677,36 +5396,76 @@ FROM deleted_teams ORDER BY deleted_at DESC
 impl TeamStore for SqlitePool {
     async fn insert_team(&self, t: &Team) -> Result<()> {
         sqlx::query(INSERT_TEAM_SQLITE)
-            .bind(&t.team_id).bind(&t.team_alias).bind(&t.organization_id).bind(&t.object_permission_id)
-            .bind(&t.admins).bind(&t.members).bind(&t.members_with_roles).bind(&t.metadata)
-            .bind(t.max_budget.clone()).bind(t.soft_budget.clone()).bind(t.spend).bind(&t.models)
-            .bind(&t.max_parallel_requests).bind(&t.tpm_limit).bind(&t.rpm_limit)
-            .bind(&t.budget_duration).bind(t.budget_reset_at).bind(t.blocked)
-            .bind(t.created_at).bind(t.updated_at)
-            .bind(&t.model_spend).bind(&t.model_max_budget).bind(&t.router_settings)
-            .bind(&t.team_member_permissions).bind(&t.access_group_ids).bind(&t.policies)
-            .bind(&t.default_team_member_models).bind(&t.budget_limits).bind(t.model_id)
+            .bind(&t.team_id)
+            .bind(&t.team_alias)
+            .bind(&t.organization_id)
+            .bind(&t.object_permission_id)
+            .bind(&t.admins)
+            .bind(&t.members)
+            .bind(&t.members_with_roles)
+            .bind(&t.metadata)
+            .bind(t.max_budget.clone())
+            .bind(t.soft_budget.clone())
+            .bind(t.spend)
+            .bind(&t.models)
+            .bind(&t.max_parallel_requests)
+            .bind(&t.tpm_limit)
+            .bind(&t.rpm_limit)
+            .bind(&t.budget_duration)
+            .bind(t.budget_reset_at)
+            .bind(t.blocked)
+            .bind(t.created_at)
+            .bind(t.updated_at)
+            .bind(&t.model_spend)
+            .bind(&t.model_max_budget)
+            .bind(&t.router_settings)
+            .bind(&t.team_member_permissions)
+            .bind(&t.access_group_ids)
+            .bind(&t.policies)
+            .bind(&t.default_team_member_models)
+            .bind(&t.budget_limits)
+            .bind(t.model_id)
             .bind(t.allow_team_guardrail_config)
-            .execute(self).await?;
+            .execute(self)
+            .await?;
         Ok(())
     }
 
     async fn get_team_by_id(&self, team_id: &str) -> Result<Option<Team>> {
-        sqlx::query_as(GET_TEAM_SQLITE).bind(team_id).fetch_optional(self).await.map_err(DbError::from)
+        sqlx::query_as(GET_TEAM_SQLITE)
+            .bind(team_id)
+            .fetch_optional(self)
+            .await
+            .map_err(DbError::from)
     }
 
     async fn list_teams(&self, org_id: Option<&str>) -> Result<Vec<Team>> {
         match org_id {
-            Some(_) => sqlx::query_as(LIST_TEAMS_BY_ORG_SQLITE).bind(org_id).fetch_all(self).await.map_err(DbError::from),
-            None => sqlx::query_as(LIST_TEAMS_SQLITE).fetch_all(self).await.map_err(DbError::from),
+            Some(_) => sqlx::query_as(LIST_TEAMS_BY_ORG_SQLITE)
+                .bind(org_id)
+                .fetch_all(self)
+                .await
+                .map_err(DbError::from),
+            None => sqlx::query_as(LIST_TEAMS_SQLITE)
+                .fetch_all(self)
+                .await
+                .map_err(DbError::from),
         }
     }
 
     async fn list_deleted_teams(&self) -> Result<Vec<DeletedTeam>> {
-        sqlx::query_as(LIST_DELETED_TEAMS_SQLITE).fetch_all(self).await.map_err(DbError::from)
+        sqlx::query_as(LIST_DELETED_TEAMS_SQLITE)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
     }
 
-    async fn list_teams_paged(&self, org_id: Option<&str>, limit: i64, offset: i64) -> Result<Vec<Team>> {
+    async fn list_teams_paged(
+        &self,
+        org_id: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<Team>> {
         match org_id {
             Some(_) => sqlx::query_as("SELECT team_id, team_alias, organization_id, object_permission_id, admins, members, members_with_roles, metadata, max_budget, soft_budget, spend, models, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, blocked, created_at, updated_at, model_spend, model_max_budget, router_settings, team_member_permissions, access_group_ids, policies, default_team_member_models, budget_limits, model_id, allow_team_guardrail_config FROM teams WHERE organization_id = ? ORDER BY team_alias LIMIT ? OFFSET ?")
                         .bind(limit).bind(offset)
@@ -4719,8 +5478,19 @@ impl TeamStore for SqlitePool {
 
     async fn count_teams_store(&self, org_id: Option<&str>) -> Result<i64> {
         match org_id {
-            Some(_) => sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM teams WHERE organization_id = ?").bind(org_id).fetch_one(self).await.map(|r| r.0).map_err(DbError::from),
-            None => sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM teams").fetch_one(self).await.map(|r| r.0).map_err(DbError::from),
+            Some(_) => {
+                sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM teams WHERE organization_id = ?")
+                    .bind(org_id)
+                    .fetch_one(self)
+                    .await
+                    .map(|r| r.0)
+                    .map_err(DbError::from)
+            }
+            None => sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM teams")
+                .fetch_one(self)
+                .await
+                .map(|r| r.0)
+                .map_err(DbError::from),
         }
     }
 
@@ -4732,23 +5502,45 @@ impl TeamStore for SqlitePool {
 
     async fn count_deleted_teams(&self) -> Result<i64> {
         sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM deleted_teams")
-            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+            .fetch_one(self)
+            .await
+            .map(|r| r.0)
+            .map_err(DbError::from)
     }
 
     async fn update_team(&self, t: &Team) -> Result<()> {
         sqlx::query(UPDATE_TEAM_SQLITE)
-            .bind(&t.team_alias).bind(&t.organization_id).bind(&t.object_permission_id)
-            .bind(&t.admins).bind(&t.members).bind(&t.members_with_roles).bind(&t.metadata)
-            .bind(t.max_budget.clone()).bind(t.soft_budget.clone()).bind(t.spend).bind(&t.models)
-            .bind(&t.max_parallel_requests).bind(&t.tpm_limit).bind(&t.rpm_limit)
-            .bind(&t.budget_duration).bind(t.budget_reset_at).bind(t.blocked)
+            .bind(&t.team_alias)
+            .bind(&t.organization_id)
+            .bind(&t.object_permission_id)
+            .bind(&t.admins)
+            .bind(&t.members)
+            .bind(&t.members_with_roles)
+            .bind(&t.metadata)
+            .bind(t.max_budget.clone())
+            .bind(t.soft_budget.clone())
+            .bind(t.spend)
+            .bind(&t.models)
+            .bind(&t.max_parallel_requests)
+            .bind(&t.tpm_limit)
+            .bind(&t.rpm_limit)
+            .bind(&t.budget_duration)
+            .bind(t.budget_reset_at)
+            .bind(t.blocked)
             .bind(t.updated_at)
-            .bind(&t.model_spend).bind(&t.model_max_budget).bind(&t.router_settings)
-            .bind(&t.team_member_permissions).bind(&t.access_group_ids).bind(&t.policies)
-            .bind(&t.default_team_member_models).bind(&t.budget_limits).bind(t.model_id)
+            .bind(&t.model_spend)
+            .bind(&t.model_max_budget)
+            .bind(&t.router_settings)
+            .bind(&t.team_member_permissions)
+            .bind(&t.access_group_ids)
+            .bind(&t.policies)
+            .bind(&t.default_team_member_models)
+            .bind(&t.budget_limits)
+            .bind(t.model_id)
             .bind(t.allow_team_guardrail_config)
             .bind(&t.team_id)
-            .execute(self).await?;
+            .execute(self)
+            .await?;
         Ok(())
     }
 
@@ -4757,20 +5549,43 @@ impl TeamStore for SqlitePool {
         let team = self.get_team_by_id(team_id).await?;
         if let Some(t) = team {
             sqlx::query(INSERT_DELETED_TEAM_SQLITE)
-                .bind(&t.team_id).bind(&t.team_alias).bind(&t.organization_id).bind(&t.object_permission_id)
-                .bind(&t.admins).bind(&t.members).bind(&t.members_with_roles).bind(&t.metadata)
-                .bind(t.max_budget.clone()).bind(t.soft_budget.clone()).bind(t.spend).bind(&t.models)
-                .bind(&t.max_parallel_requests).bind(&t.tpm_limit).bind(&t.rpm_limit)
-                .bind(&t.budget_duration).bind(t.budget_reset_at).bind(t.blocked)
-                .bind(t.created_at).bind(t.updated_at)
-                .bind(&t.model_spend).bind(&t.model_max_budget).bind(&t.router_settings)
-                .bind(&t.team_member_permissions).bind(&t.access_group_ids).bind(&t.policies)
-                .bind(&t.default_team_member_models).bind(&t.budget_limits).bind(t.model_id)
+                .bind(&t.team_id)
+                .bind(&t.team_alias)
+                .bind(&t.organization_id)
+                .bind(&t.object_permission_id)
+                .bind(&t.admins)
+                .bind(&t.members)
+                .bind(&t.members_with_roles)
+                .bind(&t.metadata)
+                .bind(t.max_budget.clone())
+                .bind(t.soft_budget.clone())
+                .bind(t.spend)
+                .bind(&t.models)
+                .bind(&t.max_parallel_requests)
+                .bind(&t.tpm_limit)
+                .bind(&t.rpm_limit)
+                .bind(&t.budget_duration)
+                .bind(t.budget_reset_at)
+                .bind(t.blocked)
+                .bind(t.created_at)
+                .bind(t.updated_at)
+                .bind(&t.model_spend)
+                .bind(&t.model_max_budget)
+                .bind(&t.router_settings)
+                .bind(&t.team_member_permissions)
+                .bind(&t.access_group_ids)
+                .bind(&t.policies)
+                .bind(&t.default_team_member_models)
+                .bind(&t.budget_limits)
+                .bind(t.model_id)
                 .bind(t.allow_team_guardrail_config)
-                .execute(self).await?;
+                .execute(self)
+                .await?;
         }
         sqlx::query("DELETE FROM teams WHERE team_id = ?")
-            .bind(team_id).execute(self).await?;
+            .bind(team_id)
+            .execute(self)
+            .await?;
         Ok(())
     }
 }
@@ -4785,17 +5600,38 @@ impl TeamStore for MySqlPool {
         let cols = "team_id, team_alias, organization_id, object_permission_id, admins, members, members_with_roles, metadata, max_budget, soft_budget, spend, models, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, blocked, created_at, updated_at, model_spend, model_max_budget, router_settings, team_member_permissions, access_group_ids, policies, default_team_member_models, budget_limits, model_id, allow_team_guardrail_config";
         let vals = "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?";
         sqlx::query(&format!("INSERT INTO teams ({}) VALUES ({})", cols, vals))
-            .bind(&t.team_id).bind(&t.team_alias).bind(&t.organization_id).bind(&t.object_permission_id)
-            .bind(&t.admins).bind(&t.members).bind(&t.members_with_roles).bind(&t.metadata)
-            .bind(t.max_budget.clone()).bind(t.soft_budget.clone()).bind(t.spend).bind(&t.models)
-            .bind(&t.max_parallel_requests).bind(&t.tpm_limit).bind(&t.rpm_limit)
-            .bind(&t.budget_duration).bind(t.budget_reset_at).bind(t.blocked)
-            .bind(t.created_at).bind(t.updated_at)
-            .bind(&t.model_spend).bind(&t.model_max_budget).bind(&t.router_settings)
-            .bind(&t.team_member_permissions).bind(&t.access_group_ids).bind(&t.policies)
-            .bind(&t.default_team_member_models).bind(&t.budget_limits).bind(t.model_id)
+            .bind(&t.team_id)
+            .bind(&t.team_alias)
+            .bind(&t.organization_id)
+            .bind(&t.object_permission_id)
+            .bind(&t.admins)
+            .bind(&t.members)
+            .bind(&t.members_with_roles)
+            .bind(&t.metadata)
+            .bind(t.max_budget.clone())
+            .bind(t.soft_budget.clone())
+            .bind(t.spend)
+            .bind(&t.models)
+            .bind(&t.max_parallel_requests)
+            .bind(&t.tpm_limit)
+            .bind(&t.rpm_limit)
+            .bind(&t.budget_duration)
+            .bind(t.budget_reset_at)
+            .bind(t.blocked)
+            .bind(t.created_at)
+            .bind(t.updated_at)
+            .bind(&t.model_spend)
+            .bind(&t.model_max_budget)
+            .bind(&t.router_settings)
+            .bind(&t.team_member_permissions)
+            .bind(&t.access_group_ids)
+            .bind(&t.policies)
+            .bind(&t.default_team_member_models)
+            .bind(&t.budget_limits)
+            .bind(t.model_id)
             .bind(t.allow_team_guardrail_config)
-            .execute(self).await?;
+            .execute(self)
+            .await?;
         Ok(())
     }
 
@@ -4818,7 +5654,12 @@ impl TeamStore for MySqlPool {
             .fetch_all(self).await.map_err(DbError::from)
     }
 
-    async fn list_teams_paged(&self, org_id: Option<&str>, limit: i64, offset: i64) -> Result<Vec<Team>> {
+    async fn list_teams_paged(
+        &self,
+        org_id: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<Team>> {
         match org_id {
             Some(_) => sqlx::query_as("SELECT team_id, team_alias, organization_id, object_permission_id, admins, members, members_with_roles, metadata, max_budget, soft_budget, spend, models, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, blocked, created_at, updated_at, model_spend, model_max_budget, router_settings, team_member_permissions, access_group_ids, policies, default_team_member_models, budget_limits, model_id, allow_team_guardrail_config FROM teams WHERE organization_id = ? ORDER BY team_alias LIMIT ? OFFSET ?")
                         .bind(limit).bind(offset)
@@ -4831,8 +5672,19 @@ impl TeamStore for MySqlPool {
 
     async fn count_teams_store(&self, org_id: Option<&str>) -> Result<i64> {
         match org_id {
-            Some(_) => sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM teams WHERE organization_id = ?").bind(org_id).fetch_one(self).await.map(|r| r.0).map_err(DbError::from),
-            None => sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM teams").fetch_one(self).await.map(|r| r.0).map_err(DbError::from),
+            Some(_) => {
+                sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM teams WHERE organization_id = ?")
+                    .bind(org_id)
+                    .fetch_one(self)
+                    .await
+                    .map(|r| r.0)
+                    .map_err(DbError::from)
+            }
+            None => sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM teams")
+                .fetch_one(self)
+                .await
+                .map(|r| r.0)
+                .map_err(DbError::from),
         }
     }
 
@@ -4844,7 +5696,10 @@ impl TeamStore for MySqlPool {
 
     async fn count_deleted_teams(&self) -> Result<i64> {
         sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM deleted_teams")
-            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+            .fetch_one(self)
+            .await
+            .map(|r| r.0)
+            .map_err(DbError::from)
     }
 
     async fn update_team(&self, t: &Team) -> Result<()> {
@@ -4882,7 +5737,9 @@ impl TeamStore for MySqlPool {
                 .execute(self).await?;
         }
         sqlx::query("DELETE FROM teams WHERE team_id = ?")
-            .bind(team_id).execute(self).await?;
+            .bind(team_id)
+            .execute(self)
+            .await?;
         Ok(())
     }
 }
@@ -4897,17 +5754,38 @@ impl TeamStore for PgPool {
         let cols = "team_id, team_alias, organization_id, object_permission_id, admins, members, members_with_roles, metadata, max_budget, soft_budget, spend, models, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, blocked, created_at, updated_at, model_spend, model_max_budget, router_settings, team_member_permissions, access_group_ids, policies, default_team_member_models, budget_limits, model_id, allow_team_guardrail_config";
         let vals = "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30";
         sqlx::query(&format!("INSERT INTO teams ({}) VALUES ({})", cols, vals))
-            .bind(&t.team_id).bind(&t.team_alias).bind(&t.organization_id).bind(&t.object_permission_id)
-            .bind(&t.admins).bind(&t.members).bind(&t.members_with_roles).bind(&t.metadata)
-            .bind(t.max_budget.clone()).bind(t.soft_budget.clone()).bind(t.spend).bind(&t.models)
-            .bind(&t.max_parallel_requests).bind(&t.tpm_limit).bind(&t.rpm_limit)
-            .bind(&t.budget_duration).bind(t.budget_reset_at).bind(t.blocked)
-            .bind(t.created_at).bind(t.updated_at)
-            .bind(&t.model_spend).bind(&t.model_max_budget).bind(&t.router_settings)
-            .bind(&t.team_member_permissions).bind(&t.access_group_ids).bind(&t.policies)
-            .bind(&t.default_team_member_models).bind(&t.budget_limits).bind(t.model_id)
+            .bind(&t.team_id)
+            .bind(&t.team_alias)
+            .bind(&t.organization_id)
+            .bind(&t.object_permission_id)
+            .bind(&t.admins)
+            .bind(&t.members)
+            .bind(&t.members_with_roles)
+            .bind(&t.metadata)
+            .bind(t.max_budget.clone())
+            .bind(t.soft_budget.clone())
+            .bind(t.spend)
+            .bind(&t.models)
+            .bind(&t.max_parallel_requests)
+            .bind(&t.tpm_limit)
+            .bind(&t.rpm_limit)
+            .bind(&t.budget_duration)
+            .bind(t.budget_reset_at)
+            .bind(t.blocked)
+            .bind(t.created_at)
+            .bind(t.updated_at)
+            .bind(&t.model_spend)
+            .bind(&t.model_max_budget)
+            .bind(&t.router_settings)
+            .bind(&t.team_member_permissions)
+            .bind(&t.access_group_ids)
+            .bind(&t.policies)
+            .bind(&t.default_team_member_models)
+            .bind(&t.budget_limits)
+            .bind(t.model_id)
             .bind(t.allow_team_guardrail_config)
-            .execute(self).await?;
+            .execute(self)
+            .await?;
         Ok(())
     }
 
@@ -4930,7 +5808,12 @@ impl TeamStore for PgPool {
             .fetch_all(self).await.map_err(DbError::from)
     }
 
-    async fn list_teams_paged(&self, org_id: Option<&str>, limit: i64, offset: i64) -> Result<Vec<Team>> {
+    async fn list_teams_paged(
+        &self,
+        org_id: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<Team>> {
         match org_id {
             Some(_) => sqlx::query_as("SELECT team_id, team_alias, organization_id, object_permission_id, admins, members, members_with_roles, metadata, max_budget, soft_budget, spend, models, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, blocked, created_at, updated_at, model_spend, model_max_budget, router_settings, team_member_permissions, access_group_ids, policies, default_team_member_models, budget_limits, model_id, allow_team_guardrail_config FROM teams WHERE organization_id = $1 ORDER BY team_alias LIMIT $2 OFFSET $3")
                 .bind(org_id).bind(limit).bind(offset).fetch_all(self).await.map_err(DbError::from),
@@ -4942,8 +5825,19 @@ impl TeamStore for PgPool {
 
     async fn count_teams_store(&self, org_id: Option<&str>) -> Result<i64> {
         match org_id {
-            Some(_) => sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM teams WHERE organization_id = $1").bind(org_id).fetch_one(self).await.map(|r| r.0).map_err(DbError::from),
-            None => sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM teams").fetch_one(self).await.map(|r| r.0).map_err(DbError::from),
+            Some(_) => {
+                sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM teams WHERE organization_id = $1")
+                    .bind(org_id)
+                    .fetch_one(self)
+                    .await
+                    .map(|r| r.0)
+                    .map_err(DbError::from)
+            }
+            None => sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM teams")
+                .fetch_one(self)
+                .await
+                .map(|r| r.0)
+                .map_err(DbError::from),
         }
     }
 
@@ -4955,7 +5849,10 @@ impl TeamStore for PgPool {
 
     async fn count_deleted_teams(&self) -> Result<i64> {
         sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM deleted_teams")
-            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+            .fetch_one(self)
+            .await
+            .map(|r| r.0)
+            .map_err(DbError::from)
     }
 
     async fn update_team(&self, t: &Team) -> Result<()> {
@@ -4981,21 +5878,47 @@ impl TeamStore for PgPool {
         if let Some(t) = team {
             let cols = "team_id, team_alias, organization_id, object_permission_id, admins, members, members_with_roles, metadata, max_budget, soft_budget, spend, models, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, blocked, created_at, updated_at, model_spend, model_max_budget, router_settings, team_member_permissions, access_group_ids, policies, default_team_member_models, budget_limits, model_id, allow_team_guardrail_config";
             let vals = "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30";
-            sqlx::query(&format!("INSERT INTO deleted_teams ({}) VALUES ({})", cols, vals))
-                .bind(&t.team_id).bind(&t.team_alias).bind(&t.organization_id).bind(&t.object_permission_id)
-                .bind(&t.admins).bind(&t.members).bind(&t.members_with_roles).bind(&t.metadata)
-                .bind(t.max_budget.clone()).bind(t.soft_budget.clone()).bind(t.spend).bind(&t.models)
-                .bind(&t.max_parallel_requests).bind(&t.tpm_limit).bind(&t.rpm_limit)
-                .bind(&t.budget_duration).bind(t.budget_reset_at).bind(t.blocked)
-                .bind(t.created_at).bind(t.updated_at)
-                .bind(&t.model_spend).bind(&t.model_max_budget).bind(&t.router_settings)
-                .bind(&t.team_member_permissions).bind(&t.access_group_ids).bind(&t.policies)
-                .bind(&t.default_team_member_models).bind(&t.budget_limits).bind(t.model_id)
-                .bind(t.allow_team_guardrail_config)
-                .execute(self).await?;
+            sqlx::query(&format!(
+                "INSERT INTO deleted_teams ({}) VALUES ({})",
+                cols, vals
+            ))
+            .bind(&t.team_id)
+            .bind(&t.team_alias)
+            .bind(&t.organization_id)
+            .bind(&t.object_permission_id)
+            .bind(&t.admins)
+            .bind(&t.members)
+            .bind(&t.members_with_roles)
+            .bind(&t.metadata)
+            .bind(t.max_budget.clone())
+            .bind(t.soft_budget.clone())
+            .bind(t.spend)
+            .bind(&t.models)
+            .bind(&t.max_parallel_requests)
+            .bind(&t.tpm_limit)
+            .bind(&t.rpm_limit)
+            .bind(&t.budget_duration)
+            .bind(t.budget_reset_at)
+            .bind(t.blocked)
+            .bind(t.created_at)
+            .bind(t.updated_at)
+            .bind(&t.model_spend)
+            .bind(&t.model_max_budget)
+            .bind(&t.router_settings)
+            .bind(&t.team_member_permissions)
+            .bind(&t.access_group_ids)
+            .bind(&t.policies)
+            .bind(&t.default_team_member_models)
+            .bind(&t.budget_limits)
+            .bind(t.model_id)
+            .bind(t.allow_team_guardrail_config)
+            .execute(self)
+            .await?;
         }
- sqlx::query("DELETE FROM teams WHERE team_id = $1")
-            .bind(team_id).execute(self).await?;
+        sqlx::query("DELETE FROM teams WHERE team_id = $1")
+            .bind(team_id)
+            .execute(self)
+            .await?;
         Ok(())
     }
 }
@@ -5063,51 +5986,101 @@ FROM deleted_users ORDER BY deleted_at DESC
 impl UserStore for SqlitePool {
     async fn insert_user(&self, u: &User) -> Result<()> {
         sqlx::query(INSERT_USER_SQLITE)
-            .bind(&u.user_id).bind(&u.user_alias).bind(&u.team_id).bind(&u.sso_user_id)
-            .bind(&u.organization_id).bind(&u.object_permission_id).bind(&u.password)
-            .bind(&u.teams).bind(&u.user_role).bind(u.max_budget.clone()).bind(u.spend)
-            .bind(&u.user_email).bind(&u.models).bind(&u.metadata)
-            .bind(&u.max_parallel_requests).bind(&u.tpm_limit).bind(&u.rpm_limit)
-            .bind(&u.budget_duration).bind(u.budget_reset_at)
-            .bind(&u.allowed_cache_controls).bind(&u.policies)
-            .bind(&u.model_spend).bind(&u.model_max_budget)
-            .bind(u.created_at).bind(u.updated_at)
-            .execute(self).await?;
+            .bind(&u.user_id)
+            .bind(&u.user_alias)
+            .bind(&u.team_id)
+            .bind(&u.sso_user_id)
+            .bind(&u.organization_id)
+            .bind(&u.object_permission_id)
+            .bind(&u.password)
+            .bind(&u.teams)
+            .bind(&u.user_role)
+            .bind(u.max_budget.clone())
+            .bind(u.spend)
+            .bind(&u.user_email)
+            .bind(&u.models)
+            .bind(&u.metadata)
+            .bind(&u.max_parallel_requests)
+            .bind(&u.tpm_limit)
+            .bind(&u.rpm_limit)
+            .bind(&u.budget_duration)
+            .bind(u.budget_reset_at)
+            .bind(&u.allowed_cache_controls)
+            .bind(&u.policies)
+            .bind(&u.model_spend)
+            .bind(&u.model_max_budget)
+            .bind(u.created_at)
+            .bind(u.updated_at)
+            .execute(self)
+            .await?;
         Ok(())
     }
 
     async fn get_user_by_id(&self, user_id: &str) -> Result<Option<User>> {
-        sqlx::query_as(GET_USER_SQLITE).bind(user_id).fetch_optional(self).await.map_err(DbError::from)
+        sqlx::query_as(GET_USER_SQLITE)
+            .bind(user_id)
+            .fetch_optional(self)
+            .await
+            .map_err(DbError::from)
     }
 
     async fn get_user_by_email(&self, email: &str) -> Result<Option<User>> {
-        sqlx::query_as(GET_USER_BY_EMAIL_SQLITE).bind(email).fetch_optional(self).await.map_err(DbError::from)
+        sqlx::query_as(GET_USER_BY_EMAIL_SQLITE)
+            .bind(email)
+            .fetch_optional(self)
+            .await
+            .map_err(DbError::from)
     }
 
     async fn list_users(&self, org_id: Option<&str>) -> Result<Vec<User>> {
         match org_id {
-            Some(_) => sqlx::query_as(LIST_USERS_BY_ORG_SQLITE).bind(org_id).fetch_all(self).await.map_err(DbError::from),
-            None => sqlx::query_as(LIST_USERS_SQLITE).fetch_all(self).await.map_err(DbError::from),
+            Some(_) => sqlx::query_as(LIST_USERS_BY_ORG_SQLITE)
+                .bind(org_id)
+                .fetch_all(self)
+                .await
+                .map_err(DbError::from),
+            None => sqlx::query_as(LIST_USERS_SQLITE)
+                .fetch_all(self)
+                .await
+                .map_err(DbError::from),
         }
     }
 
     async fn list_deleted_users(&self) -> Result<Vec<DeletedUser>> {
-        sqlx::query_as(LIST_DELETED_USERS_SQLITE).fetch_all(self).await.map_err(DbError::from)
+        sqlx::query_as(LIST_DELETED_USERS_SQLITE)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
     }
 
     async fn update_user(&self, u: &User) -> Result<()> {
         sqlx::query(UPDATE_USER_SQLITE)
-            .bind(&u.user_alias).bind(&u.team_id).bind(&u.sso_user_id)
-            .bind(&u.organization_id).bind(&u.object_permission_id).bind(&u.password)
-            .bind(&u.teams).bind(&u.user_role).bind(u.max_budget.clone()).bind(u.spend)
-            .bind(&u.user_email).bind(&u.models).bind(&u.metadata)
-            .bind(&u.max_parallel_requests).bind(&u.tpm_limit).bind(&u.rpm_limit)
-            .bind(&u.budget_duration).bind(u.budget_reset_at)
-            .bind(&u.allowed_cache_controls).bind(&u.policies)
-            .bind(&u.model_spend).bind(&u.model_max_budget)
+            .bind(&u.user_alias)
+            .bind(&u.team_id)
+            .bind(&u.sso_user_id)
+            .bind(&u.organization_id)
+            .bind(&u.object_permission_id)
+            .bind(&u.password)
+            .bind(&u.teams)
+            .bind(&u.user_role)
+            .bind(u.max_budget.clone())
+            .bind(u.spend)
+            .bind(&u.user_email)
+            .bind(&u.models)
+            .bind(&u.metadata)
+            .bind(&u.max_parallel_requests)
+            .bind(&u.tpm_limit)
+            .bind(&u.rpm_limit)
+            .bind(&u.budget_duration)
+            .bind(u.budget_reset_at)
+            .bind(&u.allowed_cache_controls)
+            .bind(&u.policies)
+            .bind(&u.model_spend)
+            .bind(&u.model_max_budget)
             .bind(u.updated_at)
             .bind(&u.user_id)
-            .execute(self).await?;
+            .execute(self)
+            .await?;
         Ok(())
     }
 
@@ -5116,19 +6089,38 @@ impl UserStore for SqlitePool {
         let user = self.get_user_by_id(user_id).await?;
         if let Some(u) = user {
             sqlx::query(INSERT_DELETED_USER_SQLITE)
-                .bind(&u.user_id).bind(&u.user_alias).bind(&u.team_id).bind(&u.sso_user_id)
-                .bind(&u.organization_id).bind(&u.object_permission_id).bind(&u.password)
-                .bind(&u.teams).bind(&u.user_role).bind(u.max_budget.clone()).bind(u.spend)
-                .bind(&u.user_email).bind(&u.models).bind(&u.metadata)
-                .bind(&u.max_parallel_requests).bind(&u.tpm_limit).bind(&u.rpm_limit)
-                .bind(&u.budget_duration).bind(u.budget_reset_at)
-                .bind(&u.allowed_cache_controls).bind(&u.policies)
-                .bind(&u.model_spend).bind(&u.model_max_budget)
-                .bind(u.created_at).bind(u.updated_at)
-                .execute(self).await?;
+                .bind(&u.user_id)
+                .bind(&u.user_alias)
+                .bind(&u.team_id)
+                .bind(&u.sso_user_id)
+                .bind(&u.organization_id)
+                .bind(&u.object_permission_id)
+                .bind(&u.password)
+                .bind(&u.teams)
+                .bind(&u.user_role)
+                .bind(u.max_budget.clone())
+                .bind(u.spend)
+                .bind(&u.user_email)
+                .bind(&u.models)
+                .bind(&u.metadata)
+                .bind(&u.max_parallel_requests)
+                .bind(&u.tpm_limit)
+                .bind(&u.rpm_limit)
+                .bind(&u.budget_duration)
+                .bind(u.budget_reset_at)
+                .bind(&u.allowed_cache_controls)
+                .bind(&u.policies)
+                .bind(&u.model_spend)
+                .bind(&u.model_max_budget)
+                .bind(u.created_at)
+                .bind(u.updated_at)
+                .execute(self)
+                .await?;
         }
         sqlx::query("DELETE FROM users WHERE user_id = ?")
-            .bind(user_id).execute(self).await?;
+            .bind(user_id)
+            .execute(self)
+            .await?;
         Ok(())
     }
 }
@@ -5143,16 +6135,33 @@ impl UserStore for MySqlPool {
         let cols = "user_id, user_alias, team_id, sso_user_id, organization_id, object_permission_id, password, teams, user_role, max_budget, spend, user_email, models, metadata, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, allowed_cache_controls, policies, model_spend, model_max_budget, created_at, updated_at";
         let vals = "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?";
         sqlx::query(&format!("INSERT INTO users ({}) VALUES ({})", cols, vals))
-            .bind(&u.user_id).bind(&u.user_alias).bind(&u.team_id).bind(&u.sso_user_id)
-            .bind(&u.organization_id).bind(&u.object_permission_id).bind(&u.password)
-            .bind(&u.teams).bind(&u.user_role).bind(u.max_budget.clone()).bind(u.spend)
-            .bind(&u.user_email).bind(&u.models).bind(&u.metadata)
-            .bind(&u.max_parallel_requests).bind(&u.tpm_limit).bind(&u.rpm_limit)
-            .bind(&u.budget_duration).bind(u.budget_reset_at)
-            .bind(&u.allowed_cache_controls).bind(&u.policies)
-            .bind(&u.model_spend).bind(&u.model_max_budget)
-            .bind(u.created_at).bind(u.updated_at)
-            .execute(self).await?;
+            .bind(&u.user_id)
+            .bind(&u.user_alias)
+            .bind(&u.team_id)
+            .bind(&u.sso_user_id)
+            .bind(&u.organization_id)
+            .bind(&u.object_permission_id)
+            .bind(&u.password)
+            .bind(&u.teams)
+            .bind(&u.user_role)
+            .bind(u.max_budget.clone())
+            .bind(u.spend)
+            .bind(&u.user_email)
+            .bind(&u.models)
+            .bind(&u.metadata)
+            .bind(&u.max_parallel_requests)
+            .bind(&u.tpm_limit)
+            .bind(&u.rpm_limit)
+            .bind(&u.budget_duration)
+            .bind(u.budget_reset_at)
+            .bind(&u.allowed_cache_controls)
+            .bind(&u.policies)
+            .bind(&u.model_spend)
+            .bind(&u.model_max_budget)
+            .bind(u.created_at)
+            .bind(u.updated_at)
+            .execute(self)
+            .await?;
         Ok(())
     }
 
@@ -5202,20 +6211,42 @@ impl UserStore for MySqlPool {
         if let Some(u) = user {
             let cols = "user_id, user_alias, team_id, sso_user_id, organization_id, object_permission_id, password, teams, user_role, max_budget, spend, user_email, models, metadata, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, allowed_cache_controls, policies, model_spend, model_max_budget, created_at, updated_at";
             let vals = "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?";
-            sqlx::query(&format!("INSERT INTO deleted_users ({}) VALUES ({})", cols, vals))
-                .bind(&u.user_id).bind(&u.user_alias).bind(&u.team_id).bind(&u.sso_user_id)
-                .bind(&u.organization_id).bind(&u.object_permission_id).bind(&u.password)
-                .bind(&u.teams).bind(&u.user_role).bind(u.max_budget.clone()).bind(u.spend)
-                .bind(&u.user_email).bind(&u.models).bind(&u.metadata)
-                .bind(&u.max_parallel_requests).bind(&u.tpm_limit).bind(&u.rpm_limit)
-                .bind(&u.budget_duration).bind(u.budget_reset_at)
-                .bind(&u.allowed_cache_controls).bind(&u.policies)
-                .bind(&u.model_spend).bind(&u.model_max_budget)
-                .bind(u.created_at).bind(u.updated_at)
-                .execute(self).await?;
+            sqlx::query(&format!(
+                "INSERT INTO deleted_users ({}) VALUES ({})",
+                cols, vals
+            ))
+            .bind(&u.user_id)
+            .bind(&u.user_alias)
+            .bind(&u.team_id)
+            .bind(&u.sso_user_id)
+            .bind(&u.organization_id)
+            .bind(&u.object_permission_id)
+            .bind(&u.password)
+            .bind(&u.teams)
+            .bind(&u.user_role)
+            .bind(u.max_budget.clone())
+            .bind(u.spend)
+            .bind(&u.user_email)
+            .bind(&u.models)
+            .bind(&u.metadata)
+            .bind(&u.max_parallel_requests)
+            .bind(&u.tpm_limit)
+            .bind(&u.rpm_limit)
+            .bind(&u.budget_duration)
+            .bind(u.budget_reset_at)
+            .bind(&u.allowed_cache_controls)
+            .bind(&u.policies)
+            .bind(&u.model_spend)
+            .bind(&u.model_max_budget)
+            .bind(u.created_at)
+            .bind(u.updated_at)
+            .execute(self)
+            .await?;
         }
         sqlx::query("DELETE FROM users WHERE user_id = ?")
-            .bind(user_id).execute(self).await?;
+            .bind(user_id)
+            .execute(self)
+            .await?;
         Ok(())
     }
 }
@@ -5230,16 +6261,33 @@ impl UserStore for PgPool {
         let cols = "user_id, user_alias, team_id, sso_user_id, organization_id, object_permission_id, password, teams, user_role, max_budget, spend, user_email, models, metadata, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, allowed_cache_controls, policies, model_spend, model_max_budget, created_at, updated_at";
         let vals = "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25";
         sqlx::query(&format!("INSERT INTO users ({}) VALUES ({})", cols, vals))
-            .bind(&u.user_id).bind(&u.user_alias).bind(&u.team_id).bind(&u.sso_user_id)
-            .bind(&u.organization_id).bind(&u.object_permission_id).bind(&u.password)
-            .bind(&u.teams).bind(&u.user_role).bind(u.max_budget.clone()).bind(u.spend)
-            .bind(&u.user_email).bind(&u.models).bind(&u.metadata)
-            .bind(&u.max_parallel_requests).bind(&u.tpm_limit).bind(&u.rpm_limit)
-            .bind(&u.budget_duration).bind(u.budget_reset_at)
-            .bind(&u.allowed_cache_controls).bind(&u.policies)
-            .bind(&u.model_spend).bind(&u.model_max_budget)
-            .bind(u.created_at).bind(u.updated_at)
-            .execute(self).await?;
+            .bind(&u.user_id)
+            .bind(&u.user_alias)
+            .bind(&u.team_id)
+            .bind(&u.sso_user_id)
+            .bind(&u.organization_id)
+            .bind(&u.object_permission_id)
+            .bind(&u.password)
+            .bind(&u.teams)
+            .bind(&u.user_role)
+            .bind(u.max_budget.clone())
+            .bind(u.spend)
+            .bind(&u.user_email)
+            .bind(&u.models)
+            .bind(&u.metadata)
+            .bind(&u.max_parallel_requests)
+            .bind(&u.tpm_limit)
+            .bind(&u.rpm_limit)
+            .bind(&u.budget_duration)
+            .bind(u.budget_reset_at)
+            .bind(&u.allowed_cache_controls)
+            .bind(&u.policies)
+            .bind(&u.model_spend)
+            .bind(&u.model_max_budget)
+            .bind(u.created_at)
+            .bind(u.updated_at)
+            .execute(self)
+            .await?;
         Ok(())
     }
 
@@ -5289,19 +6337,42 @@ impl UserStore for PgPool {
         if let Some(u) = user {
             let cols = "user_id, user_alias, team_id, sso_user_id, organization_id, object_permission_id, password, teams, user_role, max_budget, spend, user_email, models, metadata, max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at, allowed_cache_controls, policies, model_spend, model_max_budget, created_at, updated_at";
             let vals = "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25";
-            sqlx::query(&format!("INSERT INTO deleted_users ({}) VALUES ({})", cols, vals))
-                .bind(&u.user_id).bind(&u.user_alias).bind(&u.team_id).bind(&u.sso_user_id)
-                .bind(&u.organization_id).bind(&u.object_permission_id).bind(&u.password)
-                .bind(&u.teams).bind(&u.user_role).bind(u.max_budget.clone()).bind(u.spend)
-                .bind(&u.user_email).bind(&u.models).bind(&u.metadata)
-                .bind(&u.max_parallel_requests).bind(&u.tpm_limit).bind(&u.rpm_limit)
-                .bind(&u.budget_duration).bind(u.budget_reset_at)
-                .bind(&u.allowed_cache_controls).bind(&u.policies)
-                .bind(&u.model_spend).bind(&u.model_max_budget)
-                .bind(u.created_at).bind(u.updated_at)
-                .execute(self).await?;
+            sqlx::query(&format!(
+                "INSERT INTO deleted_users ({}) VALUES ({})",
+                cols, vals
+            ))
+            .bind(&u.user_id)
+            .bind(&u.user_alias)
+            .bind(&u.team_id)
+            .bind(&u.sso_user_id)
+            .bind(&u.organization_id)
+            .bind(&u.object_permission_id)
+            .bind(&u.password)
+            .bind(&u.teams)
+            .bind(&u.user_role)
+            .bind(u.max_budget.clone())
+            .bind(u.spend)
+            .bind(&u.user_email)
+            .bind(&u.models)
+            .bind(&u.metadata)
+            .bind(&u.max_parallel_requests)
+            .bind(&u.tpm_limit)
+            .bind(&u.rpm_limit)
+            .bind(&u.budget_duration)
+            .bind(u.budget_reset_at)
+            .bind(&u.allowed_cache_controls)
+            .bind(&u.policies)
+            .bind(&u.model_spend)
+            .bind(&u.model_max_budget)
+            .bind(u.created_at)
+            .bind(u.updated_at)
+            .execute(self)
+            .await?;
         }
-        sqlx::query("DELETE FROM users WHERE user_id = $1").bind(user_id).execute(self).await?;
+        sqlx::query("DELETE FROM users WHERE user_id = $1")
+            .bind(user_id)
+            .execute(self)
+            .await?;
         Ok(())
     }
 }
@@ -5349,21 +6420,38 @@ WHERE budget_id = ?
 impl BudgetStore for SqlitePool {
     async fn insert_budget(&self, b: &Budget) -> Result<()> {
         sqlx::query(INSERT_BUDGET_SQLITE)
-            .bind(&b.budget_id).bind(&b.max_budget).bind(&b.soft_budget)
-            .bind(&b.max_parallel_requests).bind(&b.tpm_limit).bind(&b.rpm_limit)
-            .bind(&b.model_max_budget).bind(&b.budget_duration).bind(b.budget_reset_at)
-            .bind(&b.allowed_models).bind(b.created_at).bind(&b.created_by)
-            .bind(b.updated_at).bind(&b.updated_by)
-            .execute(self).await?;
+            .bind(&b.budget_id)
+            .bind(&b.max_budget)
+            .bind(&b.soft_budget)
+            .bind(&b.max_parallel_requests)
+            .bind(&b.tpm_limit)
+            .bind(&b.rpm_limit)
+            .bind(&b.model_max_budget)
+            .bind(&b.budget_duration)
+            .bind(b.budget_reset_at)
+            .bind(&b.allowed_models)
+            .bind(b.created_at)
+            .bind(&b.created_by)
+            .bind(b.updated_at)
+            .bind(&b.updated_by)
+            .execute(self)
+            .await?;
         Ok(())
     }
 
     async fn get_budget_by_id(&self, budget_id: &str) -> Result<Option<Budget>> {
-        sqlx::query_as(GET_BUDGET_SQLITE).bind(budget_id).fetch_optional(self).await.map_err(DbError::from)
+        sqlx::query_as(GET_BUDGET_SQLITE)
+            .bind(budget_id)
+            .fetch_optional(self)
+            .await
+            .map_err(DbError::from)
     }
 
     async fn list_budgets(&self) -> Result<Vec<Budget>> {
-        sqlx::query_as(LIST_BUDGETS_SQLITE).fetch_all(self).await.map_err(DbError::from)
+        sqlx::query_as(LIST_BUDGETS_SQLITE)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
     }
 
     async fn list_budgets_paged(&self, limit: i64, offset: i64) -> Result<Vec<Budget>> {
@@ -5374,23 +6462,36 @@ impl BudgetStore for SqlitePool {
 
     async fn count_budgets(&self) -> Result<i64> {
         sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM budgets")
-            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+            .fetch_one(self)
+            .await
+            .map(|r| r.0)
+            .map_err(DbError::from)
     }
 
     async fn update_budget(&self, b: &Budget) -> Result<()> {
         sqlx::query(UPDATE_BUDGET_SQLITE)
-            .bind(&b.max_budget).bind(&b.soft_budget)
-            .bind(&b.max_parallel_requests).bind(&b.tpm_limit).bind(&b.rpm_limit)
-            .bind(&b.model_max_budget).bind(&b.budget_duration).bind(b.budget_reset_at)
-            .bind(&b.allowed_models).bind(b.updated_at).bind(&b.updated_by)
+            .bind(&b.max_budget)
+            .bind(&b.soft_budget)
+            .bind(&b.max_parallel_requests)
+            .bind(&b.tpm_limit)
+            .bind(&b.rpm_limit)
+            .bind(&b.model_max_budget)
+            .bind(&b.budget_duration)
+            .bind(b.budget_reset_at)
+            .bind(&b.allowed_models)
+            .bind(b.updated_at)
+            .bind(&b.updated_by)
             .bind(&b.budget_id)
-            .execute(self).await?;
+            .execute(self)
+            .await?;
         Ok(())
     }
 
     async fn delete_budget(&self, budget_id: &str) -> Result<()> {
         sqlx::query("DELETE FROM budgets WHERE budget_id = ?")
-            .bind(budget_id).execute(self).await?;
+            .bind(budget_id)
+            .execute(self)
+            .await?;
         Ok(())
     }
 }
@@ -5413,12 +6514,22 @@ WHERE budget_id = ?
 impl BudgetStore for MySqlPool {
     async fn insert_budget(&self, b: &Budget) -> Result<()> {
         sqlx::query(INSERT_BUDGET_MYSQL)
-            .bind(&b.budget_id).bind(&b.max_budget).bind(&b.soft_budget)
-            .bind(&b.max_parallel_requests).bind(&b.tpm_limit).bind(&b.rpm_limit)
-            .bind(&b.model_max_budget).bind(&b.budget_duration).bind(b.budget_reset_at)
-            .bind(&b.allowed_models).bind(b.created_at).bind(&b.created_by)
-            .bind(b.updated_at).bind(&b.updated_by)
-            .execute(self).await?;
+            .bind(&b.budget_id)
+            .bind(&b.max_budget)
+            .bind(&b.soft_budget)
+            .bind(&b.max_parallel_requests)
+            .bind(&b.tpm_limit)
+            .bind(&b.rpm_limit)
+            .bind(&b.model_max_budget)
+            .bind(&b.budget_duration)
+            .bind(b.budget_reset_at)
+            .bind(&b.allowed_models)
+            .bind(b.created_at)
+            .bind(&b.created_by)
+            .bind(b.updated_at)
+            .bind(&b.updated_by)
+            .execute(self)
+            .await?;
         Ok(())
     }
 
@@ -5440,23 +6551,36 @@ impl BudgetStore for MySqlPool {
 
     async fn count_budgets(&self) -> Result<i64> {
         sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM budgets")
-            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+            .fetch_one(self)
+            .await
+            .map(|r| r.0)
+            .map_err(DbError::from)
     }
 
     async fn update_budget(&self, b: &Budget) -> Result<()> {
         sqlx::query(UPDATE_BUDGET_MYSQL)
-            .bind(&b.max_budget).bind(&b.soft_budget)
-            .bind(&b.max_parallel_requests).bind(&b.tpm_limit).bind(&b.rpm_limit)
-            .bind(&b.model_max_budget).bind(&b.budget_duration).bind(b.budget_reset_at)
-            .bind(&b.allowed_models).bind(b.updated_at).bind(&b.updated_by)
+            .bind(&b.max_budget)
+            .bind(&b.soft_budget)
+            .bind(&b.max_parallel_requests)
+            .bind(&b.tpm_limit)
+            .bind(&b.rpm_limit)
+            .bind(&b.model_max_budget)
+            .bind(&b.budget_duration)
+            .bind(b.budget_reset_at)
+            .bind(&b.allowed_models)
+            .bind(b.updated_at)
+            .bind(&b.updated_by)
             .bind(&b.budget_id)
-            .execute(self).await?;
+            .execute(self)
+            .await?;
         Ok(())
     }
 
     async fn delete_budget(&self, budget_id: &str) -> Result<()> {
         sqlx::query("DELETE FROM budgets WHERE budget_id = ?")
-            .bind(budget_id).execute(self).await?;
+            .bind(budget_id)
+            .execute(self)
+            .await?;
         Ok(())
     }
 }
@@ -5471,12 +6595,22 @@ impl BudgetStore for PgPool {
         let cols = "budget_id, max_budget, soft_budget, max_parallel_requests, tpm_limit, rpm_limit, model_max_budget, budget_duration, budget_reset_at, allowed_models, created_at, created_by, updated_at, updated_by";
         let vals = "$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14";
         sqlx::query(&format!("INSERT INTO budgets ({}) VALUES ({})", cols, vals))
-            .bind(&b.budget_id).bind(&b.max_budget).bind(&b.soft_budget)
-            .bind(&b.max_parallel_requests).bind(&b.tpm_limit).bind(&b.rpm_limit)
-            .bind(&b.model_max_budget).bind(&b.budget_duration).bind(b.budget_reset_at)
-            .bind(&b.allowed_models).bind(b.created_at).bind(&b.created_by)
-            .bind(b.updated_at).bind(&b.updated_by)
-            .execute(self).await?;
+            .bind(&b.budget_id)
+            .bind(&b.max_budget)
+            .bind(&b.soft_budget)
+            .bind(&b.max_parallel_requests)
+            .bind(&b.tpm_limit)
+            .bind(&b.rpm_limit)
+            .bind(&b.model_max_budget)
+            .bind(&b.budget_duration)
+            .bind(b.budget_reset_at)
+            .bind(&b.allowed_models)
+            .bind(b.created_at)
+            .bind(&b.created_by)
+            .bind(b.updated_at)
+            .bind(&b.updated_by)
+            .execute(self)
+            .await?;
         Ok(())
     }
 
@@ -5498,7 +6632,10 @@ impl BudgetStore for PgPool {
 
     async fn count_budgets(&self) -> Result<i64> {
         sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM budgets")
-            .fetch_one(self).await.map(|r| r.0).map_err(DbError::from)
+            .fetch_one(self)
+            .await
+            .map(|r| r.0)
+            .map_err(DbError::from)
     }
 
     async fn update_budget(&self, b: &Budget) -> Result<()> {
@@ -5514,7 +6651,9 @@ impl BudgetStore for PgPool {
 
     async fn delete_budget(&self, budget_id: &str) -> Result<()> {
         sqlx::query("DELETE FROM budgets WHERE budget_id = $1")
-            .bind(budget_id).execute(self).await?;
+            .bind(budget_id)
+            .execute(self)
+            .await?;
         Ok(())
     }
 }
@@ -5549,7 +6688,11 @@ impl Database {
         }
     }
 
-    pub async fn list_organizations_paged(&self, limit: i64, offset: i64) -> Result<Vec<Organization>> {
+    pub async fn list_organizations_paged(
+        &self,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<Organization>> {
         match self {
             Database::Sqlite(pool) => pool.list_organizations_paged(limit, offset).await,
             Database::Mysql(pool) => pool.list_organizations_paged(limit, offset).await,
@@ -5573,7 +6716,11 @@ impl Database {
         }
     }
 
-    pub async fn list_deleted_organizations_paged(&self, limit: i64, offset: i64) -> Result<Vec<DeletedOrganization>> {
+    pub async fn list_deleted_organizations_paged(
+        &self,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<DeletedOrganization>> {
         match self {
             Database::Sqlite(pool) => pool.list_deleted_organizations_paged(limit, offset).await,
             Database::Mysql(pool) => pool.list_deleted_organizations_paged(limit, offset).await,
@@ -5630,7 +6777,12 @@ impl Database {
         }
     }
 
-    pub async fn list_teams_paged(&self, org_id: Option<&str>, limit: i64, offset: i64) -> Result<Vec<Team>> {
+    pub async fn list_teams_paged(
+        &self,
+        org_id: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<Team>> {
         match self {
             Database::Sqlite(pool) => pool.list_teams_paged(org_id, limit, offset).await,
             Database::Mysql(pool) => pool.list_teams_paged(org_id, limit, offset).await,
@@ -5654,7 +6806,11 @@ impl Database {
         }
     }
 
-    pub async fn list_deleted_teams_paged(&self, limit: i64, offset: i64) -> Result<Vec<DeletedTeam>> {
+    pub async fn list_deleted_teams_paged(
+        &self,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<DeletedTeam>> {
         match self {
             Database::Sqlite(pool) => pool.list_deleted_teams_paged(limit, offset).await,
             Database::Mysql(pool) => pool.list_deleted_teams_paged(limit, offset).await,
@@ -5903,32 +7059,32 @@ impl Database {
             Database::Sqlite(p) => {
                 sqlx::query(
                     "INSERT INTO config (param_name, param_value) VALUES (?1, ?2) \
-                     ON CONFLICT(param_name) DO UPDATE SET param_value = excluded.param_value"
+                     ON CONFLICT(param_name) DO UPDATE SET param_value = excluded.param_value",
                 )
-                    .bind(param_name)
-                    .bind(param_value)
-                    .execute(p)
-                    .await?;
+                .bind(param_name)
+                .bind(param_value)
+                .execute(p)
+                .await?;
             }
             Database::Mysql(p) => {
                 sqlx::query(
                     "INSERT INTO config (param_name, param_value) VALUES (?, ?) \
-                     ON DUPLICATE KEY UPDATE param_value = VALUES(param_value)"
+                     ON DUPLICATE KEY UPDATE param_value = VALUES(param_value)",
                 )
-                    .bind(param_name)
-                    .bind(param_value)
-                    .execute(p)
-                    .await?;
+                .bind(param_name)
+                .bind(param_value)
+                .execute(p)
+                .await?;
             }
             Database::Postgres(p) => {
                 sqlx::query(
                     "INSERT INTO config (param_name, param_value) VALUES ($1, $2) \
-                     ON CONFLICT(param_name) DO UPDATE SET param_value = excluded.param_value"
+                     ON CONFLICT(param_name) DO UPDATE SET param_value = excluded.param_value",
                 )
-                    .bind(param_name)
-                    .bind(param_value)
-                    .execute(p)
-                    .await?;
+                .bind(param_name)
+                .bind(param_value)
+                .execute(p)
+                .await?;
             }
         };
         Ok(())
@@ -5948,12 +7104,12 @@ impl Database {
             }
             Database::Mysql(p) => {
                 sqlx::query(
-                    "UPDATE virtual_keys SET router_settings = ? WHERE token = ? OR key_alias = ?"
+                    "UPDATE virtual_keys SET router_settings = ? WHERE token = ? OR key_alias = ?",
                 )
-                    .bind(settings_json)
-                    .bind(token)
-                    .execute(p)
-                    .await?;
+                .bind(settings_json)
+                .bind(token)
+                .execute(p)
+                .await?;
             }
             Database::Postgres(p) => {
                 sqlx::query(
@@ -5969,28 +7125,38 @@ impl Database {
     }
 
     /// Update router_settings on a team (teams.router_settings JSON column).
-    pub async fn update_team_router_settings(&self, team_id: &str, settings_json: &str) -> Result<()> {
+    pub async fn update_team_router_settings(
+        &self,
+        team_id: &str,
+        settings_json: &str,
+    ) -> Result<()> {
         match self {
             Database::Sqlite(p) => {
-                sqlx::query("UPDATE teams SET router_settings = ?1 WHERE team_id = ?2 OR team_alias = ?2")
-                    .bind(settings_json)
-                    .bind(team_id)
-                    .execute(p)
-                    .await?;
+                sqlx::query(
+                    "UPDATE teams SET router_settings = ?1 WHERE team_id = ?2 OR team_alias = ?2",
+                )
+                .bind(settings_json)
+                .bind(team_id)
+                .execute(p)
+                .await?;
             }
             Database::Mysql(p) => {
-                sqlx::query("UPDATE teams SET router_settings = ? WHERE team_id = ? OR team_alias = ?")
-                    .bind(settings_json)
-                    .bind(team_id)
-                    .execute(p)
-                    .await?;
+                sqlx::query(
+                    "UPDATE teams SET router_settings = ? WHERE team_id = ? OR team_alias = ?",
+                )
+                .bind(settings_json)
+                .bind(team_id)
+                .execute(p)
+                .await?;
             }
             Database::Postgres(p) => {
-                sqlx::query("UPDATE teams SET router_settings = $1 WHERE team_id = $2 OR team_alias = $2")
-                    .bind(settings_json)
-                    .bind(team_id)
-                    .execute(p)
-                    .await?;
+                sqlx::query(
+                    "UPDATE teams SET router_settings = $1 WHERE team_id = $2 OR team_alias = $2",
+                )
+                .bind(settings_json)
+                .bind(team_id)
+                .execute(p)
+                .await?;
             }
         };
         Ok(())
@@ -6088,7 +7254,8 @@ impl Database {
                     .bind(&check.checked_at)
                     .bind(&check.created_at)
                     .bind(&check.updated_at)
-                    .execute(p).await?;
+                    .execute(p)
+                    .await?;
             }
             Database::Mysql(p) => {
                 sqlx::query(sql)
@@ -6105,7 +7272,8 @@ impl Database {
                     .bind(&check.checked_at)
                     .bind(&check.created_at)
                     .bind(&check.updated_at)
-                    .execute(p).await?;
+                    .execute(p)
+                    .await?;
             }
             Database::Postgres(p) => {
                 sqlx::query(sql)
@@ -6122,7 +7290,8 @@ impl Database {
                     .bind(&check.checked_at)
                     .bind(&check.created_at)
                     .bind(&check.updated_at)
-                    .execute(p).await?;
+                    .execute(p)
+                    .await?;
             }
         }
         Ok(())
@@ -6167,23 +7336,56 @@ impl Database {
             _ => "",
         };
 
-        if let Some(k) = api_key { conditions.push(format!("api_key = '{}'", k.replace('\'', "''"))); }
-        if let Some(m) = model { conditions.push(format!("model = '{}'", m.replace('\'', "''"))); }
-        if let Some(p) = provider { conditions.push(format!("custom_llm_provider = '{}'", p.replace('\'', "''"))); }
-        if let Some(s) = start_date { conditions.push(format!("start_time >= '{}'{}", s.replace('\'', "''"), ts_cast)); }
-        if let Some(e) = end_date { conditions.push(format!("start_time <= '{}'{}", e.replace('\'', "''"), ts_cast)); }
+        if let Some(k) = api_key {
+            conditions.push(format!("api_key = '{}'", k.replace('\'', "''")));
+        }
+        if let Some(m) = model {
+            conditions.push(format!("model = '{}'", m.replace('\'', "''")));
+        }
+        if let Some(p) = provider {
+            conditions.push(format!("custom_llm_provider = '{}'", p.replace('\'', "''")));
+        }
+        if let Some(s) = start_date {
+            conditions.push(format!(
+                "start_time >= '{}'{}",
+                s.replace('\'', "''"),
+                ts_cast
+            ));
+        }
+        if let Some(e) = end_date {
+            conditions.push(format!(
+                "start_time <= '{}'{}",
+                e.replace('\'', "''"),
+                ts_cast
+            ));
+        }
         // Dual-column fuzzy search: match gateway call_id OR upstream request_id (LIKE '%X%' ESCAPE '\').
         if let Some(rid) = call_id {
-            let esc = rid.replace('\'', "''").replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
-            conditions.push(format!("(call_id LIKE '%{}%' ESCAPE '\\' OR request_id LIKE '%{}%' ESCAPE '\\')", esc, esc));
+            let esc = rid
+                .replace('\'', "''")
+                .replace('\\', "\\\\")
+                .replace('%', "\\%")
+                .replace('_', "\\_");
+            conditions.push(format!(
+                "(call_id LIKE '%{}%' ESCAPE '\\' OR request_id LIKE '%{}%' ESCAPE '\\')",
+                esc, esc
+            ));
         }
         if let Some(st) = status {
-            if st == "success" { conditions.push("status = 'success'".to_string()); }
-            else if st == "failure" { conditions.push("status LIKE 'failure%'".to_string()); }
-            else if st == "streaming" { conditions.push("status = 'streaming'".to_string()); }
+            if st == "success" {
+                conditions.push("status = 'success'".to_string());
+            } else if st == "failure" {
+                conditions.push("status LIKE 'failure%'".to_string());
+            } else if st == "streaming" {
+                conditions.push("status = 'streaming'".to_string());
+            }
         }
-        if let Some(mt) = min_tokens { conditions.push(format!("total_tokens >= {}", mt)); }
-        if let Some(mt) = max_tokens { conditions.push(format!("total_tokens <= {}", mt)); }
+        if let Some(mt) = min_tokens {
+            conditions.push(format!("total_tokens >= {}", mt));
+        }
+        if let Some(mt) = max_tokens {
+            conditions.push(format!("total_tokens <= {}", mt));
+        }
 
         let where_clause = if conditions.is_empty() {
             String::new()
@@ -6275,6 +7477,7 @@ mod tests {
             tpm_limit: Some("1000".to_string()),
             rpm_limit: Some("100".to_string()),
             max_budget: Some("100.0".to_string()),
+            soft_budget: None,
             budget_duration: None,
             budget_reset_at: None,
             allowed_cache_controls: serde_json::json!([]),
@@ -6645,7 +7848,10 @@ mod tests {
         let metadata = if cache_read_tokens > 0 || cache_creation_tokens > 0 {
             let mut m = serde_json::Map::new();
             m.insert("cache_read_tokens".to_string(), json!(cache_read_tokens));
-            m.insert("cache_creation_tokens".to_string(), json!(cache_creation_tokens));
+            m.insert(
+                "cache_creation_tokens".to_string(),
+                json!(cache_creation_tokens),
+            );
             let cache_read_spend: f64 = 0.0001;
             let cache_create_spend: f64 = 0.0002;
             m.insert("cache_read_spend".to_string(), json!(cache_read_spend));
@@ -6885,16 +8091,25 @@ mod tests {
     #[tokio::test]
     async fn test_get_nonexistent_credential() {
         let db = Database::init("sqlite::memory:").await.expect("init");
-        let result = db.get_credential_by_name("no-such-cred").await.expect("get");
+        let result = db
+            .get_credential_by_name("no-such-cred")
+            .await
+            .expect("get");
         assert!(result.is_none());
     }
 
     #[tokio::test]
     async fn test_list_credentials() {
         let db = Database::init("sqlite::memory:").await.expect("init");
-        db.insert_credential(&make_test_credential("cred-a")).await.expect("insert");
-        db.insert_credential(&make_test_credential("cred-b")).await.expect("insert");
-        db.insert_credential(&make_test_credential("cred-c")).await.expect("insert");
+        db.insert_credential(&make_test_credential("cred-a"))
+            .await
+            .expect("insert");
+        db.insert_credential(&make_test_credential("cred-b"))
+            .await
+            .expect("insert");
+        db.insert_credential(&make_test_credential("cred-c"))
+            .await
+            .expect("insert");
 
         let all = db.list_credentials().await.expect("list");
         assert_eq!(all.len(), 3);
@@ -6913,7 +8128,11 @@ mod tests {
 
         db.update_credential(&updated).await.expect("update");
 
-        let fetched = db.get_credential_by_name("update-me").await.expect("get").unwrap();
+        let fetched = db
+            .get_credential_by_name("update-me")
+            .await
+            .expect("get")
+            .unwrap();
         assert_eq!(fetched.credential_values["api_key"], "updated-key");
         assert_eq!(fetched.credential_info["provider"], "updated-provider");
     }
@@ -6924,11 +8143,19 @@ mod tests {
         let cred = make_test_credential("delete-me");
         db.insert_credential(&cred).await.expect("insert");
 
-        assert!(db.get_credential_by_name("delete-me").await.unwrap().is_some());
+        assert!(db
+            .get_credential_by_name("delete-me")
+            .await
+            .unwrap()
+            .is_some());
 
         db.delete_credential("delete-me").await.expect("delete");
 
-        assert!(db.get_credential_by_name("delete-me").await.unwrap().is_none());
+        assert!(db
+            .get_credential_by_name("delete-me")
+            .await
+            .unwrap()
+            .is_none());
     }
 
     #[tokio::test]
@@ -6938,14 +8165,22 @@ mod tests {
         // Insert
         let cred = make_test_credential("full-cycle");
         db.insert_credential(&cred).await.expect("insert");
-        assert!(db.get_credential_by_name("full-cycle").await.unwrap().is_some());
+        assert!(db
+            .get_credential_by_name("full-cycle")
+            .await
+            .unwrap()
+            .is_some());
 
         // Update
         let mut updated = cred.clone();
         updated.credential_values = serde_json::json!({"api_key": "cycled-key"});
         updated.updated_at = Utc::now().to_rfc3339();
         db.update_credential(&updated).await.expect("update");
-        let fetched = db.get_credential_by_name("full-cycle").await.unwrap().unwrap();
+        let fetched = db
+            .get_credential_by_name("full-cycle")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(fetched.credential_values["api_key"], "cycled-key");
 
         // List
@@ -6954,7 +8189,11 @@ mod tests {
 
         // Delete
         db.delete_credential("full-cycle").await.expect("delete");
-        assert!(db.get_credential_by_name("full-cycle").await.unwrap().is_none());
+        assert!(db
+            .get_credential_by_name("full-cycle")
+            .await
+            .unwrap()
+            .is_none());
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -6991,8 +8230,12 @@ mod tests {
     #[tokio::test]
     async fn test_list_models() {
         let db = Database::init("sqlite::memory:").await.expect("init");
-        db.insert_model(&make_test_model("model-a")).await.expect("insert");
-        db.insert_model(&make_test_model("model-b")).await.expect("insert");
+        db.insert_model(&make_test_model("model-a"))
+            .await
+            .expect("insert");
+        db.insert_model(&make_test_model("model-b"))
+            .await
+            .expect("insert");
 
         let all = db.list_models().await.expect("list");
         assert_eq!(all.len(), 2);
@@ -7167,23 +8410,46 @@ mod tests {
         // OpenAI-style: prompt_tokens=100 INCLUDES cached tokens.
         // Cache read=20, create=10 => regular_input = 100-20-10 = 70.
         let log = make_test_spend_log_with_cache(
-            &key_hash, "user-1", 100, 50,
-            20, 10,
-            Some("openai"), None,
+            &key_hash,
+            "user-1",
+            100,
+            50,
+            20,
+            10,
+            Some("openai"),
+            None,
             0.5,
         );
         db.insert_spend_log(&log).await.expect("insert");
 
-        let rows = db.query_activity_daily("2020-01-01", "2030-12-31", None, None, None)
-            .await.expect("query activity daily");
+        let rows = db
+            .query_activity_daily("2020-01-01", "2030-12-31", None, None, None)
+            .await
+            .expect("query activity daily");
         assert!(!rows.is_empty());
 
-        let (_date, _spend, _tokens, _requests, _prompt, _completion, _ok, _fail,
-            cache_read, cache_creation, regular_input, cache_read_spend, cache_create_spend) = &rows[0];
+        let (
+            _date,
+            _spend,
+            _tokens,
+            _requests,
+            _prompt,
+            _completion,
+            _ok,
+            _fail,
+            cache_read,
+            cache_creation,
+            regular_input,
+            cache_read_spend,
+            cache_create_spend,
+        ) = &rows[0];
 
         assert_eq!(*cache_read, 20);
         assert_eq!(*cache_creation, 10);
-        assert_eq!(*regular_input, 70, "OpenAI: regular = prompt - cache_read - cache_creation");
+        assert_eq!(
+            *regular_input, 70,
+            "OpenAI: regular = prompt - cache_read - cache_creation"
+        );
         assert!(*cache_read_spend > 0.0);
         assert!(*cache_create_spend > 0.0);
     }
@@ -7196,23 +8462,46 @@ mod tests {
         // Anthropic: prompt_tokens=50 does NOT include cache tokens.
         // Cache read=20, create=10 => regular_input = 50 (unchanged).
         let log = make_test_spend_log_with_cache(
-            &key_hash, "user-1", 50, 30,
-            20, 10,
-            Some("anthropic"), None,
+            &key_hash,
+            "user-1",
+            50,
+            30,
+            20,
+            10,
+            Some("anthropic"),
+            None,
             0.5,
         );
         db.insert_spend_log(&log).await.expect("insert");
 
-        let rows = db.query_activity_daily("2020-01-01", "2030-12-31", None, None, None)
-            .await.expect("query activity daily");
+        let rows = db
+            .query_activity_daily("2020-01-01", "2030-12-31", None, None, None)
+            .await
+            .expect("query activity daily");
         assert!(!rows.is_empty());
 
-        let (_date, _spend, _tokens, _requests, _prompt, _completion, _ok, _fail,
-            cache_read, cache_creation, regular_input, _cr_spend, _cc_spend) = &rows[0];
+        let (
+            _date,
+            _spend,
+            _tokens,
+            _requests,
+            _prompt,
+            _completion,
+            _ok,
+            _fail,
+            cache_read,
+            cache_creation,
+            regular_input,
+            _cr_spend,
+            _cc_spend,
+        ) = &rows[0];
 
         assert_eq!(*cache_read, 20);
         assert_eq!(*cache_creation, 10);
-        assert_eq!(*regular_input, 50, "Anthropic: regular = prompt (unchanged)");
+        assert_eq!(
+            *regular_input, 50,
+            "Anthropic: regular = prompt (unchanged)"
+        );
     }
 
     #[tokio::test]
@@ -7222,19 +8511,39 @@ mod tests {
 
         // Row with no cache metadata at all (metadata: None).
         let log = make_test_spend_log_with_cache(
-            &key_hash, "user-1", 100, 50,
-            0, 0,
-            Some("openai"), None,
+            &key_hash,
+            "user-1",
+            100,
+            50,
+            0,
+            0,
+            Some("openai"),
+            None,
             0.5,
         );
         db.insert_spend_log(&log).await.expect("insert");
 
-        let rows = db.query_activity_daily("2020-01-01", "2030-12-31", None, None, None)
-            .await.expect("query activity daily");
+        let rows = db
+            .query_activity_daily("2020-01-01", "2030-12-31", None, None, None)
+            .await
+            .expect("query activity daily");
         assert!(!rows.is_empty());
 
-        let (_date, _spend, _tokens, _requests, _prompt, _completion, _ok, _fail,
-            cache_read, cache_creation, regular_input, cache_read_spend, cache_create_spend) = &rows[0];
+        let (
+            _date,
+            _spend,
+            _tokens,
+            _requests,
+            _prompt,
+            _completion,
+            _ok,
+            _fail,
+            cache_read,
+            cache_creation,
+            regular_input,
+            cache_read_spend,
+            cache_create_spend,
+        ) = &rows[0];
 
         assert_eq!(*cache_read, 0);
         assert_eq!(*cache_creation, 0);
@@ -7251,24 +8560,43 @@ mod tests {
         // OpenAI: cache_read + cache_creation greater than prompt_tokens (edge case).
         // MAX(0, ...) must clamp regular_input to 0.
         let log = make_test_spend_log_with_cache(
-            &key_hash, "user-1", 10, 50,
-            30, 20,
-            Some("openai"), None,
+            &key_hash,
+            "user-1",
+            10,
+            50,
+            30,
+            20,
+            Some("openai"),
+            None,
             0.5,
         );
         assert!(log.metadata.is_some());
         db.insert_spend_log(&log).await.expect("insert");
 
-        let rows = db.query_activity_daily("2020-01-01", "2030-12-31", None, None, None)
-            .await.expect("query activity daily");
+        let rows = db
+            .query_activity_daily("2020-01-01", "2030-12-31", None, None, None)
+            .await
+            .expect("query activity daily");
         assert!(!rows.is_empty());
 
-        let (_date, _spend, _tokens, _requests, _prompt, _completion, _ok, _fail,
-            _cache_read, _cache_creation, regular_input, _cr_spend, _cc_spend) = &rows[0];
+        let (
+            _date,
+            _spend,
+            _tokens,
+            _requests,
+            _prompt,
+            _completion,
+            _ok,
+            _fail,
+            _cache_read,
+            _cache_creation,
+            regular_input,
+            _cr_spend,
+            _cc_spend,
+        ) = &rows[0];
 
         assert_eq!(*regular_input, 0, "regular_input must be clamped to 0");
     }
-
 
     // Stage 69: Daily trend 8-tuple decomposition
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -7279,26 +8607,41 @@ mod tests {
         let key_hash = hash_token("sk-daily-test");
 
         // Insert a successful request
-        let log1 = make_test_spend_log_full(
-            &key_hash, "user-1", 0.5, 100, 60, 40, "success", None,
-        );
+        let log1 = make_test_spend_log_full(&key_hash, "user-1", 0.5, 100, 60, 40, "success", None);
         // Insert a failed request
-        let log2 = make_test_spend_log_full(
-            &key_hash, "user-1", 0.0, 80, 50, 30, "failure:500", None,
-        );
+        let log2 =
+            make_test_spend_log_full(&key_hash, "user-1", 0.0, 80, 50, 30, "failure:500", None);
 
         db.insert_spend_log(&log1).await.expect("insert log1");
         db.insert_spend_log(&log2).await.expect("insert log2");
 
-        let rows = db.query_activity_daily("2020-01-01", "2030-12-31", None, None, None)
-            .await.expect("query activity daily");
+        let rows = db
+            .query_activity_daily("2020-01-01", "2030-12-31", None, None, None)
+            .await
+            .expect("query activity daily");
 
         assert!(!rows.is_empty(), "should have at least one row");
-        let (date, spend, _tokens, requests, prompt_tokens, completion_tokens, successful_requests, failed_requests,
-            _cache_read, _cache_creation, _regular_input, _cache_read_spend, _cache_create_spend) = &rows[0];
+        let (
+            date,
+            spend,
+            _tokens,
+            requests,
+            prompt_tokens,
+            completion_tokens,
+            successful_requests,
+            failed_requests,
+            _cache_read,
+            _cache_creation,
+            _regular_input,
+            _cache_read_spend,
+            _cache_create_spend,
+        ) = &rows[0];
         assert!(!date.is_empty());
         assert!(*spend > 0.0 || true, "spend present");
-        assert_eq!(*requests, 2, "should count both success and failure as requests");
+        assert_eq!(
+            *requests, 2,
+            "should count both success and failure as requests"
+        );
         assert_eq!(*prompt_tokens, 110, "60 + 50 prompt tokens");
         assert_eq!(*completion_tokens, 70, "40 + 30 completion tokens");
         assert_eq!(*successful_requests, 1);
@@ -7311,26 +8654,49 @@ mod tests {
         let key_hash = hash_token("sk-hourly-test");
 
         // Insert requests within a few hours
-        let log1 = make_test_spend_log_full(
-            &key_hash, "user-1", 0.5, 100, 60, 40, "success", None,
-        );
-        let log2 = make_test_spend_log_full(
-            &key_hash, "user-1", 0.0, 80, 50, 30, "failure:500", None,
-        );
+        let log1 = make_test_spend_log_full(&key_hash, "user-1", 0.5, 100, 60, 40, "success", None);
+        let log2 =
+            make_test_spend_log_full(&key_hash, "user-1", 0.0, 80, 50, 30, "failure:500", None);
 
         db.insert_spend_log(&log1).await.expect("insert log1");
         db.insert_spend_log(&log2).await.expect("insert log2");
 
-        let rows = db.query_activity_hourly("2020-01-01", "2030-12-31", None, None, None)
-            .await.expect("query activity hourly");
+        let rows = db
+            .query_activity_hourly("2020-01-01", "2030-12-31", None, None, None)
+            .await
+            .expect("query activity hourly");
 
         assert!(!rows.is_empty(), "should have at least one row");
-        let (date, _spend, _tokens, requests, prompt_tokens, completion_tokens, successful_requests, failed_requests,
-            _cache_read, _cache_creation, _regular_input, _cache_read_spend, _cache_create_spend) = &rows[0];
+        let (
+            date,
+            _spend,
+            _tokens,
+            requests,
+            prompt_tokens,
+            completion_tokens,
+            successful_requests,
+            failed_requests,
+            _cache_read,
+            _cache_creation,
+            _regular_input,
+            _cache_read_spend,
+            _cache_create_spend,
+        ) = &rows[0];
         // Hourly format: "YYYY-MM-DDTHH:00:00"
-        assert!(date.contains('T'), "hourly date should contain T separator, got {}", date);
-        assert!(date.ends_with(":00:00"), "hourly date should end with :00:00, got {}", date);
-        assert_eq!(*requests, 2, "should count both success and failure as requests");
+        assert!(
+            date.contains('T'),
+            "hourly date should contain T separator, got {}",
+            date
+        );
+        assert!(
+            date.ends_with(":00:00"),
+            "hourly date should end with :00:00, got {}",
+            date
+        );
+        assert_eq!(
+            *requests, 2,
+            "should count both success and failure as requests"
+        );
         assert_eq!(*prompt_tokens, 110, "60 + 50 prompt tokens");
         assert_eq!(*completion_tokens, 70, "40 + 30 completion tokens");
         assert_eq!(*successful_requests, 1);
@@ -7343,16 +8709,19 @@ mod tests {
         let key_hash = hash_token("sk-hourly-test-2");
 
         // Insert a request in 2020
-        let log = make_test_spend_log_full(
-            &key_hash, "user-1", 1.0, 100, 60, 40, "success", None,
-        );
+        let log = make_test_spend_log_full(&key_hash, "user-1", 1.0, 100, 60, 40, "success", None);
         db.insert_spend_log(&log).await.expect("insert log");
 
         // Query for a range that should NOT include our log
-        let rows = db.query_activity_hourly("2030-01-01", "2030-01-02", None, None, None)
-            .await.expect("query activity hourly");
+        let rows = db
+            .query_activity_hourly("2030-01-01", "2030-01-02", None, None, None)
+            .await
+            .expect("query activity hourly");
 
-        assert!(rows.is_empty(), "should return nothing for out-of-range query");
+        assert!(
+            rows.is_empty(),
+            "should return nothing for out-of-range query"
+        );
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -7380,8 +8749,10 @@ mod tests {
         db.insert_spend_log(&log_b).await.expect("insert b");
         db.insert_spend_log(&log_a2).await.expect("insert a2");
 
-        let rankings = db.aggregate_spend_by_keys("2020-01-01", "2030-12-31", 10)
-            .await.expect("aggregate");
+        let rankings = db
+            .aggregate_spend_by_keys("2020-01-01", "2030-12-31", 10)
+            .await
+            .expect("aggregate");
 
         assert!(rankings.len() >= 2, "should have at least 2 keys ranked");
         // Key A (13.0) should rank before Key B (5.0) — descending by spend
@@ -7399,13 +8770,16 @@ mod tests {
             let vk = make_test_key(&hash, &format!("alias-{}", i));
             db.insert_key(&vk).await.expect("insert key");
 
-            let log = make_test_spend_log_full(&hash, "u1", (i + 1) as f64, 10, 5, 5, "success", None);
+            let log =
+                make_test_spend_log_full(&hash, "u1", (i + 1) as f64, 10, 5, 5, "success", None);
             db.insert_spend_log(&log).await.expect("insert log");
         }
 
         // Limit to 2
-        let rankings = db.aggregate_spend_by_keys("2020-01-01", "2030-12-31", 2)
-            .await.expect("aggregate with limit");
+        let rankings = db
+            .aggregate_spend_by_keys("2020-01-01", "2030-12-31", 2)
+            .await
+            .expect("aggregate with limit");
 
         assert_eq!(rankings.len(), 2, "should respect limit=2");
     }
@@ -7434,29 +8808,66 @@ mod tests {
         db.insert_spend_log(&l3).await.expect("insert l3");
 
         // Search by call_id prefix "req-00" — matches all 3
-        let logs = db.query_spend_logs_filtered(None, None, None, None, None, Some("req-00"), Some(100), Some(0))
-            .await.expect("query prefix");
+        let logs = db
+            .query_spend_logs_filtered(
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("req-00"),
+                Some(100),
+                Some(0),
+            )
+            .await
+            .expect("query prefix");
         assert_eq!(logs.len(), 3, "prefix 'req-00' should match all 3 logs");
 
         // Search by request_id substring "chatcmpl" — matches l1 only
-        let logs = db.query_spend_logs_filtered(None, None, None, None, None, Some("chatcmpl"), Some(100), Some(0))
-            .await.expect("query chatcmpl");
+        let logs = db
+            .query_spend_logs_filtered(
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("chatcmpl"),
+                Some(100),
+                Some(0),
+            )
+            .await
+            .expect("query chatcmpl");
         assert_eq!(logs.len(), 1, "substring 'chatcmpl' should match 1 log");
         assert_eq!(logs[0].call_id, "req-001");
 
         // Search by request_id substring "xyz" — matches l2 only
-        let logs = db.query_spend_logs_filtered(None, None, None, None, None, Some("xyz"), Some(100), Some(0))
-            .await.expect("query xyz");
+        let logs = db
+            .query_spend_logs_filtered(
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("xyz"),
+                Some(100),
+                Some(0),
+            )
+            .await
+            .expect("query xyz");
         assert_eq!(logs.len(), 1, "substring 'xyz' should match 1 log");
         assert_eq!(logs[0].call_id, "req-002");
 
         // Count matching — should be consistent
-        let count = db.query_spend_logs_count(None, None, None, None, Some("req-00"))
-            .await.expect("count prefix");
+        let count = db
+            .query_spend_logs_count(None, None, None, None, Some("req-00"))
+            .await
+            .expect("count prefix");
         assert_eq!(count, 3, "count should match query for 'req-00'");
 
-        let count = db.query_spend_logs_count(None, None, None, None, Some("chatcmpl"))
-            .await.expect("count chatcmpl");
+        let count = db
+            .query_spend_logs_count(None, None, None, None, Some("chatcmpl"))
+            .await
+            .expect("count chatcmpl");
         assert_eq!(count, 1, "count should match query for 'chatcmpl'");
     }
 
@@ -7475,14 +8886,36 @@ mod tests {
         db.insert_spend_log(&l2).await.expect("insert l2");
 
         // Searching for "req%" should match only l1, not everything (escaped)
-        let logs = db.query_spend_logs_filtered(None, None, None, None, None, Some("req%"), Some(100), Some(0))
-            .await.expect("query req%");
+        let logs = db
+            .query_spend_logs_filtered(
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("req%"),
+                Some(100),
+                Some(0),
+            )
+            .await
+            .expect("query req%");
         assert_eq!(logs.len(), 1, "escaped '%' should not act as wildcard");
         assert_eq!(logs[0].call_id, "req%001");
 
         // Searching for "req_" should match l2
-        let logs = db.query_spend_logs_filtered(None, None, None, None, None, Some("req_"), Some(100), Some(0))
-            .await.expect("query req_");
+        let logs = db
+            .query_spend_logs_filtered(
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("req_"),
+                Some(100),
+                Some(0),
+            )
+            .await
+            .expect("query req_");
         assert_eq!(logs.len(), 1, "escaped '_' should not act as wildcard");
         assert_eq!(logs[0].call_id, "req_002");
     }
@@ -7606,7 +9039,10 @@ mod tests {
 
         // Verify org gone from source table
         let found = db.get_organization_by_id("org-1").await.expect("get");
-        assert!(found.is_none(), "organization should be deleted from source");
+        assert!(
+            found.is_none(),
+            "organization should be deleted from source"
+        );
 
         // Verify org in archive
         let deleted = db.list_deleted_organizations().await.expect("list deleted");
@@ -7748,7 +9184,9 @@ mod tests {
             db.insert_organization(&org).await.expect("insert");
         }
         for i in 1..=3 {
-            db.delete_organization(&format!("org-{}", i)).await.expect("delete");
+            db.delete_organization(&format!("org-{}", i))
+                .await
+                .expect("delete");
         }
 
         let deleted = db.list_deleted_organizations().await.expect("list deleted");

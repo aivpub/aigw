@@ -8,12 +8,12 @@
 
 use aigw_core::db::Database;
 use aigw_core::engine::append_log;
-use cucumber::{given, then, when};
 use cucumber::gherkin::Step;
+use cucumber::{given, then, when};
 use std::sync::Arc;
 
-use crate::TestWorld;
 use crate::bdd_steps::common::{build_admin_jobs_router, make_request};
+use crate::TestWorld;
 use axum::http::Method;
 
 fn sqlite_pool<'a>(db: &'a Database) -> &'a sqlx::SqlitePool {
@@ -78,7 +78,13 @@ fn get_job_id(world: &TestWorld) -> String {
         .unwrap_or_else(|| "nonexistent-id".to_string())
 }
 
-async fn send(world: &mut TestWorld, method: Method, uri: &str, body: Option<&str>, auth: Option<&str>) {
+async fn send(
+    world: &mut TestWorld,
+    method: Method,
+    uri: &str,
+    body: Option<&str>,
+    auth: Option<&str>,
+) {
     // Snapshot the control flags we carry across steps (job_id, no_auth).
     // send() overwrites last_body with the HTTP response, so without this
     // snapshot a second When in the same scenario would lose the job_id.
@@ -185,9 +191,17 @@ async fn then_error_contains(world: &mut TestWorld, needle: String) {
     let msg = body
         .get("error")
         .and_then(|e| e.as_str())
-        .or_else(|| body.get("error").and_then(|e| e.get("message").and_then(|m| m.as_str())))
+        .or_else(|| {
+            body.get("error")
+                .and_then(|e| e.get("message").and_then(|m| m.as_str()))
+        })
         .unwrap_or("");
-    assert!(msg.contains(&needle), "error message '{}' missing '{}'", msg, needle);
+    assert!(
+        msg.contains(&needle),
+        "error message '{}' missing '{}'",
+        msg,
+        needle
+    );
 }
 
 // ── GET /admin/jobs ──
@@ -223,27 +237,47 @@ fn extract_uri(txt: &str) -> String {
 
 #[then(expr = "响应 status_code 为 200")]
 async fn then_status_200(world: &mut TestWorld) {
-    assert_eq!(world.last_status, Some(200), "expected 200, got {:?}", world.last_status);
+    assert_eq!(
+        world.last_status,
+        Some(200),
+        "expected 200, got {:?}",
+        world.last_status
+    );
 }
 
 #[then(expr = "响应 body 中 jobs 数组包含 {int} 条记录")]
 async fn then_jobs_count(world: &mut TestWorld, n: i64) {
     let body = world.last_body.as_ref().expect("jobs body");
-    let jobs = body.get("jobs").and_then(|v| v.as_array()).expect("jobs array");
-    assert_eq!(jobs.len() as i64, n, "expected {} jobs, got {}", n, jobs.len());
+    let jobs = body
+        .get("jobs")
+        .and_then(|v| v.as_array())
+        .expect("jobs array");
+    assert_eq!(
+        jobs.len() as i64,
+        n,
+        "expected {} jobs, got {}",
+        n,
+        jobs.len()
+    );
 }
 
 #[then(expr = "total = {int}")]
 async fn then_total(world: &mut TestWorld, n: i64) {
     let body = world.last_body.as_ref().expect("total body");
-    let total = body.get("total").and_then(|v| v.as_i64()).expect("total field");
+    let total = body
+        .get("total")
+        .and_then(|v| v.as_i64())
+        .expect("total field");
     assert_eq!(total, n, "expected total {}, got {}", n, total);
 }
 
 #[then(regex = r#"响应 jobs 数组中每条记录的 step_type 均为 "([^"]+)""#)]
 async fn then_jobs_step_type(world: &mut TestWorld, expected: String) {
     let body = world.last_body.as_ref().expect("jobs body");
-    let jobs = body.get("jobs").and_then(|v| v.as_array()).expect("jobs array");
+    let jobs = body
+        .get("jobs")
+        .and_then(|v| v.as_array())
+        .expect("jobs array");
     for j in jobs {
         let st = j.get("step_type").and_then(|v| v.as_str()).unwrap_or("");
         assert_eq!(st, expected, "expected step_type {}, got {}", expected, st);
@@ -253,7 +287,10 @@ async fn then_jobs_step_type(world: &mut TestWorld, expected: String) {
 #[then(regex = r#"响应 jobs 数组中每条记录的 status 均为 "([^"]+)""#)]
 async fn then_jobs_status(world: &mut TestWorld, expected: String) {
     let body = world.last_body.as_ref().expect("jobs body");
-    let jobs = body.get("jobs").and_then(|v| v.as_array()).expect("jobs array");
+    let jobs = body
+        .get("jobs")
+        .and_then(|v| v.as_array())
+        .expect("jobs array");
     for j in jobs {
         let st = j.get("status").and_then(|v| v.as_str()).unwrap_or("");
         assert_eq!(st, expected, "expected status {}, got {}", expected, st);
@@ -325,7 +362,13 @@ async fn then_detail_fields(world: &mut TestWorld) {
     // Handler nests fields under "job". But send() may re-merge flags at the
     // top level — look under "job" first, then fall back to top-level.
     let job = body.get("job").unwrap_or(body);
-    for f in ["step_type", "status", "total_steps", "completed_steps", "failed_steps"] {
+    for f in [
+        "step_type",
+        "status",
+        "total_steps",
+        "completed_steps",
+        "failed_steps",
+    ] {
         assert!(
             job.get(f).is_some() || body.get(f).is_some(),
             "detail missing field {} (body keys: {:?})",
@@ -338,14 +381,26 @@ async fn then_detail_fields(world: &mut TestWorld) {
 #[then(expr = "steps 数组包含 {int} 个 Step")]
 async fn then_detail_steps(world: &mut TestWorld, n: i64) {
     let body = world.last_body.as_ref().expect("detail body");
-    let steps = body.get("steps").and_then(|v| v.as_array()).expect("steps array");
-    assert_eq!(steps.len() as i64, n, "expected {} steps, got {}", n, steps.len());
+    let steps = body
+        .get("steps")
+        .and_then(|v| v.as_array())
+        .expect("steps array");
+    assert_eq!(
+        steps.len() as i64,
+        n,
+        "expected {} steps, got {}",
+        n,
+        steps.len()
+    );
 }
 
 #[then(regex = r#"completed Step 的 status 为 "completed"，result 不为 null"#)]
 async fn then_completed_step_has_result(world: &mut TestWorld) {
     let body = world.last_body.as_ref().expect("detail body");
-    let steps = body.get("steps").and_then(|v| v.as_array()).expect("steps array");
+    let steps = body
+        .get("steps")
+        .and_then(|v| v.as_array())
+        .expect("steps array");
     let completed = steps
         .iter()
         .find(|s| s.get("status").and_then(|v| v.as_str()) == Some("completed"))
@@ -357,7 +412,10 @@ async fn then_completed_step_has_result(world: &mut TestWorld) {
 #[then(regex = r#"pending Step 的 status 为 "pending"，result 为 null"#)]
 async fn then_pending_step_null_result(world: &mut TestWorld) {
     let body = world.last_body.as_ref().expect("detail body");
-    let steps = body.get("steps").and_then(|v| v.as_array()).expect("steps array");
+    let steps = body
+        .get("steps")
+        .and_then(|v| v.as_array())
+        .expect("steps array");
     let pending = steps
         .iter()
         .find(|s| s.get("status").and_then(|v| v.as_str()) == Some("pending"))
@@ -388,7 +446,14 @@ async fn given_five_logs(world: &mut TestWorld) {
     let state = world.ensure_state().await;
     let levels = ["info", "info", "info", "warn", "error"];
     for (i, lvl) in levels.iter().enumerate() {
-        append_log(&state.db, &job_id, Some("hour=k0"), lvl, &format!("log line {}", i)).await;
+        append_log(
+            &state.db,
+            &job_id,
+            Some("hour=k0"),
+            lvl,
+            &format!("log line {}", i),
+        )
+        .await;
     }
 }
 
@@ -400,7 +465,14 @@ async fn given_n_logs(world: &mut TestWorld, n: i64) {
     let levels = ["info", "warn", "error", "info", "info"];
     for i in 0..n {
         let lvl = levels[(i as usize) % levels.len()];
-        append_log(&state.db, &job_id, Some("hour=k0"), lvl, &format!("line {}", i)).await;
+        append_log(
+            &state.db,
+            &job_id,
+            Some("hour=k0"),
+            lvl,
+            &format!("line {}", i),
+        )
+        .await;
     }
 }
 
@@ -421,14 +493,26 @@ async fn when_get_job_logs(world: &mut TestWorld, step: &Step) {
 #[then(expr = "响应包含 {int} 条日志")]
 async fn then_logs_count(world: &mut TestWorld, n: i64) {
     let body = world.last_body.as_ref().expect("logs body");
-    let logs = body.get("logs").and_then(|v| v.as_array()).expect("logs array");
-    assert_eq!(logs.len() as i64, n, "expected {} logs, got {}", n, logs.len());
+    let logs = body
+        .get("logs")
+        .and_then(|v| v.as_array())
+        .expect("logs array");
+    assert_eq!(
+        logs.len() as i64,
+        n,
+        "expected {} logs, got {}",
+        n,
+        logs.len()
+    );
 }
 
 #[then(expr = "每条日志包含 level、message、created_at")]
 async fn then_log_fields(world: &mut TestWorld) {
     let body = world.last_body.as_ref().expect("logs body");
-    let logs = body.get("logs").and_then(|v| v.as_array()).expect("logs array");
+    let logs = body
+        .get("logs")
+        .and_then(|v| v.as_array())
+        .expect("logs array");
     assert!(!logs.is_empty(), "expected at least one log");
     for l in logs {
         for f in ["level", "message", "created_at"] {
@@ -440,7 +524,10 @@ async fn then_log_fields(world: &mut TestWorld) {
 #[then(regex = r#"只返回 level="([^"]+)" 的日志"#)]
 async fn then_logs_filtered(world: &mut TestWorld, level: String) {
     let body = world.last_body.as_ref().expect("logs body");
-    let logs = body.get("logs").and_then(|v| v.as_array()).expect("logs array");
+    let logs = body
+        .get("logs")
+        .and_then(|v| v.as_array())
+        .expect("logs array");
     assert!(!logs.is_empty(), "expected at least one error log");
     for l in logs {
         let lv = l.get("level").and_then(|v| v.as_str()).unwrap_or("");
@@ -476,4 +563,6 @@ fn set_auth(_world: &mut TestWorld, _token: String) {
 
 // Silence unused-import warnings.
 #[allow(dead_code)]
-fn _unused_arc_marker() -> Arc<()> { Arc::new(()) }
+fn _unused_arc_marker() -> Arc<()> {
+    Arc::new(())
+}

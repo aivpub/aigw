@@ -1,12 +1,12 @@
 //! Step bindings for adapter.feature
 
-use cucumber::{given, then, when};
-use cucumber::gherkin::Step;
+use crate::TestWorld;
 use aigw_core::adapter::{DefaultAdapter, ProviderAdapter};
 use aigw_core::models::{
     ChatCompletionRequest, ChatCompletionResponse, ClaudeMessageRequest, ClaudeMessageResponse,
 };
-use crate::TestWorld;
+use cucumber::gherkin::Step;
+use cucumber::{given, then, when};
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Given
@@ -92,11 +92,9 @@ async fn given_openai_response(world: &mut TestWorld) {
 #[when(expr = "通过适配器转换为 Claude 请求")]
 async fn when_convert_to_claude_req(world: &mut TestWorld) {
     let body = world.last_body.take().expect("no stored request");
-    let req: ChatCompletionRequest =
-        serde_json::from_value(body).expect("parse OpenAI request");
+    let req: ChatCompletionRequest = serde_json::from_value(body).expect("parse OpenAI request");
     let claude_req = DefaultAdapter::openai_to_claude_request(&req, 1024);
-    world.last_body =
-        Some(serde_json::to_value(&claude_req).expect("serialize Claude request"));
+    world.last_body = Some(serde_json::to_value(&claude_req).expect("serialize Claude request"));
 }
 
 #[when(expr = "通过适配器转换为 OpenAI 响应")]
@@ -104,8 +102,7 @@ async fn when_convert_to_openai_resp(world: &mut TestWorld) {
     let body = world.last_body.take().expect("no stored response");
     let resp: ClaudeMessageResponse = serde_json::from_value(body).expect("parse Claude response");
     let oai_resp = DefaultAdapter::claude_to_openai_response(&resp, "claude-sonnet");
-    world.last_body =
-        Some(serde_json::to_value(&oai_resp).expect("serialize OpenAI response"));
+    world.last_body = Some(serde_json::to_value(&oai_resp).expect("serialize OpenAI response"));
 }
 
 #[when(expr = "通过适配器转换为 OpenAI 请求")]
@@ -113,8 +110,7 @@ async fn when_convert_to_openai_req(world: &mut TestWorld) {
     let body = world.last_body.take().expect("no stored request");
     let req: ClaudeMessageRequest = serde_json::from_value(body).expect("parse Claude request");
     let oai_req = DefaultAdapter::claude_to_openai_request(&req);
-    world.last_body =
-        Some(serde_json::to_value(&oai_req).expect("serialize OpenAI request"));
+    world.last_body = Some(serde_json::to_value(&oai_req).expect("serialize OpenAI request"));
 }
 
 #[when(expr = "通过适配器转换为 Claude 响应")]
@@ -122,8 +118,7 @@ async fn when_convert_to_claude_resp(world: &mut TestWorld) {
     let body = world.last_body.take().expect("no stored response");
     let resp: ChatCompletionResponse = serde_json::from_value(body).expect("parse OpenAI response");
     let claude_resp = DefaultAdapter::openai_to_claude_response(&resp);
-    world.last_body =
-        Some(serde_json::to_value(&claude_resp).expect("serialize Claude response"));
+    world.last_body = Some(serde_json::to_value(&claude_resp).expect("serialize Claude response"));
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -133,7 +128,10 @@ async fn when_convert_to_claude_resp(world: &mut TestWorld) {
 #[then(regex = "^Claude 请求的 model 为 \"(.+)\"$")]
 async fn then_claude_model_is(world: &mut TestWorld, expected: String) {
     let body = world.last_body.as_ref().expect("no body");
-    let model = body.get("model").and_then(|v| v.as_str()).expect("no model field");
+    let model = body
+        .get("model")
+        .and_then(|v| v.as_str())
+        .expect("no model field");
     assert_eq!(model, expected);
 }
 
@@ -175,16 +173,16 @@ async fn then_claude_only_user_messages(world: &mut TestWorld) {
         .and_then(|v| v.as_array())
         .expect("no messages array");
     assert_eq!(msgs.len(), 1);
-    assert_eq!(
-        msgs[0].get("role").and_then(|v| v.as_str()),
-        Some("user")
-    );
+    assert_eq!(msgs[0].get("role").and_then(|v| v.as_str()), Some("user"));
 }
 
 #[then(regex = "^OpenAI 响应的 object 为 \"(.+)\"$")]
 async fn then_openai_object_is(world: &mut TestWorld, expected: String) {
     let body = world.last_body.as_ref().expect("no body");
-    let obj = body.get("object").and_then(|v| v.as_str()).expect("no object");
+    let obj = body
+        .get("object")
+        .and_then(|v| v.as_str())
+        .expect("no object");
     assert_eq!(obj, expected);
 }
 
@@ -207,7 +205,10 @@ async fn then_openai_has_usage(world: &mut TestWorld) {
 #[then(regex = "^OpenAI 请求的 model 为 \"(.+)\"$")]
 async fn then_openai_model_is(world: &mut TestWorld, expected: String) {
     let body = world.last_body.as_ref().expect("no body");
-    let model = body.get("model").and_then(|v| v.as_str()).expect("no model");
+    let model = body
+        .get("model")
+        .and_then(|v| v.as_str())
+        .expect("no model");
     assert_eq!(model, expected);
 }
 
@@ -225,7 +226,7 @@ async fn then_openai_max_tokens(world: &mut TestWorld, expected: i32) {
 async fn then_claude_type_is(world: &mut TestWorld, expected: String) {
     let body = world.last_body.as_ref().expect("no body");
     let typ = body
-        .get("response_type")  // type is renamed via #[serde(rename = "type")]
+        .get("response_type") // type is renamed via #[serde(rename = "type")]
         .or_else(|| body.get("type"))
         .and_then(|v| v.as_str())
         .expect("no type field");

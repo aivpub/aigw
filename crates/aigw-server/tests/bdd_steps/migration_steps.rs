@@ -1,15 +1,13 @@
 //! Step bindings for migration.feature
 
-use cucumber::{given, then, when};
 use axum::http::Method;
 use axum::Router;
+use cucumber::{given, then, when};
 
 use super::common::make_request;
 use crate::TestWorld;
 
-fn build_credential_router(
-    state: aigw_server::routes::keys::SharedState,
-) -> Router {
+fn build_credential_router(state: aigw_server::routes::keys::SharedState) -> Router {
     Router::new()
         .route(
             "/credential/new",

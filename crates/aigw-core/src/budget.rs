@@ -123,6 +123,7 @@ mod tests {
             tpm_limit: None,
             rpm_limit: None,
             max_budget: max_budget.map(|v| v.to_string()),
+            soft_budget: None,
             budget_duration: None,
             budget_reset_at: None,
             allowed_cache_controls: json!([]),
@@ -251,7 +252,10 @@ mod tests {
         db.insert_key(&key).await.expect("insert");
 
         let result = BudgetEnforcer::check_budget(&db, &hash).await;
-        assert!(result.is_ok(), "NaN max_budget should be treated as unlimited");
+        assert!(
+            result.is_ok(),
+            "NaN max_budget should be treated as unlimited"
+        );
     }
 
     #[tokio::test]
@@ -265,6 +269,9 @@ mod tests {
         db.insert_key(&key).await.expect("insert");
 
         let result = BudgetEnforcer::check_budget(&db, &hash).await;
-        assert!(result.is_ok(), "INFINITY max_budget should be treated as unlimited");
+        assert!(
+            result.is_ok(),
+            "INFINITY max_budget should be treated as unlimited"
+        );
     }
 }

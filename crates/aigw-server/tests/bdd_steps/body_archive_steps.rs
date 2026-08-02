@@ -50,7 +50,11 @@ async fn given_archive_disabled(world: &mut TestWorld) {
 
 #[given(expr = "body_archive.null_body_after_archive = false")]
 async fn given_null_body_after_archive_false(world: &mut TestWorld) {
-    set_flag(world, "null_body_after_archive", &serde_json::Value::Bool(false));
+    set_flag(
+        world,
+        "null_body_after_archive",
+        &serde_json::Value::Bool(false),
+    );
 }
 
 #[given(expr = "spend_logs 中最近 2 小时的数据 body_archived 均为 TRUE")]
@@ -63,25 +67,42 @@ async fn given_recent_data_all_archived(world: &mut TestWorld) {
         call_type: "completion".to_string(),
         api_key: "hash1".to_string(),
         spend: 0.01,
-        total_tokens: 100, prompt_tokens: 50, completion_tokens: 50,
+        total_tokens: 100,
+        prompt_tokens: 50,
+        completion_tokens: 50,
         start_time: now - chrono::Duration::hours(1),
         end_time: now - chrono::Duration::hours(1),
-        request_duration_ms: Some(500), completion_start_time: None,
-        model: "gpt-4".to_string(), model_id: None, model_group: None,
-        custom_llm_provider: Some("openai".to_string()), api_base: None,
-        user: Some("testuser".to_string()), metadata: None,
-        cache_hit: None, cache_key: None, request_tags: None,
-        team_id: None, organization_id: None, end_user: None,
+        request_duration_ms: Some(500),
+        completion_start_time: None,
+        model: "gpt-4".to_string(),
+        model_id: None,
+        model_group: None,
+        custom_llm_provider: Some("openai".to_string()),
+        api_base: None,
+        user: Some("testuser".to_string()),
+        metadata: None,
+        cache_hit: None,
+        cache_key: None,
+        request_tags: None,
+        team_id: None,
+        organization_id: None,
+        end_user: None,
         requester_ip_address: None,
         messages: Some(serde_json::json!([{"role":"user","content":"hi"}])),
         response: Some(serde_json::json!({"choices":[{}]})),
-        session_id: None, status: Some("success".to_string()),
-        mcp_namespaced_tool_name: None, agent_id: None,
+        session_id: None,
+        status: Some("success".to_string()),
+        mcp_namespaced_tool_name: None,
+        agent_id: None,
         proxy_server_request: None,
         body_archived: true,
         parquet_path: Some("s3://test/path.parquet".to_string()),
     };
-    state.db.insert_spend_log(&log).await.expect("insert spend log");
+    state
+        .db
+        .insert_spend_log(&log)
+        .await
+        .expect("insert spend log");
     // preserve any flags from prior Given steps
 }
 
@@ -95,7 +116,11 @@ async fn given_three_hours_unarchived(world: &mut TestWorld) {
     ];
     for hour in hours {
         let log = make_spend_log_for_hour(hour);
-        state.db.insert_spend_log(&log).await.expect("insert spend log");
+        state
+            .db
+            .insert_spend_log(&log)
+            .await
+            .expect("insert spend log");
     }
 }
 
@@ -154,8 +179,16 @@ async fn then_return_none(world: &mut TestWorld) {
 #[then(expr = "返回 Some(steps)，steps 数量为 {int}")]
 async fn then_return_some_steps(world: &mut TestWorld, count: usize) {
     let body = world.last_body.as_ref().expect("should have response body");
-    let steps = body["steps"].as_array().expect("should be Some(steps) array");
-    assert_eq!(steps.len(), count, "expected {} steps, got {}", count, steps.len());
+    let steps = body["steps"]
+        .as_array()
+        .expect("should be Some(steps) array");
+    assert_eq!(
+        steps.len(),
+        count,
+        "expected {} steps, got {}",
+        count,
+        steps.len()
+    );
 }
 
 #[then(expr = "async_jobs 表中新增 1 条，step_type=\"body_archive\"，trigger_type=\"cron\"")]
@@ -184,20 +217,34 @@ async fn given_n_records_for_hour(world: &mut TestWorld, count: usize) {
             request_id: Some(format!("upstream-{:04}", i)),
             call_type: "completion".to_string(),
             api_key: "hash-test".to_string(),
-            spend: 0.01, total_tokens: 100, prompt_tokens: 50, completion_tokens: 50,
+            spend: 0.01,
+            total_tokens: 100,
+            prompt_tokens: 50,
+            completion_tokens: 50,
             start_time: chrono::Utc::now() - chrono::Duration::hours(2),
             end_time: chrono::Utc::now() - chrono::Duration::hours(2),
-            request_duration_ms: Some(500), completion_start_time: None,
-            model: "gpt-4".to_string(), model_id: None, model_group: None,
-            custom_llm_provider: Some("openai".to_string()), api_base: None,
-            user: Some("testuser".to_string()), metadata: None,
-            cache_hit: None, cache_key: None, request_tags: None,
-            team_id: None, organization_id: None, end_user: None,
+            request_duration_ms: Some(500),
+            completion_start_time: None,
+            model: "gpt-4".to_string(),
+            model_id: None,
+            model_group: None,
+            custom_llm_provider: Some("openai".to_string()),
+            api_base: None,
+            user: Some("testuser".to_string()),
+            metadata: None,
+            cache_hit: None,
+            cache_key: None,
+            request_tags: None,
+            team_id: None,
+            organization_id: None,
+            end_user: None,
             requester_ip_address: None,
             messages: Some(serde_json::json!([{"role":"user","content":"test"}])),
             response: Some(serde_json::json!({"choices":[{}]})),
-            session_id: None, status: Some("success".to_string()),
-            mcp_namespaced_tool_name: None, agent_id: None,
+            session_id: None,
+            status: Some("success".to_string()),
+            mcp_namespaced_tool_name: None,
+            agent_id: None,
             proxy_server_request: None,
             body_archived: false,
             parquet_path: None,
@@ -214,20 +261,34 @@ async fn given_all_archived_for_hour(world: &mut TestWorld) {
         request_id: None,
         call_type: "completion".to_string(),
         api_key: "hash-test".to_string(),
-        spend: 0.01, total_tokens: 100, prompt_tokens: 50, completion_tokens: 50,
+        spend: 0.01,
+        total_tokens: 100,
+        prompt_tokens: 50,
+        completion_tokens: 50,
         start_time: chrono::Utc::now() - chrono::Duration::hours(2),
         end_time: chrono::Utc::now() - chrono::Duration::hours(2),
-        request_duration_ms: Some(500), completion_start_time: None,
-        model: "gpt-4".to_string(), model_id: None, model_group: None,
-        custom_llm_provider: Some("openai".to_string()), api_base: None,
-        user: Some("testuser".to_string()), metadata: None,
-        cache_hit: None, cache_key: None, request_tags: None,
-        team_id: None, organization_id: None, end_user: None,
+        request_duration_ms: Some(500),
+        completion_start_time: None,
+        model: "gpt-4".to_string(),
+        model_id: None,
+        model_group: None,
+        custom_llm_provider: Some("openai".to_string()),
+        api_base: None,
+        user: Some("testuser".to_string()),
+        metadata: None,
+        cache_hit: None,
+        cache_key: None,
+        request_tags: None,
+        team_id: None,
+        organization_id: None,
+        end_user: None,
         requester_ip_address: None,
         messages: Some(serde_json::json!([{"role":"user","content":"test"}])),
         response: Some(serde_json::json!({"choices":[{}]})),
-        session_id: None, status: Some("success".to_string()),
-        mcp_namespaced_tool_name: None, agent_id: None,
+        session_id: None,
+        status: Some("success".to_string()),
+        mcp_namespaced_tool_name: None,
+        agent_id: None,
         proxy_server_request: None,
         body_archived: true,
         parquet_path: Some("s3://test/exists.parquet".to_string()),
@@ -250,25 +311,43 @@ async fn given_storage_unreachable(world: &mut TestWorld) {
         request_id: Some("upstream-unreachable-001".to_string()),
         call_type: "completion".to_string(),
         api_key: "hash-unreachable".to_string(),
-        spend: 0.01, total_tokens: 100, prompt_tokens: 50, completion_tokens: 50,
+        spend: 0.01,
+        total_tokens: 100,
+        prompt_tokens: 50,
+        completion_tokens: 50,
         start_time: anchor,
         end_time: anchor,
-        request_duration_ms: Some(500), completion_start_time: None,
-        model: "gpt-4".to_string(), model_id: None, model_group: None,
-        custom_llm_provider: Some("openai".to_string()), api_base: None,
-        user: Some("testuser".to_string()), metadata: None,
-        cache_hit: None, cache_key: None, request_tags: None,
-        team_id: None, organization_id: None, end_user: None,
+        request_duration_ms: Some(500),
+        completion_start_time: None,
+        model: "gpt-4".to_string(),
+        model_id: None,
+        model_group: None,
+        custom_llm_provider: Some("openai".to_string()),
+        api_base: None,
+        user: Some("testuser".to_string()),
+        metadata: None,
+        cache_hit: None,
+        cache_key: None,
+        request_tags: None,
+        team_id: None,
+        organization_id: None,
+        end_user: None,
         requester_ip_address: None,
         messages: Some(serde_json::json!([{"role":"user","content":"storage-test"}])),
         response: Some(serde_json::json!({"choices":[{}]})),
-        session_id: None, status: Some("success".to_string()),
-        mcp_namespaced_tool_name: None, agent_id: None,
+        session_id: None,
+        status: Some("success".to_string()),
+        mcp_namespaced_tool_name: None,
+        agent_id: None,
         proxy_server_request: None,
         body_archived: false,
         parquet_path: None,
     };
-    state.db.insert_spend_log(&log).await.expect("insert unreachable test data");
+    state
+        .db
+        .insert_spend_log(&log)
+        .await
+        .expect("insert unreachable test data");
 }
 
 #[given(expr = "spend_logs 中有 50 条待归档记录")]
@@ -281,21 +360,38 @@ async fn given_50_pending_for_parquet(world: &mut TestWorld) {
             request_id: Some(format!("upstream-parquet-{:04}", i)),
             call_type: "completion".to_string(),
             api_key: "hash-test".to_string(),
-            spend: 0.01, total_tokens: 100, prompt_tokens: 50, completion_tokens: 50,
+            spend: 0.01,
+            total_tokens: 100,
+            prompt_tokens: 50,
+            completion_tokens: 50,
             start_time: chrono::Utc::now() - chrono::Duration::hours(2),
             end_time: chrono::Utc::now() - chrono::Duration::hours(2),
-            request_duration_ms: Some(500), completion_start_time: None,
-            model: "gpt-4".to_string(), model_id: None, model_group: None,
-            custom_llm_provider: Some("openai".to_string()), api_base: None,
-            user: Some("testuser".to_string()), metadata: None,
-            cache_hit: None, cache_key: None, request_tags: None,
-            team_id: None, organization_id: None, end_user: None,
+            request_duration_ms: Some(500),
+            completion_start_time: None,
+            model: "gpt-4".to_string(),
+            model_id: None,
+            model_group: None,
+            custom_llm_provider: Some("openai".to_string()),
+            api_base: None,
+            user: Some("testuser".to_string()),
+            metadata: None,
+            cache_hit: None,
+            cache_key: None,
+            request_tags: None,
+            team_id: None,
+            organization_id: None,
+            end_user: None,
             requester_ip_address: None,
             messages: Some(serde_json::json!([{"role":"user","content":"parquet-test"}])),
             response: Some(serde_json::json!({"choices":[{}]})),
-            session_id: if i % 3 == 0 { Some(format!("session-{}", i)) } else { None },
+            session_id: if i % 3 == 0 {
+                Some(format!("session-{}", i))
+            } else {
+                None
+            },
             status: Some("success".to_string()),
-            mcp_namespaced_tool_name: None, agent_id: None,
+            mcp_namespaced_tool_name: None,
+            agent_id: None,
             proxy_server_request: None,
             body_archived: false,
             parquet_path: None,
@@ -409,19 +505,30 @@ async fn then_rows_archived(world: &mut TestWorld) {
 
 #[then(expr = "step.status 更新为 completed")]
 async fn then_step_completed(world: &mut TestWorld) {
-    assert_eq!(world.last_status, Some(200), "step should complete successfully");
+    assert_eq!(
+        world.last_status,
+        Some(200),
+        "step should complete successfully"
+    );
 }
 
 #[then(regex = r"result 包含 \{rows_archived: 2, size_bytes: >0, storage_path, duration_ms\}")]
 async fn then_result_contains_fields(world: &mut TestWorld) {
     let body = world.last_body.as_ref().expect("should have body");
-    assert!(body["rows_archived"].as_u64().unwrap_or(0) > 0, "should have rows_archived > 0");
+    assert!(
+        body["rows_archived"].as_u64().unwrap_or(0) > 0,
+        "should have rows_archived > 0"
+    );
 }
 
 #[then(expr = "result.rows_archived = 0")]
 async fn then_rows_exported_zero(world: &mut TestWorld) {
     let body = world.last_body.as_ref().expect("should have body");
-    assert_eq!(body["rows_archived"].as_u64().unwrap_or(999), 0, "expected 0 rows");
+    assert_eq!(
+        body["rows_archived"].as_u64().unwrap_or(999),
+        0,
+        "expected 0 rows"
+    );
 }
 
 #[then(expr = "不上传任何文件")]
@@ -451,20 +558,34 @@ async fn given_8_day_old_archived_data(world: &mut TestWorld) {
         request_id: None,
         call_type: "completion".to_string(),
         api_key: "hash-old".to_string(),
-        spend: 0.01, total_tokens: 100, prompt_tokens: 50, completion_tokens: 50,
+        spend: 0.01,
+        total_tokens: 100,
+        prompt_tokens: 50,
+        completion_tokens: 50,
         start_time: chrono::Utc::now() - chrono::Duration::days(8),
         end_time: chrono::Utc::now() - chrono::Duration::days(8),
-        request_duration_ms: Some(500), completion_start_time: None,
-        model: "gpt-4".to_string(), model_id: None, model_group: None,
-        custom_llm_provider: Some("openai".to_string()), api_base: None,
-        user: Some("testuser".to_string()), metadata: None,
-        cache_hit: None, cache_key: None, request_tags: None,
-        team_id: None, organization_id: None, end_user: None,
+        request_duration_ms: Some(500),
+        completion_start_time: None,
+        model: "gpt-4".to_string(),
+        model_id: None,
+        model_group: None,
+        custom_llm_provider: Some("openai".to_string()),
+        api_base: None,
+        user: Some("testuser".to_string()),
+        metadata: None,
+        cache_hit: None,
+        cache_key: None,
+        request_tags: None,
+        team_id: None,
+        organization_id: None,
+        end_user: None,
         requester_ip_address: None,
         messages: Some(serde_json::json!([{"role":"user","content":"old"}])),
         response: Some(serde_json::json!({"choices":[{}]})),
-        session_id: None, status: Some("success".to_string()),
-        mcp_namespaced_tool_name: None, agent_id: None,
+        session_id: None,
+        status: Some("success".to_string()),
+        mcp_namespaced_tool_name: None,
+        agent_id: None,
         proxy_server_request: None,
         body_archived: true,
         parquet_path: Some("s3://test/old.parquet".to_string()),
@@ -480,20 +601,34 @@ async fn given_3_day_old_archived_data(world: &mut TestWorld) {
         request_id: None,
         call_type: "completion".to_string(),
         api_key: "hash-recent".to_string(),
-        spend: 0.01, total_tokens: 100, prompt_tokens: 50, completion_tokens: 50,
+        spend: 0.01,
+        total_tokens: 100,
+        prompt_tokens: 50,
+        completion_tokens: 50,
         start_time: chrono::Utc::now() - chrono::Duration::days(3),
         end_time: chrono::Utc::now() - chrono::Duration::days(3),
-        request_duration_ms: Some(500), completion_start_time: None,
-        model: "gpt-4".to_string(), model_id: None, model_group: None,
-        custom_llm_provider: Some("openai".to_string()), api_base: None,
-        user: Some("testuser".to_string()), metadata: None,
-        cache_hit: None, cache_key: None, request_tags: None,
-        team_id: None, organization_id: None, end_user: None,
+        request_duration_ms: Some(500),
+        completion_start_time: None,
+        model: "gpt-4".to_string(),
+        model_id: None,
+        model_group: None,
+        custom_llm_provider: Some("openai".to_string()),
+        api_base: None,
+        user: Some("testuser".to_string()),
+        metadata: None,
+        cache_hit: None,
+        cache_key: None,
+        request_tags: None,
+        team_id: None,
+        organization_id: None,
+        end_user: None,
         requester_ip_address: None,
         messages: Some(serde_json::json!([{"role":"user","content":"recent"}])),
         response: Some(serde_json::json!({"choices":[{}]})),
-        session_id: None, status: Some("success".to_string()),
-        mcp_namespaced_tool_name: None, agent_id: None,
+        session_id: None,
+        status: Some("success".to_string()),
+        mcp_namespaced_tool_name: None,
+        agent_id: None,
         proxy_server_request: None,
         body_archived: true,
         parquet_path: Some("s3://test/recent.parquet".to_string()),
@@ -509,20 +644,34 @@ async fn given_8_day_old_archived_record(world: &mut TestWorld) {
         request_id: None,
         call_type: "completion".to_string(),
         api_key: "hash-old".to_string(),
-        spend: 0.01, total_tokens: 100, prompt_tokens: 50, completion_tokens: 50,
+        spend: 0.01,
+        total_tokens: 100,
+        prompt_tokens: 50,
+        completion_tokens: 50,
         start_time: chrono::Utc::now() - chrono::Duration::days(8),
         end_time: chrono::Utc::now() - chrono::Duration::days(8),
-        request_duration_ms: Some(500), completion_start_time: None,
-        model: "gpt-4".to_string(), model_id: None, model_group: None,
-        custom_llm_provider: Some("openai".to_string()), api_base: None,
-        user: Some("testuser".to_string()), metadata: None,
-        cache_hit: None, cache_key: None, request_tags: None,
-        team_id: None, organization_id: None, end_user: None,
+        request_duration_ms: Some(500),
+        completion_start_time: None,
+        model: "gpt-4".to_string(),
+        model_id: None,
+        model_group: None,
+        custom_llm_provider: Some("openai".to_string()),
+        api_base: None,
+        user: Some("testuser".to_string()),
+        metadata: None,
+        cache_hit: None,
+        cache_key: None,
+        request_tags: None,
+        team_id: None,
+        organization_id: None,
+        end_user: None,
         requester_ip_address: None,
         messages: Some(serde_json::json!([{"role":"user","content":"old"}])),
         response: Some(serde_json::json!({"choices":[{}]})),
-        session_id: None, status: Some("success".to_string()),
-        mcp_namespaced_tool_name: None, agent_id: None,
+        session_id: None,
+        status: Some("success".to_string()),
+        mcp_namespaced_tool_name: None,
+        agent_id: None,
         proxy_server_request: None,
         body_archived: true,
         parquet_path: Some("s3://test/old.parquet".to_string()),
@@ -554,10 +703,15 @@ async fn do_finalize(world: &mut TestWorld, null_body_after_archive: bool) {
         trigger_type: "cron".to_string(),
         triggered_by: None,
         status: "running".to_string(),
-        total_steps: 1, completed_steps: 1, failed_steps: 0,
-        error_message: None, max_retries: 3,
-        started_at: None, completed_at: None,
-        created_at: String::new(), updated_at: String::new(),
+        total_steps: 1,
+        completed_steps: 1,
+        failed_steps: 0,
+        error_message: None,
+        max_retries: 3,
+        started_at: None,
+        completed_at: None,
+        created_at: String::new(),
+        updated_at: String::new(),
     };
     let result = archiver.finalize(&state.db, &job).await;
     match result {
@@ -598,20 +752,34 @@ async fn given_already_archived(world: &mut TestWorld) {
             request_id: None,
             call_type: "completion".to_string(),
             api_key: "hash-archived".to_string(),
-            spend: 0.01, total_tokens: 100, prompt_tokens: 50, completion_tokens: 50,
+            spend: 0.01,
+            total_tokens: 100,
+            prompt_tokens: 50,
+            completion_tokens: 50,
             start_time: chrono::Utc::now() - chrono::Duration::hours(2),
             end_time: chrono::Utc::now() - chrono::Duration::hours(2),
-            request_duration_ms: Some(500), completion_start_time: None,
-            model: "gpt-4".to_string(), model_id: None, model_group: None,
-            custom_llm_provider: Some("openai".to_string()), api_base: None,
-            user: Some("testuser".to_string()), metadata: None,
-            cache_hit: None, cache_key: None, request_tags: None,
-            team_id: None, organization_id: None, end_user: None,
+            request_duration_ms: Some(500),
+            completion_start_time: None,
+            model: "gpt-4".to_string(),
+            model_id: None,
+            model_group: None,
+            custom_llm_provider: Some("openai".to_string()),
+            api_base: None,
+            user: Some("testuser".to_string()),
+            metadata: None,
+            cache_hit: None,
+            cache_key: None,
+            request_tags: None,
+            team_id: None,
+            organization_id: None,
+            end_user: None,
             requester_ip_address: None,
             messages: Some(serde_json::json!([{"role":"user","content":"already"}])),
             response: Some(serde_json::json!({"choices":[{}]})),
-            session_id: None, status: Some("success".to_string()),
-            mcp_namespaced_tool_name: None, agent_id: None,
+            session_id: None,
+            status: Some("success".to_string()),
+            mcp_namespaced_tool_name: None,
+            agent_id: None,
             proxy_server_request: None,
             body_archived: true,
             parquet_path: Some("s3://test/existing.parquet".to_string()),
@@ -653,7 +821,11 @@ region: us-east-1
 access_key_id: test-key
 secret_access_key: test-secret
 "#;
-    set_flag(world, "storage_yaml", &serde_json::Value::String(yaml.to_string()));
+    set_flag(
+        world,
+        "storage_yaml",
+        &serde_json::Value::String(yaml.to_string()),
+    );
 }
 
 #[given(expr = "config 中 type = \"fs\"，path = \"/data/aigw/archive\"")]
@@ -662,7 +834,11 @@ async fn given_config_fs(world: &mut TestWorld) {
 type: fs
 path: /data/aigw/archive
 "#;
-    set_flag(world, "storage_yaml", &serde_json::Value::String(yaml.to_string()));
+    set_flag(
+        world,
+        "storage_yaml",
+        &serde_json::Value::String(yaml.to_string()),
+    );
 }
 
 #[when(expr = "反序列化为 StorageBackend")]
@@ -683,13 +859,21 @@ async fn when_deserialize_storage_backend(world: &mut TestWorld) {
 #[then(expr = "为 StorageBackend::S3 变体")]
 async fn then_storage_backend_s3(world: &mut TestWorld) {
     let body = world.last_body.as_ref().expect("should have body");
-    assert_eq!(body["variant"].as_str().unwrap_or(""), "s3", "expected S3 variant");
+    assert_eq!(
+        body["variant"].as_str().unwrap_or(""),
+        "s3",
+        "expected S3 variant"
+    );
 }
 
 #[then(expr = "为 StorageBackend::FileSystem 变体")]
 async fn then_storage_backend_fs(world: &mut TestWorld) {
     let body = world.last_body.as_ref().expect("should have body");
-    assert_eq!(body["variant"].as_str().unwrap_or(""), "fs", "expected FileSystem variant");
+    assert_eq!(
+        body["variant"].as_str().unwrap_or(""),
+        "fs",
+        "expected FileSystem variant"
+    );
 }
 
 // ── Helpers ──

@@ -51,12 +51,13 @@ const REQUIRED_TABLES: &[&str] = &[
     "LiteLLM_CredentialsTable",
 ];
 
-const CORE_TABLES: &[&str] = &[
-    "LiteLLM_VerificationToken",
-    "LiteLLM_ProxyModelTable",
-];
+const CORE_TABLES: &[&str] = &["LiteLLM_VerificationToken", "LiteLLM_ProxyModelTable"];
 
-pub async fn run(source_url: &str, target_url: &str, target_master_key: &str) -> anyhow::Result<bool> {
+pub async fn run(
+    source_url: &str,
+    target_url: &str,
+    target_master_key: &str,
+) -> anyhow::Result<bool> {
     let mut passed = 0u32;
     let total = 6u32;
 
@@ -353,11 +354,7 @@ mod tests {
         let src_url = format!("sqlite://{}", src_path.display());
         let tgt_url = format!("sqlite://{}", tgt_path.display());
 
-        let source = setup_source_db(
-            src_path.to_str().unwrap(),
-            &src_url,
-        )
-        .await;
+        let source = setup_source_db(src_path.to_str().unwrap(), &src_url).await;
         source.close().await;
 
         // Create target DB (empty is fine for connectivity check)
@@ -386,7 +383,7 @@ mod tests {
         create_db_file(src_path.to_str().unwrap()).await;
         let pool = connect(&src_url).await.unwrap();
         sqlx::query(
-            "CREATE TABLE IF NOT EXISTS \"LiteLLM_VerificationToken\" (id INTEGER PRIMARY KEY)"
+            "CREATE TABLE IF NOT EXISTS \"LiteLLM_VerificationToken\" (id INTEGER PRIMARY KEY)",
         )
         .execute(&pool)
         .await
@@ -418,18 +415,12 @@ mod tests {
         let src_url = format!("sqlite://{}", src_path.display());
         let tgt_url = format!("sqlite://{}", tgt_path.display());
 
-        let source = setup_source_db(
-            src_path.to_str().unwrap(),
-            &src_url,
-        )
-        .await;
+        let source = setup_source_db(src_path.to_str().unwrap(), &src_url).await;
         source.close().await;
 
         create_db_file(tgt_path.to_str().unwrap()).await;
 
-        let result = run(&src_url, &tgt_url, "short")
-            .await
-            .unwrap();
+        let result = run(&src_url, &tgt_url, "short").await.unwrap();
 
         assert!(!result, "Should fail with short target key");
     }
@@ -472,6 +463,9 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(result, "All pre-checks should pass even with empty core tables (warning only)");
+        assert!(
+            result,
+            "All pre-checks should pass even with empty core tables (warning only)"
+        );
     }
 }

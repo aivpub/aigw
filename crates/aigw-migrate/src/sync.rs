@@ -61,8 +61,7 @@ pub const DEFAULT_TABLES: &[&str] = &[
 ];
 
 /// The spend_logs body columns skipped by `--skip-body`.
-const SPEND_LOGS_BODY_COLUMNS: &[&str] =
-    &["messages", "response", "proxy_server_request"];
+const SPEND_LOGS_BODY_COLUMNS: &[&str] = &["messages", "response", "proxy_server_request"];
 
 /// Per-table result of a sync run.
 #[derive(Debug, Clone, Default)]
@@ -182,7 +181,11 @@ fn merge_resume(
     match existing {
         Some(ref s) => {
             let existing_dt = parse_iso8601(s)?;
-            Ok(if candidate > existing_dt { candidate.to_rfc3339() } else { s.clone() })
+            Ok(if candidate > existing_dt {
+                candidate.to_rfc3339()
+            } else {
+                s.clone()
+            })
         }
         None => Ok(candidate.to_rfc3339()),
     }
@@ -195,7 +198,11 @@ fn merge_end_before(
     match existing {
         Some(ref s) => {
             let existing_dt = parse_iso8601(s)?;
-            Ok(if candidate < existing_dt { candidate.to_rfc3339() } else { s.clone() })
+            Ok(if candidate < existing_dt {
+                candidate.to_rfc3339()
+            } else {
+                s.clone()
+            })
         }
         None => Ok(candidate.to_rfc3339()),
     }
@@ -407,7 +414,11 @@ pub async fn run_sync(
     let empty_overrides: HashMap<String, String> = HashMap::new();
 
     if debug {
-        eprintln!("[DEBUG] source kind: {:?}, target kind: {:?}", source.kind(), target.kind());
+        eprintln!(
+            "[DEBUG] source kind: {:?}, target kind: {:?}",
+            source.kind(),
+            target.kind()
+        );
     }
 
     let mut stats = SyncStats::default();
@@ -422,7 +433,11 @@ pub async fn run_sync(
             Ok(s) => {
                 eprintln!(
                     "  {} -> {}: inserted={} ignored={} ({:?})",
-                    table, table, s.inserted, s.ignored, t.elapsed()
+                    table,
+                    table,
+                    s.inserted,
+                    s.ignored,
+                    t.elapsed()
                 );
                 stats.per_table.insert(table.clone(), s);
             }
@@ -475,7 +490,9 @@ async fn sync_plain_table(
 ///   columns match the target by name directly — same-schema, no overrides.
 ///
 /// Returns `(id_column_name, overrides)`.
-async fn spend_logs_id_mapping(source: &SourcePool) -> anyhow::Result<(String, HashMap<String, String>)> {
+async fn spend_logs_id_mapping(
+    source: &SourcePool,
+) -> anyhow::Result<(String, HashMap<String, String>)> {
     let src_cols = source.column_types("spend_logs").await?;
     let has_call_id = src_cols.iter().any(|(n, _, _)| n == "call_id");
     let has_request_id = src_cols.iter().any(|(n, _, _)| n == "request_id");
@@ -546,14 +563,23 @@ async fn sync_spend_logs(
         eprintln!(
             "[DEBUG] insert target cols ({}): [{}]",
             filtered_cols.len(),
-            filtered_cols.iter().map(|(n, _, _)| n.as_str()).collect::<Vec<_>>().join(", ")
+            filtered_cols
+                .iter()
+                .map(|(n, _, _)| n.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
         );
         if !overrides.is_empty() {
             eprintln!("[DEBUG] column overrides {:?}", overrides);
         }
         // Print equivalent SQL that would runnon-PG path via build_aigw_cursor_sql,
         // PG uses keyset pagination which is similar but with (start_time, id) anchor).
-        let sql = source.build_aigw_cursor_sql("spend_logs", cursor, Some(batch_size), Some(&select_columns));
+        let sql = source.build_aigw_cursor_sql(
+            "spend_logs",
+            cursor,
+            Some(batch_size),
+            Some(&select_columns),
+        );
         eprintln!("[DEBUG] cursor SQL (SQLite/MySQL; PG uses keyset pagination):");
         eprintln!("[DEBUG]   {}", sql);
         eprintln!(
@@ -575,9 +601,14 @@ async fn sync_spend_logs(
     let count_sql = if conditions.is_empty() {
         format!("SELECT COUNT(*) FROM {}", quoted)
     } else {
-        format!("SELECT COUNT(*) FROM {} WHERE {}", quoted, conditions.join(" AND "))
+        format!(
+            "SELECT COUNT(*) FROM {} WHERE {}",
+            quoted,
+            conditions.join(" AND ")
+        )
     };
-    let total_est = source.query_scalar_string(&count_sql)
+    let total_est = source
+        .query_scalar_string(&count_sql)
         .await
         .ok()
         .flatten()
@@ -602,7 +633,10 @@ async fn sync_spend_logs(
     let mut last_cursor: Option<String> = None;
     let mut buf: Vec<UnifiedRow> = Vec::with_capacity(batch_size);
     let mut write_acc = std::time::Duration::ZERO;
-    eprintln!("  [START] spend_logs: streaming from source, batch_size={} ...", batch_size);
+    eprintln!(
+        "  [START] spend_logs: streaming from source, batch_size={} ...",
+        batch_size
+    );
     while let Some(row_res) = stream.next().await {
         let row = row_res?;
         // Track cursor position for progress reporting.
@@ -657,7 +691,8 @@ async fn sync_spend_logs(
     }
     if !buf.is_empty() {
         let (ins, ign) =
-            native::insert_rows_batch(target, "spend_logs", &filtered_cols, &buf, &overrides).await?;
+            native::insert_rows_batch(target, "spend_logs", &filtered_cols, &buf, &overrides)
+                .await?;
         inserted_total += ins;
         ignored_total += ign;
     }

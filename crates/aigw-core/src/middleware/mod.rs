@@ -216,6 +216,7 @@ mod tests {
             tpm_limit: None,
             rpm_limit: None,
             max_budget: None,
+            soft_budget: None,
             budget_duration: None,
             budget_reset_at: None,
             allowed_cache_controls: json!([]),

@@ -2,15 +2,12 @@
 //!
 //! Tests the Anthropic Native upstream adapters: AnthropicPassthrough and OpenAIToAnthropic.
 
-use cucumber::{given, then, when};
-use cucumber::gherkin::Step;
-use aigw_core::adapter::{
-    ClientProtocol, MessageAdapter, select_adapter,
-    AnthropicPassthrough,
-};
-use aigw_core::deployment::{Deployment, ProviderType};
-use serde_json::json;
 use crate::TestWorld;
+use aigw_core::adapter::{select_adapter, AnthropicPassthrough, ClientProtocol, MessageAdapter};
+use aigw_core::deployment::{Deployment, ProviderType};
+use cucumber::gherkin::Step;
+use cucumber::{given, then, when};
+use serde_json::json;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // State helpers in TestWorld
@@ -24,7 +21,11 @@ struct ScenarioAdapter {
 
 impl ScenarioAdapter {
     fn new() -> Self {
-        Self { adapter: None, deployment: None, adapted: None }
+        Self {
+            adapter: None,
+            deployment: None,
+            adapted: None,
+        }
     }
 }
 
@@ -75,7 +76,11 @@ async fn then_client_protocol(_world: &mut TestWorld, expected: String) {
         let state = s.borrow();
         let adapter = state.adapter.expect("no adapter selected");
         let actual = format!("{:?}", adapter.client_protocol());
-        assert_eq!(actual, expected, "expected client_protocol {:?}, got {:?}", expected, actual);
+        assert_eq!(
+            actual, expected,
+            "expected client_protocol {:?}, got {:?}",
+            expected, actual
+        );
     });
 }
 
@@ -95,7 +100,7 @@ async fn given_passthrough_adapter(_world: &mut TestWorld) {
 async fn given_anthropic_deployment(_world: &mut TestWorld, model: String) {
     ADAPTER_STATE.with(|s| {
         let mut state = s.borrow_mut();
-               state.deployment = Some(Deployment {
+        state.deployment = Some(Deployment {
             api_base: "https://api.anthropic.com/v1".into(),
             api_key: Some("sk-ant-test-key".into()),
             upstream_model: model,

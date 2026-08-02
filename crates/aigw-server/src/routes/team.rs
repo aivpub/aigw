@@ -8,8 +8,8 @@
 //! - DELETE /team/delete — Delete a team
 //! - GET    /team/deleted — List deleted teams
 
-use aigw_core::models::Team;
 use aigw_core::db::Database;
+use aigw_core::models::Team;
 use axum::{extract::State, http::StatusCode, Json};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -36,7 +36,9 @@ async fn validate_team_budget(
                     if org_max > 0.0 && team_max_budget > org_max {
                         return Err((
                             StatusCode::BAD_REQUEST,
-                            Json(json!({"error": {"message": "Team budget cannot exceed organization budget", "type": "budget_violation"}})),
+                            Json(
+                                json!({"error": {"message": "Team budget cannot exceed organization budget", "type": "budget_violation"}}),
+                            ),
                         ));
                     }
                 }
@@ -85,34 +87,73 @@ pub async fn team_new(
             .get("team_alias")
             .and_then(|v| v.as_str())
             .map(String::from),
-        organization_id: body.get("organization_id").and_then(|v| v.as_str()).map(String::from),
-        object_permission_id: body.get("object_permission_id").and_then(|v| v.as_str()).map(String::from),
+        organization_id: body
+            .get("organization_id")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        object_permission_id: body
+            .get("object_permission_id")
+            .and_then(|v| v.as_str())
+            .map(String::from),
         admins: body.get("admins").cloned().unwrap_or(json!([])),
         members: body.get("members").cloned().unwrap_or(json!([])),
         members_with_roles: body.get("members_with_roles").cloned().unwrap_or(json!([])),
         metadata: body.get("metadata").cloned().unwrap_or(json!({})),
-        max_budget: body.get("max_budget").and_then(|v| v.as_f64()).map(|v| v.to_string()),
-        soft_budget: body.get("soft_budget").and_then(|v| v.as_f64()).map(|v| v.to_string()),
+        max_budget: body
+            .get("max_budget")
+            .and_then(|v| v.as_f64())
+            .map(|v| v.to_string()),
+        soft_budget: body
+            .get("soft_budget")
+            .and_then(|v| v.as_f64())
+            .map(|v| v.to_string()),
         spend: 0.0,
         models: body.get("models").cloned().unwrap_or(json!([])),
-        max_parallel_requests: body.get("max_parallel_requests").and_then(|v| v.as_i64()).map(|v| v.to_string()),
-        tpm_limit: body.get("tpm_limit").and_then(|v| v.as_i64()).map(|v| v.to_string()),
-        rpm_limit: body.get("rpm_limit").and_then(|v| v.as_i64()).map(|v| v.to_string()),
-        budget_duration: body.get("budget_duration").and_then(|v| v.as_str()).map(String::from),
+        max_parallel_requests: body
+            .get("max_parallel_requests")
+            .and_then(|v| v.as_i64())
+            .map(|v| v.to_string()),
+        tpm_limit: body
+            .get("tpm_limit")
+            .and_then(|v| v.as_i64())
+            .map(|v| v.to_string()),
+        rpm_limit: body
+            .get("rpm_limit")
+            .and_then(|v| v.as_i64())
+            .map(|v| v.to_string()),
+        budget_duration: body
+            .get("budget_duration")
+            .and_then(|v| v.as_str())
+            .map(String::from),
         budget_reset_at: None,
-        blocked: body.get("blocked").and_then(|v| v.as_bool()).unwrap_or(false),
+        blocked: body
+            .get("blocked")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
         created_at: now,
         updated_at: now,
         model_spend: body.get("model_spend").cloned().unwrap_or(json!({})),
         model_max_budget: body.get("model_max_budget").cloned().unwrap_or(json!({})),
         router_settings: body.get("router_settings").cloned(),
-        team_member_permissions: body.get("team_member_permissions").cloned().unwrap_or(json!([])),
+        team_member_permissions: body
+            .get("team_member_permissions")
+            .cloned()
+            .unwrap_or(json!([])),
         access_group_ids: body.get("access_group_ids").cloned().unwrap_or(json!([])),
         policies: body.get("policies").cloned().unwrap_or(json!([])),
-        default_team_member_models: body.get("default_team_member_models").cloned().unwrap_or(json!([])),
+        default_team_member_models: body
+            .get("default_team_member_models")
+            .cloned()
+            .unwrap_or(json!([])),
         budget_limits: body.get("budget_limits").cloned(),
-        model_id: body.get("model_id").and_then(|v| v.as_i64()).map(|v| v as i32),
-        allow_team_guardrail_config: body.get("allow_team_guardrail_config").and_then(|v| v.as_bool()).unwrap_or(false),
+        model_id: body
+            .get("model_id")
+            .and_then(|v| v.as_i64())
+            .map(|v| v as i32),
+        allow_team_guardrail_config: body
+            .get("allow_team_guardrail_config")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
     };
 
     // Validate budget hierarchy: team budget cannot exceed organization budget
@@ -129,7 +170,9 @@ pub async fn team_new(
         )
     })?;
 
-    Ok(Json(serde_json::to_value(&team).unwrap_or(json!({"team_id": team_id}))))
+    Ok(Json(
+        serde_json::to_value(&team).unwrap_or(json!({"team_id": team_id})),
+    ))
 }
 
 /// GET /team/info?team_id=...
@@ -176,7 +219,9 @@ pub async fn team_list(
     let limit = page_size as i64;
 
     let (teams, total_count) = tokio::try_join!(
-        state.db.list_teams_paged(query.organization_id.as_deref(), limit, offset),
+        state
+            .db
+            .list_teams_paged(query.organization_id.as_deref(), limit, offset),
         state.db.count_teams_store(query.organization_id.as_deref()),
     )
     .map_err(|e| {
@@ -222,13 +267,10 @@ pub async fn team_update(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&auth)?;
 
-    let team_id = body
-        .get("team_id")
-        .and_then(|v| v.as_str())
-        .ok_or((
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": {"message": "team_id is required", "type": "bad_request"}})),
-        ))?;
+    let team_id = body.get("team_id").and_then(|v| v.as_str()).ok_or((
+        StatusCode::BAD_REQUEST,
+        Json(json!({"error": {"message": "team_id is required", "type": "bad_request"}})),
+    ))?;
 
     let mut existing = state
         .db

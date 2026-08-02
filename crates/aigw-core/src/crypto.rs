@@ -48,8 +48,8 @@ fn derive_key(master_key: &str) -> [u8; 32] {
 /// 600 000 PBKDF2 iterations (several seconds in debug builds) on data that
 /// was never GCM-encrypted.
 pub fn decrypt_litellm_value(encrypted_b64: &str, master_key: &str) -> Result<String, String> {
-    let data = decode_base64_safe(encrypted_b64)
-        .map_err(|e| format!("base64 decode failed: {}", e))?;
+    let data =
+        decode_base64_safe(encrypted_b64).map_err(|e| format!("base64 decode failed: {}", e))?;
 
     // Check for v2:gcm: prefix indicating AES-256-GCM encrypted values.
     // litellm always writes this prefix for GCM-encrypted values.
@@ -105,8 +105,7 @@ fn decrypt_gcm(data: &[u8], master_key: &str) -> Result<String, String> {
     // Derive key using PBKDF2 with SHA-256
     let key = derive_gcm_key(master_key, salt);
 
-    let cipher = Aes256Gcm::new_from_slice(&key)
-        .map_err(|e| format!("invalid AES key: {}", e))?;
+    let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| format!("invalid AES key: {}", e))?;
 
     use aes_gcm::aead::consts::U12;
     let nonce = <&aes_gcm::Nonce<U12>>::try_from(nonce_bytes)
@@ -186,9 +185,11 @@ pub fn decrypt_json_fields(value: &Value, master_key: &str) -> Value {
             }
             Value::Object(out)
         }
-        Value::Array(arr) => {
-            Value::Array(arr.iter().map(|v| decrypt_json_fields(v, master_key)).collect())
-        }
+        Value::Array(arr) => Value::Array(
+            arr.iter()
+                .map(|v| decrypt_json_fields(v, master_key))
+                .collect(),
+        ),
         Value::String(s) if !s.is_empty() && !s.starts_with('{') => {
             match decrypt_litellm_value(s, master_key) {
                 Ok(decrypted) => {
@@ -220,11 +221,7 @@ pub fn rotate_json_fields(
     Ok(serde_json::to_string(&rotated).unwrap_or_else(|_| "{}".to_string()))
 }
 
-fn rotate_fields_inner(
-    value: &Value,
-    source_key: &str,
-    target_key: &str,
-) -> Result<Value, String> {
+fn rotate_fields_inner(value: &Value, source_key: &str, target_key: &str) -> Result<Value, String> {
     match value {
         Value::Object(map) => {
             let mut out = serde_json::Map::new();
@@ -244,9 +241,7 @@ fn rotate_fields_inner(
             // Try decrypting with source key; if it succeeds, re-encrypt with target key.
             // If decrypt fails, it's plain text — leave untouched.
             match decrypt_litellm_value(s, source_key) {
-                Ok(plaintext) => {
-                    encrypt_litellm_value(&plaintext, target_key).map(Value::String)
-                }
+                Ok(plaintext) => encrypt_litellm_value(&plaintext, target_key).map(Value::String),
                 Err(_) => Ok(value.clone()),
             }
         }
@@ -373,8 +368,7 @@ mod tests {
     #[test]
     fn test_encrypt_decrypt_roundtrip() {
         let master_key = "sk-test-master-key-12345";
-        let plaintext =
-            r#"{"api_key":"sk-secret-value","api_base":"https://api.openai.com"}"#;
+        let plaintext = r#"{"api_key":"sk-secret-value","api_base":"https://api.openai.com"}"#;
 
         let encrypted = encrypt_litellm_value(plaintext, master_key).unwrap();
         let decrypted = decrypt_litellm_value(&encrypted, master_key).unwrap();
@@ -542,7 +536,10 @@ mod tests {
         assert_eq!(result["model"], serde_json::json!("gpt-4"));
         assert_eq!(result["rpm"], serde_json::json!(100));
         assert_eq!(result["tpm"], serde_json::json!(2000));
-        assert_eq!(result["api_base"], serde_json::json!("https://plain.example.com"));
+        assert_eq!(
+            result["api_base"],
+            serde_json::json!("https://plain.example.com")
+        );
     }
 
     #[test]
@@ -564,8 +561,14 @@ mod tests {
         });
         let result = decrypt_json_fields(&params, "test-master-key");
         assert_eq!(result["model"], serde_json::json!("bedrock"));
-        assert_eq!(result["litellm_params"]["deployment"], serde_json::json!(plain_deployment));
-        assert_eq!(result["litellm_params"]["region"], serde_json::json!("us-east-1"));
+        assert_eq!(
+            result["litellm_params"]["deployment"],
+            serde_json::json!(plain_deployment)
+        );
+        assert_eq!(
+            result["litellm_params"]["region"],
+            serde_json::json!("us-east-1")
+        );
     }
 
     #[test]
@@ -592,7 +595,10 @@ mod tests {
             "litellm_credential_name": make_encrypted(plain_cred_name),
         });
         let result = decrypt_json_fields(&params, "test-master-key");
-        assert_eq!(result["litellm_credential_name"], serde_json::json!(plain_cred_name));
+        assert_eq!(
+            result["litellm_credential_name"],
+            serde_json::json!(plain_cred_name)
+        );
     }
 
     #[test]
@@ -602,7 +608,10 @@ mod tests {
         let encrypted = make_encrypted(plain);
         let result = decrypt_json_fields(&serde_json::json!(encrypted), "test-master-key");
         assert_eq!(result["model"], serde_json::json!("gpt-4"));
-        assert_eq!(result["api_base"], serde_json::json!("https://api.openai.com"));
+        assert_eq!(
+            result["api_base"],
+            serde_json::json!("https://api.openai.com")
+        );
     }
 
     // ━━━━━━━━━━━ rotate_json_fields tests ━━━━━━━━━━━
@@ -711,7 +720,11 @@ mod tests {
         let plain = r#"{"model":"gpt-4"}"#;
         let encoded = BASE64_STD.encode(plain.as_bytes());
         // Insert newlines mid-string the way a JSON column might.
-        let with_newlines = format!("{}\n{}", &encoded[..encoded.len() / 2], &encoded[encoded.len() / 2..]);
+        let with_newlines = format!(
+            "{}\n{}",
+            &encoded[..encoded.len() / 2],
+            &encoded[encoded.len() / 2..]
+        );
         let envelope = format!("base64:type15:{}", with_newlines);
 
         let decoded = decode_base64_type15(&envelope).unwrap();

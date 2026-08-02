@@ -94,7 +94,11 @@ fn get_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
         .map(|s| s.trim())
         .find_map(|part| {
             let (k, v) = part.split_once('=')?;
-            if k == name { Some(v.to_string()) } else { None }
+            if k == name {
+                Some(v.to_string())
+            } else {
+                None
+            }
         })
 }
 
@@ -107,15 +111,12 @@ pub async fn login(
     State(state): State<SharedState>,
     Json(req): Json<LoginRequest>,
 ) -> Result<(StatusCode, [(String, String); 1], Json<Value>), (StatusCode, Json<Value>)> {
-    let master_key = state
-        .master_key
-        .as_ref()
-        .ok_or_else(|| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": {"message": "Server misconfigured", "type": "server_error"}})),
-            )
-        })?;
+    let master_key = state.master_key.as_ref().ok_or_else(|| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {"message": "Server misconfigured", "type": "server_error"}})),
+        )
+    })?;
 
     let username = req.username.trim();
     let password = req.password;
@@ -144,7 +145,9 @@ pub async fn login(
                 if !valid {
                     return Err((
                         StatusCode::UNAUTHORIZED,
-                        Json(json!({"error": {"message": "Invalid credentials", "type": "auth_error"}})),
+                        Json(
+                            json!({"error": {"message": "Invalid credentials", "type": "auth_error"}}),
+                        ),
                     ));
                 }
                 user_id = user.user_id;
@@ -152,7 +155,9 @@ pub async fn login(
             Ok(None) => {
                 return Err((
                     StatusCode::UNAUTHORIZED,
-                    Json(json!({"error": {"message": "Invalid credentials", "type": "auth_error"}})),
+                    Json(
+                        json!({"error": {"message": "Invalid credentials", "type": "auth_error"}}),
+                    ),
                 ));
             }
             Err(_) => {
@@ -280,7 +285,11 @@ pub async fn logout_with_cleanup(
     State(state): State<SharedState>,
     headers: HeaderMap,
 ) -> Result<(StatusCode, [(String, String); 1], Json<Value>), (StatusCode, Json<Value>)> {
-    let master_key = state.master_key.as_ref().map(|k| k.clone()).unwrap_or_default();
+    let master_key = state
+        .master_key
+        .as_ref()
+        .map(|k| k.clone())
+        .unwrap_or_default();
 
     // Extract JWT from cookie and delete the session key
     if let Some(token) = get_cookie(&headers, "token") {
@@ -302,7 +311,11 @@ pub async fn login_check(
     State(state): State<SharedState>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let master_key = state.master_key.as_ref().map(|k| k.clone()).unwrap_or_default();
+    let master_key = state
+        .master_key
+        .as_ref()
+        .map(|k| k.clone())
+        .unwrap_or_default();
 
     let token = get_cookie(&headers, "token").ok_or_else(|| {
         (
@@ -350,8 +363,8 @@ mod tests {
     use aigw_core::db::Database;
     use aigw_core::provider::ProviderRegistry;
     use aigw_core::rate_limiter::RateLimiter;
+    use aigw_core::resolver::ModelResolver;
     use aigw_core::router::{Router as AigwRouter, RouterState};
-use aigw_core::resolver::ModelResolver;
     use axum::{
         body::Body,
         http::{header, Method, Request},
@@ -378,8 +391,9 @@ use aigw_core::resolver::ModelResolver;
             deployment_mode: "onprem".to_string(),
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
-  otel_active: false,
-            body_archiver: None,            metrics: None,
+            otel_active: false,
+            body_archiver: None,
+            metrics: None,
         });
         Router::new()
             .route("/v2/login", axum::routing::post(login))
@@ -414,7 +428,9 @@ use aigw_core::resolver::ModelResolver;
             .map(|v| v.to_str().unwrap().to_string())
             .collect();
         assert!(
-            cookies.iter().any(|c| c.contains("token=") && c.contains("HttpOnly")),
+            cookies
+                .iter()
+                .any(|c| c.contains("token=") && c.contains("HttpOnly")),
             "Expected HttpOnly cookie, got: {:?}",
             cookies
         );

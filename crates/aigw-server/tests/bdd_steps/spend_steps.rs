@@ -1,7 +1,7 @@
 //! Step bindings for spend.feature, global.feature, and spend_aggregation.feature
 
-use cucumber::{given, when};
 use axum::http::Method;
+use cucumber::{given, when};
 
 use super::common::{build_spend_router, make_request};
 use crate::TestWorld;
@@ -86,6 +86,7 @@ async fn given_regular_key(world: &mut TestWorld, alias: String) {
         tpm_limit: None,
         rpm_limit: None,
         max_budget: None,
+        soft_budget: None,
         budget_duration: None,
         budget_reset_at: None,
         allowed_cache_controls: serde_json::json!([]),
@@ -134,7 +135,14 @@ async fn when_key_get_global_spend_providers(world: &mut TestWorld, alias: Strin
     let state = world.ensure_state().await;
     let app = build_spend_router(state);
     let token = world.created_keys.get(&alias).expect("key not found");
-    let (s, b) = make_request(&app, Method::GET, "/global/spend/providers", Some(token), None).await;
+    let (s, b) = make_request(
+        &app,
+        Method::GET,
+        "/global/spend/providers",
+        Some(token),
+        None,
+    )
+    .await;
     world.last_status = Some(s);
     world.last_body = b;
 }
@@ -164,7 +172,14 @@ async fn when_key_get_spend_logs_filtered_model(world: &mut TestWorld, alias: St
     let state = world.ensure_state().await;
     let app = build_spend_router(state);
     let token = world.created_keys.get(&alias).expect("key not found");
-    let (s, b) = make_request(&app, Method::GET, "/spend/logs?model=gpt-4", Some(token), None).await;
+    let (s, b) = make_request(
+        &app,
+        Method::GET,
+        "/spend/logs?model=gpt-4",
+        Some(token),
+        None,
+    )
+    .await;
     world.last_status = Some(s);
     world.last_body = b;
 }
@@ -224,7 +239,9 @@ async fn when_key_get_spend_logs_request_id(world: &mut TestWorld, alias: String
     world.last_body = b;
 }
 
-#[when(expr = "使用 master-key 发送 GET \\/global\\/spend\\/logs 请求带 page=1&page_size=5&request_id=nonexistent")]
+#[when(
+    expr = "使用 master-key 发送 GET \\/global\\/spend\\/logs 请求带 page=1&page_size=5&request_id=nonexistent"
+)]
 async fn when_master_get_global_spend_logs_paginated(world: &mut TestWorld) {
     let state = world.ensure_state().await;
     let app = build_spend_router(state);
@@ -260,7 +277,14 @@ async fn when_master_get_global_spend_providers(world: &mut TestWorld) {
     let state = world.ensure_state().await;
     let app = build_spend_router(state);
     let mk = world.master_key.clone();
-    let (s, b) = make_request(&app, Method::GET, "/global/spend/providers", Some(&mk), None).await;
+    let (s, b) = make_request(
+        &app,
+        Method::GET,
+        "/global/spend/providers",
+        Some(&mk),
+        None,
+    )
+    .await;
     world.last_status = Some(s);
     world.last_body = b;
 }
@@ -316,10 +340,14 @@ async fn given_spend_log_basic(world: &mut TestWorld, request_id: String) {
         mcp_namespaced_tool_name: None,
         agent_id: None,
         proxy_server_request: None,
-    body_archived: false,
-    parquet_path: None,
+        body_archived: false,
+        parquet_path: None,
     };
-    state.db.insert_spend_log(&log).await.expect("insert spend log");
+    state
+        .db
+        .insert_spend_log(&log)
+        .await
+        .expect("insert spend log");
 }
 
 #[given(expr = "一个支出记录 {string} 含 body 已入库")]
@@ -359,10 +387,14 @@ async fn given_spend_log_with_body(world: &mut TestWorld, request_id: String) {
         mcp_namespaced_tool_name: None,
         agent_id: None,
         proxy_server_request: None,
-    body_archived: false,
-    parquet_path: None,
+        body_archived: false,
+        parquet_path: None,
     };
-    state.db.insert_spend_log(&log).await.expect("insert spend log");
+    state
+        .db
+        .insert_spend_log(&log)
+        .await
+        .expect("insert spend log");
 }
 
 #[when(expr = "使用 master-key 发送 GET \\/global\\/spend\\/logs\\/{word} 请求")]
@@ -405,11 +437,22 @@ async fn then_body_has_keys(world: &mut TestWorld, key1: String, key2: String) {
 #[then(expr = "响应 data 不含 {string} 和 {string} 字段")]
 async fn then_data_has_no_keys(world: &mut TestWorld, key1: String, key2: String) {
     let body = world.last_body.as_ref().expect("no response body");
-    let data = body.get("data").and_then(|v| v.as_array()).expect("data array");
+    let data = body
+        .get("data")
+        .and_then(|v| v.as_array())
+        .expect("data array");
     assert!(!data.is_empty(), "data array is empty");
     let first = &data[0];
-    assert!(first.get(&key1).is_none(), "data should not have key: {}", key1);
-    assert!(first.get(&key2).is_none(), "data should not have key: {}", key2);
+    assert!(
+        first.get(&key1).is_none(),
+        "data should not have key: {}",
+        key1
+    );
+    assert!(
+        first.get(&key2).is_none(),
+        "data should not have key: {}",
+        key2
+    );
 }
 
 // ━━━━ Stage 85: call_id + upstream request_id 双列验收 ━━━━
@@ -460,7 +503,11 @@ async fn given_spend_log_with_upstream_id(world: &mut TestWorld, call_id: String
         body_archived: false,
         parquet_path: None,
     };
-    state.db.insert_spend_log(&log).await.expect("insert spend log");
+    state
+        .db
+        .insert_spend_log(&log)
+        .await
+        .expect("insert spend log");
 }
 
 #[then(expr = "响应 body 的 call_id 为 {string}")]
@@ -473,8 +520,14 @@ async fn then_body_call_id_is(world: &mut TestWorld, expected: String) {
 #[then(expr = "响应 body 的 request_id 为 {string}")]
 async fn then_body_request_id_is(world: &mut TestWorld, expected: String) {
     let body = world.last_body.as_ref().expect("no response body");
-    let got = body.get("request_id").and_then(|v| v.as_str()).unwrap_or("");
-    assert_eq!(got, expected, "upstream request_id mismatch — core expectation (reconciliation) broken");
+    let got = body
+        .get("request_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    assert_eq!(
+        got, expected,
+        "upstream request_id mismatch — core expectation (reconciliation) broken"
+    );
 }
 
 #[when(expr = "使用 master-key 发送 GET \\/global\\/spend\\/logs 请求搜索 request_id 为 {string}")]
@@ -491,13 +544,24 @@ async fn when_master_search_by_request_id(world: &mut TestWorld, search: String)
 #[then(expr = "响应 data 包含 call_id 为 {string} 的记录")]
 async fn then_data_contains_call_id(world: &mut TestWorld, expected: String) {
     let body = world.last_body.as_ref().expect("no response body");
-    let data = body.get("data").and_then(|v| v.as_array()).expect("data array");
+    let data = body
+        .get("data")
+        .and_then(|v| v.as_array())
+        .expect("data array");
     // Diagnostic: list present call_ids on miss so the failure is actionable
     // (the global list endpoint paginates page_size=30; test DBs are ephemeral
     // so the seeded rows land on page 1).
-    let found = data.iter().any(|r| r.get("call_id").and_then(|v| v.as_str()) == Some(expected.as_str()));
+    let found = data
+        .iter()
+        .any(|r| r.get("call_id").and_then(|v| v.as_str()) == Some(expected.as_str()));
     if !found {
-        let present: Vec<&str> = data.iter().filter_map(|r| r.get("call_id").and_then(|v| v.as_str())).collect();
-        panic!("no row in data has call_id = {} (present call_ids: {:?})", expected, present);
+        let present: Vec<&str> = data
+            .iter()
+            .filter_map(|r| r.get("call_id").and_then(|v| v.as_str()))
+            .collect();
+        panic!(
+            "no row in data has call_id = {} (present call_ids: {:?})",
+            expected, present
+        );
     }
 }

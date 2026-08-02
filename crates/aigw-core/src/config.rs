@@ -1,8 +1,8 @@
 //! Configuration types compatible with litellm proxy config.yaml format
 
-use serde::{Deserialize, Serialize};
-use crate::otel_tracing::OtelConfig;
 use crate::body_archive::config::BodyArchiveConfig;
+use crate::otel_tracing::OtelConfig;
+use serde::{Deserialize, Serialize};
 
 /// Budget reset configuration.
 ///
@@ -15,7 +15,9 @@ pub struct BudgetResetConfig {
     pub enabled: bool,
 }
 
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
 /// Top-level config (litellm-compatible)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,7 +95,10 @@ pub struct GeneralSettings {
     /// which covers large LLM requests (long context, tool definitions, base64
     /// attachments) while still capping abuse. Set to 0 to restore axum's built-in
     /// 2 MiB default.
-    #[serde(rename = "request_body_limit_mb", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "request_body_limit_mb",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub request_body_limit_mb: Option<u32>,
 }
 
@@ -124,8 +129,12 @@ impl Default for CompressionConfig {
     }
 }
 
-fn default_compression_enabled() -> bool { true }
-fn default_compression_level() -> u32 { 6 }
+fn default_compression_enabled() -> bool {
+    true
+}
+fn default_compression_level() -> u32 {
+    6
+}
 fn default_compression_algorithms() -> Vec<String> {
     vec!["gzip".into(), "deflate".into(), "brotli".into()]
 }
@@ -145,7 +154,11 @@ pub const DEFAULT_REQUEST_BODY_LIMIT_MB: u32 = 32;
 pub fn resolve_body_limit_bytes(mb: Option<u32>) -> Option<usize> {
     match mb.unwrap_or(DEFAULT_REQUEST_BODY_LIMIT_MB) {
         0 => None,
-        n => Some(usize::try_from(n).unwrap_or(usize::MAX).saturating_mul(1024 * 1024)),
+        n => Some(
+            usize::try_from(n)
+                .unwrap_or(usize::MAX)
+                .saturating_mul(1024 * 1024),
+        ),
     }
 }
 
@@ -238,10 +251,7 @@ mod tests {
 
     #[test]
     fn body_limit_unset_defaults_to_32mib() {
-        assert_eq!(
-            resolve_body_limit_bytes(None),
-            Some(32 * 1024 * 1024)
-        );
+        assert_eq!(resolve_body_limit_bytes(None), Some(32 * 1024 * 1024));
     }
 
     #[test]

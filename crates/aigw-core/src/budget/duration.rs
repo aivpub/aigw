@@ -4,7 +4,7 @@
 //! and computes the next reset_at timestamp aligned to period boundaries
 //! (compatible with litellm's budget reset semantics).
 
-use chrono::{Datelike, DateTime, Duration, TimeZone, Utc, Weekday};
+use chrono::{DateTime, Datelike, Duration, TimeZone, Utc, Weekday};
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Duration parsing
@@ -90,14 +90,7 @@ pub fn compute_next_reset_at(
         86400 => {
             let tomorrow = now + Duration::days(1);
             let midnight = Utc
-                .with_ymd_and_hms(
-                    tomorrow.year(),
-                    tomorrow.month(),
-                    tomorrow.day(),
-                    0,
-                    0,
-                    0,
-                )
+                .with_ymd_and_hms(tomorrow.year(), tomorrow.month(), tomorrow.day(), 0, 0, 0)
                 .single()?;
             Some(midnight)
         }
@@ -211,7 +204,10 @@ mod tests {
     #[test]
     fn compute_next_24h() {
         // 2026-08-02T14:30:00Z → next UTC midnight = 2026-08-03T00:00:00Z
-        let now = Utc.with_ymd_and_hms(2026, 8, 2, 14, 30, 0).single().unwrap();
+        let now = Utc
+            .with_ymd_and_hms(2026, 8, 2, 14, 30, 0)
+            .single()
+            .unwrap();
         let next = compute_next_reset_at("24h", now, None, None).unwrap();
         let expected = Utc.with_ymd_and_hms(2026, 8, 3, 0, 0, 0).single().unwrap();
         assert_eq!(next, expected);
@@ -220,7 +216,10 @@ mod tests {
     #[test]
     fn compute_next_7d_from_monday() {
         // Monday 2026-07-27T10:00:00Z → next Monday = 2026-08-03T00:00:00Z
-        let now = Utc.with_ymd_and_hms(2026, 7, 27, 10, 0, 0).single().unwrap();
+        let now = Utc
+            .with_ymd_and_hms(2026, 7, 27, 10, 0, 0)
+            .single()
+            .unwrap();
         let next = compute_next_reset_at("7d", now, None, None).unwrap();
         let expected = Utc.with_ymd_and_hms(2026, 8, 3, 0, 0, 0).single().unwrap();
         assert_eq!(next, expected);
@@ -229,7 +228,10 @@ mod tests {
     #[test]
     fn compute_next_7d_from_wednesday() {
         // Wednesday 2026-07-29T10:00:00Z → next Monday = 2026-08-03T00:00:00Z
-        let now = Utc.with_ymd_and_hms(2026, 7, 29, 10, 0, 0).single().unwrap();
+        let now = Utc
+            .with_ymd_and_hms(2026, 7, 29, 10, 0, 0)
+            .single()
+            .unwrap();
         let next = compute_next_reset_at("7d", now, None, None).unwrap();
         let expected = Utc.with_ymd_and_hms(2026, 8, 3, 0, 0, 0).single().unwrap();
         assert_eq!(next, expected);
@@ -247,7 +249,10 @@ mod tests {
     #[test]
     fn compute_next_1mo() {
         // 2026-08-15T10:00:00Z → 1st of next month = 2026-09-01T00:00:00Z
-        let now = Utc.with_ymd_and_hms(2026, 8, 15, 10, 0, 0).single().unwrap();
+        let now = Utc
+            .with_ymd_and_hms(2026, 8, 15, 10, 0, 0)
+            .single()
+            .unwrap();
         let next = compute_next_reset_at("1mo", now, None, None).unwrap();
         let expected = Utc.with_ymd_and_hms(2026, 9, 1, 0, 0, 0).single().unwrap();
         assert_eq!(next, expected);
@@ -256,7 +261,10 @@ mod tests {
     #[test]
     fn compute_next_1mo_december_rollover() {
         // 2026-12-15T10:00:00Z → 1st of next month = 2027-01-01T00:00:00Z
-        let now = Utc.with_ymd_and_hms(2026, 12, 15, 10, 0, 0).single().unwrap();
+        let now = Utc
+            .with_ymd_and_hms(2026, 12, 15, 10, 0, 0)
+            .single()
+            .unwrap();
         let next = compute_next_reset_at("1mo", now, None, None).unwrap();
         let expected = Utc.with_ymd_and_hms(2027, 1, 1, 0, 0, 0).single().unwrap();
         assert_eq!(next, expected);
@@ -265,14 +273,20 @@ mod tests {
     #[test]
     fn compute_next_1h() {
         // Short duration: now + 1h, no alignment
-        let now = Utc.with_ymd_and_hms(2026, 8, 2, 14, 30, 0).single().unwrap();
+        let now = Utc
+            .with_ymd_and_hms(2026, 8, 2, 14, 30, 0)
+            .single()
+            .unwrap();
         let next = compute_next_reset_at("1h", now, None, None).unwrap();
         assert_eq!(next, now + Duration::hours(1));
     }
 
     #[test]
     fn compute_next_30s() {
-        let now = Utc.with_ymd_and_hms(2026, 8, 2, 14, 30, 0).single().unwrap();
+        let now = Utc
+            .with_ymd_and_hms(2026, 8, 2, 14, 30, 0)
+            .single()
+            .unwrap();
         let next = compute_next_reset_at("30s", now, None, None).unwrap();
         assert_eq!(next, now + Duration::seconds(30));
     }

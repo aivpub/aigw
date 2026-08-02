@@ -13,11 +13,11 @@
 //! read_body_from_storage_with_store / archive_rows_to_storage) and the
 //! build_object_store_for_backend / resolve_env_placeholders helpers.
 
-use aigw_core::body_archive::BodyArchiver;
 use aigw_core::body_archive::config::{BodyArchiveConfig, StorageBackend};
 use aigw_core::body_archive::query::BodyPayload;
 use aigw_core::body_archive::storage::{build_object_store_for_backend, resolve_env_placeholders};
 use aigw_core::body_archive::writer::write_parquet_to_buffer;
+use aigw_core::body_archive::BodyArchiver;
 use aigw_core::body_archive::BodyRow;
 use object_store::path::Path as ObjPath;
 use object_store::{ObjectStore, PutPayload};
@@ -76,22 +76,42 @@ impl std::fmt::Display for CountingStore {
 
 #[async_trait::async_trait]
 impl ObjectStore for CountingStore {
-    async fn put(&self, location: &ObjPath, payload: PutPayload) -> object_store::Result<object_store::PutResult> {
+    async fn put(
+        &self,
+        location: &ObjPath,
+        payload: PutPayload,
+    ) -> object_store::Result<object_store::PutResult> {
         self.inner.put(location, payload).await
     }
-    async fn put_opts(&self, location: &ObjPath, payload: PutPayload, opts: object_store::PutOptions) -> object_store::Result<object_store::PutResult> {
+    async fn put_opts(
+        &self,
+        location: &ObjPath,
+        payload: PutPayload,
+        opts: object_store::PutOptions,
+    ) -> object_store::Result<object_store::PutResult> {
         self.inner.put_opts(location, payload, opts).await
     }
-    async fn put_multipart(&self, location: &ObjPath) -> object_store::Result<Box<dyn object_store::MultipartUpload>> {
+    async fn put_multipart(
+        &self,
+        location: &ObjPath,
+    ) -> object_store::Result<Box<dyn object_store::MultipartUpload>> {
         self.inner.put_multipart(location).await
     }
-    async fn put_multipart_opts(&self, location: &ObjPath, opts: object_store::PutMultipartOpts) -> object_store::Result<Box<dyn object_store::MultipartUpload>> {
+    async fn put_multipart_opts(
+        &self,
+        location: &ObjPath,
+        opts: object_store::PutMultipartOpts,
+    ) -> object_store::Result<Box<dyn object_store::MultipartUpload>> {
         self.inner.put_multipart_opts(location, opts).await
     }
     async fn get(&self, location: &ObjPath) -> object_store::Result<object_store::GetResult> {
         self.inner.get(location).await
     }
-    async fn get_opts(&self, location: &ObjPath, options: object_store::GetOptions) -> object_store::Result<object_store::GetResult> {
+    async fn get_opts(
+        &self,
+        location: &ObjPath,
+        options: object_store::GetOptions,
+    ) -> object_store::Result<object_store::GetResult> {
         self.inner.get_opts(location, options).await
     }
     async fn get_range(
@@ -102,7 +122,11 @@ impl ObjectStore for CountingStore {
         self.range_calls.fetch_add(1, Ordering::SeqCst);
         self.inner.get_range(location, range).await
     }
-    async fn get_ranges(&self, location: &ObjPath, ranges: &[std::ops::Range<usize>]) -> object_store::Result<Vec<bytes::Bytes>> {
+    async fn get_ranges(
+        &self,
+        location: &ObjPath,
+        ranges: &[std::ops::Range<usize>],
+    ) -> object_store::Result<Vec<bytes::Bytes>> {
         self.range_calls.fetch_add(ranges.len(), Ordering::SeqCst);
         self.inner.get_ranges(location, ranges).await
     }
@@ -112,7 +136,10 @@ impl ObjectStore for CountingStore {
     async fn delete(&self, location: &ObjPath) -> object_store::Result<()> {
         self.inner.delete(location).await
     }
-    fn list(&self, _prefix: Option<&ObjPath>) -> futures::stream::BoxStream<'static, object_store::Result<object_store::ObjectMeta>> {
+    fn list(
+        &self,
+        _prefix: Option<&ObjPath>,
+    ) -> futures::stream::BoxStream<'static, object_store::Result<object_store::ObjectMeta>> {
         // Tests don't exercise list; emit an empty stream. The inner store
         // can be queried directly if a test ever needs listing.
         Box::pin(futures::stream::empty())
@@ -200,7 +227,8 @@ async fn test_query_parquet_with_cache_hits_footer_cache_on_second_call() {
 }
 
 #[tokio::test]
-async fn test_query_parquet_with_cache_returns_none_for_missing_request_id() {    let rows = vec![make_row("req-001", 14)];
+async fn test_query_parquet_with_cache_returns_none_for_missing_request_id() {
+    let rows = vec![make_row("req-001", 14)];
     let (store, path) = seed_inmemory(&rows).await;
     let store: Arc<dyn ObjectStore> = store;
     let archiver = BodyArchiver::new(BodyArchiveConfig::default());
@@ -219,7 +247,8 @@ async fn test_query_parquet_with_cache_locates_target_row_group() {
     // groups. The target lives in the 2nd group. We assert the result is found
     // and correct (proving the locator scanned row groups, not just group 0).
     let rows = vec![make_row("rg1-req", 14), make_row("rg2-req", 14)];
-    let data = write_parquet_to_buffer(&rows, 1, 10, "zstd", 6).expect("write parquet with rg_size=1");
+    let data =
+        write_parquet_to_buffer(&rows, 1, 10, "zstd", 6).expect("write parquet with rg_size=1");
     let store = Arc::new(object_store::memory::InMemory::new());
     let path = ObjPath::from("year=2026/month=07/day=25/hour=14/data.parquet");
     store.put(&path, data.into()).await.expect("put");
@@ -273,47 +302,118 @@ async fn test_read_body_from_storage_errors_on_unreachable_store() {
     }
     #[async_trait::async_trait]
     impl ObjectStore for AlwaysFailStore {
-        async fn put(&self, _: &ObjPath, _: PutPayload) -> object_store::Result<object_store::PutResult> {
-            Err(object_store::Error::Generic { store: "test", source: "boom".into() })
+        async fn put(
+            &self,
+            _: &ObjPath,
+            _: PutPayload,
+        ) -> object_store::Result<object_store::PutResult> {
+            Err(object_store::Error::Generic {
+                store: "test",
+                source: "boom".into(),
+            })
         }
-        async fn put_opts(&self, _: &ObjPath, _: PutPayload, _: object_store::PutOptions) -> object_store::Result<object_store::PutResult> {
-            Err(object_store::Error::Generic { store: "test", source: "boom".into() })
+        async fn put_opts(
+            &self,
+            _: &ObjPath,
+            _: PutPayload,
+            _: object_store::PutOptions,
+        ) -> object_store::Result<object_store::PutResult> {
+            Err(object_store::Error::Generic {
+                store: "test",
+                source: "boom".into(),
+            })
         }
-        async fn put_multipart(&self, _: &ObjPath) -> object_store::Result<Box<dyn object_store::MultipartUpload>> {
-            Err(object_store::Error::Generic { store: "test", source: "boom".into() })
+        async fn put_multipart(
+            &self,
+            _: &ObjPath,
+        ) -> object_store::Result<Box<dyn object_store::MultipartUpload>> {
+            Err(object_store::Error::Generic {
+                store: "test",
+                source: "boom".into(),
+            })
         }
-        async fn put_multipart_opts(&self, _: &ObjPath, _: object_store::PutMultipartOpts) -> object_store::Result<Box<dyn object_store::MultipartUpload>> {
-            Err(object_store::Error::Generic { store: "test", source: "boom".into() })
+        async fn put_multipart_opts(
+            &self,
+            _: &ObjPath,
+            _: object_store::PutMultipartOpts,
+        ) -> object_store::Result<Box<dyn object_store::MultipartUpload>> {
+            Err(object_store::Error::Generic {
+                store: "test",
+                source: "boom".into(),
+            })
         }
         async fn get(&self, _location: &ObjPath) -> object_store::Result<object_store::GetResult> {
-            Err(object_store::Error::Generic { store: "test", source: "unreachable".into() })
+            Err(object_store::Error::Generic {
+                store: "test",
+                source: "unreachable".into(),
+            })
         }
-        async fn get_opts(&self, _: &ObjPath, _: object_store::GetOptions) -> object_store::Result<object_store::GetResult> {
-            Err(object_store::Error::Generic { store: "test", source: "unreachable".into() })
+        async fn get_opts(
+            &self,
+            _: &ObjPath,
+            _: object_store::GetOptions,
+        ) -> object_store::Result<object_store::GetResult> {
+            Err(object_store::Error::Generic {
+                store: "test",
+                source: "unreachable".into(),
+            })
         }
-        async fn get_range(&self, _: &ObjPath, _: std::ops::Range<usize>) -> object_store::Result<bytes::Bytes> {
-            Err(object_store::Error::Generic { store: "test", source: "unreachable".into() })
+        async fn get_range(
+            &self,
+            _: &ObjPath,
+            _: std::ops::Range<usize>,
+        ) -> object_store::Result<bytes::Bytes> {
+            Err(object_store::Error::Generic {
+                store: "test",
+                source: "unreachable".into(),
+            })
         }
-        async fn get_ranges(&self, _: &ObjPath, _: &[std::ops::Range<usize>]) -> object_store::Result<Vec<bytes::Bytes>> {
-            Err(object_store::Error::Generic { store: "test", source: "unreachable".into() })
+        async fn get_ranges(
+            &self,
+            _: &ObjPath,
+            _: &[std::ops::Range<usize>],
+        ) -> object_store::Result<Vec<bytes::Bytes>> {
+            Err(object_store::Error::Generic {
+                store: "test",
+                source: "unreachable".into(),
+            })
         }
         async fn head(&self, _: &ObjPath) -> object_store::Result<object_store::ObjectMeta> {
-            Err(object_store::Error::Generic { store: "test", source: "unreachable".into() })
+            Err(object_store::Error::Generic {
+                store: "test",
+                source: "unreachable".into(),
+            })
         }
-        fn list(&self, _: Option<&ObjPath>) -> futures::stream::BoxStream<'static, object_store::Result<object_store::ObjectMeta>> {
+        fn list(
+            &self,
+            _: Option<&ObjPath>,
+        ) -> futures::stream::BoxStream<'static, object_store::Result<object_store::ObjectMeta>>
+        {
             Box::pin(futures::stream::empty())
         }
-        async fn list_with_delimiter(&self, _: Option<&ObjPath>) -> object_store::Result<object_store::ListResult> {
-            Err(object_store::Error::Generic { store: "test", source: "unreachable".into() })
+        async fn list_with_delimiter(
+            &self,
+            _: Option<&ObjPath>,
+        ) -> object_store::Result<object_store::ListResult> {
+            Err(object_store::Error::Generic {
+                store: "test",
+                source: "unreachable".into(),
+            })
         }
         async fn delete(&self, _: &ObjPath) -> object_store::Result<()> {
             Ok(())
         }
         async fn copy(&self, _: &ObjPath, _: &ObjPath) -> object_store::Result<()> {
-            Err(object_store::Error::Generic { store: "test", source: "unreachable".into() })
+            Err(object_store::Error::Generic {
+                store: "test",
+                source: "unreachable".into(),
+            })
         }
         async fn copy_if_not_exists(&self, _: &ObjPath, _: &ObjPath) -> object_store::Result<()> {
-            Err(object_store::Error::Generic { store: "test", source: "unreachable".into() })
+            Err(object_store::Error::Generic {
+                store: "test",
+                source: "unreachable".into(),
+            })
         }
     }
 
@@ -350,10 +450,21 @@ secret_access_key: ${AIGW_TEST_SK}
     let backend: StorageBackend = serde_yaml::from_str(yaml).expect("parse");
     let resolved = resolve_env_placeholders(&backend);
     match resolved {
-        StorageBackend::S3 { bucket, access_key_id, secret_access_key, .. } => {
+        StorageBackend::S3 {
+            bucket,
+            access_key_id,
+            secret_access_key,
+            ..
+        } => {
             assert_eq!(bucket, "env-bucket", "bucket env placeholder resolved");
-            assert_eq!(access_key_id, "resolved-ak", "access_key_id env placeholder resolved");
-            assert_eq!(secret_access_key, "resolved-sk", "secret_access_key env placeholder resolved");
+            assert_eq!(
+                access_key_id, "resolved-ak",
+                "access_key_id env placeholder resolved"
+            );
+            assert_eq!(
+                secret_access_key, "resolved-sk",
+                "secret_access_key env placeholder resolved"
+            );
         }
         _ => panic!("expected S3"),
     }
@@ -449,8 +560,7 @@ async fn test_filesystem_archive_partition_path_layout() {
         .await
         .expect("archive rows");
     assert_eq!(
-        written_path,
-        "year=2026/month=07/day=25/hour=14/data.parquet",
+        written_path, "year=2026/month=07/day=25/hour=14/data.parquet",
         "FS archive must use year=/month=/day=/hour=/data.parquet layout"
     );
     // The file must physically exist under the FS root.

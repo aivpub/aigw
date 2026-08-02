@@ -1,8 +1,8 @@
 //! Step bindings for keys.feature
 
-use cucumber::{given, then, when};
-use cucumber::gherkin::Step;
 use axum::http::Method;
+use cucumber::gherkin::Step;
+use cucumber::{given, then, when};
 
 use super::common::{build_key_router, make_request};
 use crate::TestWorld;
@@ -56,7 +56,8 @@ async fn key_already_deleted(world: &mut TestWorld, alias: String) {
     if let Some(ref b) = body {
         if let Some(raw) = b.get("key").and_then(|v| v.as_str()) {
             let uri = format!("/key/delete?key={}", raw);
-            let _ = make_request(&router, Method::DELETE, &uri, Some(&world.master_key), None).await;
+            let _ =
+                make_request(&router, Method::DELETE, &uri, Some(&world.master_key), None).await;
         }
     }
 }
@@ -69,7 +70,11 @@ async fn key_already_deleted(world: &mut TestWorld, alias: String) {
 async fn when_post_key_generate(world: &mut TestWorld, step: &Step) {
     let state = world.ensure_state().await;
     let router = build_key_router(state);
-    let body = step.docstring.as_ref().expect("docstring body not found").to_string();
+    let body = step
+        .docstring
+        .as_ref()
+        .expect("docstring body not found")
+        .to_string();
     let (s, b) = make_request(
         &router,
         Method::POST,
@@ -86,7 +91,11 @@ async fn when_post_key_generate(world: &mut TestWorld, step: &Step) {
 async fn when_post_key_generate_noauth(world: &mut TestWorld, step: &Step) {
     let state = world.ensure_state().await;
     let router = build_key_router(state);
-    let body = step.docstring.as_ref().expect("docstring body not found").to_string();
+    let body = step
+        .docstring
+        .as_ref()
+        .expect("docstring body not found")
+        .to_string();
     let (s, b) = make_request(&router, Method::POST, "/key/generate", None, Some(&body)).await;
     world.last_status = Some(s);
     world.last_body = b;
@@ -98,7 +107,14 @@ async fn when_get_key_info(world: &mut TestWorld, key_ref: String) {
     let router = build_key_router(state);
     let raw_key = world.created_keys.get(&key_ref).cloned().unwrap_or(key_ref);
     let uri = format!("/key/info?key={}", raw_key);
-    let (s, b) = make_request(&router, Method::GET, &uri, Some(&world.master_key.clone()), None).await;
+    let (s, b) = make_request(
+        &router,
+        Method::GET,
+        &uri,
+        Some(&world.master_key.clone()),
+        None,
+    )
+    .await;
     world.last_status = Some(s);
     world.last_body = b;
 }
@@ -229,7 +245,11 @@ async fn then_key_base64url(world: &mut TestWorld) {
 #[then(expr = "响应包含 key_alias 字段")]
 async fn then_has_key_alias(world: &mut TestWorld) {
     let body = world.last_body.as_ref().expect("no body");
-    assert!(body.get("key_alias").is_some(), "Missing key_alias: {:?}", body);
+    assert!(
+        body.get("key_alias").is_some(),
+        "Missing key_alias: {:?}",
+        body
+    );
 }
 
 #[then(expr = "响应包含 {int} 个 key")]

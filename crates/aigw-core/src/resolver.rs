@@ -3,9 +3,9 @@
 //! Replaces chat.rs's resolve_upstream_params() with a standalone component
 //! that returns Vec<Deployment> — one result per matching proxy_models row.
 
+use crate::crypto::{decrypt_json_fields, decrypt_litellm_value};
 use crate::db::Database;
 use crate::deployment::{Deployment, ProviderType};
-use crate::crypto::{decrypt_json_fields, decrypt_litellm_value};
 use axum::http::StatusCode;
 use axum::Json;
 use serde_json::{json, Value};
@@ -22,10 +22,18 @@ pub struct ModelResolver {
 }
 
 impl ModelResolver {
-    pub fn new<D: Into<String>>(db: Database, aigw_master_key: Option<D>, deployment_mode: D) -> Self {
+    pub fn new<D: Into<String>>(
+        db: Database,
+        aigw_master_key: Option<D>,
+        deployment_mode: D,
+    ) -> Self {
         let aigw_master_key = aigw_master_key.map(|k| k.into());
         let deployment_mode = deployment_mode.into();
-        Self { db, aigw_master_key, deployment_mode }
+        Self {
+            db,
+            aigw_master_key,
+            deployment_mode,
+        }
     }
 
     /// Resolve all upstream Deployments for the given model_name.
@@ -52,7 +60,8 @@ impl ModelResolver {
 
         // Fallback to env vars (except in test mode)
         if self.deployment_mode != "test" {
-            let api_key_env = std::env::var("OPENAI_API_KEY").ok()
+            let api_key_env = std::env::var("OPENAI_API_KEY")
+                .ok()
                 .or_else(|| std::env::var("OPENAPI_KEY").ok());
             let api_base_env = std::env::var("OPENAI_BASE_URL")
                 .or_else(|_| std::env::var("OPENAPI_BASE_URL"))
@@ -102,7 +111,9 @@ impl ModelResolver {
         m: crate::models::ProxyModel,
         model_name: &str,
     ) -> Result<Deployment, (StatusCode, Json<Value>)> {
-        let litellm_params_str = m.litellm_params.as_str()
+        let litellm_params_str = m
+            .litellm_params
+            .as_str()
             .map(String::from)
             .unwrap_or_else(|| m.litellm_params.to_string());
 
@@ -122,7 +133,11 @@ impl ModelResolver {
             })?;
 
             let decrypted = decrypt_litellm_value(&litellm_params_str, key).map_err(|e| {
-                tracing::error!("Failed to decrypt litellm_params for model '{}': {}", model_name, e);
+                tracing::error!(
+                    "Failed to decrypt litellm_params for model '{}': {}",
+                    model_name,
+                    e
+                );
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(json!({
@@ -145,7 +160,8 @@ impl ModelResolver {
         };
 
         // Extract pricing (including cache tiers)
-        let (input_cost, output_cost, cache_read_cost, cache_create_cost) = extract_pricing(&m.model_info, &params_json);
+        let (input_cost, output_cost, cache_read_cost, cache_create_cost) =
+            extract_pricing(&m.model_info, &params_json);
 
         // Extract model_group/model_id/custom_llm_provider from proxy_models for SpendLog
         let model_id = Some(m.model_id.clone());
@@ -160,18 +176,22 @@ impl ModelResolver {
             .get("litellm_credential_name")
             .and_then(|v| v.as_str())
         {
-            let cred = self.db.get_credential_by_name(cred_name).await.map_err(|e| {
-                tracing::error!("Failed to look up credential '{}': {}", cred_name, e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({
-                        "error": {
-                            "message": format!("Credential '{}' not found", cred_name),
-                            "type": "not_found"
-                        }
-                    })),
-                )
-            })?;
+            let cred = self
+                .db
+                .get_credential_by_name(cred_name)
+                .await
+                .map_err(|e| {
+                    tracing::error!("Failed to look up credential '{}': {}", cred_name, e);
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({
+                            "error": {
+                                "message": format!("Credential '{}' not found", cred_name),
+                                "type": "not_found"
+                            }
+                        })),
+                    )
+                })?;
 
             let cred = cred.ok_or_else(|| {
                 (
@@ -241,7 +261,10 @@ impl ModelResolver {
                 .and_then(|v| v.as_str())
                 .unwrap_or("https://api.openai.com/v1")
                 .to_string();
-            let api_key = merged.get("api_key").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let api_key = merged
+                .get("api_key")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
             let upstream_model = merged
                 .get("model")
                 .and_then(|v| v.as_str())
@@ -254,7 +277,8 @@ impl ModelResolver {
             );
 
             // Extract chat_template_compat from model_info
-            let chat_template_compat = m.model_info
+            let chat_template_compat = m
+                .model_info
                 .get("chat_template_compat")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
@@ -294,19 +318,23 @@ impl ModelResolver {
                 .to_string();
 
             let provider_type = ProviderType::infer(
-                params_json.get("custom_llm_provider").and_then(|v| v.as_str()),
+                params_json
+                    .get("custom_llm_provider")
+                    .and_then(|v| v.as_str()),
                 &api_base,
             );
 
             // Extract chat_template_compat from model_info
-            let chat_template_compat = m.model_info
+            let chat_template_compat = m
+                .model_info
                 .get("chat_template_compat")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
 
             // When proxy_models has api_key=None (encrypted/empty), fall back to env vars.
             let (api_base, api_key) = if api_key.is_none() {
-                let env_key = std::env::var("OPENAI_API_KEY").ok()
+                let env_key = std::env::var("OPENAI_API_KEY")
+                    .ok()
                     .or_else(|| std::env::var("OPENAPI_KEY").ok());
                 let env_base = std::env::var("OPENAI_BASE_URL")
                     .or_else(|_| std::env::var("OPENAPI_BASE_URL"))
@@ -339,23 +367,42 @@ impl ModelResolver {
 }
 
 /// Extract pricing — primary from model_info, fallback to litellm_params.
-fn extract_pricing(model_info: &Value, params_json: &Value) -> (Option<f64>, Option<f64>, Option<f64>, Option<f64>) {
+fn extract_pricing(
+    model_info: &Value,
+    params_json: &Value,
+) -> (Option<f64>, Option<f64>, Option<f64>, Option<f64>) {
     let input = model_info
         .get("input_cost_per_token")
         .and_then(|v| v.as_f64())
-        .or_else(|| params_json.get("input_cost_per_token").and_then(|v| v.as_f64()));
+        .or_else(|| {
+            params_json
+                .get("input_cost_per_token")
+                .and_then(|v| v.as_f64())
+        });
     let output = model_info
         .get("output_cost_per_token")
         .and_then(|v| v.as_f64())
-        .or_else(|| params_json.get("output_cost_per_token").and_then(|v| v.as_f64()));
+        .or_else(|| {
+            params_json
+                .get("output_cost_per_token")
+                .and_then(|v| v.as_f64())
+        });
     let cache_read = model_info
         .get("cache_read_input_token_cost")
         .and_then(|v| v.as_f64())
-        .or_else(|| params_json.get("cache_read_input_token_cost").and_then(|v| v.as_f64()));
+        .or_else(|| {
+            params_json
+                .get("cache_read_input_token_cost")
+                .and_then(|v| v.as_f64())
+        });
     let cache_create = model_info
         .get("cache_creation_input_token_cost")
         .and_then(|v| v.as_f64())
-        .or_else(|| params_json.get("cache_creation_input_token_cost").and_then(|v| v.as_f64()));
+        .or_else(|| {
+            params_json
+                .get("cache_creation_input_token_cost")
+                .and_then(|v| v.as_f64())
+        });
     (input, output, cache_read, cache_create)
 }
 
@@ -371,11 +418,7 @@ mod tests {
     use crate::models::ProxyModel;
 
     async fn make_resolver(db: Database, master_key: Option<&str>) -> ModelResolver {
-        ModelResolver::new(
-            db,
-            master_key.map(String::from),
-            "onprem".to_string(),
-        )
+        ModelResolver::new(db, master_key.map(String::from), "onprem".to_string())
     }
 
     /// Helper: insert a model with plaintext params and optional model_info pricing.
@@ -437,13 +480,7 @@ mod tests {
         let encrypted = encrypt_litellm_value(&params_str, master_key).unwrap();
         let encrypted_params: Value = serde_json::from_str(&format!("\"{}\"", encrypted)).unwrap();
 
-        insert_plaintext_model(
-            &db,
-            "gpt-4",
-            encrypted_params,
-            json!({}),
-        )
-        .await;
+        insert_plaintext_model(&db, "gpt-4", encrypted_params, json!({})).await;
 
         let resolver = make_resolver(db, Some(master_key)).await;
         let deployments = resolver.resolve("gpt-4").await.unwrap();
@@ -549,9 +586,11 @@ mod tests {
 
         // Encrypt with one key, try to decrypt with different key
         let params = json!({"model": "gpt-4"});
-        let wrong_encrypted = encrypt_litellm_value(&params.to_string(), "some-other-key-32chrs!!!").unwrap();
+        let wrong_encrypted =
+            encrypt_litellm_value(&params.to_string(), "some-other-key-32chrs!!!").unwrap();
 
-        let encrypted_val: Value = serde_json::from_str(&format!("\"{}\"", wrong_encrypted)).unwrap();
+        let encrypted_val: Value =
+            serde_json::from_str(&format!("\"{}\"", wrong_encrypted)).unwrap();
         insert_plaintext_model(&db, "gpt-4", encrypted_val, json!({})).await;
 
         let resolver = make_resolver(db, Some(master_key)).await;
@@ -566,7 +605,8 @@ mod tests {
     async fn test_resolve_encrypted_params_no_master_key() {
         let db = Database::init("sqlite::memory:").await.unwrap();
         let params = json!({"model": "gpt-4"});
-        let encrypted = encrypt_litellm_value(&params.to_string(), "some-key-32chars-long!!!!!").unwrap();
+        let encrypted =
+            encrypt_litellm_value(&params.to_string(), "some-key-32chars-long!!!!!").unwrap();
         let encrypted_val: Value = serde_json::from_str(&format!("\"{}\"", encrypted)).unwrap();
         insert_plaintext_model(&db, "gpt-4", encrypted_val, json!({})).await;
 

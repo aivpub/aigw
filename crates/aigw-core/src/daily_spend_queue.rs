@@ -109,9 +109,7 @@ type AggEntry = (
     i64,    // failed_requests
 );
 
-fn aggregate_daily_spend(
-    pending: Vec<PendingDailySpend>,
-) -> HashMap<String, Vec<AggEntry>> {
+fn aggregate_daily_spend(pending: Vec<PendingDailySpend>) -> HashMap<String, Vec<AggEntry>> {
     let mut tables: HashMap<String, HashMap<String, AggEntry>> = HashMap::new();
 
     for item in pending {
@@ -147,18 +145,18 @@ fn aggregate_daily_spend(
                 log.mcp_namespaced_tool_name.clone(),
                 log.endpoint.clone(),
                 log.model_group.clone(),
-                0,     // prompt_tokens
-                0,     // completion_tokens
-                0,     // cache_read_input_tokens
-                0,     // cache_creation_input_tokens
-                0.0,   // spend
-                0,     // api_requests
-                0,     // successful_requests
-                0,     // failed_requests
+                0,   // prompt_tokens
+                0,   // completion_tokens
+                0,   // cache_read_input_tokens
+                0,   // cache_creation_input_tokens
+                0.0, // spend
+                0,   // api_requests
+                0,   // successful_requests
+                0,   // failed_requests
             )
         });
 
-        entry.7 = log.model_group.clone();  // model_group — take last value
+        entry.7 = log.model_group.clone(); // model_group — take last value
         entry.8 += log.prompt_tokens;
         entry.9 += log.completion_tokens;
         entry.10 += log.cache_read_input_tokens;
@@ -171,9 +169,7 @@ fn aggregate_daily_spend(
 
     tables
         .into_iter()
-        .map(|(table_name, map)| {
-            (table_name, map.into_values().collect())
-        })
+        .map(|(table_name, map)| (table_name, map.into_values().collect()))
         .collect()
 }
 

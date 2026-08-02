@@ -21,9 +21,14 @@ use super::spend::{require_admin, SpendAuth};
 
 /// Valid router_settings top-level keys (defense-in-depth).
 const VALID_ROUTER_SETTINGS_KEYS: &[&str] = &[
-    "routing_strategy", "num_retries", "allowed_fails",
-    "cooldown_time", "retry_after", "fallbacks",
-    "model_group_alias", "routing_groups",
+    "routing_strategy",
+    "num_retries",
+    "allowed_fails",
+    "cooldown_time",
+    "retry_after",
+    "fallbacks",
+    "model_group_alias",
+    "routing_groups",
 ];
 
 fn validate_router_settings_keys(body: &Value) -> Result<(), (StatusCode, Json<Value>)> {
@@ -87,12 +92,16 @@ pub async fn put_global(
     validate_router_settings_keys(&body)?;
 
     // Write to config table
-    state.db.upsert_config("router_settings", &body.to_string()).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": {"message": format!("DB error: {}", e), "type": "db_error"}})),
-        )
-    })?;
+    state
+        .db
+        .upsert_config("router_settings", &body.to_string())
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": {"message": format!("DB error: {}", e), "type": "db_error"}})),
+            )
+        })?;
 
     // Hot reload — update the in-memory Router (Router is Clone but not wrapped in Arc<Mutex<>>,
     // so this is a best-effort log. Full hot reload requires Arc<Mutex<Router>> in AppState.)
@@ -130,12 +139,16 @@ pub async fn patch_key(
 
     validate_router_settings_keys(&body)?;
 
-    state.db.update_key_router_settings(&token, &body.to_string()).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": {"message": format!("DB error: {}", e), "type": "db_error"}})),
-        )
-    })?;
+    state
+        .db
+        .update_key_router_settings(&token, &body.to_string())
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": {"message": format!("DB error: {}", e), "type": "db_error"}})),
+            )
+        })?;
 
     tracing::info!(%token, "Key router_settings updated");
     Ok(Json(body))
@@ -155,12 +168,16 @@ pub async fn patch_team(
 
     validate_router_settings_keys(&body)?;
 
-    state.db.update_team_router_settings(&id, &body.to_string()).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": {"message": format!("DB error: {}", e), "type": "db_error"}})),
-        )
-    })?;
+    state
+        .db
+        .update_team_router_settings(&id, &body.to_string())
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": {"message": format!("DB error: {}", e), "type": "db_error"}})),
+            )
+        })?;
 
     tracing::info!(%id, "Team router_settings updated");
     Ok(Json(body))
@@ -173,8 +190,8 @@ mod tests {
     use aigw_core::db::Database;
     use aigw_core::provider::ProviderRegistry;
     use aigw_core::rate_limiter::RateLimiter;
-    use aigw_core::router::{Router as AigwRouter, RouterState};
     use aigw_core::resolver::ModelResolver;
+    use aigw_core::router::{Router as AigwRouter, RouterState};
     use axum::{
         body::Body,
         http::{header, Method, Request},
@@ -199,13 +216,23 @@ mod tests {
             deployment_mode: "onprem".to_string(),
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
-  otel_active: false,
-            body_archiver: None,            metrics: None,
+            otel_active: false,
+            body_archiver: None,
+            metrics: None,
         });
         Router::new()
-            .route("/router/settings", axum::routing::get(get_global).put(put_global))
-            .route("/key/{token}/router/settings", axum::routing::patch(patch_key))
-            .route("/team/{id}/router/settings", axum::routing::patch(patch_team))
+            .route(
+                "/router/settings",
+                axum::routing::get(get_global).put(put_global),
+            )
+            .route(
+                "/key/{token}/router/settings",
+                axum::routing::patch(patch_key),
+            )
+            .route(
+                "/team/{id}/router/settings",
+                axum::routing::patch(patch_team),
+            )
             .with_state(state)
     }
 
@@ -294,7 +321,9 @@ mod tests {
             .uri("/router/settings")
             .header(header::AUTHORIZATION, "Bearer sk-master-test-123")
             .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(r#"{"routing_strategy":"least_latency","num_retries":2}"#))
+            .body(Body::from(
+                r#"{"routing_strategy":"least_latency","num_retries":2}"#,
+            ))
             .unwrap();
         let response = app.oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);

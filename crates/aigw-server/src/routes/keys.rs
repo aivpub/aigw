@@ -8,10 +8,10 @@
 //! - DELETE /key/delete       — Delete key
 //! - POST   /key/regenerate   — Regenerate key (new token, copy config)
 
+use aigw_core::body_archive::BodyArchiver;
 use aigw_core::crypto::hash_token;
 use aigw_core::daily_spend_queue::DailySpendQueue;
 use aigw_core::db::Database;
-use aigw_core::body_archive::BodyArchiver;
 use aigw_core::metrics::MetricsRecorder;
 use aigw_core::models::{GenerateKeyRequest, VirtualKey};
 use aigw_core::provider::ProviderRegistry;
@@ -27,7 +27,6 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
-
 
 use super::spend::{require_admin, SpendAuth};
 
@@ -174,7 +173,9 @@ async fn validate_key_budget(
                 if user_max > 0.0 && key_max_budget > user_max {
                     return Err((
                         StatusCode::BAD_REQUEST,
-                        Json(json!({"error": {"message": "Key budget cannot exceed user budget", "type": "budget_violation"}})),
+                        Json(
+                            json!({"error": {"message": "Key budget cannot exceed user budget", "type": "budget_violation"}}),
+                        ),
                     ));
                 }
             }
@@ -188,7 +189,9 @@ async fn validate_key_budget(
                 if team_max > 0.0 && key_max_budget > team_max {
                     return Err((
                         StatusCode::BAD_REQUEST,
-                        Json(json!({"error": {"message": "Key budget cannot exceed team budget", "type": "budget_violation"}})),
+                        Json(
+                            json!({"error": {"message": "Key budget cannot exceed team budget", "type": "budget_violation"}}),
+                        ),
                     ));
                 }
             }
@@ -338,10 +341,7 @@ pub async fn generate_key(
     Json(req): Json<GenerateKeyRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&auth)?;
-    let raw_token = req
-        .key
-        .clone()
-        .unwrap_or_else(|| generate_key_token());
+    let raw_token = req.key.clone().unwrap_or_else(|| generate_key_token());
     let hash = hash_token(&raw_token);
 
     // Check if key already exists
@@ -437,7 +437,9 @@ pub async fn key_list(
             limit,
             offset,
         ),
-        state.db.count_keys(query.team_id.as_deref(), query.user_id.as_deref()),
+        state
+            .db
+            .count_keys(query.team_id.as_deref(), query.user_id.as_deref()),
     )
     .map_err(|e| {
         (
@@ -570,10 +572,22 @@ pub async fn key_update(
             .map(|v| v.to_string()),
         metadata: body.get("metadata").cloned().unwrap_or_else(|| json!({})),
         blocked: body.get("blocked").and_then(|v| v.as_bool()),
-        tpm_limit: body.get("tpm_limit").and_then(|v| v.as_i64()).map(|v| v.to_string()),
-        rpm_limit: body.get("rpm_limit").and_then(|v| v.as_i64()).map(|v| v.to_string()),
-        max_budget: body.get("max_budget").and_then(|v| v.as_f64()).map(|v| v.to_string()),
-        soft_budget: body.get("soft_budget").and_then(|v| v.as_f64()).map(|v| v.to_string()),
+        tpm_limit: body
+            .get("tpm_limit")
+            .and_then(|v| v.as_i64())
+            .map(|v| v.to_string()),
+        rpm_limit: body
+            .get("rpm_limit")
+            .and_then(|v| v.as_i64())
+            .map(|v| v.to_string()),
+        max_budget: body
+            .get("max_budget")
+            .and_then(|v| v.as_f64())
+            .map(|v| v.to_string()),
+        soft_budget: body
+            .get("soft_budget")
+            .and_then(|v| v.as_f64())
+            .map(|v| v.to_string()),
         budget_duration: body
             .get("budget_duration")
             .and_then(|v| v.as_str())
@@ -627,7 +641,10 @@ pub async fn key_update(
             .get("rotation_count")
             .and_then(|v| v.as_i64())
             .map(|v| v as i32),
-        auto_rotate: body.get("auto_rotate").and_then(|v| v.as_bool()).map(|v| v.to_string()),
+        auto_rotate: body
+            .get("auto_rotate")
+            .and_then(|v| v.as_bool())
+            .map(|v| v.to_string()),
         rotation_interval: body
             .get("rotation_interval")
             .and_then(|v| v.as_str())
@@ -734,8 +751,11 @@ pub async fn key_deleted_list(
         )
     })?;
 
-    let data: Vec<Value> = serde_json::to_value(&keys).unwrap_or(json!([]))
-        .as_array().cloned().unwrap_or_default();
+    let data: Vec<Value> = serde_json::to_value(&keys)
+        .unwrap_or(json!([]))
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     let total_pages = if total_count > 0 {
         ((total_count as f64) / (page_size as f64)).ceil() as i64
     } else {

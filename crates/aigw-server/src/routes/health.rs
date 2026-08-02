@@ -14,15 +14,15 @@ use aigw_core::db::Database;
 use aigw_core::deployment::ProviderType;
 use aigw_core::models::{HealthCheck, SpendLog};
 use axum::{extract::State, http::StatusCode, Json};
+use chrono::Utc;
 use prometheus::{Encoder, TextEncoder};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use uuid::Uuid;
-use chrono::Utc;
 
-use super::spend::{require_admin, SpendAuth};
 use super::chat::{calc_spend, extract_cache_creation_tokens, extract_cache_read_tokens};
+use super::spend::{require_admin, SpendAuth};
 use crate::routes::keys::SharedState;
 
 /// Sentinel api_key recorded in spend_logs for model health-check probes.
@@ -121,7 +121,10 @@ pub async fn model_health_check(
     })?;
 
     let models = state.db.list_models().await.map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})))
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
+        )
     })?;
 
     let model = models.iter().find(|m| m.model_id == model_id).ok_or_else(|| {
@@ -141,7 +144,9 @@ pub async fn model_health_check(
         run_and_save_health_check(&resolver, &db, &mn, &mi).await;
     });
 
-    Ok(Json(json!({"status": "checking", "model_name": model.model_name, "model_id": model.model_id})))
+    Ok(Json(
+        json!({"status": "checking", "model_name": model.model_name, "model_id": model.model_id}),
+    ))
 }
 
 /// POST /model/health-check/all — Trigger async checks for ALL models, return immediately.
@@ -152,11 +157,17 @@ pub async fn model_health_check_all(
     require_admin(&auth)?;
 
     let models = state.db.list_models().await.map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})))
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
+        )
     })?;
 
     // Collect model info before moving into spawn
-    let to_check: Vec<(String, String)> = models.iter().map(|m| (m.model_name.clone(), m.model_id.clone())).collect();
+    let to_check: Vec<(String, String)> = models
+        .iter()
+        .map(|m| (m.model_name.clone(), m.model_id.clone()))
+        .collect();
     let count = to_check.len();
 
     // Insert "checking" placeholder for all models
@@ -196,7 +207,10 @@ pub async fn health_latest(
     require_admin(&auth)?;
 
     let checks = state.db.get_latest_health_checks().await.map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})))
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
+        )
     })?;
 
     // Merge with models table: show all models, even those without any check yet
@@ -240,7 +254,9 @@ pub async fn health_latest(
         last_success.entry(m.model_name.clone()).or_insert(None);
     }
 
-    Ok(Json(json!({ "data": data, "count": data.len(), "last_success": last_success })))
+    Ok(Json(
+        json!({ "data": data, "count": data.len(), "last_success": last_success }),
+    ))
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -465,7 +481,11 @@ async fn save_result(
         health_check_id: Uuid::new_v4().to_string(),
         model_name: model_name.to_string(),
         model_id: Some(model_id.to_string()),
-        status: if healthy { "healthy".into() } else { "unhealthy".into() },
+        status: if healthy {
+            "healthy".into()
+        } else {
+            "unhealthy".into()
+        },
         healthy_count: if healthy { 1 } else { 0 },
         unhealthy_count: if healthy { 0 } else { 1 },
         error_message: error.clone(),
@@ -557,7 +577,11 @@ async fn save_result(
                 .map(|e| json!({"error": e, "failure_reason": "health_check"}))
         }),
         session_id: None,
-        status: Some(if healthy { "success".to_string() } else { "failure:health_check".to_string() }),
+        status: Some(if healthy {
+            "success".to_string()
+        } else {
+            "failure:health_check".to_string()
+        }),
         mcp_namespaced_tool_name: None,
         agent_id: None,
         proxy_server_request: None,
@@ -712,8 +736,9 @@ mod tests {
             deployment_mode: "test".to_string(),
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
-  otel_active: false,
-            body_archiver: None,            metrics: None,
+            otel_active: false,
+            body_archiver: None,
+            metrics: None,
         })
     }
 
@@ -740,8 +765,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_system_info_returns_ok() {
-    use aigw_core::resolver::ModelResolver;
         use aigw_core::db::Database;
+        use aigw_core::resolver::ModelResolver;
         use std::sync::Arc;
 
         let db = Database::init("sqlite::memory:").await.expect("init");
@@ -759,8 +784,9 @@ mod tests {
             deployment_mode: "test".to_string(),
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
-  otel_active: false,
-            body_archiver: None,            metrics: None,
+            otel_active: false,
+            body_archiver: None,
+            metrics: None,
         });
 
         let app = Router::new()
@@ -781,7 +807,9 @@ mod tests {
             .unwrap();
         let json_val: JsonValue = serde_json::from_slice(&body_bytes).unwrap();
         assert!(
-            json_val.get("version").and_then(|v| v.as_str())
+            json_val
+                .get("version")
+                .and_then(|v| v.as_str())
                 .map(|v| v.starts_with(env!("CARGO_PKG_VERSION")))
                 .unwrap_or(false),
             "version should start with CARGO_PKG_VERSION"

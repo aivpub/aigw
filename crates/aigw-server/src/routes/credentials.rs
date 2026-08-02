@@ -18,8 +18,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tracing::warn;
 
-use crate::routes::keys::SharedState;
 use super::spend::{require_admin, SpendAuth};
+use crate::routes::keys::SharedState;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Request/Response types
@@ -94,7 +94,9 @@ impl CredentialResponse {
         let key = match master_key {
             Some(k) => k,
             None => {
-                warn!("AIGW_MASTER_KEY not configured — returning encrypted credential_values as-is");
+                warn!(
+                    "AIGW_MASTER_KEY not configured — returning encrypted credential_values as-is"
+                );
                 return params.clone();
             }
         };
@@ -160,16 +162,12 @@ pub async fn credential_new(
         updated_by: None,
     };
 
-    state
-        .db
-        .insert_credential(&credential)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": {"message": format!("{}", e)}})),
-            )
-        })?;
+    state.db.insert_credential(&credential).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {"message": format!("{}", e)}})),
+        )
+    })?;
 
     let resp = CredentialResponse::from_credential(credential, state.aigw_master_key.as_deref());
     Ok(Json(serde_json::to_value(resp).unwrap_or(json!({}))))
@@ -231,7 +229,10 @@ pub async fn credential_list(
     let master_key = state.aigw_master_key.as_deref();
     let data: Vec<Value> = credentials
         .into_iter()
-        .map(|c| serde_json::to_value(CredentialResponse::from_credential(c, master_key)).unwrap_or(json!({})))
+        .map(|c| {
+            serde_json::to_value(CredentialResponse::from_credential(c, master_key))
+                .unwrap_or(json!({}))
+        })
         .collect();
 
     let total_pages = if total_count > 0 {
@@ -284,16 +285,12 @@ pub async fn credential_update(
     }
     credential.updated_at = chrono::Utc::now().to_rfc3339();
 
-    state
-        .db
-        .update_credential(&credential)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": {"message": format!("{}", e)}})),
-            )
-        })?;
+    state.db.update_credential(&credential).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {"message": format!("{}", e)}})),
+        )
+    })?;
 
     let resp = CredentialResponse::from_credential(credential, state.aigw_master_key.as_deref());
     Ok(Json(serde_json::to_value(resp).unwrap_or(json!({}))))

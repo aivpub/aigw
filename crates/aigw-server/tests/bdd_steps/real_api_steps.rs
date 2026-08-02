@@ -7,8 +7,8 @@
 //! The cucumber @real_api tag already filters scenarios at the runner level;
 //! these guards add a runtime safety net so a misconfigured run won't panic.
 
-use cucumber::{given, then, when, codegen::LocalBoxFuture};
 use crate::TestWorld;
+use cucumber::{codegen::LocalBoxFuture, given, then, when};
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Cucumber hooks — called from bdd.rs via .before()/.after()
@@ -52,9 +52,12 @@ pub(crate) fn before_scenario_hook<'a>(
             match resp {
                 Ok(r) if r.status().is_success() => {
                     if let Ok(body) = r.json::<serde_json::Value>().await {
-                        if let Some(raw_key) = body.get("key").and_then(|v| v.as_str()).map(String::from) {
+                        if let Some(raw_key) =
+                            body.get("key").and_then(|v| v.as_str()).map(String::from)
+                        {
                             eprintln!("[bdd cleanup] pre-deleting stale key alias={}", alias);
-                            let _ = delete_key_via_api_inner(&client, &base_url(), &mk, &raw_key).await;
+                            let _ =
+                                delete_key_via_api_inner(&client, &base_url(), &mk, &raw_key).await;
                         }
                     }
                 }
@@ -132,20 +135,25 @@ async fn delete_key_via_api_inner(
 /// Trailing `/v1` is stripped — all step URLs already include
 /// their own prefixes (`/v1/...`, `/health`, `/key/generate`, etc.).
 pub(crate) fn base_url() -> String {
-    let raw = std::env::var("AIGW_BASE_URL").unwrap_or_else(|_| "http://localhost:4000".to_string());
+    let raw =
+        std::env::var("AIGW_BASE_URL").unwrap_or_else(|_| "http://localhost:4000".to_string());
     let raw = raw.strip_suffix("/v1").unwrap_or(&raw);
     raw.trim_end_matches('/').to_string()
 }
 
 /// Returns true when real API mode is active.
 pub(crate) fn real_api_enabled() -> bool {
-    std::env::var("AIGW_REAL_API").map(|v| v == "1").unwrap_or(false)
+    std::env::var("AIGW_REAL_API")
+        .map(|v| v == "1")
+        .unwrap_or(false)
 }
 
 /// Returns the upstream litellm database URL (for needs_upstream_db scenarios).
 #[allow(dead_code)]
 pub(crate) fn upstream_db_url() -> Option<String> {
-    std::env::var("AIGW_UPSTREAM_DB_URL").ok().filter(|s| !s.is_empty())
+    std::env::var("AIGW_UPSTREAM_DB_URL")
+        .ok()
+        .filter(|s| !s.is_empty())
 }
 
 /// Returns true when real API mode and upstream DB are both configured.
@@ -249,8 +257,13 @@ pub(crate) async fn create_key_via_api(world: &mut TestWorld, alias: &str) -> St
     }
 
     let resp_body: serde_json::Value = resp.json().await.expect("key/generate body");
-    let raw_key = resp_body["key"].as_str().expect("key field missing").to_string();
-    world.created_keys.insert(alias.to_string(), raw_key.clone());
+    let raw_key = resp_body["key"]
+        .as_str()
+        .expect("key field missing")
+        .to_string();
+    world
+        .created_keys
+        .insert(alias.to_string(), raw_key.clone());
     raw_key
 }
 
@@ -271,7 +284,11 @@ async fn bg_create_key_with_user(world: &mut TestWorld, alias: String) {
 }
 
 /// Create a virtual key with a user_id via the HTTP API.
-pub(crate) async fn create_key_with_user_id(world: &mut TestWorld, alias: &str, user_id: &str) -> String {
+pub(crate) async fn create_key_with_user_id(
+    world: &mut TestWorld,
+    alias: &str,
+    user_id: &str,
+) -> String {
     let url = format!("{}/key/generate", base_url());
     let test_model = real_model();
     let body = serde_json::json!({
@@ -305,8 +322,13 @@ pub(crate) async fn create_key_with_user_id(world: &mut TestWorld, alias: &str, 
     }
 
     let resp_body: serde_json::Value = resp.json().await.expect("key/generate body");
-    let raw_key = resp_body["key"].as_str().expect("key field missing").to_string();
-    world.created_keys.insert(alias.to_string(), raw_key.clone());
+    let raw_key = resp_body["key"]
+        .as_str()
+        .expect("key field missing")
+        .to_string();
+    world
+        .created_keys
+        .insert(alias.to_string(), raw_key.clone());
     raw_key
 }
 
@@ -335,7 +357,11 @@ pub(crate) fn set_skip_pass(world: &mut TestWorld, status: u16, body: serde_json
 #[when(expr = "使用 key {string} 发送 POST \\/chat\\/completions 请求到真实上游")]
 async fn when_real_chat(world: &mut TestWorld, alias: String) {
     if !real_api_enabled() {
-        set_skip_pass(world, 200, serde_json::json!({"choices":[{"message":{"content":"ok"}}]}));
+        set_skip_pass(
+            world,
+            200,
+            serde_json::json!({"choices":[{"message":{"content":"ok"}}]}),
+        );
         return;
     }
     // Ensure the key exists
@@ -361,7 +387,11 @@ async fn when_real_chat(world: &mut TestWorld, alias: String) {
 #[when(expr = "使用 invalid key 发送 POST \\/chat\\/completions 请求到真实上游")]
 async fn when_real_chat_invalid_key(world: &mut TestWorld) {
     if !real_api_enabled() {
-        set_skip_pass(world, 401, serde_json::json!({"error": {"type": "authentication_error", "message": "invalid token"}}));
+        set_skip_pass(
+            world,
+            401,
+            serde_json::json!({"error": {"type": "authentication_error", "message": "invalid token"}}),
+        );
         return;
     }
     let url = format!("{}/v1/chat/completions", base_url());
@@ -384,7 +414,11 @@ async fn when_real_chat_invalid_key(world: &mut TestWorld) {
 async fn when_real_chat_model(world: &mut TestWorld, alias: String, model: String) {
     if !real_api_enabled() {
         // For bad model: expect 400/404/422. Use 400 as the skip-pass default.
-        set_skip_pass(world, 400, serde_json::json!({"error": {"message": "model not found", "type": "invalid_request_error"}}));
+        set_skip_pass(
+            world,
+            400,
+            serde_json::json!({"error": {"message": "model not found", "type": "invalid_request_error"}}),
+        );
         return;
     }
     let token = world
@@ -411,7 +445,11 @@ async fn when_real_chat_model(world: &mut TestWorld, alias: String, model: Strin
 #[when(expr = "使用 key {string} 发送 POST \\/chat\\/completions stream=true 请求到真实上游")]
 async fn when_real_chat_stream(world: &mut TestWorld, alias: String) {
     if !real_api_enabled() {
-        set_skip_pass(world, 200, serde_json::json!({"_sse_data_chunks": 5, "_raw_sse_lines": 10, "_raw_text": "data:..."}));
+        set_skip_pass(
+            world,
+            200,
+            serde_json::json!({"_sse_data_chunks": 5, "_raw_sse_lines": 10, "_raw_text": "data:..."}),
+        );
         return;
     }
     let token = world
@@ -440,7 +478,13 @@ async fn when_real_chat_stream(world: &mut TestWorld, alias: String) {
         // Fall back to SSE text parsing (litellm upstream returns real SSE).
         if let Ok(json_body) = serde_json::from_str::<serde_json::Value>(&text) {
             // aigw mock: "object": "chat.completion.chunk"
-            let chunk_count = if json_body.get("object").and_then(|v| v.as_str()) == Some("chat.completion.chunk") { 2 } else { 0 };
+            let chunk_count = if json_body.get("object").and_then(|v| v.as_str())
+                == Some("chat.completion.chunk")
+            {
+                2
+            } else {
+                0
+            };
             world.last_body = Some(serde_json::json!({
                 "_raw_sse_lines": 1,
                 "_sse_data_chunks": chunk_count,
@@ -462,7 +506,11 @@ async fn when_real_chat_stream(world: &mut TestWorld, alias: String) {
 #[when(expr = "使用 key {string} 发送 POST \\/chat\\/completions 请求包含 max_tokens={int}")]
 async fn when_real_chat_max_tokens(world: &mut TestWorld, alias: String, max_tokens: usize) {
     if !real_api_enabled() {
-        set_skip_pass(world, 200, serde_json::json!({"usage": {"completion_tokens": 30}}));
+        set_skip_pass(
+            world,
+            200,
+            serde_json::json!({"usage": {"completion_tokens": 30}}),
+        );
         return;
     }
     let token = world
@@ -494,7 +542,11 @@ async fn when_real_chat_max_tokens(world: &mut TestWorld, alias: String, max_tok
 #[when(expr = "发送无 messages 字段的请求经 aigw 到真实上游")]
 async fn when_real_no_messages(world: &mut TestWorld) {
     if !real_api_enabled() {
-        set_skip_pass(world, 400, serde_json::json!({"error": {"message": "messages is required", "type": "invalid_request_error"}}));
+        set_skip_pass(
+            world,
+            400,
+            serde_json::json!({"error": {"message": "messages is required", "type": "invalid_request_error"}}),
+        );
         return;
     }
     let token = world
@@ -522,7 +574,11 @@ async fn when_real_no_messages(world: &mut TestWorld) {
 #[when(expr = "使用 OpenAI SDK 调用默认模型经 aigw")]
 async fn when_real_default_model(world: &mut TestWorld) {
     if !real_api_enabled() {
-        set_skip_pass(world, 200, serde_json::json!({"choices": [{"message": {"content": "hello"}}]}));
+        set_skip_pass(
+            world,
+            200,
+            serde_json::json!({"choices": [{"message": {"content": "hello"}}]}),
+        );
         return;
     }
     let model = real_model();
@@ -552,7 +608,11 @@ async fn when_real_default_model(world: &mut TestWorld) {
 #[when(expr = "使用 OpenAI SDK 调用 model={string} 经 aigw")]
 async fn when_real_claude_model(world: &mut TestWorld, model: String) {
     if !real_api_enabled() {
-        set_skip_pass(world, 200, serde_json::json!({"choices": [{"message": {"content": "hello"}}]}));
+        set_skip_pass(
+            world,
+            200,
+            serde_json::json!({"choices": [{"message": {"content": "hello"}}]}),
+        );
         return;
     }
     let token = world
@@ -589,12 +649,16 @@ async fn when_real_claude_model(world: &mut TestWorld, model: String) {
 async fn when_post_messages_default(world: &mut TestWorld, alias: String) {
     let model = real_model();
     if !real_api_enabled() {
-        set_skip_pass(world, 200, serde_json::json!({
-            "type": "message", "role": "assistant",
-            "content": [{"type": "text", "text": "hello"}],
-            "model": model, "stop_reason": "end_turn",
-            "usage": {"input_tokens": 5, "output_tokens": 3}
-        }));
+        set_skip_pass(
+            world,
+            200,
+            serde_json::json!({
+                "type": "message", "role": "assistant",
+                "content": [{"type": "text", "text": "hello"}],
+                "model": model, "stop_reason": "end_turn",
+                "usage": {"input_tokens": 5, "output_tokens": 3}
+            }),
+        );
         return;
     }
     let token = ensure_key(world, &alias).await;
@@ -631,11 +695,15 @@ async fn when_post_messages_default(world: &mut TestWorld, alias: String) {
 async fn when_post_messages_stream_default(world: &mut TestWorld, alias: String) {
     let model = real_model();
     if !real_api_enabled() {
-        set_skip_pass(world, 200, serde_json::json!({
-            "_sse_data_chunks": 3,
-            "_raw_sse_lines": 6,
-            "_raw_text": "event: message_start\ndata: {...}\n\n"
-        }));
+        set_skip_pass(
+            world,
+            200,
+            serde_json::json!({
+                "_sse_data_chunks": 3,
+                "_raw_sse_lines": 6,
+                "_raw_text": "event: message_start\ndata: {...}\n\n"
+            }),
+        );
         return;
     }
     let token = ensure_key(world, &alias).await;
@@ -668,7 +736,11 @@ async fn when_post_messages_stream_default(world: &mut TestWorld, alias: String)
 #[when(expr = "不带 Authorization 头发送请求")]
 async fn when_real_no_auth(world: &mut TestWorld) {
     if !real_api_enabled() {
-        set_skip_pass(world, 401, serde_json::json!({"error": {"type": "authentication_error", "message": "missing auth"}}));
+        set_skip_pass(
+            world,
+            401,
+            serde_json::json!({"error": {"type": "authentication_error", "message": "missing auth"}}),
+        );
         return;
     }
     let url = format!("{}/v1/chat/completions", base_url());
@@ -759,7 +831,10 @@ async fn then_tokens_positive(world: &mut TestWorld) {
         return;
     }
     let body: serde_json::Value = resp.json().await.expect("spend/logs body");
-    let logs = body.get("data").and_then(|d| d.as_array()).expect("no data array");
+    let logs = body
+        .get("data")
+        .and_then(|d| d.as_array())
+        .expect("no data array");
     let latest = logs.last().expect("no log entries");
     let tokens = latest
         .get("total_tokens")
@@ -801,7 +876,10 @@ async fn then_multiple_sse_chunks(world: &mut TestWorld) {
         return;
     }
     let body = world.last_body.as_ref().expect("no response body");
-    let chunks = body.get("_sse_data_chunks").and_then(|v| v.as_u64()).unwrap_or(0);
+    let chunks = body
+        .get("_sse_data_chunks")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
     assert!(chunks > 1, "Expected multiple SSE chunks, got {}", chunks);
 }
 
@@ -829,7 +907,10 @@ async fn then_openai_error_format(world: &mut TestWorld) {
         return;
     }
     let body = world.last_body.as_ref().expect("no response body");
-    assert!(body.get("error").is_some(), "Expected 'error' field in OpenAI error response");
+    assert!(
+        body.get("error").is_some(),
+        "Expected 'error' field in OpenAI error response"
+    );
 }
 
 #[then(expr = "错误包含 {string} 和 {string} 字段")]
@@ -895,12 +976,19 @@ async fn then_anthropic_message_format(world: &mut TestWorld) {
     }
     let body = world.last_body.as_ref().expect("no response body");
     let msg_type = body.get("type").and_then(|v| v.as_str()).unwrap_or("");
-    assert_eq!(msg_type, "message",
+    assert_eq!(
+        msg_type,
+        "message",
         "Expected type='message', got '{}' in: {}",
-        msg_type, serde_json::to_string_pretty(body).unwrap_or_default());
+        msg_type,
+        serde_json::to_string_pretty(body).unwrap_or_default()
+    );
     let role = body.get("role").and_then(|v| v.as_str()).unwrap_or("");
-    assert_eq!(role, "assistant",
-        "Expected role='assistant', got '{}'", role);
+    assert_eq!(
+        role, "assistant",
+        "Expected role='assistant', got '{}'",
+        role
+    );
 }
 
 #[then(expr = "响应包含 content 数组")]
@@ -909,11 +997,15 @@ async fn then_anthropic_has_content(world: &mut TestWorld) {
         return;
     }
     let body = world.last_body.as_ref().expect("no response body");
-    let content = body.get("content").and_then(|v| v.as_array())
+    let content = body
+        .get("content")
+        .and_then(|v| v.as_array())
         .expect("no content array in Anthropic response");
-    assert!(!content.is_empty(),
+    assert!(
+        !content.is_empty(),
         "Expected non-empty content array, got: {}",
-        serde_json::to_string_pretty(body).unwrap_or_default());
+        serde_json::to_string_pretty(body).unwrap_or_default()
+    );
 }
 
 #[then(expr = "流式响应包含 Anthropic SSE 事件（message_start）")]
@@ -925,7 +1017,8 @@ async fn then_sse_has_anthropic_event(world: &mut TestWorld) {
     let text = body.get("_raw_text").and_then(|v| v.as_str()).unwrap_or("");
     // Anthropic SSE: "event: message_start\ndata: {...}\n\n"
     let has_event_prefix = text.contains("event: message_start");
-    let has_data_start = text.contains("\"type\":\"message_start\"") || text.contains("\"type\": \"message_start\"");
+    let has_data_start =
+        text.contains("\"type\":\"message_start\"") || text.contains("\"type\": \"message_start\"");
     assert!(
         has_event_prefix || has_data_start,
         "Expected SSE to contain 'message_start' event. Got {} bytes. First 500 chars: {}",
@@ -933,7 +1026,6 @@ async fn then_sse_has_anthropic_event(world: &mut TestWorld) {
         &text[..text.len().min(500)]
     );
 }
-
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Stage 82: Body Archive Admin API — trigger 409 / 401 / 404
@@ -947,10 +1039,18 @@ use cucumber::gherkin::Step;
 #[when(expr = "使用 master-key 发送 POST \\/admin\\/jobs\\/trigger 请求")]
 async fn when_post_admin_jobs_trigger_master(world: &mut TestWorld, step: &Step) {
     if !real_api_enabled() {
-        set_skip_pass(world, 409, serde_json::json!({"error": {"message": "body archive storage not configured"}}));
+        set_skip_pass(
+            world,
+            409,
+            serde_json::json!({"error": {"message": "body archive storage not configured"}}),
+        );
         return;
     }
-    let body = step.docstring.as_ref().expect("POST /admin/jobs/trigger docstring body").to_string();
+    let body = step
+        .docstring
+        .as_ref()
+        .expect("POST /admin/jobs/trigger docstring body")
+        .to_string();
     let url = format!("{}/admin/jobs/trigger", base_url());
     let mk = world.master_key.clone();
     let resp = client()
@@ -970,10 +1070,18 @@ async fn when_post_admin_jobs_trigger_master(world: &mut TestWorld, step: &Step)
 #[when(expr = "不携带 Authorization 发送 POST \\/admin\\/jobs\\/trigger 请求")]
 async fn when_post_admin_jobs_trigger_noauth(world: &mut TestWorld, step: &Step) {
     if !real_api_enabled() {
-        set_skip_pass(world, 401, serde_json::json!({"error": {"type": "authentication_error"}}));
+        set_skip_pass(
+            world,
+            401,
+            serde_json::json!({"error": {"type": "authentication_error"}}),
+        );
         return;
     }
-    let body = step.docstring.as_ref().expect("POST /admin/jobs/trigger docstring body").to_string();
+    let body = step
+        .docstring
+        .as_ref()
+        .expect("POST /admin/jobs/trigger docstring body")
+        .to_string();
     let url = format!("{}/admin/jobs/trigger", base_url());
     let resp = client()
         .post(&url)

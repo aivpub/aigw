@@ -168,9 +168,6 @@ mod tests {
         assert_eq!(d.output_cost_per_token, Some(0.00006));
         assert_eq!(d.cache_read_input_token_cost, Some(0.0000075));
         assert_eq!(d.cache_creation_input_token_cost, Some(0.0000375));
-        assert_eq!(
-            d.raw_params["custom_llm_provider"].as_str(),
-            Some("openai")
-        );
+        assert_eq!(d.raw_params["custom_llm_provider"].as_str(), Some("openai"));
     }
 }

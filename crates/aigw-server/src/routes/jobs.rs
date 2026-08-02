@@ -4,11 +4,13 @@
 //! Requires admin authentication.
 
 use aigw_core::async_task::{AsyncTask, JobRecord};
+use aigw_core::budget::resetter::candidates_to_steps as budget_candidates_to_steps;
 use aigw_core::budget::resetter::scan_all as budget_scan_all;
 use aigw_core::budget::resetter::scan_by_type as budget_scan_by_type;
-use aigw_core::budget::resetter::candidates_to_steps as budget_candidates_to_steps;
 use aigw_core::budget::resetter::EntityType;
-use aigw_core::engine::{create_job, get_job_detail, get_job_logs as engine_get_job_logs, get_job_stats, list_jobs};
+use aigw_core::engine::{
+    create_job, get_job_detail, get_job_logs as engine_get_job_logs, get_job_stats, list_jobs,
+};
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -124,20 +126,25 @@ pub async fn trigger_job(
     // Only body_archive and budget_reset are supported for now
     let steps = match step_type {
         "body_archive" => {
-            let archiver = state.body_archiver.as_ref()
-                .ok_or((
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    Json(serde_json::json!({"error": "body archiver not configured"})),
-                ))?;
+            let archiver = state.body_archiver.as_ref().ok_or((
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": "body archiver not configured"})),
+            ))?;
             if !archiver.storage_configured() {
                 return Err((
                     StatusCode::CONFLICT,
                     Json(serde_json::json!({"error": "body archive storage not configured"})),
                 ));
             }
-            archiver.steps_from_payload(&req.payload).await.map_err(|e| {
-                (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": e.to_string()})))
-            })?
+            archiver
+                .steps_from_payload(&req.payload)
+                .await
+                .map_err(|e| {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({"error": e.to_string()})),
+                    )
+                })?
         }
         "budget_reset" => {
             let entity_type = req.payload.get("entity_type").and_then(|v| v.as_str());
@@ -145,23 +152,31 @@ pub async fn trigger_job(
                 Some(et_str) => {
                     let et = EntityType::from_str(et_str).ok_or((
                         StatusCode::BAD_REQUEST,
-                        Json(serde_json::json!({"error": format!("unknown entity_type: {et_str}")})),
+                        Json(
+                            serde_json::json!({"error": format!("unknown entity_type: {et_str}")}),
+                        ),
                     ))?;
                     budget_scan_by_type(&state.db, et).await.map_err(|e| {
-                        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()})))
+                        (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(serde_json::json!({"error": e.to_string()})),
+                        )
                     })?
                 }
-                None => {
-                    budget_scan_all(&state.db).await.map_err(|e| {
-                        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()})))
-                    })?
-                }
+                None => budget_scan_all(&state.db).await.map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({"error": e.to_string()})),
+                    )
+                })?,
             };
 
             if candidates.is_empty() {
                 return Err((
                     StatusCode::OK,
-                    Json(serde_json::json!({"message": "No entities need budget reset right now.", "total_steps": 0})),
+                    Json(
+                        serde_json::json!({"message": "No entities need budget reset right now.", "total_steps": 0}),
+                    ),
                 ));
             }
             budget_candidates_to_steps(candidates)
@@ -174,8 +189,21 @@ pub async fn trigger_job(
         }
     };
 
-    let job_id = create_job(&state.db, step_type, "manual", Some(&triggered_by), &steps, 3).await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    let job_id = create_job(
+        &state.db,
+        step_type,
+        "manual",
+        Some(&triggered_by),
+        &steps,
+        3,
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+    })?;
 
     Ok(Json(TriggerJobResponse {
         job_id,
@@ -200,8 +228,20 @@ pub async fn list_jobs_handler(
     let page = params.page.unwrap_or(1).max(1);
     let offset = (page - 1) * limit;
 
-    let (jobs, total) = list_jobs(&state.db, params.step_type.as_deref(), params.status.as_deref(), limit, offset).await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    let (jobs, total) = list_jobs(
+        &state.db,
+        params.step_type.as_deref(),
+        params.status.as_deref(),
+        limit,
+        offset,
+    )
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+    })?;
 
     let job_items: Vec<JobListItem> = jobs.into_iter().map(JobListItem::from).collect();
 
@@ -224,8 +264,12 @@ pub async fn job_stats_handler(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&auth)?;
 
-    let stats = get_job_stats(&state.db).await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    let stats = get_job_stats(&state.db).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+    })?;
 
     Ok(Json(stats))
 }
@@ -242,24 +286,31 @@ pub async fn job_detail_handler(
 ) -> Result<Json<JobDetailResponse>, (StatusCode, Json<Value>)> {
     require_admin(&auth)?;
 
-    let result = get_job_detail(&state.db, &job_id).await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    let result = get_job_detail(&state.db, &job_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+    })?;
 
     match result {
         Some((job, steps)) => {
-            let steps_json: Vec<Value> = steps.iter().map(|s| {
-                serde_json::json!(StepResponse {
-                    id: s.id.clone(),
-                    step_key: s.step_key.clone(),
-                    status: s.status.clone(),
-                    payload: s.payload.clone(),
-                    result: s.result.clone(),
-                    error_message: s.error_message.clone(),
-                    retry_count: s.retry_count,
-                    started_at: s.started_at.clone(),
-                    completed_at: s.completed_at.clone(),
+            let steps_json: Vec<Value> = steps
+                .iter()
+                .map(|s| {
+                    serde_json::json!(StepResponse {
+                        id: s.id.clone(),
+                        step_key: s.step_key.clone(),
+                        status: s.status.clone(),
+                        payload: s.payload.clone(),
+                        result: s.result.clone(),
+                        error_message: s.error_message.clone(),
+                        retry_count: s.retry_count,
+                        started_at: s.started_at.clone(),
+                        completed_at: s.completed_at.clone(),
+                    })
                 })
-            }).collect();
+                .collect();
 
             Ok(Json(JobDetailResponse {
                 job: JobListItem::from(job),
@@ -297,17 +348,26 @@ pub async fn job_logs_handler(
     let page = params.page.unwrap_or(1).max(1);
     let offset = (page - 1) * limit;
 
-    let logs = engine_get_job_logs(&state.db, &job_id, params.level.as_deref(), limit, offset).await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    let logs = engine_get_job_logs(&state.db, &job_id, params.level.as_deref(), limit, offset)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+        })?;
 
-    let log_entries: Vec<Value> = logs.into_iter().map(|entry| {
-        serde_json::json!({
-            "step_key": entry.step_key,
-            "level": entry.level,
-            "message": entry.message,
-            "created_at": entry.created_at,
+    let log_entries: Vec<Value> = logs
+        .into_iter()
+        .map(|entry| {
+            serde_json::json!({
+                "step_key": entry.step_key,
+                "level": entry.level,
+                "message": entry.message,
+                "created_at": entry.created_at,
+            })
         })
-    }).collect();
+        .collect();
 
     Ok(Json(serde_json::json!({
         "logs": log_entries,
@@ -327,13 +387,16 @@ pub async fn archive_stats_handler(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&auth)?;
 
-    let archiver = state.body_archiver.as_ref()
-        .ok_or((
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({"error": "body archiver not configured"})),
-        ))?;
-    let stats = archiver.get_archive_stats(&state.db).await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": e.to_string()}))))?;
+    let archiver = state.body_archiver.as_ref().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(serde_json::json!({"error": "body archiver not configured"})),
+    ))?;
+    let stats = archiver.get_archive_stats(&state.db).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": e.to_string()})),
+        )
+    })?;
 
     Ok(Json(stats))
 }

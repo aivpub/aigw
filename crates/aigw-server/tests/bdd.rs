@@ -47,8 +47,8 @@ impl TestWorld {
                 .await
                 .expect("db init");
             let mk = "sk-master-test".to_string();
-            let state: aigw_server::routes::keys::SharedState = Arc::new(
-                aigw_server::routes::keys::AppState {
+            let state: aigw_server::routes::keys::SharedState =
+                Arc::new(aigw_server::routes::keys::AppState {
                     resolver: aigw_core::resolver::ModelResolver::new(db.clone(), None, "onprem"),
                     router: aigw_core::router::Router::default(),
                     db,
@@ -60,10 +60,10 @@ impl TestWorld {
                     deployment_mode: "test".to_string(),
                     started_at: std::time::Instant::now(),
                     daily_spend_queue: None,
-  otel_active: false,
-            body_archiver: None,                    metrics: None,
-                },
-            );
+                    otel_active: false,
+                    body_archiver: None,
+                    metrics: None,
+                });
             self.master_key = mk;
             self.state = Some(state.clone());
             state
@@ -124,7 +124,10 @@ async fn main() {
                 return false;
             }
             if real_api_mode {
-                feature.tags.iter().chain(scenario.tags.iter())
+                feature
+                    .tags
+                    .iter()
+                    .chain(scenario.tags.iter())
                     .any(|t| t == "real_api")
             } else {
                 true
@@ -140,7 +143,10 @@ async fn main() {
     }
     if let (Some(mgr), Some(ref info)) = (manager, db_info) {
         if std::env::var("AIGW_TEST_KEEP_DB").as_deref() == Ok("1") {
-            eprintln!("==> AIGW_TEST_KEEP_DB=1: keeping test DB: {}", info.database_url);
+            eprintln!(
+                "==> AIGW_TEST_KEEP_DB=1: keeping test DB: {}",
+                info.database_url
+            );
         } else {
             mgr.drop_db(info).await.ok();
         }

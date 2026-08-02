@@ -47,7 +47,12 @@ fn looks_encrypted(s: &str) -> bool {
     }
     s.len() >= 60
         && s.bytes().all(|b| {
-            b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'=' || b == b'-' || b == b'_'
+            b.is_ascii_alphanumeric()
+                || b == b'+'
+                || b == b'/'
+                || b == b'='
+                || b == b'-'
+                || b == b'_'
         })
         && !s.contains(' ')
 }
@@ -96,7 +101,12 @@ fn verify_nested_decrypt_for_all_fixtures() {
 
         // 1. Decrypt litellm_params with test key
         let params_str = decrypt_litellm_value(&m.encrypted_litellm_params, TEST_MASTER_KEY)
-            .unwrap_or_else(|e| panic!("Failed to decrypt litellm_params for {}: {}", m.model_name, e));
+            .unwrap_or_else(|e| {
+                panic!(
+                    "Failed to decrypt litellm_params for {}: {}",
+                    m.model_name, e
+                )
+            });
         let params_json: Value =
             serde_json::from_str(&params_str).expect("litellm_params must be valid JSON");
 
@@ -145,12 +155,12 @@ fn verify_nested_decrypt_for_all_fixtures() {
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             let matches = api_base.contains(suffix.as_str());
-            println!(
-                "  api_base check: suffix='{}' found={}",
-                suffix, matches
-            );
+            println!("  api_base check: suffix='{}' found={}", suffix, matches);
             if !matches {
-                println!("  [FAIL] api_base '{}' does not contain '{}'", api_base, suffix);
+                println!(
+                    "  [FAIL] api_base '{}' does not contain '{}'",
+                    api_base, suffix
+                );
                 any_failure = true;
             }
         }
@@ -160,9 +170,15 @@ fn verify_nested_decrypt_for_all_fixtures() {
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             let matches = model == expected.as_str();
-            println!("  model check: expected='{}' actual='{}' ok={}", expected, model, matches);
+            println!(
+                "  model check: expected='{}' actual='{}' ok={}",
+                expected, model, matches
+            );
             if !matches {
-                println!("  [FAIL] model mismatch: expected '{}' got '{}'", expected, model);
+                println!(
+                    "  [FAIL] model mismatch: expected '{}' got '{}'",
+                    expected, model
+                );
                 any_failure = true;
             }
         }
@@ -184,7 +200,10 @@ fn verify_nested_decrypt_for_all_fixtures() {
                 .filter(|(_, v)| looks_encrypted(v))
                 .collect();
             if cred_still.is_empty() {
-                println!("  [OK] credential_values 全部解密成功 ({} 字段)", cred_after.len());
+                println!(
+                    "  [OK] credential_values 全部解密成功 ({} 字段)",
+                    cred_after.len()
+                );
             } else {
                 for (path, value) in &cred_still {
                     println!(

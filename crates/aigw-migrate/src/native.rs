@@ -74,9 +74,7 @@ impl SourcePool {
                                 .await?;
                             // JIT is pure overhead for simple INSERT
                             // statements with no complex WHERE clauses.
-                            sqlx::query("SET jit = off")
-                                .execute(&mut *conn)
-                                .await?;
+                            sqlx::query("SET jit = off").execute(&mut *conn).await?;
                             // More memory for sort/hash operations per
                             // statement (default 4MB → 64MB).
                             sqlx::query("SET work_mem = '64MB'")
@@ -96,15 +94,24 @@ impl SourcePool {
                 // must be collapsed to avoid divergent parsing between drivers.
                 let normalized = url.replacen("sqlite:////", "sqlite://", 1);
                 let pool = if normalized.starts_with("sqlite:") || normalized.contains("://") {
-                    SqlitePoolOptions::new().max_connections(5).connect(&normalized).await?
+                    SqlitePoolOptions::new()
+                        .max_connections(5)
+                        .connect(&normalized)
+                        .await?
                 } else {
                     let sqlite_url = format!("sqlite://{}", normalized);
-                    SqlitePoolOptions::new().max_connections(5).connect(&sqlite_url).await?
+                    SqlitePoolOptions::new()
+                        .max_connections(5)
+                        .connect(&sqlite_url)
+                        .await?
                 };
                 Ok(SourcePool::Sqlite(pool))
             }
             DbKind::Mysql => {
-                let pool = MySqlPoolOptions::new().max_connections(5).connect(url).await?;
+                let pool = MySqlPoolOptions::new()
+                    .max_connections(5)
+                    .connect(url)
+                    .await?;
                 Ok(SourcePool::Mysql(pool))
             }
         }
@@ -148,15 +155,9 @@ impl SourcePool {
         let quoted = self.quote_ident(table);
         let sql = format!("SELECT COUNT(*) FROM {}", quoted);
         let count: i64 = match self {
-            SourcePool::Postgres(p) => {
-                sqlx::query_scalar(&sql).fetch_one(p).await?
-            }
-            SourcePool::Sqlite(p) => {
-                sqlx::query_scalar(&sql).fetch_one(p).await?
-            }
-            SourcePool::Mysql(p) => {
-                sqlx::query_scalar(&sql).fetch_one(p).await?
-            }
+            SourcePool::Postgres(p) => sqlx::query_scalar(&sql).fetch_one(p).await?,
+            SourcePool::Sqlite(p) => sqlx::query_scalar(&sql).fetch_one(p).await?,
+            SourcePool::Mysql(p) => sqlx::query_scalar(&sql).fetch_one(p).await?,
         };
         Ok(count)
     }
@@ -178,15 +179,9 @@ impl SourcePool {
     /// keeps decoding uniform as `String` across TEXT and JSONB.
     pub async fn query_scalar_string(&self, sql: &str) -> anyhow::Result<Option<String>> {
         let opt: Option<String> = match self {
-            SourcePool::Postgres(p) => {
-                sqlx::query_scalar(sql).fetch_optional(p).await?
-            }
-            SourcePool::Sqlite(p) => {
-                sqlx::query_scalar(sql).fetch_optional(p).await?
-            }
-            SourcePool::Mysql(p) => {
-                sqlx::query_scalar(sql).fetch_optional(p).await?
-            }
+            SourcePool::Postgres(p) => sqlx::query_scalar(sql).fetch_optional(p).await?,
+            SourcePool::Sqlite(p) => sqlx::query_scalar(sql).fetch_optional(p).await?,
+            SourcePool::Mysql(p) => sqlx::query_scalar(sql).fetch_optional(p).await?,
         };
         Ok(opt)
     }
@@ -203,7 +198,11 @@ impl SourcePool {
 
     /// Read rows with an optional SQL LIMIT clause.
     /// When `limit` is Some(N), appends `LIMIT N` to avoid full table scans.
-    pub async fn read_rows_with_limit(&self, table: &str, limit: Option<usize>) -> anyhow::Result<Vec<UnifiedRow>> {
+    pub async fn read_rows_with_limit(
+        &self,
+        table: &str,
+        limit: Option<usize>,
+    ) -> anyhow::Result<Vec<UnifiedRow>> {
         let quoted = self.quote_ident(table);
         let sql = if let Some(n) = limit {
             format!("SELECT * FROM {} LIMIT {}", quoted, n)
@@ -337,7 +336,6 @@ impl SourcePool {
         }
         parts.join(" ")
     }
-
 
     /// Stream rows from a paginated cursor query (used by pipelined migrations).
     ///
@@ -510,22 +508,35 @@ fn try_pg_get(row: &sqlx::postgres::PgRow, col: &str) -> Value {
     // single allocation that round-trips cleanly through PG→PG migration
     // without any JSON manipulation.
     if let Ok(v) = row.try_get::<String, _>(col) {
-        if v.is_empty() { return Value::Null; }
+        if v.is_empty() {
+            return Value::Null;
+        }
         return Value::String(v);
     }
-    if let Ok(v) = row.try_get::<Value, _>(col) { return v; }
-    if let Ok(v) = row.try_get::<bool, _>(col) { return Value::Bool(v); }
-    if let Ok(v) = row.try_get::<f64, _>(col) { return json!(v); }
-    if let Ok(v) = row.try_get::<f32, _>(col) { return json!(v); }
-    if let Ok(v) = row.try_get::<i64, _>(col) { return json!(v); }
-    if let Ok(v) = row.try_get::<i32, _>(col) { return json!(v); }
+    if let Ok(v) = row.try_get::<Value, _>(col) {
+        return v;
+    }
+    if let Ok(v) = row.try_get::<bool, _>(col) {
+        return Value::Bool(v);
+    }
+    if let Ok(v) = row.try_get::<f64, _>(col) {
+        return json!(v);
+    }
+    if let Ok(v) = row.try_get::<f32, _>(col) {
+        return json!(v);
+    }
+    if let Ok(v) = row.try_get::<i64, _>(col) {
+        return json!(v);
+    }
+    if let Ok(v) = row.try_get::<i32, _>(col) {
+        return json!(v);
+    }
     if let Ok(v) = row.try_get::<chrono::DateTime<chrono::Utc>, _>(col) {
         return Value::String(v.to_rfc3339());
     }
     if let Ok(v) = row.try_get::<chrono::NaiveDateTime, _>(col) {
         return Value::String(
-            chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(v, chrono::Utc)
-                .to_rfc3339(),
+            chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(v, chrono::Utc).to_rfc3339(),
         );
     }
     if let Ok(v) = row.try_get::<chrono::NaiveDate, _>(col) {
@@ -558,18 +569,26 @@ fn try_sqlite_get(row: &sqlx::sqlite::SqliteRow, col: &str) -> Value {
     // BLOB: try parse as UTF-8 JSON, fallback to base64-like hex
     if let Ok(v) = row.try_get::<Vec<u8>, _>(col) {
         return match String::from_utf8(v) {
-            Ok(s) if !s.is_empty() => {
-                serde_json::from_str(&s).unwrap_or(Value::String(s))
-            }
+            Ok(s) if !s.is_empty() => serde_json::from_str(&s).unwrap_or(Value::String(s)),
             _ => Value::Null,
         };
     }
-    if let Ok(v) = row.try_get::<f64, _>(col) { return json!(v); }
-    if let Ok(v) = row.try_get::<f32, _>(col) { return json!(v); }
-    if let Ok(v) = row.try_get::<i64, _>(col) { return json!(v); }
-    if let Ok(v) = row.try_get::<i32, _>(col) { return json!(v); }
+    if let Ok(v) = row.try_get::<f64, _>(col) {
+        return json!(v);
+    }
+    if let Ok(v) = row.try_get::<f32, _>(col) {
+        return json!(v);
+    }
+    if let Ok(v) = row.try_get::<i64, _>(col) {
+        return json!(v);
+    }
+    if let Ok(v) = row.try_get::<i32, _>(col) {
+        return json!(v);
+    }
     if let Ok(v) = row.try_get::<String, _>(col) {
-        if v.is_empty() { return Value::Null; }
+        if v.is_empty() {
+            return Value::Null;
+        }
         // SQLite TEXT column — try parse as JSON (covers the case where
         // a value was written as text but the column is logically JSON/BLOB)
         if let Ok(json_val) = serde_json::from_str(&v) {
@@ -599,7 +618,6 @@ async fn read_mysql_rows(pool: &MySqlPool, sql: &str) -> anyhow::Result<Vec<Unif
     }
     Ok(result)
 }
-
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Row streaming (for pipelined migrations — see migrate_spend_logs)
@@ -921,7 +939,6 @@ fn stream_pg_rows_keyset_aigw<'a>(
     .boxed()
 }
 
-
 /// Stream rows from a SQLite source one at a time.
 fn stream_sqlite_rows<'a>(
     pool: &'a SqlitePool,
@@ -967,12 +984,24 @@ fn stream_mysql_rows<'a>(
 }
 
 fn try_mysql_get(row: &sqlx::mysql::MySqlRow, col: &str) -> Value {
-    if let Ok(v) = row.try_get::<Value, _>(col) { return v; }
-    if let Ok(v) = row.try_get::<bool, _>(col) { return Value::Bool(v); }
-    if let Ok(v) = row.try_get::<f64, _>(col) { return json!(v); }
-    if let Ok(v) = row.try_get::<f32, _>(col) { return json!(v); }
-    if let Ok(v) = row.try_get::<i64, _>(col) { return json!(v); }
-    if let Ok(v) = row.try_get::<i32, _>(col) { return json!(v); }
+    if let Ok(v) = row.try_get::<Value, _>(col) {
+        return v;
+    }
+    if let Ok(v) = row.try_get::<bool, _>(col) {
+        return Value::Bool(v);
+    }
+    if let Ok(v) = row.try_get::<f64, _>(col) {
+        return json!(v);
+    }
+    if let Ok(v) = row.try_get::<f32, _>(col) {
+        return json!(v);
+    }
+    if let Ok(v) = row.try_get::<i64, _>(col) {
+        return json!(v);
+    }
+    if let Ok(v) = row.try_get::<i32, _>(col) {
+        return json!(v);
+    }
     // MySQL datetime/timestamp columns don't decode straight into String.
     // Same treatment as PG: format uniformly as RFC 3339 UTC.
     if let Ok(v) = row.try_get::<chrono::DateTime<chrono::Utc>, _>(col) {
@@ -980,15 +1009,16 @@ fn try_mysql_get(row: &sqlx::mysql::MySqlRow, col: &str) -> Value {
     }
     if let Ok(v) = row.try_get::<chrono::NaiveDateTime, _>(col) {
         return Value::String(
-            chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(v, chrono::Utc)
-                .to_rfc3339(),
+            chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(v, chrono::Utc).to_rfc3339(),
         );
     }
     if let Ok(v) = row.try_get::<chrono::NaiveDate, _>(col) {
         return Value::String(v.format("%Y-%m-%d").to_string());
     }
     if let Ok(v) = row.try_get::<String, _>(col) {
-        if v.is_empty() { return Value::Null; }
+        if v.is_empty() {
+            return Value::Null;
+        }
         return Value::String(v);
     }
     Value::Null
@@ -998,7 +1028,10 @@ fn try_mysql_get(row: &sqlx::mysql::MySqlRow, col: &str) -> Value {
 // Column type metadata readers (target DB)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-async fn pg_column_types(pool: &PgPool, table: &str) -> anyhow::Result<Vec<(String, String, bool)>> {
+async fn pg_column_types(
+    pool: &PgPool,
+    table: &str,
+) -> anyhow::Result<Vec<(String, String, bool)>> {
     let rows = sqlx::query(
         "SELECT column_name::text, \
                 CASE WHEN data_type = 'ARRAY' THEN udt_name ELSE data_type END::text, \
@@ -1014,12 +1047,19 @@ async fn pg_column_types(pool: &PgPool, table: &str) -> anyhow::Result<Vec<(Stri
         .iter()
         .map(|r| {
             let nullable: String = r.get(2);
-            (r.get::<String, _>(0), r.get::<String, _>(1), nullable == "YES")
+            (
+                r.get::<String, _>(0),
+                r.get::<String, _>(1),
+                nullable == "YES",
+            )
         })
         .collect())
 }
 
-async fn sqlite_column_types(pool: &SqlitePool, table: &str) -> anyhow::Result<Vec<(String, String, bool)>> {
+async fn sqlite_column_types(
+    pool: &SqlitePool,
+    table: &str,
+) -> anyhow::Result<Vec<(String, String, bool)>> {
     let sql = format!("PRAGMA table_info(\"{}\")", table);
     let rows = sqlx::query(&sql).fetch_all(pool).await?;
     Ok(rows
@@ -1033,7 +1073,10 @@ async fn sqlite_column_types(pool: &SqlitePool, table: &str) -> anyhow::Result<V
         .collect())
 }
 
-async fn mysql_column_types(pool: &MySqlPool, table: &str) -> anyhow::Result<Vec<(String, String, bool)>> {
+async fn mysql_column_types(
+    pool: &MySqlPool,
+    table: &str,
+) -> anyhow::Result<Vec<(String, String, bool)>> {
     let rows = sqlx::query(
         "SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE \
          FROM INFORMATION_SCHEMA.COLUMNS \
@@ -1063,19 +1106,34 @@ async fn mysql_column_types(pool: &MySqlPool, table: &str) -> anyhow::Result<Vec
 /// Normalize MySQL type names to SQL-standard equivalents.
 fn normalize_mysql_type(raw: &str) -> String {
     let lower = raw.to_lowercase();
-    if lower.starts_with("varchar") || lower.starts_with("char") || lower.starts_with("text")
-        || lower.starts_with("longtext") || lower.starts_with("mediumtext")
-    { "text".into() }
-    else if lower.starts_with("int") || lower.starts_with("tinyint") { "integer".into() }
-    else if lower.starts_with("bigint") { "bigint".into() }
-    else if lower.starts_with("smallint") { "smallint".into() }
-    else if lower.starts_with("float") { "real".into() }
-    else if lower.starts_with("double") { "double precision".into() }
-    else if lower.starts_with("decimal") || lower.starts_with("numeric") { "numeric".into() }
-    else if lower.starts_with("datetime") || lower.starts_with("timestamp") { "timestamp".into() }
-    else if lower == "json" { "json".into() }
-    else if lower.starts_with("blob") || lower.starts_with("binary") { "blob".into() }
-    else { "text".into() }
+    if lower.starts_with("varchar")
+        || lower.starts_with("char")
+        || lower.starts_with("text")
+        || lower.starts_with("longtext")
+        || lower.starts_with("mediumtext")
+    {
+        "text".into()
+    } else if lower.starts_with("int") || lower.starts_with("tinyint") {
+        "integer".into()
+    } else if lower.starts_with("bigint") {
+        "bigint".into()
+    } else if lower.starts_with("smallint") {
+        "smallint".into()
+    } else if lower.starts_with("float") {
+        "real".into()
+    } else if lower.starts_with("double") {
+        "double precision".into()
+    } else if lower.starts_with("decimal") || lower.starts_with("numeric") {
+        "numeric".into()
+    } else if lower.starts_with("datetime") || lower.starts_with("timestamp") {
+        "timestamp".into()
+    } else if lower == "json" {
+        "json".into()
+    } else if lower.starts_with("blob") || lower.starts_with("binary") {
+        "blob".into()
+    } else {
+        "text".into()
+    }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1103,7 +1161,11 @@ fn mysql_json_hex_literal(s: &str) -> String {
         Ok(v) => v.to_string(),
         Err(_) => return "'{}'".to_string(),
     };
-    let hex: String = normalized.as_bytes().iter().map(|b| format!("{:02X}", b)).collect();
+    let hex: String = normalized
+        .as_bytes()
+        .iter()
+        .map(|b| format!("{:02X}", b))
+        .collect();
     // CAST(X'hex' AS CHAR) yields the raw JSON text (no backslash un-escaping
     // that a '…' string literal would apply), and CAST(… AS JSON) then parses
     // it as a JSON document — so `\"` escapes survive for MySQL's JSON parser
@@ -1121,7 +1183,12 @@ fn mysql_json_hex_literal(s: &str) -> String {
 ///   - JSON/JSONB: reject empty strings (→ NULL), wrap with ::jsonb for PG
 ///   - BOOLEAN: SQLite INTEGER(0/1) → PG true/false; PG bool → SQLite 1/0
 ///   - Numeric: native decode gives us f64/i64, direct string conversion
-pub fn value_to_target_literal(v: &Value, col_type: &str, target: DbKind, is_nullable: bool) -> String {
+pub fn value_to_target_literal(
+    v: &Value,
+    col_type: &str,
+    target: DbKind,
+    is_nullable: bool,
+) -> String {
     let ty = col_type.to_lowercase();
     // Determine if this PG column is an array type.
     // information_schema returns udt_name like `_text`, `_varchar` for array columns.
@@ -1141,11 +1208,19 @@ pub fn value_to_target_literal(v: &Value, col_type: &str, target: DbKind, is_nul
             match target {
                 DbKind::Postgres if !ty.is_empty() => match ty.as_str() {
                     "boolean" | "bool" => "false".to_string(),
-                    "integer" | "int" | "int4" | "smallint" | "int2" | "bigint" | "int8" => "0".to_string(),
+                    "integer" | "int" | "int4" | "smallint" | "int2" | "bigint" | "int8" => {
+                        "0".to_string()
+                    }
                     "jsonb" | "json" => "'{}'::jsonb".to_string(),
-                    "timestamp with time zone" | "timestamptz" => "'1970-01-01 00:00:00+00'::timestamptz".to_string(),
-                    "timestamp without time zone" | "timestamp" => "'1970-01-01 00:00:00'::timestamp".to_string(),
-                    "double precision" | "float8" | "real" | "float4" | "numeric" | "decimal" => "0".to_string(),
+                    "timestamp with time zone" | "timestamptz" => {
+                        "'1970-01-01 00:00:00+00'::timestamptz".to_string()
+                    }
+                    "timestamp without time zone" | "timestamp" => {
+                        "'1970-01-01 00:00:00'::timestamp".to_string()
+                    }
+                    "double precision" | "float8" | "real" | "float4" | "numeric" | "decimal" => {
+                        "0".to_string()
+                    }
                     _ if ty.ends_with("[]") || ty.starts_with("_") => "'{}'".to_string(),
                     "text" | "character varying" | "varchar" => "''".to_string(),
                     // Any time/date type not matched above (e.g. "timestamp with local time zone")
@@ -1158,7 +1233,8 @@ pub fn value_to_target_literal(v: &Value, col_type: &str, target: DbKind, is_nul
                 // MySQL: safe fallback for unknown types
                 DbKind::Mysql if !ty.is_empty() => match ty.as_str() {
                     "json" | "blob" | "binary" | "varbinary" => "'{}'".to_string(),
-                    "integer" | "int" | "bigint" | "smallint" | "tinyint" | "float" | "double" | "decimal" | "numeric" | "real" => "0".to_string(),
+                    "integer" | "int" | "bigint" | "smallint" | "tinyint" | "float" | "double"
+                    | "decimal" | "numeric" | "real" => "0".to_string(),
                     "timestamp" | "datetime" => "'1970-01-01 00:00:00'".to_string(),
                     "date" => "'1970-01-01'".to_string(),
                     "time" => "'00:00:00'".to_string(),
@@ -1170,7 +1246,9 @@ pub fn value_to_target_literal(v: &Value, col_type: &str, target: DbKind, is_nul
                 DbKind::Sqlite if !ty.is_empty() => match ty.as_str() {
                     "blob" | "binary" | "varbinary" => "'{}'".to_string(),
                     "integer" | "int" | "bigint" | "smallint" | "tinyint" => "0".to_string(),
-                    "real" | "float" | "double" | "numeric" | "decimal" | "number" => "0".to_string(),
+                    "real" | "float" | "double" | "numeric" | "decimal" | "number" => {
+                        "0".to_string()
+                    }
                     // FK columns: SQLite allows NULL in FK columns, so keep NULL.
                     // TEXT / DATETIME / empty-type columns: empty string is safe.
                     _ => "''".to_string(),
@@ -1183,10 +1261,15 @@ pub fn value_to_target_literal(v: &Value, col_type: &str, target: DbKind, is_nul
             match target {
                 DbKind::Postgres => {
                     if ty == "boolean" || ty == "bool" {
-                        if *b { "true".into() } else { "false".into() }
+                        if *b {
+                            "true".into()
+                        } else {
+                            "false".into()
+                        }
                     } else if ty.contains("int") || ty == "smallint" || ty == "bigint" {
                         (if *b { "1" } else { "0" }).into()
-                    } else if ty.contains("timestamp") || ty.contains("date") || ty.contains("time") {
+                    } else if ty.contains("timestamp") || ty.contains("date") || ty.contains("time")
+                    {
                         // SQLite stores "false"/"true" as BLOB→JSON→Bool →
                         // won't convert to timestamp.  Use NULL.
                         "NULL".to_string()
@@ -1201,7 +1284,11 @@ pub fn value_to_target_literal(v: &Value, col_type: &str, target: DbKind, is_nul
                 DbKind::Mysql => {
                     if ty.contains("int") || ty == "tinyint" || ty.contains("bool") {
                         (if *b { "1" } else { "0" }).into()
-                    } else if ty.contains("timestamp") || ty.contains("date") || ty.contains("time") || ty.contains("datetime") {
+                    } else if ty.contains("timestamp")
+                        || ty.contains("date")
+                        || ty.contains("time")
+                        || ty.contains("datetime")
+                    {
                         "NULL".to_string()
                     } else {
                         format!("'{}'", if *b { "true" } else { "false" })
@@ -1214,11 +1301,24 @@ pub fn value_to_target_literal(v: &Value, col_type: &str, target: DbKind, is_nul
             match target {
                 DbKind::Postgres => {
                     if ty == "boolean" || ty == "bool" {
-                        if n.as_i64().map(|i| i != 0).unwrap_or(false) { "true".into() } else { "false".into() }
+                        if n.as_i64().map(|i| i != 0).unwrap_or(false) {
+                            "true".into()
+                        } else {
+                            "false".into()
+                        }
                     } else if ty.contains("int") || ty == "smallint" || ty == "bigint" {
-                        n.as_i64().map(|i| i.to_string()).unwrap_or_else(|| n.to_string())
-                    } else if ty.contains("double") || ty.contains("real") || ty.contains("float") || ty.contains("numeric") || ty.contains("decimal") {
-                        n.as_f64().map(|f| f.to_string()).unwrap_or_else(|| n.to_string())
+                        n.as_i64()
+                            .map(|i| i.to_string())
+                            .unwrap_or_else(|| n.to_string())
+                    } else if ty.contains("double")
+                        || ty.contains("real")
+                        || ty.contains("float")
+                        || ty.contains("numeric")
+                        || ty.contains("decimal")
+                    {
+                        n.as_f64()
+                            .map(|f| f.to_string())
+                            .unwrap_or_else(|| n.to_string())
                     } else {
                         n.to_string()
                     }
@@ -1248,13 +1348,17 @@ pub fn value_to_target_literal(v: &Value, col_type: &str, target: DbKind, is_nul
                         return match ty.as_str() {
                             "jsonb" | "json" => "'{}'::jsonb".to_string(),
                             "boolean" | "bool" => "false".to_string(),
-                            "timestamp with time zone" | "timestamptz"
-                                => "'1970-01-01 00:00:00+00'::timestamptz".to_string(),
-                            "timestamp without time zone" | "timestamp"
-                                => "'1970-01-01 00:00:00'::timestamp".to_string(),
+                            "timestamp with time zone" | "timestamptz" => {
+                                "'1970-01-01 00:00:00+00'::timestamptz".to_string()
+                            }
+                            "timestamp without time zone" | "timestamp" => {
+                                "'1970-01-01 00:00:00'::timestamp".to_string()
+                            }
                             "date" => "'1970-01-01'::date".to_string(),
                             "time without time zone" | "time" => "'00:00:00'::time".to_string(),
-                            _ if ty.contains("time") || ty.contains("date") => "'1970-01-01 00:00:00+00'::timestamptz".to_string(),
+                            _ if ty.contains("time") || ty.contains("date") => {
+                                "'1970-01-01 00:00:00+00'::timestamptz".to_string()
+                            }
                             _ if would_reject_empty_string(&ty, target) => "0".to_string(),
                             _ => "''".to_string(),
                         };
@@ -1262,16 +1366,28 @@ pub fn value_to_target_literal(v: &Value, col_type: &str, target: DbKind, is_nul
                     DbKind::Sqlite if !ty.is_empty() => {
                         return match ty.as_str() {
                             "blob" | "binary" | "varbinary" => "'{}'".to_string(),
-                            "integer" | "int" | "bigint" | "smallint" | "tinyint" => "0".to_string(),
-                            "real" | "float" | "double" | "numeric" | "decimal" | "number" => "0".to_string(),
+                            "integer" | "int" | "bigint" | "smallint" | "tinyint" => {
+                                "0".to_string()
+                            }
+                            "real" | "float" | "double" | "numeric" | "decimal" | "number" => {
+                                "0".to_string()
+                            }
                             _ => "''".to_string(),
                         };
                     }
                     _ => {
                         return match ty.as_str() {
                             "" => "''".to_string(),
-                            _ if target == DbKind::Mysql && ty.contains("json") => "'{}'".to_string(),
-                            _ if target == DbKind::Mysql && (ty.contains("int") || ty.contains("double") || ty.contains("float")) => "0".to_string(),
+                            _ if target == DbKind::Mysql && ty.contains("json") => {
+                                "'{}'".to_string()
+                            }
+                            _ if target == DbKind::Mysql
+                                && (ty.contains("int")
+                                    || ty.contains("double")
+                                    || ty.contains("float")) =>
+                            {
+                                "0".to_string()
+                            }
                             _ => "''".to_string(),
                         };
                     }
@@ -1298,18 +1414,16 @@ pub fn value_to_target_literal(v: &Value, col_type: &str, target: DbKind, is_nul
                                 let escaped = trimmed.replace('\'', "''");
                                 format!("'{}'::jsonb", escaped)
                             } else {
-                                let wrapped = serde_json::to_string(s)
-                                    .unwrap_or_else(|_| "\"\"".to_string());
+                                let wrapped =
+                                    serde_json::to_string(s).unwrap_or_else(|_| "\"\"".to_string());
                                 let escaped = wrapped.replace('\'', "''");
                                 format!("'{}'::jsonb", escaped)
                             }
                         }
-                        "boolean" | "bool" => {
-                            match s.to_lowercase().as_str() {
-                                "true" | "1" | "t" | "yes" | "y" => "true".into(),
-                                _ => "false".into(),
-                            }
-                        }
+                        "boolean" | "bool" => match s.to_lowercase().as_str() {
+                            "true" | "1" | "t" | "yes" | "y" => "true".into(),
+                            _ => "false".into(),
+                        },
                         _ => {
                             if is_pg_array() {
                                 // Try parse JSON string as array, convert to PG array literal
@@ -1335,7 +1449,8 @@ pub fn value_to_target_literal(v: &Value, col_type: &str, target: DbKind, is_nul
                             s.replace('\'', "''")
                         } else {
                             // Wrap non-JSON strings as JSON strings
-                            serde_json::to_string(s).unwrap_or_else(|_| s.to_string())
+                            serde_json::to_string(s)
+                                .unwrap_or_else(|_| s.to_string())
                                 .replace('\'', "''")
                         };
                         format!("'{}'", escaped)
@@ -1351,9 +1466,7 @@ pub fn value_to_target_literal(v: &Value, col_type: &str, target: DbKind, is_nul
                         // MySQL's JSON validator rejects.  Use hex encoding to
                         // avoid any SQL-string-escaping problems.
                         match serde_json::from_str::<Value>(s) {
-                            Ok(json_val) => {
-                                mysql_json_hex_literal(&json_val.to_string())
-                            }
+                            Ok(json_val) => mysql_json_hex_literal(&json_val.to_string()),
                             Err(_) => "'{}'".to_string(),
                         }
                     } else {
@@ -1368,7 +1481,8 @@ pub fn value_to_target_literal(v: &Value, col_type: &str, target: DbKind, is_nul
             let json_str = v.to_string();
             // MySQL JSON is stricter than PG JSONB — validate before inserting.
             // Invalid JSON (e.g. PG jsonb with trailing garbage) → fall back to '{}'.
-            if target == DbKind::Mysql && (ty == "json" || ty.contains("json"))
+            if target == DbKind::Mysql
+                && (ty == "json" || ty.contains("json"))
                 && serde_json::from_str::<Value>(&json_str).is_err()
             {
                 return "'{}'".to_string();
@@ -1407,21 +1521,20 @@ fn value_to_pg_array_literal(v: &Value) -> String {
             if arr.is_empty() {
                 return "'{}'".to_string();
             }
-            let elems: Vec<String> = arr.iter().map(|elem| {
-                match elem {
+            let elems: Vec<String> = arr
+                .iter()
+                .map(|elem| match elem {
                     Value::String(s) => format!("\"{}\"", s.replace('"', "\\\"")),
                     Value::Null => "NULL".to_string(),
                     other => format!("\"{}\"", other.to_string().replace('"', "\\\"")),
-                }
-            }).collect();
+                })
+                .collect();
             format!("'{{{}}}'", elems.join(","))
         }
         Value::String(s) => {
             // JSON string from SQLite TEXT→String→try parse as JSON arr
             match serde_json::from_str::<Value>(s) {
-                Ok(Value::Array(arr)) => {
-                    value_to_pg_array_literal(&Value::Array(arr))
-                }
+                Ok(Value::Array(arr)) => value_to_pg_array_literal(&Value::Array(arr)),
                 Ok(_) => {
                     // Non-array JSON (object, string, number) — wrap as single element
                     let escaped = s.replace('\'', "''");
@@ -1447,16 +1560,22 @@ fn would_reject_empty_string(col_type: &str, target: DbKind) -> bool {
     let ty = col_type.to_lowercase();
     match target {
         DbKind::Postgres => {
-            ty == "jsonb" || ty == "json"
-                || ty.contains("int") || ty == "integer" || ty == "smallint" || ty == "bigint"
-                || ty.contains("double") || ty.contains("real") || ty.contains("float")
-                || ty.contains("numeric") || ty.contains("decimal")
-                || ty == "boolean" || ty == "bool"
+            ty == "jsonb"
+                || ty == "json"
+                || ty.contains("int")
+                || ty == "integer"
+                || ty == "smallint"
+                || ty == "bigint"
+                || ty.contains("double")
+                || ty.contains("real")
+                || ty.contains("float")
+                || ty.contains("numeric")
+                || ty.contains("decimal")
+                || ty == "boolean"
+                || ty == "bool"
                 || ty.contains("timestamp")
         }
-        DbKind::Mysql => {
-            ty == "json" || ty.contains("json")
-        }
+        DbKind::Mysql => ty == "json" || ty.contains("json"),
         DbKind::Sqlite => false, // SQLite is permissive
     }
 }
@@ -1551,7 +1670,6 @@ pub async fn insert_rows(
 
     Ok(inserted)
 }
-
 
 /// Build the (comma-separated column list, comma-separated VALUES tuple)
 /// for a single unified row, given the target column schema and any
@@ -1649,7 +1767,6 @@ pub async fn insert_rows_batch(
     Ok((inserted, ignored))
 }
 
-
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Unit tests
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1686,7 +1803,10 @@ mod tests {
         // sorted via serde_json round-trip).
         let v = Value::String(r#"{"api_key":"k","api_base":"http://x"}"#.to_string());
         let out = value_to_target_literal(&v, "jsonb", DbKind::Postgres, false);
-        assert_eq!(out, "'{\"api_key\":\"k\",\"api_base\":\"http://x\"}'::jsonb");
+        assert_eq!(
+            out,
+            "'{\"api_key\":\"k\",\"api_base\":\"http://x\"}'::jsonb"
+        );
     }
 
     #[test]
@@ -1766,11 +1886,7 @@ mod tests {
             resume_after: Some("2026-01-01T00:00:00Z".into()),
             end_before: None,
         };
-        let cols: Vec<String> = vec![
-            "startTime".into(),
-            "request_id".into(),
-            "spend".into(),
-        ];
+        let cols: Vec<String> = vec!["startTime".into(), "request_id".into(), "spend".into()];
 
         let sql = pool.build_cursor_sql("LiteLLM_SpendLogs", &cursor, Some(10), Some(&cols));
 
@@ -1780,7 +1896,10 @@ mod tests {
             ),
             "projection must include exactly the requested columns in order; got: {sql}"
         );
-        assert!(!sql.contains(" * "), "must not fall back to SELECT *; got: {sql}");
+        assert!(
+            !sql.contains(" * "),
+            "must not fall back to SELECT *; got: {sql}"
+        );
         assert!(sql.contains("ORDER BY \"startTime\" ASC"));
         assert!(sql.contains("LIMIT 10"));
         assert!(sql.contains("\"startTime\" >="));
@@ -1789,8 +1908,7 @@ mod tests {
     #[tokio::test]
     async fn build_cursor_sql_defaults_to_star() {
         let pool = SourcePool::connect("sqlite::memory:").await.unwrap();
-        let sql =
-            pool.build_cursor_sql("LiteLLM_SpendLogs", &CursorRange::default(), None, None);
+        let sql = pool.build_cursor_sql("LiteLLM_SpendLogs", &CursorRange::default(), None, None);
         assert!(sql.starts_with("SELECT * FROM \"LiteLLM_SpendLogs\""));
     }
 }

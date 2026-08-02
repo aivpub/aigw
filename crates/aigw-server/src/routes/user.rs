@@ -8,9 +8,9 @@
 //! - DELETE /user/delete — Delete a user
 //! - GET    /user/deleted — List deleted users
 
-use aigw_core::models::User;
-use aigw_core::models::DeletedUser;
 use aigw_core::db::Database;
+use aigw_core::models::DeletedUser;
+use aigw_core::models::User;
 use axum::{extract::State, http::StatusCode, Json};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -35,7 +35,9 @@ async fn validate_user_budget(
                 if team_max > 0.0 && user_max_budget > team_max {
                     return Err((
                         StatusCode::BAD_REQUEST,
-                        Json(json!({"error": {"message": "User budget cannot exceed team budget", "type": "budget_violation"}})),
+                        Json(
+                            json!({"error": {"message": "User budget cannot exceed team budget", "type": "budget_violation"}}),
+                        ),
                     ));
                 }
             }
@@ -83,24 +85,63 @@ pub async fn user_new(
             .get("user_alias")
             .and_then(|v| v.as_str())
             .map(String::from),
-        team_id: body.get("team_id").and_then(|v| v.as_str()).map(String::from),
-        sso_user_id: body.get("sso_user_id").and_then(|v| v.as_str()).map(String::from),
-        organization_id: body.get("organization_id").and_then(|v| v.as_str()).map(String::from),
-        object_permission_id: body.get("object_permission_id").and_then(|v| v.as_str()).map(String::from),
-        password: body.get("password").and_then(|v| v.as_str()).map(String::from),
+        team_id: body
+            .get("team_id")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        sso_user_id: body
+            .get("sso_user_id")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        organization_id: body
+            .get("organization_id")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        object_permission_id: body
+            .get("object_permission_id")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        password: body
+            .get("password")
+            .and_then(|v| v.as_str())
+            .map(String::from),
         teams: body.get("teams").cloned().unwrap_or(json!([])),
-        user_role: body.get("user_role").and_then(|v| v.as_str()).map(String::from),
-        max_budget: body.get("max_budget").and_then(|v| v.as_f64()).map(|v| v.to_string()),
+        user_role: body
+            .get("user_role")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        max_budget: body
+            .get("max_budget")
+            .and_then(|v| v.as_f64())
+            .map(|v| v.to_string()),
         spend: 0.0,
-        user_email: body.get("user_email").and_then(|v| v.as_str()).map(String::from),
+        user_email: body
+            .get("user_email")
+            .and_then(|v| v.as_str())
+            .map(String::from),
         models: body.get("models").cloned().unwrap_or(json!([])),
         metadata: body.get("metadata").cloned().unwrap_or(json!({})),
-        max_parallel_requests: body.get("max_parallel_requests").and_then(|v| v.as_i64()).map(|v| v.to_string()),
-        tpm_limit: body.get("tpm_limit").and_then(|v| v.as_i64()).map(|v| v.to_string()),
-        rpm_limit: body.get("rpm_limit").and_then(|v| v.as_i64()).map(|v| v.to_string()),
-        budget_duration: body.get("budget_duration").and_then(|v| v.as_str()).map(String::from),
+        max_parallel_requests: body
+            .get("max_parallel_requests")
+            .and_then(|v| v.as_i64())
+            .map(|v| v.to_string()),
+        tpm_limit: body
+            .get("tpm_limit")
+            .and_then(|v| v.as_i64())
+            .map(|v| v.to_string()),
+        rpm_limit: body
+            .get("rpm_limit")
+            .and_then(|v| v.as_i64())
+            .map(|v| v.to_string()),
+        budget_duration: body
+            .get("budget_duration")
+            .and_then(|v| v.as_str())
+            .map(String::from),
         budget_reset_at: None,
-        allowed_cache_controls: body.get("allowed_cache_controls").cloned().unwrap_or(json!([])),
+        allowed_cache_controls: body
+            .get("allowed_cache_controls")
+            .cloned()
+            .unwrap_or(json!([])),
         policies: body.get("policies").cloned().unwrap_or(json!([])),
         model_spend: body.get("model_spend").cloned().unwrap_or(json!({})),
         model_max_budget: body.get("model_max_budget").cloned().unwrap_or(json!({})),
@@ -123,7 +164,9 @@ pub async fn user_new(
         )
     })?;
 
-    Ok(Json(serde_json::to_value(&user).unwrap_or(json!({"user_id": user_id}))))
+    Ok(Json(
+        serde_json::to_value(&user).unwrap_or(json!({"user_id": user_id})),
+    ))
 }
 
 /// GET /user/info?user_id=...
@@ -168,12 +211,16 @@ pub async fn user_list(
     let page = query.page.unwrap_or(1).max(1);
     let page_size = query.page_size.unwrap_or(30).max(1).min(100);
 
-    let all_users = state.db.list_users(query.organization_id.as_deref()).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": {"message": format!("{}", e), "type": "internal"}})),
-        )
-    })?;
+    let all_users = state
+        .db
+        .list_users(query.organization_id.as_deref())
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": {"message": format!("{}", e), "type": "internal"}})),
+            )
+        })?;
 
     let total_count = all_users.len() as i64;
     let total_pages = if total_count > 0 {
@@ -220,13 +267,10 @@ pub async fn user_update(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&auth)?;
 
-    let user_id = body
-        .get("user_id")
-        .and_then(|v| v.as_str())
-        .ok_or((
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": {"message": "user_id is required", "type": "bad_request"}})),
-        ))?;
+    let user_id = body.get("user_id").and_then(|v| v.as_str()).ok_or((
+        StatusCode::BAD_REQUEST,
+        Json(json!({"error": {"message": "user_id is required", "type": "bad_request"}})),
+    ))?;
 
     let mut existing = state
         .db

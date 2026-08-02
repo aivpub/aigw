@@ -40,7 +40,6 @@ pub mod tenant;
 
 // Re-export commonly used types
 pub use async_task::{AsyncTask, JobLogEntry, NewStep, StepOutput};
-pub use engine::{Engine, EngineConfig};
 pub use auth::{decode_jwt, encode_jwt, JwtClaims};
 pub use config::{AigwConfig, BudgetResetConfig, GeneralSettings, ModelInfo, RouterSettings};
 pub use crypto::{
@@ -49,11 +48,12 @@ pub use crypto::{
 };
 pub use db::CredentialsStore;
 pub use deployment::{Deployment, ProviderType};
+pub use engine::{Engine, EngineConfig};
 pub use metrics::{MetricsRecorder, RequestSummary};
-pub use router::{merge_router_overrides, Router, RouterConfig, RouterStrategy};
 pub use models::{
     Budget, Credential, DailySpendKind, DailySpendLog, Organization, OrganizationMembership,
     Project, ProxyModel, SpendLog, Team, TeamMembership, User, VirtualKey,
 };
+pub use otel_tracing::{extract_traceparent, inject_traceparent, OtelConfig};
 pub use password::{hash_password, verify_password};
-pub use otel_tracing::{OtelConfig, extract_traceparent, inject_traceparent};
+pub use router::{merge_router_overrides, Router, RouterConfig, RouterStrategy};

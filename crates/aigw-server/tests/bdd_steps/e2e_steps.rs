@@ -1,13 +1,12 @@
 //! Step bindings for end_to_end.feature
 
-use cucumber::{given, then, when};
 use axum::http::Method;
+use cucumber::{given, then, when};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::bdd_support::mock_upstream::MockUpstream;
 use crate::TestWorld;
-
 
 /// Global mock upstream — lives for the test lifetime
 static MOCK_UPSTREAM: std::sync::OnceLock<Arc<Mutex<Option<MockUpstream>>>> =
@@ -37,10 +36,18 @@ async fn given_mock_upstream_started(_world: &mut TestWorld) {
 }
 
 #[given(expr = "已配置 model {string} 且上游 model 为 {string} 指向 mock 上游")]
-async fn given_model_with_upstream_model_points_to_mock(world: &mut TestWorld, proxy_name: String, upstream_model: String) {
+async fn given_model_with_upstream_model_points_to_mock(
+    world: &mut TestWorld,
+    proxy_name: String,
+    upstream_model: String,
+) {
     let state = world.ensure_state().await;
     let mu = mock_upstream().lock().await;
-    let mock_base = mu.as_ref().expect("mock upstream not started").url().to_string();
+    let mock_base = mu
+        .as_ref()
+        .expect("mock upstream not started")
+        .url()
+        .to_string();
 
     let model = aigw_core::models::ProxyModel {
         model_id: uuid::Uuid::new_v4().to_string(),
@@ -62,7 +69,11 @@ async fn given_model_with_upstream_model_points_to_mock(world: &mut TestWorld, p
 async fn given_model_points_to_mock(world: &mut TestWorld, name: String) {
     let state = world.ensure_state().await;
     let mu = mock_upstream().lock().await;
-    let mock_base = mu.as_ref().expect("mock upstream not started").url().to_string();
+    let mock_base = mu
+        .as_ref()
+        .expect("mock upstream not started")
+        .url()
+        .to_string();
 
     let model = aigw_core::models::ProxyModel {
         model_id: uuid::Uuid::new_v4().to_string(),
@@ -105,7 +116,11 @@ async fn when_post_chat_completions_model(world: &mut TestWorld, alias: String, 
     when_post_chat_completions_with_model(world, alias, model).await;
 }
 
-async fn when_post_chat_completions_with_model(world: &mut TestWorld, alias: String, model: String) {
+async fn when_post_chat_completions_with_model(
+    world: &mut TestWorld,
+    alias: String,
+    model: String,
+) {
     let state = world.ensure_state().await;
     use axum::Router;
     use tower::util::ServiceExt;
@@ -121,7 +136,8 @@ async fn when_post_chat_completions_with_model(world: &mut TestWorld, alias: Str
     let body = serde_json::json!({
         "model": model,
         "messages": [{"role": "user", "content": "hi"}]
-    }).to_string();
+    })
+    .to_string();
 
     let req = axum::http::Request::builder()
         .method(Method::POST)
@@ -150,7 +166,10 @@ async fn then_mock_received_request(_world: &mut TestWorld) {
     let mu = mock_upstream().lock().await;
     let upstream = mu.as_ref().expect("mock upstream not started");
     let count = upstream.request_count();
-    assert!(count > 0, "Expected mock upstream to receive at least 1 request, got 0");
+    assert!(
+        count > 0,
+        "Expected mock upstream to receive at least 1 request, got 0"
+    );
 }
 
 #[then(expr = "响应状态码为 500 或 502")]
@@ -192,7 +211,10 @@ async fn then_mock_received_path(_world: &mut TestWorld, expected_path: String) 
 #[then(expr = "spend_logs 中 model 字段值为 {string}")]
 async fn then_spend_logs_model_is(world: &mut TestWorld, expected_model: String) {
     let state = world.ensure_state().await;
-    let logs = state.db.query_spend_logs(None, Some(1)).await
+    let logs = state
+        .db
+        .query_spend_logs(None, Some(1))
+        .await
         .expect("query spend logs");
     assert!(!logs.is_empty(), "Expected at least one spend_log record");
     let log = &logs[0];

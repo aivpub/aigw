@@ -13,8 +13,8 @@
 //! so they live as an integration test rather than inside engine.rs.
 
 use aigw_core::async_task::{AsyncTask, NewStep, StepOutput, StepRecord};
-use aigw_core::body_archive::BodyArchiver;
 use aigw_core::body_archive::config::{BodyArchiveConfig, StorageBackend};
+use aigw_core::body_archive::BodyArchiver;
 use aigw_core::config::AigwConfig;
 use aigw_core::db::{Database, DbError, Result};
 use aigw_core::engine::{claim_next_step, complete_step, create_job, fail_step};
@@ -68,7 +68,11 @@ impl AsyncTask for MockTask {
             Err(DbError::Other("mock execute failure".into()))
         }
     }
-    async fn finalize(&self, _db: &Database, _job: &aigw_core::async_task::JobRecord) -> Result<()> {
+    async fn finalize(
+        &self,
+        _db: &Database,
+        _job: &aigw_core::async_task::JobRecord,
+    ) -> Result<()> {
         self.finalize_calls
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(())
@@ -78,13 +82,11 @@ impl AsyncTask for MockTask {
 /// Helper: read async_jobs.status for a job.
 async fn job_status(db: &Database, job_id: &str) -> String {
     let row: (String,) = match db {
-        Database::Sqlite(pool) => {
-            sqlx::query_as("SELECT status FROM async_jobs WHERE id = ?")
-                .bind(job_id)
-                .fetch_one(pool)
-                .await
-                .expect("fetch job status")
-        }
+        Database::Sqlite(pool) => sqlx::query_as("SELECT status FROM async_jobs WHERE id = ?")
+            .bind(job_id)
+            .fetch_one(pool)
+            .await
+            .expect("fetch job status"),
         _ => unreachable!(),
     };
     row.0
@@ -118,12 +120,16 @@ async fn make_job(db: &Database, n: usize) -> (String, Vec<String>) {
         .expect("create_job");
     let mut step_ids = Vec::new();
     for i in 0..n {
-        let row: (String,) = sqlx::query_as("SELECT id FROM async_job_steps WHERE job_id = ? AND step_key = ?")
-            .bind(&job_id)
-            .bind(format!("k{}", i))
-            .fetch_one(match db { Database::Sqlite(p) => p, _ => unreachable!() })
-            .await
-            .expect("fetch step id");
+        let row: (String,) =
+            sqlx::query_as("SELECT id FROM async_job_steps WHERE job_id = ? AND step_key = ?")
+                .bind(&job_id)
+                .bind(format!("k{}", i))
+                .fetch_one(match db {
+                    Database::Sqlite(p) => p,
+                    _ => unreachable!(),
+                })
+                .await
+                .expect("fetch step id");
         step_ids.push(row.0);
     }
     (job_id, step_ids)
@@ -137,11 +143,17 @@ async fn make_job(db: &Database, n: usize) -> (String, Vec<String>) {
 /// re-pick the step immediately without waiting for the backoff window.
 async fn exhaust_step_to_failed(db: &Database, task: &Arc<dyn AsyncTask>, job_id: &str) {
     loop {
-        let step = claim_next_step(db, "mock").await.expect("claim").expect("step available");
+        let step = claim_next_step(db, "mock")
+            .await
+            .expect("claim")
+            .expect("step available");
         fail_step(db, &step, "boom", task, job_id).await;
         let row: (String,) = sqlx::query_as("SELECT status FROM async_job_steps WHERE id = ?")
             .bind(&step.id)
-            .fetch_one(match db { Database::Sqlite(p) => p, _ => unreachable!() })
+            .fetch_one(match db {
+                Database::Sqlite(p) => p,
+                _ => unreachable!(),
+            })
             .await
             .expect("fetch step status");
         if row.0 == "failed" {
@@ -149,7 +161,10 @@ async fn exhaust_step_to_failed(db: &Database, task: &Arc<dyn AsyncTask>, job_id
         }
         sqlx::query("UPDATE async_job_steps SET next_retry_at = NULL WHERE id = ?")
             .bind(&step.id)
-            .execute(match db { Database::Sqlite(p) => p, _ => unreachable!() })
+            .execute(match db {
+                Database::Sqlite(p) => p,
+                _ => unreachable!(),
+            })
             .await
             .expect("clear next_retry_at");
     }
@@ -167,17 +182,38 @@ async fn test_job_transitions_out_of_pending_on_first_claim() {
     // Step↔Job linked state machine — the P0-1 contract.
     let db = Database::init("sqlite::memory:").await.expect("db init");
     let (job_id, _step_ids) = make_job(&db, 1).await;
-    assert_eq!(job_status(&db, &job_id).await, "pending",
-        "job must start pending");
+    assert_eq!(
+        job_status(&db, &job_id).await,
+        "pending",
+        "job must start pending"
+    );
 
     let (task, finalize_counter) = MockTask::new("mock", true);
-    let step = claim_next_step(&db, "mock").await.expect("claim").expect("step");
-    complete_step(&db, &step, StepOutput { result: serde_json::json!({}) }, &task, &job_id).await;
+    let step = claim_next_step(&db, "mock")
+        .await
+        .expect("claim")
+        .expect("step");
+    complete_step(
+        &db,
+        &step,
+        StepOutput {
+            result: serde_json::json!({}),
+        },
+        &task,
+        &job_id,
+    )
+    .await;
 
-    assert_eq!(job_status(&db, &job_id).await, "completed",
-        "claim→complete must drive job out of pending to completed (P0-1 wiring)");
-    assert_eq!(finalize_counter.load(std::sync::atomic::Ordering::SeqCst), 1,
-        "finalize called once on the completed terminal state");
+    assert_eq!(
+        job_status(&db, &job_id).await,
+        "completed",
+        "claim→complete must drive job out of pending to completed (P0-1 wiring)"
+    );
+    assert_eq!(
+        finalize_counter.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "finalize called once on the completed terminal state"
+    );
 }
 
 // ─── Q3 / P0-4: storage_configured gate rejects unconfigured archiver ────
@@ -185,8 +221,10 @@ async fn test_job_transitions_out_of_pending_on_first_claim() {
 #[tokio::test]
 async fn test_storage_configured_false_for_default_config() {
     let archiver = BodyArchiver::new(BodyArchiveConfig::default());
-    assert!(!archiver.storage_configured(),
-        "default config has empty bucket → storage_configured must be false (P0-4)");
+    assert!(
+        !archiver.storage_configured(),
+        "default config has empty bucket → storage_configured must be false (P0-4)"
+    );
 }
 
 #[tokio::test]
@@ -207,8 +245,10 @@ async fn test_storage_configured_true_for_s3_with_bucket_and_key() {
         ..Default::default()
     };
     let archiver = BodyArchiver::new(cfg);
-    assert!(archiver.storage_configured(),
-        "S3 with bucket + access_key_id → storage_configured must be true");
+    assert!(
+        archiver.storage_configured(),
+        "S3 with bucket + access_key_id → storage_configured must be true"
+    );
 }
 
 #[tokio::test]
@@ -229,8 +269,10 @@ async fn test_storage_configured_false_when_bucket_empty_but_key_set() {
         ..Default::default()
     };
     let archiver = BodyArchiver::new(cfg);
-    assert!(!archiver.storage_configured(),
-        "empty bucket → storage_configured false even if key set");
+    assert!(
+        !archiver.storage_configured(),
+        "empty bucket → storage_configured false even if key set"
+    );
 }
 
 #[tokio::test]
@@ -243,8 +285,10 @@ async fn test_storage_configured_true_for_fs_with_path() {
         ..Default::default()
     };
     let archiver = BodyArchiver::new(cfg);
-    assert!(archiver.storage_configured(),
-        "FS with non-empty path → storage_configured true");
+    assert!(
+        archiver.storage_configured(),
+        "FS with non-empty path → storage_configured true"
+    );
 }
 
 // ─── P0-6: AigwConfig parses the body_archive section ────────────────────
@@ -270,9 +314,15 @@ body_archive:
 "#;
     let cfg: AigwConfig = serde_yaml::from_str(yaml).expect("parse AigwConfig");
     let ba = cfg.body_archive.expect("body_archive section present");
-    assert!(ba.auto_archive, "body_archive.auto_archive parsed (backward-compat via 'enabled' alias)");
+    assert!(
+        ba.auto_archive,
+        "body_archive.auto_archive parsed (backward-compat via 'enabled' alias)"
+    );
     assert_eq!(ba.s3.bucket, "aigw-logs", "bucket parsed");
-    assert_eq!(ba.archive.archive_after_hours, 1, "archive_after_hours parsed");
+    assert_eq!(
+        ba.archive.archive_after_hours, 1,
+        "archive_after_hours parsed"
+    );
 }
 
 #[tokio::test]
@@ -283,8 +333,10 @@ general_settings:
   master_key: test
 "#;
     let cfg: AigwConfig = serde_yaml::from_str(yaml).expect("parse AigwConfig");
-    assert!(cfg.body_archive.is_none(),
-        "missing body_archive section → Option::None (skip_serializing_if)");
+    assert!(
+        cfg.body_archive.is_none(),
+        "missing body_archive section → Option::None (skip_serializing_if)"
+    );
 }
 
 // ─── Q1 / P0-2: job → failed when all steps fail (retry exhausted) ────────
@@ -300,8 +352,11 @@ async fn test_job_failed_when_all_steps_fail() {
     exhaust_step_to_failed(&db, &task, &job_id).await;
     exhaust_step_to_failed(&db, &task, &job_id).await;
 
-    assert_eq!(job_status(&db, &job_id).await, "failed",
-        "all steps failed → job failed (P0-2: mark_job_failed)");
+    assert_eq!(
+        job_status(&db, &job_id).await,
+        "failed",
+        "all steps failed → job failed (P0-2: mark_job_failed)"
+    );
 }
 
 // ─── partially_failed when some steps fail and some succeed ───────────────
@@ -322,13 +377,25 @@ async fn test_job_partially_failed_when_mixed_results() {
     .fetch_one(match &db { Database::Sqlite(p) => p, _ => unreachable!() })
     .await
     .expect("fetch s0");
-    complete_step(&db, &s0, StepOutput { result: serde_json::json!({}) }, &task_ok, &job_id).await;
+    complete_step(
+        &db,
+        &s0,
+        StepOutput {
+            result: serde_json::json!({}),
+        },
+        &task_ok,
+        &job_id,
+    )
+    .await;
 
     // Step 1 → exhaust to failed.
     exhaust_step_to_failed(&db, &task_fail, &job_id).await;
 
-    assert_eq!(job_status(&db, &job_id).await, "partially_failed",
-        "1 completed + 1 failed → partially_failed (P0: mark_job_partially_failed)");
+    assert_eq!(
+        job_status(&db, &job_id).await,
+        "partially_failed",
+        "1 completed + 1 failed → partially_failed (P0: mark_job_partially_failed)"
+    );
 }
 
 // ─── Q1: job → completed when all steps succeed ───────────────────────────
@@ -347,13 +414,28 @@ async fn test_job_completed_when_all_steps_succeed() {
         .fetch_one(match &db { Database::Sqlite(p) => p, _ => unreachable!() })
         .await
         .expect("fetch step");
-        complete_step(&db, &s, StepOutput { result: serde_json::json!({}) }, &task, &job_id).await;
+        complete_step(
+            &db,
+            &s,
+            StepOutput {
+                result: serde_json::json!({}),
+            },
+            &task,
+            &job_id,
+        )
+        .await;
     }
 
-    assert_eq!(job_status(&db, &job_id).await, "completed",
-        "all steps completed → job completed");
-    assert_eq!(finalize_counter.load(std::sync::atomic::Ordering::SeqCst), 1,
-        "finalize called exactly once when job reaches completed");
+    assert_eq!(
+        job_status(&db, &job_id).await,
+        "completed",
+        "all steps completed → job completed"
+    );
+    assert_eq!(
+        finalize_counter.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "finalize called exactly once when job reaches completed"
+    );
 }
 
 // ─── P0-3: finalize still called when job has a failed step ───────────────
@@ -386,14 +468,25 @@ async fn test_finalize_called_on_partially_failed_job() {
     .fetch_one(match &db { Database::Sqlite(p) => p, _ => unreachable!() })
     .await
     .expect("fetch s0");
-    complete_step(&db, &s0, StepOutput { result: serde_json::json!({}) }, &task_ok, &job_id).await;
+    complete_step(
+        &db,
+        &s0,
+        StepOutput {
+            result: serde_json::json!({}),
+        },
+        &task_ok,
+        &job_id,
+    )
+    .await;
 
     // Fail step 1 to exhaustion. finalize must fire on the partially_failed terminal state.
     exhaust_step_to_failed(&db, &task_fail, &job_id).await;
 
     assert_eq!(job_status(&db, &job_id).await, "partially_failed");
-    assert!(counter.load(std::sync::atomic::Ordering::SeqCst) >= 1,
-        "P0-3: finalize must be called on partially_failed (not silently skipped)");
+    assert!(
+        counter.load(std::sync::atomic::Ordering::SeqCst) >= 1,
+        "P0-3: finalize must be called on partially_failed (not silently skipped)"
+    );
 }
 
 // ─── P1-3/4/6: concurrent complete_step → finalize exactly once ───────────
@@ -417,11 +510,23 @@ async fn test_concurrent_complete_step_finalizes_once() {
         .fetch_one(match &db { Database::Sqlite(p) => p, _ => unreachable!() })
         .await
         .expect("fetch step");
-        complete_step(&db, &s, StepOutput { result: serde_json::json!({}) }, &task, &job_id).await;
+        complete_step(
+            &db,
+            &s,
+            StepOutput {
+                result: serde_json::json!({}),
+            },
+            &task,
+            &job_id,
+        )
+        .await;
     }
 
-    assert_eq!(finalize_counter.load(std::sync::atomic::Ordering::SeqCst), 1,
-        "P1-6: finalize called exactly once even when both completes hit terminal");
+    assert_eq!(
+        finalize_counter.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "P1-6: finalize called exactly once even when both completes hit terminal"
+    );
 }
 
 // ─── Q1: fail_step backoff sets next_retry_at and grows ───────────────────
@@ -445,15 +550,23 @@ async fn test_fail_step_sets_next_retry_at_and_grows() {
     fail_step(&db, &s, "boom", &task, &job_id).await;
 
     let nr1 = step_next_retry_at(&db, &step_ids[0]).await;
-    assert!(nr1.is_some(), "first failure with retries left → next_retry_at set (backoff)");
+    assert!(
+        nr1.is_some(),
+        "first failure with retries left → next_retry_at set (backoff)"
+    );
 
     // Re-claim (which increments retry_count again) and fail again — backoff grows.
     // We simulate by manually bumping retry_count so claim→fail advances the count.
-    sqlx::query("UPDATE async_job_steps SET status='pending', retry_count=1, next_retry_at=NULL WHERE id=?")
-        .bind(&step_ids[0])
-        .execute(match &db { Database::Sqlite(p) => p, _ => unreachable!() })
-        .await
-        .expect("reset step");
+    sqlx::query(
+        "UPDATE async_job_steps SET status='pending', retry_count=1, next_retry_at=NULL WHERE id=?",
+    )
+    .bind(&step_ids[0])
+    .execute(match &db {
+        Database::Sqlite(p) => p,
+        _ => unreachable!(),
+    })
+    .await
+    .expect("reset step");
     let s2: StepRecord = sqlx::query_as::<_, StepRecord>(
         "SELECT id, job_id, step_key, step_type, status, payload, result, error_message, retry_count, started_at, completed_at, next_retry_at FROM async_job_steps WHERE id = ?"
     )
@@ -463,14 +576,22 @@ async fn test_fail_step_sets_next_retry_at_and_grows() {
     .expect("fetch step 2");
     fail_step(&db, &s2, "boom", &task, &job_id).await;
     let nr2 = step_next_retry_at(&db, &step_ids[0]).await;
-    assert!(nr2.is_some(), "second failure still has retries left → backoff set");
+    assert!(
+        nr2.is_some(),
+        "second failure still has retries left → backoff set"
+    );
 
     // Backoff is exponential: 2^retry_count. retry_count=1 → 2s; retry_count=2 → 4s.
     // Both must be in the future and nr2 > nr1 in magnitude.
     let parse = |s: &str| chrono::DateTime::parse_from_rfc3339(s).map(|d| d.timestamp());
     let t1 = parse(nr1.as_ref().unwrap()).expect("parse nr1");
     let t2 = parse(nr2.as_ref().unwrap()).expect("parse nr2");
-    assert!(t2 > t1, "exponential backoff must increase (nr2={} > nr1={})", t2, t1);
+    assert!(
+        t2 > t1,
+        "exponential backoff must increase (nr2={} > nr1={})",
+        t2,
+        t1
+    );
 }
 
 // ─── P1-3: finalize failure marks job failed (not silent completed) ───────
@@ -480,13 +601,25 @@ struct FailingFinalizeTask {
 }
 #[async_trait::async_trait]
 impl AsyncTask for FailingFinalizeTask {
-    fn step_type(&self) -> &'static str { self.step_type }
-    async fn tick(&self, _db: &Database) -> Result<Option<Vec<NewStep>>> { Ok(None) }
-    fn tick_interval(&self) -> Duration { Duration::from_secs(60) }
-    async fn execute(&self, _db: &Database, _step: &StepRecord) -> Result<StepOutput> {
-        Ok(StepOutput { result: serde_json::json!({}) })
+    fn step_type(&self) -> &'static str {
+        self.step_type
     }
-    async fn finalize(&self, _db: &Database, _job: &aigw_core::async_task::JobRecord) -> Result<()> {
+    async fn tick(&self, _db: &Database) -> Result<Option<Vec<NewStep>>> {
+        Ok(None)
+    }
+    fn tick_interval(&self) -> Duration {
+        Duration::from_secs(60)
+    }
+    async fn execute(&self, _db: &Database, _step: &StepRecord) -> Result<StepOutput> {
+        Ok(StepOutput {
+            result: serde_json::json!({}),
+        })
+    }
+    async fn finalize(
+        &self,
+        _db: &Database,
+        _job: &aigw_core::async_task::JobRecord,
+    ) -> Result<()> {
         Err(DbError::Other("finalize boom".into()))
     }
 }
@@ -504,10 +637,22 @@ async fn test_finalize_failure_marks_job_failed() {
     .fetch_one(match &db { Database::Sqlite(p) => p, _ => unreachable!() })
     .await
     .expect("fetch step");
-    complete_step(&db, &s, StepOutput { result: serde_json::json!({}) }, &task, &job_id).await;
+    complete_step(
+        &db,
+        &s,
+        StepOutput {
+            result: serde_json::json!({}),
+        },
+        &task,
+        &job_id,
+    )
+    .await;
 
-    assert_eq!(job_status(&db, &job_id).await, "failed",
-        "P1-3: finalize Err must mark job failed, not silently completed");
+    assert_eq!(
+        job_status(&db, &job_id).await,
+        "failed",
+        "P1-3: finalize Err must mark job failed, not silently completed"
+    );
 }
 
 // ─── P1-5: create_job with zero steps errors (no orphan job) ──────────────
@@ -517,8 +662,10 @@ async fn test_create_job_with_empty_steps_errors() {
     let db = Database::init("sqlite::memory:").await.expect("db init");
     let empty: Vec<NewStep> = vec![];
     let result = create_job(&db, "mock", "manual", None, &empty, 3).await;
-    assert!(result.is_err(),
-        "create_job with zero steps must error (no orphan job row)");
+    assert!(
+        result.is_err(),
+        "create_job with zero steps must error (no orphan job row)"
+    );
 }
 
 // ─── Q3 / P0-4: execute() rejects when storage unconfigured ───────────────
@@ -542,8 +689,10 @@ async fn test_execute_rejects_when_storage_unconfigured() {
         next_retry_at: None,
     };
     let result = AsyncTask::execute(&archiver, &db, &step).await;
-    assert!(result.is_err(),
-        "P0-4: execute() with unconfigured storage must Err (not Ok→false-positive completed)");
+    assert!(
+        result.is_err(),
+        "P0-4: execute() with unconfigured storage must Err (not Ok→false-positive completed)"
+    );
 }
 
 // ─── Q3 / P0-4: steps_from_payload rejects when storage unconfigured ──────
@@ -556,8 +705,10 @@ async fn test_steps_from_payload_rejects_when_storage_unconfigured() {
         "end_date": "2026-07-22T02:00:00+00:00",
     });
     let result = AsyncTask::steps_from_payload(&archiver, &payload).await;
-    assert!(result.is_err(),
-        "P0-4: steps_from_payload() with unconfigured storage must Err");
+    assert!(
+        result.is_err(),
+        "P0-4: steps_from_payload() with unconfigured storage must Err"
+    );
 }
 
 // ─── writer.rs: start_time is TimestampMillisecond, cache_hit is Boolean ──
@@ -595,14 +746,18 @@ async fn test_writer_start_time_is_timestamp_millisecond_and_cache_hit_boolean()
     let file = std::fs::File::open(&path).expect("open parquet");
     let metadata = ArrowReaderMetadata::load(&file, Default::default()).expect("load metadata");
     let schema = metadata.schema().fields();
-    let start_time_field = schema.iter().find(|f| f.name() == "start_time")
+    let start_time_field = schema
+        .iter()
+        .find(|f| f.name() == "start_time")
         .expect("start_time field exists");
     assert_eq!(
         start_time_field.data_type(),
         &arrow::datatypes::DataType::Timestamp(arrow::datatypes::TimeUnit::Millisecond, None),
         "P1-7: start_time must be Timestamp(Millisecond) not Utf8"
     );
-    let cache_hit_field = schema.iter().find(|f| f.name() == "cache_hit")
+    let cache_hit_field = schema
+        .iter()
+        .find(|f| f.name() == "cache_hit")
         .expect("cache_hit field exists");
     assert_eq!(
         cache_hit_field.data_type(),
@@ -617,7 +772,10 @@ async fn test_writer_start_time_is_timestamp_millisecond_and_cache_hit_boolean()
     use parquet::arrow::arrow_reader::ArrowReaderBuilder;
     let builder = ArrowReaderBuilder::try_new(file2).expect("builder");
     let mut batch_reader = builder.build().expect("build reader");
-    let batch = batch_reader.next().expect("at least one batch").expect("read batch");
+    let batch = batch_reader
+        .next()
+        .expect("at least one batch")
+        .expect("read batch");
     assert_eq!(batch.num_rows(), 1, "exactly one row round-tripped");
 
     let _ = std::fs::remove_file(&path);

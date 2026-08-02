@@ -4,15 +4,15 @@
 //! - POST /v1/chat/completions — Chat completions (streaming SSE + non-streaming)
 //! - GET  /v1/models           — List available models for the authenticated key
 
-use aigw_core::adapter::{ClientProtocol, select_adapter};
+use aigw_core::adapter::{select_adapter, ClientProtocol};
 use aigw_core::auth::decode_jwt;
 use aigw_core::crypto::{decrypt_json_fields, decrypt_litellm_value, hash_token};
-use aigw_core::middleware::KeyIdentity;
 use aigw_core::metrics::RequestSummary;
+use aigw_core::middleware::KeyIdentity;
 use aigw_core::models::{DailySpendKind, DailySpendLog, SpendLog, Team, VirtualKey};
 use axum::{
     extract::State,
-    http::{self, StatusCode, header},
+    http::{self, header, StatusCode},
     response::IntoResponse,
     Json,
 };
@@ -23,8 +23,8 @@ use std::sync::Arc;
 use tokio_stream::StreamExt;
 use tower_http::request_id::RequestId;
 
-use super::keys::SharedState;
 use super::ip_extractor::OptionalClientIp;
+use super::keys::SharedState;
 use aigw_core::otel_tracing;
 
 /// Resolved upstream routing parameters from proxy_models + credentials lookup.
@@ -56,23 +56,42 @@ pub(crate) struct ResolvedUpstream {
 ///   - model_info is the authoritative cost lookup location
 ///   - litellm_params is where users set pricing; Deployment.__init__ mirrors it to model_info
 #[allow(dead_code)]
-fn extract_pricing(model_info: &Value, params_json: &Value) -> (Option<f64>, Option<f64>, Option<f64>, Option<f64>) {
+fn extract_pricing(
+    model_info: &Value,
+    params_json: &Value,
+) -> (Option<f64>, Option<f64>, Option<f64>, Option<f64>) {
     let input = model_info
         .get("input_cost_per_token")
         .and_then(|v| v.as_f64())
-        .or_else(|| params_json.get("input_cost_per_token").and_then(|v| v.as_f64()));
+        .or_else(|| {
+            params_json
+                .get("input_cost_per_token")
+                .and_then(|v| v.as_f64())
+        });
     let output = model_info
         .get("output_cost_per_token")
         .and_then(|v| v.as_f64())
-        .or_else(|| params_json.get("output_cost_per_token").and_then(|v| v.as_f64()));
+        .or_else(|| {
+            params_json
+                .get("output_cost_per_token")
+                .and_then(|v| v.as_f64())
+        });
     let cache_read = model_info
         .get("cache_read_input_token_cost")
         .and_then(|v| v.as_f64())
-        .or_else(|| params_json.get("cache_read_input_token_cost").and_then(|v| v.as_f64()));
+        .or_else(|| {
+            params_json
+                .get("cache_read_input_token_cost")
+                .and_then(|v| v.as_f64())
+        });
     let cache_create = model_info
         .get("cache_creation_input_token_cost")
         .and_then(|v| v.as_f64())
-        .or_else(|| params_json.get("cache_creation_input_token_cost").and_then(|v| v.as_f64()));
+        .or_else(|| {
+            params_json
+                .get("cache_creation_input_token_cost")
+                .and_then(|v| v.as_f64())
+        });
     (input, output, cache_read, cache_create)
 }
 
@@ -105,11 +124,15 @@ pub(crate) fn calc_spend(
 /// Extract cache-read tokens from usage JSON (Anthropic + OpenAI formats).
 pub(crate) fn extract_cache_read_tokens(usage: &Value) -> i32 {
     // Anthropic: usage.cache_read_input_tokens
-    if let Some(v) = usage.get("cache_read_input_tokens").and_then(|v| v.as_i64()) {
+    if let Some(v) = usage
+        .get("cache_read_input_tokens")
+        .and_then(|v| v.as_i64())
+    {
         return v as i32;
     }
     // OpenAI: usage.prompt_tokens_details.cached_tokens
-    usage.get("prompt_tokens_details")
+    usage
+        .get("prompt_tokens_details")
         .and_then(|d| d.get("cached_tokens"))
         .and_then(|v| v.as_i64())
         .unwrap_or(0) as i32
@@ -118,12 +141,16 @@ pub(crate) fn extract_cache_read_tokens(usage: &Value) -> i32 {
 /// Extract cache-creation tokens from usage JSON.
 pub(crate) fn extract_cache_creation_tokens(usage: &Value) -> i32 {
     // Anthropic: usage.cache_creation_input_tokens
-    if let Some(v) = usage.get("cache_creation_input_tokens").and_then(|v| v.as_i64()) {
+    if let Some(v) = usage
+        .get("cache_creation_input_tokens")
+        .and_then(|v| v.as_i64())
+    {
         return v as i32;
     }
     // OpenAI: prompt_tokens_details.cache_write_tokens or cache_creation_tokens
     let details = usage.get("prompt_tokens_details");
-    details.and_then(|d| d.get("cache_write_tokens"))
+    details
+        .and_then(|d| d.get("cache_write_tokens"))
         .or_else(|| details.and_then(|d| d.get("cache_creation_tokens")))
         .and_then(|v| v.as_i64())
         .unwrap_or(0) as i32
@@ -148,7 +175,11 @@ pub(crate) async fn resolve_upstream_params(
     match model {
         Some(m) => {
             // Use as_str() for string values to avoid JSON quoting from to_string()
-            let litellm_params_str = m.litellm_params.as_str().map(String::from).unwrap_or_else(|| m.litellm_params.to_string());
+            let litellm_params_str = m
+                .litellm_params
+                .as_str()
+                .map(String::from)
+                .unwrap_or_else(|| m.litellm_params.to_string());
 
             // Detect whether litellm_params is encrypted (base64) or plaintext JSON
             let params_json: Value = if litellm_params_str.starts_with('{') {
@@ -169,7 +200,11 @@ pub(crate) async fn resolve_upstream_params(
                 })?;
 
                 let decrypted = decrypt_litellm_value(&litellm_params_str, key).map_err(|e| {
-                    tracing::error!("Failed to decrypt litellm_params for model '{}': {}", model_name, e);
+                    tracing::error!(
+                        "Failed to decrypt litellm_params for model '{}': {}",
+                        model_name,
+                        e
+                    );
                     (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(json!({
@@ -195,7 +230,8 @@ pub(crate) async fn resolve_upstream_params(
             // Extract pricing: model_info is the primary source (litellm-standard),
             // decrypted litellm_params is the fallback for deployments where pricing
             // was set only in proxy config and not mirrored to model_info.
-            let (input_cost, output_cost, cache_read_cost, cache_create_cost) = extract_pricing(&m.model_info, &params_json);
+            let (input_cost, output_cost, cache_read_cost, cache_create_cost) =
+                extract_pricing(&m.model_info, &params_json);
 
             // Extract model_group / custom_llm_provider from proxy_models for SpendLog
             let model_id = Some(m.model_id.clone());
@@ -210,18 +246,22 @@ pub(crate) async fn resolve_upstream_params(
                 .get("litellm_credential_name")
                 .and_then(|v| v.as_str())
             {
-                let cred = state.db.get_credential_by_name(cred_name).await.map_err(|e| {
-                    tracing::error!("Failed to look up credential '{}': {}", cred_name, e);
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(json!({
-                            "error": {
-                                "message": format!("Credential '{}' not found", cred_name),
-                                "type": "not_found"
-                            }
-                        })),
-                    )
-                })?;
+                let cred = state
+                    .db
+                    .get_credential_by_name(cred_name)
+                    .await
+                    .map_err(|e| {
+                        tracing::error!("Failed to look up credential '{}': {}", cred_name, e);
+                        (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(json!({
+                                "error": {
+                                    "message": format!("Credential '{}' not found", cred_name),
+                                    "type": "not_found"
+                                }
+                            })),
+                        )
+                    })?;
 
                 let cred = cred.ok_or_else(|| {
                     (
@@ -255,18 +295,17 @@ pub(crate) async fn resolve_upstream_params(
                             })),
                         )
                     })?;
-                    let decrypted =
-                        decrypt_litellm_value(&cred_values_str, key).map_err(|e| {
-                            (
-                                StatusCode::INTERNAL_SERVER_ERROR,
-                                Json(json!({
-                                    "error": {
-                                        "message": format!("Failed to decrypt credential: {}", e),
-                                        "type": "crypto_error"
-                                    }
-                                })),
-                            )
-                        })?;
+                    let decrypted = decrypt_litellm_value(&cred_values_str, key).map_err(|e| {
+                        (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(json!({
+                                "error": {
+                                    "message": format!("Failed to decrypt credential: {}", e),
+                                    "type": "crypto_error"
+                                }
+                            })),
+                        )
+                    })?;
                     serde_json::from_str(&decrypted).unwrap_or_else(|_| json!({}))
                 };
 
@@ -292,7 +331,10 @@ pub(crate) async fn resolve_upstream_params(
                     .and_then(|v| v.as_str())
                     .unwrap_or("https://api.openai.com/v1")
                     .to_string();
-                let api_key = merged.get("api_key").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let api_key = merged
+                    .get("api_key")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
                 let upstream_model = merged
                     .get("model")
                     .and_then(|v| v.as_str())
@@ -348,7 +390,8 @@ pub(crate) async fn resolve_upstream_params(
             // Only in non-test deployment modes; test mode (BDD mock) must fail
             // fast with model_not_found so assertions on error types are stable.
             if state.deployment_mode != "test" {
-                let api_key_env = std::env::var("OPENAI_API_KEY").ok()
+                let api_key_env = std::env::var("OPENAI_API_KEY")
+                    .ok()
                     .or_else(|| std::env::var("OPENAPI_KEY").ok());
                 let api_base_env = std::env::var("OPENAI_BASE_URL")
                     .or_else(|_| std::env::var("OPENAPI_BASE_URL"))
@@ -480,16 +523,12 @@ impl ChatAuth {
 
         // Hash and DB lookup
         let token_hash = hash_token(token);
-        let key = state
-            .db
-            .get_key_by_token(&token_hash)
-            .await
-            .map_err(|_| {
-                (
-                    StatusCode::UNAUTHORIZED,
-                    Json(json!({"error": {"message": "Invalid API key", "type": "auth_error"}})),
-                )
-            })?;
+        let key = state.db.get_key_by_token(&token_hash).await.map_err(|_| {
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({"error": {"message": "Invalid API key", "type": "auth_error"}})),
+            )
+        })?;
 
         match key {
             Some(k) => Ok(ChatAuth(KeyIdentity {
@@ -550,16 +589,12 @@ impl ChatAuth {
 
         // Hash the key from JWT claims and look up in DB
         let token_hash = hash_token(&claims.key);
-        let key = state
-            .db
-            .get_key_by_token(&token_hash)
-            .await
-            .map_err(|_| {
-                (
-                    StatusCode::UNAUTHORIZED,
-                    Json(json!({"error": {"message": "Invalid API key", "type": "auth_error"}})),
-                )
-            })?;
+        let key = state.db.get_key_by_token(&token_hash).await.map_err(|_| {
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({"error": {"message": "Invalid API key", "type": "auth_error"}})),
+            )
+        })?;
 
         let is_admin = claims.user_role == "proxy_admin";
         match key {
@@ -869,21 +904,24 @@ pub async fn chat_completions(
     let resolve_span = tracing::info_span!("resolve_deployment", model = %_model);
     let _resolve_enter = resolve_span.enter();
     let mut deployments = state.resolver.resolve(_model).await?;
-    let deployment_idx = state.router.pick_deployment(&mut deployments).ok_or_else(|| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(json!({
-                "error": {
-                    "message": format!("Model '{}' not found", _model),
-                    "type": "invalid_request_error",
-                    "code": "model_not_found"
-                }
-            })),
-        )
-    })?;
-    let deployment = deployments.remove(deployment_idx);
-    let adapter = select_adapter(ClientProtocol::OpenAI, &deployment.provider_type)
+    let deployment_idx = state
+        .router
+        .pick_deployment(&mut deployments)
         .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": {
+                        "message": format!("Model '{}' not found", _model),
+                        "type": "invalid_request_error",
+                        "code": "model_not_found"
+                    }
+                })),
+            )
+        })?;
+    let deployment = deployments.remove(deployment_idx);
+    let adapter =
+        select_adapter(ClientProtocol::OpenAI, &deployment.provider_type).ok_or_else(|| {
             (
                 StatusCode::BAD_REQUEST,
                 Json(json!({
@@ -927,13 +965,11 @@ pub async fn chat_completions(
 
     // Try to parse session_id from JSON blob (Claude Code convention)
     let session_id = end_user.as_ref().and_then(|eu| {
-        serde_json::from_str::<Value>(eu)
-            .ok()
-            .and_then(|v| {
-                v.get("session_id")
-                    .and_then(|id| id.as_str())
-                    .map(|s| s.to_string())
-            })
+        serde_json::from_str::<Value>(eu).ok().and_then(|v| {
+            v.get("session_id")
+                .and_then(|id| id.as_str())
+                .map(|s| s.to_string())
+        })
     });
 
     let requester_ip: Option<String> = client_ip.map(|cip| cip.0.to_string());
@@ -946,13 +982,11 @@ pub async fn chat_completions(
 
     // Extract device_id from metadata.user_id JSON (Claude Code convention)
     let device_id: Option<String> = end_user.as_ref().and_then(|eu| {
-        serde_json::from_str::<Value>(eu)
-            .ok()
-            .and_then(|v| {
-                v.get("device_id")
-                    .and_then(|id| id.as_str())
-                    .map(|s| s.to_string())
-            })
+        serde_json::from_str::<Value>(eu).ok().and_then(|v| {
+            v.get("device_id")
+                .and_then(|id| id.as_str())
+                .map(|s| s.to_string())
+        })
     });
 
     // Build metadata JSON with user_agent and device_id (align with litellm)
@@ -1033,14 +1067,13 @@ pub async fn chat_completions(
         let err_type = if is_timeout {
             tracing::error!(
                 "upstream request TIMEOUT after {}s for model '{}', upstream_url={}",
-                600, _model, upstream_url
+                600,
+                _model,
+                upstream_url
             );
             "timeout_error"
         } else {
-            tracing::error!(
-                "upstream request failed for model '{}': {}",
-                _model, e
-            );
+            tracing::error!("upstream request failed for model '{}': {}", _model, e);
             "upstream_error"
         };
         // Record failure spend_log on timeout (before returning error)
@@ -1078,7 +1111,7 @@ pub async fn chat_completions(
                     start_time,
                     end_time: chrono::Utc::now(),
                     request_duration_ms: Some(
-                        (chrono::Utc::now() - start_time).num_milliseconds() as i32,
+                        (chrono::Utc::now() - start_time).num_milliseconds() as i32
                     ),
                     completion_start_time: None,
                     model: fail_model,
@@ -1107,8 +1140,8 @@ pub async fn chat_completions(
                     mcp_namespaced_tool_name: None,
                     agent_id: None,
                     proxy_server_request: fail_psr,
-                body_archived: false,
-                parquet_path: None,
+                    body_archived: false,
+                    parquet_path: None,
                 };
                 let _ = state2.db.insert_spend_log(&sl).await;
             });
@@ -1194,7 +1227,7 @@ pub async fn chat_completions(
                     start_time,
                     end_time: chrono::Utc::now(),
                     request_duration_ms: Some(
-                        (chrono::Utc::now() - start_time).num_milliseconds() as i32,
+                        (chrono::Utc::now() - start_time).num_milliseconds() as i32
                     ),
                     completion_start_time: None,
                     model: fail_model,
@@ -1218,8 +1251,8 @@ pub async fn chat_completions(
                     mcp_namespaced_tool_name: None,
                     agent_id: None,
                     proxy_server_request: proxy_server_request.clone(),
-                body_archived: false,
-                parquet_path: None,
+                    body_archived: false,
+                    parquet_path: None,
                 };
                 let _ = state.db.insert_spend_log(&sl).await;
             });
@@ -1291,8 +1324,8 @@ pub async fn chat_completions(
                 mcp_namespaced_tool_name: None,
                 agent_id: None,
                 proxy_server_request: None,
-            body_archived: false,
-            parquet_path: None,
+                body_archived: false,
+                parquet_path: None,
             };
             let _ = state.db.insert_spend_log(&sl).await;
         }
@@ -1327,7 +1360,9 @@ pub async fn chat_completions(
                                         if let Ok(val) = serde_json::from_str::<Value>(data) {
                                             // Extract upstream id (borrow, before any push/move).
                                             if upstream_id.is_none() {
-                                                if let Some(id) = val.get("id").and_then(|v| v.as_str()) {
+                                                if let Some(id) =
+                                                    val.get("id").and_then(|v| v.as_str())
+                                                {
                                                     upstream_id = Some(id.to_string());
                                                 }
                                             }
@@ -1335,20 +1370,29 @@ pub async fn chat_completions(
                                                 stream_prompt_tokens = usage
                                                     .get("prompt_tokens")
                                                     .and_then(|v| v.as_i64())
-                                                    .unwrap_or(0) as i32;
+                                                    .unwrap_or(0)
+                                                    as i32;
                                                 stream_completion_tokens = usage
                                                     .get("completion_tokens")
                                                     .and_then(|v| v.as_i64())
-                                                    .unwrap_or(0) as i32;
+                                                    .unwrap_or(0)
+                                                    as i32;
                                                 stream_total_tokens = usage
                                                     .get("total_tokens")
                                                     .and_then(|v| v.as_i64())
-                                                    .unwrap_or(0) as i32;
-                                                stream_cache_read = extract_cache_read_tokens(usage);
-                                                stream_cache_creation = extract_cache_creation_tokens(usage);
+                                                    .unwrap_or(0)
+                                                    as i32;
+                                                stream_cache_read =
+                                                    extract_cache_read_tokens(usage);
+                                                stream_cache_creation =
+                                                    extract_cache_creation_tokens(usage);
                                             }
                                             if let Some(choices) = val.get("choices") {
-                                                if !choices.as_array().map(|a| a.is_empty()).unwrap_or(true) {
+                                                if !choices
+                                                    .as_array()
+                                                    .map(|a| a.is_empty())
+                                                    .unwrap_or(true)
+                                                {
                                                     chunk_jsons.push(val);
                                                 }
                                             }
@@ -1412,7 +1456,8 @@ pub async fn chat_completions(
                             // Accumulate streamed tool_calls
                             if let Some(delta_tcs) = choice["delta"]["tool_calls"].as_array() {
                                 for tc in delta_tcs {
-                                    let idx = tc.get("index").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
+                                    let idx = tc.get("index").and_then(|v| v.as_i64()).unwrap_or(0)
+                                        as usize;
                                     while tool_calls.len() <= idx {
                                         tool_calls.push(json!({"id": "", "type": "function", "function": {"name": "", "arguments": ""}}));
                                     }
@@ -1421,14 +1466,25 @@ pub async fn chat_completions(
                                             tool_calls[idx]["id"] = json!(id);
                                         }
                                     }
-                                    if let Some(fn_name) = tc.get("function").and_then(|v| v.get("name")).and_then(|v| v.as_str()) {
+                                    if let Some(fn_name) = tc
+                                        .get("function")
+                                        .and_then(|v| v.get("name"))
+                                        .and_then(|v| v.as_str())
+                                    {
                                         if !fn_name.is_empty() {
                                             tool_calls[idx]["function"]["name"] = json!(fn_name);
                                         }
                                     }
-                                    if let Some(args) = tc.get("function").and_then(|v| v.get("arguments")).and_then(|v| v.as_str()) {
-                                        tool_calls[idx]["function"]["arguments"] = json!(format!("{}{}",
-                                            tool_calls[idx]["function"]["arguments"].as_str().unwrap_or(""),
+                                    if let Some(args) = tc
+                                        .get("function")
+                                        .and_then(|v| v.get("arguments"))
+                                        .and_then(|v| v.as_str())
+                                    {
+                                        tool_calls[idx]["function"]["arguments"] = json!(format!(
+                                            "{}{}",
+                                            tool_calls[idx]["function"]["arguments"]
+                                                .as_str()
+                                                .unwrap_or(""),
                                             args
                                         ));
                                     }
@@ -1463,13 +1519,23 @@ pub async fn chat_completions(
             // Phase 2: UPDATE the pre-inserted SpendLog row
             match failure {
                 Some((status_code, err)) => {
-                    let _ = state_clone.db.update_spend_log(
-                        &request_id, upstream_id.as_deref(), 0.0, 0, 0, 0,
-                        now, duration_ms, cst,
-                        json!({"error": err, "status_code": status_code}),
-                        &format!("failure:{}", status_code),
-                        None,
-                    ).await;
+                    let _ = state_clone
+                        .db
+                        .update_spend_log(
+                            &request_id,
+                            upstream_id.as_deref(),
+                            0.0,
+                            0,
+                            0,
+                            0,
+                            now,
+                            duration_ms,
+                            cst,
+                            json!({"error": err, "status_code": status_code}),
+                            &format!("failure:{}", status_code),
+                            None,
+                        )
+                        .await;
                     if let Some(ref m) = stream_metrics {
                         m.record_request(&RequestSummary {
                             model: stream_model.clone(),
@@ -1493,24 +1559,53 @@ pub async fn chat_completions(
                     let cache_metadata = if stream_cache_read > 0 || stream_cache_creation > 0 {
                         let mut m = serde_json::Map::new();
                         m.insert("cache_read_tokens".to_string(), json!(stream_cache_read));
-                        m.insert("cache_creation_tokens".to_string(), json!(stream_cache_creation));
-                        let cache_read_spend = stream_cache_read as f64 * deployment.cache_read_input_token_cost.unwrap_or(deployment.input_cost_per_token.unwrap_or(0.0));
-                        let cache_create_spend = stream_cache_creation as f64 * deployment.cache_creation_input_token_cost.unwrap_or(deployment.input_cost_per_token.unwrap_or(0.0));
+                        m.insert(
+                            "cache_creation_tokens".to_string(),
+                            json!(stream_cache_creation),
+                        );
+                        let cache_read_spend = stream_cache_read as f64
+                            * deployment
+                                .cache_read_input_token_cost
+                                .unwrap_or(deployment.input_cost_per_token.unwrap_or(0.0));
+                        let cache_create_spend = stream_cache_creation as f64
+                            * deployment
+                                .cache_creation_input_token_cost
+                                .unwrap_or(deployment.input_cost_per_token.unwrap_or(0.0));
                         if cache_read_spend > 0.0 || cache_create_spend > 0.0 {
-                            m.insert("cache_read_spend".to_string(), json!((cache_read_spend * 10000.0).round() / 10000.0));
-                            m.insert("cache_create_spend".to_string(), json!((cache_create_spend * 10000.0).round() / 10000.0));
+                            m.insert(
+                                "cache_read_spend".to_string(),
+                                json!((cache_read_spend * 10000.0).round() / 10000.0),
+                            );
+                            m.insert(
+                                "cache_create_spend".to_string(),
+                                json!((cache_create_spend * 10000.0).round() / 10000.0),
+                            );
                         }
                         Some(serde_json::Value::Object(m))
                     } else {
                         None
                     };
-                    let _ = state_clone.db.update_spend_log(
-                        &request_id, upstream_id.as_deref(), streaming_spend, stream_total_tokens, stream_prompt_tokens, stream_completion_tokens,
-                        now, duration_ms, cst, assembled_response, "success", cache_metadata,
-                    ).await;
+                    let _ = state_clone
+                        .db
+                        .update_spend_log(
+                            &request_id,
+                            upstream_id.as_deref(),
+                            streaming_spend,
+                            stream_total_tokens,
+                            stream_prompt_tokens,
+                            stream_completion_tokens,
+                            now,
+                            duration_ms,
+                            cst,
+                            assembled_response,
+                            "success",
+                            cache_metadata,
+                        )
+                        .await;
                     if let Some(ref m) = stream_metrics {
-                        let ttft = first_chunk_time
-                            .map(|fct| fct.signed_duration_since(start_time).num_milliseconds() as f64 / 1000.0);
+                        let ttft = first_chunk_time.map(|fct| {
+                            fct.signed_duration_since(start_time).num_milliseconds() as f64 / 1000.0
+                        });
                         m.record_request(&RequestSummary {
                             model: stream_model.clone(),
                             user: stream_auth_user.clone().unwrap_or_default(),
@@ -1620,7 +1715,10 @@ pub async fn chat_completions(
             // OpenAI error bodies usually carry no `id` field; fall back to the
             // pre-extracted upstream response header (x-request-id / request-id)
             // captured at chat.rs:1067-1073 before upstream_resp was consumed.
-            let fail_upstream_id = fail_resp.get("id").and_then(|v| v.as_str()).map(|s| s.to_string())
+            let fail_upstream_id = fail_resp
+                .get("id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
                 .or_else(|| upstream_req_id.clone());
             let auth_team_id = auth.team_id.clone();
             let auth_org_id = auth.organization_id.clone();
@@ -1637,7 +1735,7 @@ pub async fn chat_completions(
                     start_time,
                     end_time: chrono::Utc::now(),
                     request_duration_ms: Some(
-                        (chrono::Utc::now() - start_time).num_milliseconds() as i32,
+                        (chrono::Utc::now() - start_time).num_milliseconds() as i32
                     ),
                     completion_start_time: None,
                     model: fail_model,
@@ -1661,8 +1759,8 @@ pub async fn chat_completions(
                     mcp_namespaced_tool_name: None,
                     agent_id: None,
                     proxy_server_request: proxy_server_request.clone(),
-                body_archived: false,
-                parquet_path: None,
+                    body_archived: false,
+                    parquet_path: None,
                 };
                 let _ = state.db.insert_spend_log(&sl).await;
             });
@@ -1675,8 +1773,14 @@ pub async fn chat_completions(
         // 6. Record spend log
         let now = chrono::Utc::now();
         let usage = resp_body.get("usage");
-        let prompt_tokens = usage.and_then(|u| u.get("prompt_tokens")).and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-        let completion_tokens = usage.and_then(|u| u.get("completion_tokens")).and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+        let prompt_tokens = usage
+            .and_then(|u| u.get("prompt_tokens"))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0) as i32;
+        let completion_tokens = usage
+            .and_then(|u| u.get("completion_tokens"))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0) as i32;
         let cache_read = usage.map(|u| extract_cache_read_tokens(u)).unwrap_or(0);
         let cache_create = usage.map(|u| extract_cache_creation_tokens(u)).unwrap_or(0);
         // Anthropic normalization
@@ -1699,7 +1803,10 @@ pub async fn chat_completions(
         let spend_log = aigw_core::models::SpendLog {
             call_id: request_id.clone(),
             // v6.1 §4.3: non-streaming success — upstream id at INSERT from resp_body.
-            request_id: resp_body.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()),
+            request_id: resp_body
+                .get("id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
             call_type: "completion".to_string(),
             api_key: auth.token_hash.clone(),
             spend: spend_amount,
@@ -1733,11 +1840,23 @@ pub async fn chat_completions(
                     m.insert("cache_read_tokens".to_string(), json!(cache_read));
                     m.insert("cache_creation_tokens".to_string(), json!(cache_create));
                     // Effective cache spend (excludes regular token portion)
-                    let cache_read_spend = cache_read as f64 * deployment.cache_read_input_token_cost.unwrap_or(deployment.input_cost_per_token.unwrap_or(0.0));
-                    let cache_create_spend = cache_create as f64 * deployment.cache_creation_input_token_cost.unwrap_or(deployment.input_cost_per_token.unwrap_or(0.0));
+                    let cache_read_spend = cache_read as f64
+                        * deployment
+                            .cache_read_input_token_cost
+                            .unwrap_or(deployment.input_cost_per_token.unwrap_or(0.0));
+                    let cache_create_spend = cache_create as f64
+                        * deployment
+                            .cache_creation_input_token_cost
+                            .unwrap_or(deployment.input_cost_per_token.unwrap_or(0.0));
                     if cache_read_spend > 0.0 || cache_create_spend > 0.0 {
-                        m.insert("cache_read_spend".to_string(), json!((cache_read_spend * 10000.0).round() / 10000.0));
-                        m.insert("cache_create_spend".to_string(), json!((cache_create_spend * 10000.0).round() / 10000.0));
+                        m.insert(
+                            "cache_read_spend".to_string(),
+                            json!((cache_read_spend * 10000.0).round() / 10000.0),
+                        );
+                        m.insert(
+                            "cache_create_spend".to_string(),
+                            json!((cache_create_spend * 10000.0).round() / 10000.0),
+                        );
                     }
                     Some(Value::Object(m))
                 } else {
@@ -1758,8 +1877,8 @@ pub async fn chat_completions(
             mcp_namespaced_tool_name: None,
             agent_id: None,
             proxy_server_request: None,
-        body_archived: false,
-        parquet_path: None,
+            body_archived: false,
+            parquet_path: None,
         };
 
         // Record spend log (don't fail the request if logging fails)
@@ -1798,8 +1917,11 @@ pub async fn chat_completions(
                 user: auth.user_id.clone().unwrap_or_default(),
                 status_code: "200".to_string(),
                 success: true,
-                latency_secs: now.signed_duration_since(start_time).num_milliseconds() as f64 / 1000.0,
-                upstream_latency_secs: now.signed_duration_since(start_time).num_milliseconds() as f64 / 1000.0,
+                latency_secs: now.signed_duration_since(start_time).num_milliseconds() as f64
+                    / 1000.0,
+                upstream_latency_secs: now.signed_duration_since(start_time).num_milliseconds()
+                    as f64
+                    / 1000.0,
                 ttft_secs: None,
                 queue_time_secs: None,
                 spend: spend_amount,
@@ -1814,21 +1936,14 @@ pub async fn chat_completions(
         // Queue daily_spend update
         if let Some(ref queue) = state.daily_spend_queue {
             let date = now.format("%Y-%m-%d").to_string();
-            let is_success = spend_log
-                .status
-                .as_deref()
-                .unwrap_or("success")
-                == "success";
+            let is_success = spend_log.status.as_deref().unwrap_or("success") == "success";
             let ds_log = DailySpendLog {
                 entity_id: spend_log.user.clone().unwrap_or_default(),
                 date,
                 api_key: spend_log.api_key.clone(),
                 model: spend_log.model.clone(),
                 model_group: spend_log.model_group.clone().unwrap_or_default(),
-                custom_llm_provider: spend_log
-                    .custom_llm_provider
-                    .clone()
-                    .unwrap_or_default(),
+                custom_llm_provider: spend_log.custom_llm_provider.clone().unwrap_or_default(),
                 mcp_namespaced_tool_name: spend_log
                     .mcp_namespaced_tool_name
                     .clone()
@@ -1895,16 +2010,12 @@ pub async fn models_list(
 
     if auth.is_master_key {
         // Master key sees all models registered in proxy_models table
-        let models = state
-            .db
-            .list_models()
-            .await
-            .map_err(|_| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"error": {"message": "Failed to list models", "type": "db_error"}})),
-                )
-            })?;
+        let models = state.db.list_models().await.map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": {"message": "Failed to list models", "type": "db_error"}})),
+            )
+        })?;
         model_ids = models.into_iter().map(|m| m.model_name).collect();
     } else {
         let key_record = state
@@ -1987,8 +2098,9 @@ mod tests {
             deployment_mode: "onprem".to_string(),
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
-  otel_active: false,
-            body_archiver: None,            metrics: None,
+            otel_active: false,
+            body_archiver: None,
+            metrics: None,
         });
 
         Router::new()
@@ -2059,10 +2171,7 @@ mod tests {
             .await
             .unwrap();
         let val: Value = serde_json::from_slice(&body_bytes).unwrap();
-        assert_eq!(
-            val["error"]["type"].as_str(),
-            Some("invalid_request_error")
-        );
+        assert_eq!(val["error"]["type"].as_str(), Some("invalid_request_error"));
         assert!(val["error"]["message"]
             .as_str()
             .unwrap()
@@ -2136,7 +2245,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_models_list_with_auth() {
-        let db = Database::init("sqlite::memory:").await.expect("init sqlite");
+        let db = Database::init("sqlite::memory:")
+            .await
+            .expect("init sqlite");
 
         // Insert a model so the models_list endpoint has data to return
         let model = ProxyModel {
@@ -2163,8 +2274,9 @@ mod tests {
             deployment_mode: "onprem".to_string(),
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
-  otel_active: false,
-            body_archiver: None,            metrics: None,
+            otel_active: false,
+            body_archiver: None,
+            metrics: None,
         });
 
         let app = Router::new()
@@ -2266,6 +2378,7 @@ mod tests {
             tpm_limit: None,
             rpm_limit: None,
             max_budget: None,
+            soft_budget: None,
             budget_duration: None,
             budget_reset_at: None,
             allowed_cache_controls: json!([]),
@@ -2306,8 +2419,9 @@ mod tests {
             deployment_mode: "onprem".to_string(),
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
-  otel_active: false,
-            body_archiver: None,            metrics: None,
+            otel_active: false,
+            body_archiver: None,
+            metrics: None,
         });
 
         let app = Router::new()
@@ -2352,8 +2466,9 @@ mod tests {
             deployment_mode: "onprem".to_string(),
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
-  otel_active: false,
-            body_archiver: None,            metrics: None,
+            otel_active: false,
+            body_archiver: None,
+            metrics: None,
         })
     }
 
@@ -2380,6 +2495,7 @@ mod tests {
             tpm_limit: None,
             rpm_limit: None,
             max_budget: None,
+            soft_budget: None,
             budget_duration: None,
             budget_reset_at: None,
             allowed_cache_controls: json!([]),
@@ -2635,8 +2751,9 @@ mod tests {
             deployment_mode: "onprem".to_string(),
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
-  otel_active: false,
-            body_archiver: None,            metrics: None,
+            otel_active: false,
+            body_archiver: None,
+            metrics: None,
         });
 
         // Send a request with the proxy model name "my-gpt-proxy"
@@ -2672,7 +2789,11 @@ mod tests {
         // prompt=600, cache_read=500, cache_create=0, input=$0.01, cache_read=$0.0025
         // regular = 100 * 0.01 = $1.0, cache_read = 500 * 0.0025 = $1.25, total = $2.25
         let spend = calc_spend(600, 0, Some(0.01), Some(0.02), 500, 0, Some(0.0025), None);
-        assert!((spend - 2.25).abs() < 0.0001, "expected 2.25, got {}", spend);
+        assert!(
+            (spend - 2.25).abs() < 0.0001,
+            "expected 2.25, got {}",
+            spend
+        );
     }
 
     #[test]
@@ -2691,9 +2812,22 @@ mod tests {
         // cache_read = 300 * 0.0025 = 0.75
         // cache_create = 50 * 0.0125 = 0.625
         // total = 4.875
-        let spend = calc_spend(700, 100, Some(0.01), Some(0.02), 300, 50, Some(0.0025), Some(0.0125));
+        let spend = calc_spend(
+            700,
+            100,
+            Some(0.01),
+            Some(0.02),
+            300,
+            50,
+            Some(0.0025),
+            Some(0.0125),
+        );
         // regular=350*0.01=3.5 + cache_read=300*0.0025=0.75 + cache_create=50*0.0125=0.625 + completion=100*0.02=2.0 = 6.875
-        assert!((spend - 6.875).abs() < 0.0001, "expected 6.875, got {}", spend);
+        assert!(
+            (spend - 6.875).abs() < 0.0001,
+            "expected 6.875, got {}",
+            spend
+        );
     }
 
     #[test]

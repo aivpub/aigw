@@ -3,12 +3,7 @@
 //! Provides in-memory HTTP servers simulating OpenAI and Claude upstreams.
 //! Supports configurable responses, request recording, and SSE streaming.
 
-use axum::{
-    extract::State,
-    http::StatusCode,
-    routing::post,
-    Json, Router,
-};
+use axum::{extract::State, http::StatusCode, routing::post, Json, Router};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -169,16 +164,21 @@ impl MockUpstream {
             .route("/v1/messages", post(claude_handler))
             .with_state(route_state);
 
-        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind mock upstream");
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock upstream");
         let addr = listener.local_addr().unwrap();
         let base_url = format!("http://{}:{}", addr.ip(), addr.port());
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
-        let server = axum::serve(listener, app)
-            .with_graceful_shutdown(async { let _ = shutdown_rx.await; });
+        let server = axum::serve(listener, app).with_graceful_shutdown(async {
+            let _ = shutdown_rx.await;
+        });
 
-        tokio::spawn(async move { let _ = server.await; });
+        tokio::spawn(async move {
+            let _ = server.await;
+        });
 
         MockUpstream {
             base_url,

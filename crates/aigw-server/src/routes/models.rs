@@ -18,8 +18,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tracing::warn;
 
-use crate::routes::keys::SharedState;
 use super::spend::{require_admin, SpendAuth};
+use crate::routes::keys::SharedState;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Request/Response types
@@ -131,13 +131,13 @@ impl ModelResponse {
                         return params.clone();
                     }
                 };
-                let parsed: Value = serde_json::from_str(&decrypted).unwrap_or_else(|_| params.clone());
+                let parsed: Value =
+                    serde_json::from_str(&decrypted).unwrap_or_else(|_| params.clone());
                 decrypt_json_fields(&parsed, key)
             }
             _ => params.clone(),
         }
     }
-
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -469,7 +469,10 @@ mod tests {
         });
         let result = ModelResponse::decrypt_params(&params, Some("test-master-key"));
         assert_eq!(result["model"], json!("bedrock"));
-        assert_eq!(result["litellm_params"]["deployment"], json!(plain_deployment));
+        assert_eq!(
+            result["litellm_params"]["deployment"],
+            json!(plain_deployment)
+        );
         assert_eq!(result["litellm_params"]["region"], json!("us-east-1"));
     }
 

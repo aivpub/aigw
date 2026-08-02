@@ -44,13 +44,13 @@ impl TestDatabaseManager {
         match driver.to_lowercase().as_str() {
             "sqlite" => Some(Self::Sqlite),
             "postgres" | "postgresql" | "pg" => {
-                let host = std::env::var("AIGW_TEST_DB_HOST").unwrap_or_else(|_| "localhost".into());
+                let host =
+                    std::env::var("AIGW_TEST_DB_HOST").unwrap_or_else(|_| "localhost".into());
                 let port: u16 = std::env::var("AIGW_TEST_DB_PORT")
                     .ok()
                     .and_then(|p| p.parse().ok())
                     .unwrap_or(5432);
-                let user = std::env::var("AIGW_TEST_DB_USER")
-                    .unwrap_or_else(|_| "postgres".into());
+                let user = std::env::var("AIGW_TEST_DB_USER").unwrap_or_else(|_| "postgres".into());
                 let password =
                     std::env::var("AIGW_TEST_DB_PASS").unwrap_or_else(|_| "postgres".into());
                 let clean_host = host.trim_end_matches('/');
@@ -67,18 +67,19 @@ impl TestDatabaseManager {
                 })
             }
             "mysql" | "mariadb" => {
-                let host = std::env::var("AIGW_TEST_DB_HOST").unwrap_or_else(|_| "localhost".into());
+                let host =
+                    std::env::var("AIGW_TEST_DB_HOST").unwrap_or_else(|_| "localhost".into());
                 let port: u16 = std::env::var("AIGW_TEST_DB_PORT")
                     .ok()
                     .and_then(|p| p.parse().ok())
                     .unwrap_or(3306);
-                let user =
-                    std::env::var("AIGW_TEST_DB_USER").unwrap_or_else(|_| "root".into());
-                let password =
-                    std::env::var("AIGW_TEST_DB_PASS").unwrap_or_else(|_| "root".into());
+                let user = std::env::var("AIGW_TEST_DB_USER").unwrap_or_else(|_| "root".into());
+                let password = std::env::var("AIGW_TEST_DB_PASS").unwrap_or_else(|_| "root".into());
                 let clean_host = host.trim_end_matches('/');
-                let admin_url =
-                    format!("mysql://{}:{}@{}:{}/mysql", user, password, clean_host, port);
+                let admin_url = format!(
+                    "mysql://{}:{}@{}:{}/mysql",
+                    user, password, clean_host, port
+                );
                 Some(Self::Mysql {
                     admin_url,
                     host: clean_host.to_string(),
@@ -103,8 +104,7 @@ impl TestDatabaseManager {
         match self {
             Self::Sqlite => {
                 let dir = std::env::temp_dir().join("aigw_bdd_tests");
-                std::fs::create_dir_all(&dir)
-                    .map_err(|e| format!("create temp dir: {e}"))?;
+                std::fs::create_dir_all(&dir).map_err(|e| format!("create temp dir: {e}"))?;
                 let path = dir.join(format!("{db_name}.db"));
                 // `sqlite://` + `/abs/path` = `sqlite:///abs/path` (3 slashes — correct).
                 // Do NOT use `sqlite:///` + `/abs/path` — that produces 4 slashes,
@@ -119,7 +119,12 @@ impl TestDatabaseManager {
                 })
             }
             Self::Postgres {
-                admin_url, host, port, user, password, ..
+                admin_url,
+                host,
+                port,
+                user,
+                password,
+                ..
             } => {
                 use sqlx::postgres::PgConnectOptions;
 
@@ -151,12 +156,16 @@ impl TestDatabaseManager {
                 })
             }
             Self::Mysql {
-                admin_url, host, port, user, password, ..
+                admin_url,
+                host,
+                port,
+                user,
+                password,
+                ..
             } => {
-                let admin_pool =
-                    sqlx::MySqlPool::connect(admin_url)
-                        .await
-                        .map_err(|e| format!("connect to mysql admin db: {e}"))?;
+                let admin_pool = sqlx::MySqlPool::connect(admin_url)
+                    .await
+                    .map_err(|e| format!("connect to mysql admin db: {e}"))?;
                 let quoted = format!("`{db_name}`");
                 let sql = format!("CREATE DATABASE {}", quoted);
                 sqlx::query(&sql)
@@ -214,10 +223,9 @@ impl TestDatabaseManager {
                 Ok(())
             }
             Self::Mysql { admin_url, .. } => {
-                let admin_pool =
-                    sqlx::MySqlPool::connect(admin_url)
-                        .await
-                        .map_err(|e| format!("connect to mysql admin db: {e}"))?;
+                let admin_pool = sqlx::MySqlPool::connect(admin_url)
+                    .await
+                    .map_err(|e| format!("connect to mysql admin db: {e}"))?;
 
                 let sql = format!("DROP DATABASE IF EXISTS `{}`", info.db_name);
                 sqlx::query(&sql)

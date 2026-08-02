@@ -44,9 +44,15 @@ pub struct OtelConfig {
     pub exporter: String,
 }
 
-fn default_service_name() -> String { "aigw".into() }
-fn default_sample_rate() -> f64 { 1.0 }
-fn default_exporter() -> String { "otlp_grpc".into() }
+fn default_service_name() -> String {
+    "aigw".into()
+}
+fn default_sample_rate() -> f64 {
+    1.0
+}
+fn default_exporter() -> String {
+    "otlp_grpc".into()
+}
 
 impl Default for OtelConfig {
     fn default() -> Self {
@@ -158,7 +164,8 @@ pub fn is_enabled() -> bool {
 pub fn build_otel_layer<S>(
 ) -> tracing_opentelemetry::OpenTelemetryLayer<S, opentelemetry::global::BoxedTracer>
 where
-    S: tracing_subscriber::layer::SubscriberExt + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
+    S: tracing_subscriber::layer::SubscriberExt
+        + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
 {
     let tracer = global::tracer("aigw");
     tracing_opentelemetry::layer().with_tracer(tracer)
@@ -279,9 +286,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             "traceparent",
-            HeaderValue::from_static(
-                "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
-            ),
+            HeaderValue::from_static("00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"),
         );
         let ctx = extract_traceparent(&headers);
         // With a noop propagator (OTEL not initialized), the context won't be valid.

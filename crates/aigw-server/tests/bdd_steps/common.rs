@@ -41,7 +41,10 @@ pub fn build_key_router(state: SharedState) -> Router {
 /// Build an axum Router for health check routes
 pub fn build_health_router(state: SharedState) -> Router {
     Router::new()
-        .route("/health", axum::routing::get(aigw_server::routes::health::health))
+        .route(
+            "/health",
+            axum::routing::get(aigw_server::routes::health::health),
+        )
         .route(
             "/health/readiness",
             axum::routing::get(aigw_server::routes::health::readiness),
@@ -134,11 +137,26 @@ pub fn build_admin_jobs_router(state: SharedState) -> Router {
             "/admin/jobs/trigger",
             axum::routing::post(aigw_server::routes::jobs::trigger_job),
         )
-        .route("/admin/jobs/stats", axum::routing::get(aigw_server::routes::jobs::job_stats_handler))
-        .route("/admin/jobs/{job_id}/logs", axum::routing::get(aigw_server::routes::jobs::job_logs_handler))
-        .route("/admin/jobs/{job_id}", axum::routing::get(aigw_server::routes::jobs::job_detail_handler))
-        .route("/admin/jobs", axum::routing::get(aigw_server::routes::jobs::list_jobs_handler))
-        .route("/admin/archive/stats", axum::routing::get(aigw_server::routes::jobs::archive_stats_handler))
+        .route(
+            "/admin/jobs/stats",
+            axum::routing::get(aigw_server::routes::jobs::job_stats_handler),
+        )
+        .route(
+            "/admin/jobs/{job_id}/logs",
+            axum::routing::get(aigw_server::routes::jobs::job_logs_handler),
+        )
+        .route(
+            "/admin/jobs/{job_id}",
+            axum::routing::get(aigw_server::routes::jobs::job_detail_handler),
+        )
+        .route(
+            "/admin/jobs",
+            axum::routing::get(aigw_server::routes::jobs::list_jobs_handler),
+        )
+        .route(
+            "/admin/archive/stats",
+            axum::routing::get(aigw_server::routes::jobs::archive_stats_handler),
+        )
         .with_state(state)
 }
 

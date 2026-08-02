@@ -104,7 +104,9 @@ impl VirtualKey {
 
     /// Parse `max_parallel_requests` as Option<i32> from TEXT-compatible string.
     pub fn max_parallel_requests_i32(&self) -> Option<i32> {
-        self.max_parallel_requests.as_deref().and_then(|s| s.parse().ok())
+        self.max_parallel_requests
+            .as_deref()
+            .and_then(|s| s.parse().ok())
     }
 
     /// Parse `tpm_limit` as Option<i64> from TEXT-compatible string.
@@ -178,7 +180,7 @@ pub struct SpendLog {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DailySpendLog {
     pub entity_id: String,
-    pub date: String,           // YYYY-MM-DD
+    pub date: String, // YYYY-MM-DD
     pub api_key: String,
     pub model: String,
     pub model_group: String,
@@ -316,7 +318,9 @@ impl Team {
 
     /// Parse `max_parallel_requests` as Option<i32> from TEXT-compatible string.
     pub fn max_parallel_requests_i32(&self) -> Option<i32> {
-        self.max_parallel_requests.as_deref().and_then(|s| s.parse().ok())
+        self.max_parallel_requests
+            .as_deref()
+            .and_then(|s| s.parse().ok())
     }
 
     /// Parse `tpm_limit` as Option<i64> from TEXT-compatible string.
@@ -371,7 +375,9 @@ impl User {
 
     /// Parse `max_parallel_requests` as Option<i32> from TEXT-compatible string.
     pub fn max_parallel_requests_i32(&self) -> Option<i32> {
-        self.max_parallel_requests.as_deref().and_then(|s| s.parse().ok())
+        self.max_parallel_requests
+            .as_deref()
+            .and_then(|s| s.parse().ok())
     }
 
     /// Parse `tpm_limit` as Option<i64> from TEXT-compatible string.
@@ -436,7 +442,9 @@ impl Budget {
 
     /// Parse `max_parallel_requests` as Option<i32> from TEXT-compatible string.
     pub fn max_parallel_requests_i32(&self) -> Option<i32> {
-        self.max_parallel_requests.as_deref().and_then(|s| s.parse().ok())
+        self.max_parallel_requests
+            .as_deref()
+            .and_then(|s| s.parse().ok())
     }
 
     /// Parse `tpm_limit` as Option<i64> from TEXT-compatible string.
@@ -511,7 +519,9 @@ pub struct ToolDef {
     pub function: ToolDefFunction,
 }
 
-fn default_tool_type() -> String { "function".to_string() }
+fn default_tool_type() -> String {
+    "function".to_string()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolDefFunction {
@@ -543,7 +553,9 @@ pub struct ToolCall {
     pub function: ToolCallFunction,
 }
 
-fn default_tool_call_type() -> String { "function".to_string() }
+fn default_tool_call_type() -> String {
+    "function".to_string()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCallFunction {
@@ -680,10 +692,10 @@ pub struct ModelInfo {
 /// ProxyModel — column-compatible with litellm's `LiteLLM_ProxyModelTable`
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct ProxyModel {
-    pub model_id: String, // PK, UUID
-    pub model_name: String, // unique human-readable name
+    pub model_id: String,                  // PK, UUID
+    pub model_name: String,                // unique human-readable name
     pub litellm_params: serde_json::Value, // JSON: {model, api_base, api_key, rpm, tpm, ...}
-    pub model_info: serde_json::Value,     // JSON: {id, mode, max_tokens, input_cost_per_token, ...}
+    pub model_info: serde_json::Value, // JSON: {id, mode, max_tokens, input_cost_per_token, ...}
     pub created_at: String,
     pub created_by: Option<String>,
     pub updated_at: String,

@@ -1,17 +1,15 @@
 //! Step bindings for messages.feature
 
-use cucumber::{given, then, when};
-use cucumber::gherkin::Step;
+use crate::TestWorld;
 use aigw_core::models::ProxyModel;
 use axum::http::Method;
 use axum::Router;
+use cucumber::gherkin::Step;
+use cucumber::{given, then, when};
 use tower::util::ServiceExt;
-use crate::TestWorld;
 
 /// Build a router with /v1/messages route only
-fn build_messages_router(
-    state: aigw_server::routes::keys::SharedState,
-) -> Router {
+fn build_messages_router(state: aigw_server::routes::keys::SharedState) -> Router {
     Router::new()
         .route(
             "/v1/messages",
@@ -182,7 +180,8 @@ async fn when_post_messages_with_model(world: &mut TestWorld, step: &Step, model
         "model": model_name,
         "messages": [{"role": "user", "content": "hi"}],
         "max_tokens": 100
-    }).to_string();
+    })
+    .to_string();
 
     let req = axum::http::Request::builder()
         .method(Method::POST)
@@ -215,7 +214,11 @@ async fn then_error_type_is(world: &mut TestWorld, expected: String) {
         .and_then(|e| e.get("type"))
         .and_then(|v| v.as_str())
         .expect("no error.type in response");
-    assert_eq!(err_type, expected, "Expected error.type '{}', got '{}'", expected, err_type);
+    assert_eq!(
+        err_type, expected,
+        "Expected error.type '{}', got '{}'",
+        expected, err_type
+    );
 }
 
 #[then(regex = "^错误信息包含 \"(.+)\"$")]

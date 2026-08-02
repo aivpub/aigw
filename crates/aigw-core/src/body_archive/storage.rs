@@ -47,7 +47,9 @@ pub fn build_object_store(config: &S3Config) -> Result<Arc<dyn ObjectStore>, Str
         builder
     };
 
-    let store = builder.build().map_err(|e| format!("S3 builder error: {}", e))?;
+    let store = builder
+        .build()
+        .map_err(|e| format!("S3 builder error: {}", e))?;
     Ok(Arc::new(store))
 }
 

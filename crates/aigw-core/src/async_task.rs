@@ -89,11 +89,7 @@ pub trait AsyncTask: Send + Sync + 'static {
     // ── cron + manual shared ──
 
     /// Execute a single Step.
-    async fn execute(
-        &self,
-        db: &Database,
-        step: &StepRecord,
-    ) -> crate::db::Result<StepOutput>;
+    async fn execute(&self, db: &Database, step: &StepRecord) -> crate::db::Result<StepOutput>;
     /// Called after all Steps in a Job complete. Default: no-op.
     async fn finalize(&self, _db: &Database, _job: &JobRecord) -> crate::db::Result<()> {
         Ok(())

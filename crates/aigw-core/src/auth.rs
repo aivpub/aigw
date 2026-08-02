@@ -19,8 +19,7 @@ pub struct JwtClaims {
 /// Encode a JWT using HS256 with master_key as secret.
 pub fn encode_jwt(claims: &JwtClaims, master_key: &str) -> Result<String, String> {
     let key = EncodingKey::from_secret(master_key.as_bytes());
-    encode(&Header::default(), claims, &key)
-        .map_err(|e| format!("JWT encode failed: {}", e))
+    encode(&Header::default(), claims, &key).map_err(|e| format!("JWT encode failed: {}", e))
 }
 
 /// Decode and validate a JWT using HS256 with master_key as secret.

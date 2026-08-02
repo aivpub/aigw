@@ -194,7 +194,10 @@ pub async fn scan_all(db: &Database) -> Result<Vec<ResetCandidate>, DbError> {
 }
 
 /// Scan only entities of a specific type and return reset candidates.
-pub async fn scan_by_type(db: &Database, entity_type: EntityType) -> Result<Vec<ResetCandidate>, DbError> {
+pub async fn scan_by_type(
+    db: &Database,
+    entity_type: EntityType,
+) -> Result<Vec<ResetCandidate>, DbError> {
     match entity_type {
         EntityType::Organization => scan_organizations(db).await,
         et => scan_entity_table(db, et).await,
@@ -246,27 +249,21 @@ async fn execute_reset(
                 WHERE o.organization_id = ?
             "#;
             match db {
-                Database::Sqlite(pool) => {
-                    sqlx::query_scalar(sql)
-                        .bind(entity_id)
-                        .fetch_optional(pool)
-                        .await?
-                        .flatten()
-                }
-                Database::Mysql(pool) => {
-                    sqlx::query_scalar(sql)
-                        .bind(entity_id)
-                        .fetch_optional(pool)
-                        .await?
-                        .flatten()
-                }
-                Database::Postgres(pool) => {
-                    sqlx::query_scalar(sql)
-                        .bind(entity_id)
-                        .fetch_optional(pool)
-                        .await?
-                        .flatten()
-                }
+                Database::Sqlite(pool) => sqlx::query_scalar(sql)
+                    .bind(entity_id)
+                    .fetch_optional(pool)
+                    .await?
+                    .flatten(),
+                Database::Mysql(pool) => sqlx::query_scalar(sql)
+                    .bind(entity_id)
+                    .fetch_optional(pool)
+                    .await?
+                    .flatten(),
+                Database::Postgres(pool) => sqlx::query_scalar(sql)
+                    .bind(entity_id)
+                    .fetch_optional(pool)
+                    .await?
+                    .flatten(),
             }
         }
         _ => {
@@ -276,35 +273,32 @@ async fn execute_reset(
                 entity_type.pk_column()
             );
             match db {
-                Database::Sqlite(pool) => {
-                    sqlx::query_scalar(&sql)
-                        .bind(entity_id)
-                        .fetch_optional(pool)
-                        .await?
-                        .flatten()
-                }
-                Database::Mysql(pool) => {
-                    sqlx::query_scalar(&sql)
-                        .bind(entity_id)
-                        .fetch_optional(pool)
-                        .await?
-                        .flatten()
-                }
-                Database::Postgres(pool) => {
-                    sqlx::query_scalar(&sql)
-                        .bind(entity_id)
-                        .fetch_optional(pool)
-                        .await?
-                        .flatten()
-                }
+                Database::Sqlite(pool) => sqlx::query_scalar(&sql)
+                    .bind(entity_id)
+                    .fetch_optional(pool)
+                    .await?
+                    .flatten(),
+                Database::Mysql(pool) => sqlx::query_scalar(&sql)
+                    .bind(entity_id)
+                    .fetch_optional(pool)
+                    .await?
+                    .flatten(),
+                Database::Postgres(pool) => sqlx::query_scalar(&sql)
+                    .bind(entity_id)
+                    .fetch_optional(pool)
+                    .await?
+                    .flatten(),
             }
         }
     };
 
     // Compute next reset time
-    let next_reset_at = compute_next_reset_at(budget_duration, now, None, None).ok_or_else(
-        || DbError::Other(format!("unable to compute next_reset_at for '{budget_duration}'")),
-    )?;
+    let next_reset_at =
+        compute_next_reset_at(budget_duration, now, None, None).ok_or_else(|| {
+            DbError::Other(format!(
+                "unable to compute next_reset_at for '{budget_duration}'"
+            ))
+        })?;
     let next_reset_at_str = next_reset_at.format("%Y-%m-%d %H:%M:%S").to_string();
 
     // Execute the UPDATE(s)
@@ -416,18 +410,13 @@ impl AsyncTask for BudgetResetter {
     }
 
     /// Execute a single budget reset for one entity.
-    async fn execute(
-        &self,
-        db: &Database,
-        step: &StepRecord,
-    ) -> crate::db::Result<StepOutput> {
+    async fn execute(&self, db: &Database, step: &StepRecord) -> crate::db::Result<StepOutput> {
         let entity_type_str = step.payload["entity_type"]
             .as_str()
             .ok_or_else(|| DbError::Other("payload missing entity_type".into()))?;
 
-        let entity_type = EntityType::from_str(entity_type_str).ok_or_else(|| {
-            DbError::Other(format!("unknown entity_type '{entity_type_str}'"))
-        })?;
+        let entity_type = EntityType::from_str(entity_type_str)
+            .ok_or_else(|| DbError::Other(format!("unknown entity_type '{entity_type_str}'")))?;
 
         let entity_id = step.payload["entity_id"]
             .as_str()
@@ -459,8 +448,7 @@ impl AsyncTask for BudgetResetter {
             .and_then(|v| v.as_array())
             .ok_or_else(|| {
                 DbError::Other(
-                    "entity_ids array required for manual trigger (scan uses periodic tick)"
-                        .into(),
+                    "entity_ids array required for manual trigger (scan uses periodic tick)".into(),
                 )
             })?;
 
@@ -470,9 +458,8 @@ impl AsyncTask for BudgetResetter {
             ));
         }
 
-        let entity_type = EntityType::from_str(entity_type_str).ok_or_else(|| {
-            DbError::Other(format!("unknown entity_type '{entity_type_str}'"))
-        })?;
+        let entity_type = EntityType::from_str(entity_type_str)
+            .ok_or_else(|| DbError::Other(format!("unknown entity_type '{entity_type_str}'")))?;
 
         let budget_duration = payload
             .get("budget_duration")
@@ -482,10 +469,7 @@ impl AsyncTask for BudgetResetter {
         let steps: Vec<NewStep> = entity_ids
             .iter()
             .map(|v| {
-                let id = v
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_string();
+                let id = v.as_str().unwrap_or_default().to_string();
                 NewStep {
                     key: format!("{}:{}", entity_type.as_str(), id),
                     payload: json!({
@@ -667,12 +651,11 @@ mod tests {
         assert_eq!(r["entity_type"], "key");
         assert!(r["new_reset_at"].as_str().unwrap() > past.as_str());
 
-        let spend: (f64,) =
-            sqlx::query_as("SELECT spend FROM virtual_keys WHERE token = ?")
-                .bind(&hash)
-                .fetch_one(sqlite_pool(&db))
-                .await
-                .unwrap();
+        let spend: (f64,) = sqlx::query_as("SELECT spend FROM virtual_keys WHERE token = ?")
+            .bind(&hash)
+            .fetch_one(sqlite_pool(&db))
+            .await
+            .unwrap();
         assert_eq!(spend.0, 0.0);
     }
 

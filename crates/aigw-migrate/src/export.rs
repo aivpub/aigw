@@ -73,10 +73,7 @@ pub async fn run(source_str: &str, target_str: &str) -> anyhow::Result<()> {
             inserted += 1;
         }
 
-        println!(
-            "  {} -> {} ({} rows)",
-            aigw_table, litellm_table, inserted
-        );
+        println!("  {} -> {} ({} rows)", aigw_table, litellm_table, inserted);
     }
 
     Ok(())

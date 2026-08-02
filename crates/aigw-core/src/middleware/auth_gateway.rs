@@ -111,7 +111,11 @@ mod tests {
             team_id: Some("team-1".to_string()),
             organization_id: org_id.map(|s| s.to_string()),
             is_master_key: is_master,
-            user_role: if is_master { Some("proxy_admin".to_string()) } else { None },
+            user_role: if is_master {
+                Some("proxy_admin".to_string())
+            } else {
+                None
+            },
         }
     }
 

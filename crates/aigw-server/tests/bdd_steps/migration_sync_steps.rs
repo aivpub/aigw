@@ -5,21 +5,25 @@
 //! `AIGW_UPSTREAM_DB_URL` env var, and the upstream master key via
 //! `AIGW_UPSTREAM_ENCRYPT_KEY`.
 
+use crate::TestWorld;
 use cucumber::{given, then, when};
 #[allow(unused_imports)]
 use sqlx::any::AnyPoolOptions;
 #[allow(unused_imports)]
 use sqlx::Row as _;
-use crate::TestWorld;
 
 /// Returns true when real API mode is active.
 fn real_api_enabled() -> bool {
-    std::env::var("AIGW_REAL_API").map(|v| v == "1").unwrap_or(false)
+    std::env::var("AIGW_REAL_API")
+        .map(|v| v == "1")
+        .unwrap_or(false)
 }
 
 /// Returns the upstream litellm database URL.
 fn upstream_db_url() -> Option<String> {
-    std::env::var("AIGW_UPSTREAM_DB_URL").ok().filter(|s| !s.is_empty())
+    std::env::var("AIGW_UPSTREAM_DB_URL")
+        .ok()
+        .filter(|s| !s.is_empty())
 }
 
 /// Returns true when migration tests are fully configured.
@@ -35,13 +39,14 @@ fn upstream_encrypt_key() -> Option<String> {
 
 /// Returns the target aigw database URL for the test.
 fn target_db_url() -> String {
-    std::env::var("AIGW_TEST_DB_URL")
-        .expect("AIGW_TEST_DB_URL must be set by the BDD test harness")
+    std::env::var("AIGW_TEST_DB_URL").expect("AIGW_TEST_DB_URL must be set by the BDD test harness")
 }
 
 /// Returns the optional migrate step filter from env var.
 fn migrate_step_filter() -> Option<u8> {
-    std::env::var("AIGW_MIGRATE_STEP").ok().and_then(|v| v.parse().ok())
+    std::env::var("AIGW_MIGRATE_STEP")
+        .ok()
+        .and_then(|v| v.parse().ok())
 }
 
 /// Get the target master key.
@@ -79,9 +84,7 @@ fn bg_upstream_db_configured(_world: &mut TestWorld) {
         return;
     }
     if upstream_db_url().is_none() {
-        eprintln!(
-            "SKIP: AIGW_UPSTREAM_DB_URL not set — skipping migration sync/rollback scenario"
-        );
+        eprintln!("SKIP: AIGW_UPSTREAM_DB_URL not set — skipping migration sync/rollback scenario");
         return;
     }
 }
@@ -108,8 +111,12 @@ async fn when_sync_plain_tables(world: &mut TestWorld) {
         &target_key,
         Some(0),
         &aigw_migrate::CursorRange::default(),
-        migrate_step_filter(), false, &std::collections::HashSet::new(), 1000,
-    ).await;
+        migrate_step_filter(),
+        false,
+        &std::collections::HashSet::new(),
+        1000,
+    )
+    .await;
 
     match result {
         Ok(all_match) => {
@@ -161,13 +168,21 @@ async fn when_sync_credentials(world: &mut TestWorld) {
         &target_key,
         Some(0),
         &aigw_migrate::CursorRange::default(),
-        migrate_step_filter(), false, &std::collections::HashSet::new(), 1000,
-    ).await;
+        migrate_step_filter(),
+        false,
+        &std::collections::HashSet::new(),
+        1000,
+    )
+    .await;
 
     match result {
         Ok(all_match) => {
-            let tgt_count = get_row_count(&target_url, "credentials").await.unwrap_or(-1);
-            let src_count = get_row_count(&source_url, "LiteLLM_CredentialsTable").await.unwrap_or(-1);
+            let tgt_count = get_row_count(&target_url, "credentials")
+                .await
+                .unwrap_or(-1);
+            let src_count = get_row_count(&source_url, "LiteLLM_CredentialsTable")
+                .await
+                .unwrap_or(-1);
             world.last_body = Some(serde_json::json!({
                 "success": true,
                 "all_match": all_match,
@@ -201,13 +216,21 @@ async fn when_sync_proxy_models(world: &mut TestWorld) {
         &target_key,
         Some(0),
         &aigw_migrate::CursorRange::default(),
-        migrate_step_filter(), false, &std::collections::HashSet::new(), 1000,
-    ).await;
+        migrate_step_filter(),
+        false,
+        &std::collections::HashSet::new(),
+        1000,
+    )
+    .await;
 
     match result {
         Ok(all_match) => {
-            let tgt_count = get_row_count(&target_url, "proxy_models").await.unwrap_or(-1);
-            let src_count = get_row_count(&source_url, "LiteLLM_ProxyModelTable").await.unwrap_or(-1);
+            let tgt_count = get_row_count(&target_url, "proxy_models")
+                .await
+                .unwrap_or(-1);
+            let src_count = get_row_count(&source_url, "LiteLLM_ProxyModelTable")
+                .await
+                .unwrap_or(-1);
             world.last_body = Some(serde_json::json!({
                 "success": true,
                 "all_match": all_match,
@@ -241,8 +264,12 @@ async fn when_sync_spend_logs_limit_10(world: &mut TestWorld) {
         &target_key,
         Some(10),
         &aigw_migrate::CursorRange::default(),
-        migrate_step_filter(), false, &std::collections::HashSet::new(), 1000,
-    ).await;
+        migrate_step_filter(),
+        false,
+        &std::collections::HashSet::new(),
+        1000,
+    )
+    .await;
 
     match result {
         Ok(_all_match) => {
@@ -266,7 +293,10 @@ async fn when_sync_spend_logs_limit_10(world: &mut TestWorld) {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 fn assert_success(body: &serde_json::Value) {
-    let success = body.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+    let success = body
+        .get("success")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     assert!(success, "Expected success=true, got: {:?}", body);
 }
 
@@ -280,10 +310,7 @@ fn assert_counts_match(body: &serde_json::Value, name: &str) {
     let src_key = format!("{name}_src_count");
     let tgt = body.get(&tgt_key).and_then(|v| v.as_i64()).unwrap_or(-1);
     let src = body.get(&src_key).and_then(|v| v.as_i64()).unwrap_or(-2);
-    assert_eq!(
-        tgt, src,
-        "Expected {name} count match: src={src} tgt={tgt}",
-    );
+    assert_eq!(tgt, src, "Expected {name} count match: src={src} tgt={tgt}",);
 }
 
 #[then("同步成功无报错")]
@@ -302,8 +329,15 @@ fn then_org_rows_ge_0(world: &mut TestWorld) {
     }
     let body = world.last_body.as_ref().expect("no sync result");
     assert_success(body);
-    let count = body.get("organizations_count").and_then(|v| v.as_i64()).unwrap_or(-1);
-    assert!(count >= 0, "Expected organizations_count >= 0, got {}", count);
+    let count = body
+        .get("organizations_count")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(-1);
+    assert!(
+        count >= 0,
+        "Expected organizations_count >= 0, got {}",
+        count
+    );
 }
 
 #[then(expr = "teams 表行数 > 0")]
@@ -327,8 +361,13 @@ fn then_all_plain_tables_match(world: &mut TestWorld) {
     // scenarios and mutated by server-side operations. all_match from
     // run_filtered is also not checked for the same reason.
     for tbl in &[
-        "organizations", "teams", "users", "projects", "budgets",
-        "organization_memberships", "team_memberships",
+        "organizations",
+        "teams",
+        "users",
+        "projects",
+        "budgets",
+        "organization_memberships",
+        "team_memberships",
     ] {
         assert_counts_match(body, tbl);
     }
@@ -383,6 +422,13 @@ fn then_spend_logs_count_10(world: &mut TestWorld) {
     }
     let body = world.last_body.as_ref().expect("no sync result");
     assert_success(body);
-    let count = body.get("spend_logs_count").and_then(|v| v.as_i64()).unwrap_or(-1);
-    assert!(count >= 10, "Expected spend_logs_count >= 10, got {}", count);
+    let count = body
+        .get("spend_logs_count")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(-1);
+    assert!(
+        count >= 10,
+        "Expected spend_logs_count >= 10, got {}",
+        count
+    );
 }

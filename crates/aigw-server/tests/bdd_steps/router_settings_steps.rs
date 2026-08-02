@@ -1,7 +1,7 @@
 //! Step bindings for router_settings BDD scenarios (auth.feature)
 
-use cucumber::when;
 use axum::http::Method;
+use cucumber::when;
 use tower::ServiceExt;
 
 use crate::TestWorld;

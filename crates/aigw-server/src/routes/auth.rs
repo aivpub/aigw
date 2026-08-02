@@ -135,8 +135,8 @@ mod tests {
     use aigw_core::models::VirtualKey;
     use aigw_core::provider::ProviderRegistry;
     use aigw_core::rate_limiter::RateLimiter;
+    use aigw_core::resolver::ModelResolver;
     use aigw_core::router::{Router as AigwRouter, RouterState};
-use aigw_core::resolver::ModelResolver;
     use axum::{body::Body, http::Request, routing::get, Json, Router};
     use serde_json::{json, Value};
     use std::sync::Arc;
@@ -155,8 +155,9 @@ use aigw_core::resolver::ModelResolver;
             deployment_mode: deployment_mode.to_string(),
             started_at: std::time::Instant::now(),
             daily_spend_queue: None,
-  otel_active: false,
-            body_archiver: None,            metrics: None,
+            otel_active: false,
+            body_archiver: None,
+            metrics: None,
         })
     }
 
@@ -183,6 +184,7 @@ use aigw_core::resolver::ModelResolver;
             tpm_limit: None,
             rpm_limit: None,
             max_budget: None,
+            soft_budget: None,
             budget_duration: None,
             budget_reset_at: None,
             allowed_cache_controls: json!([]),
