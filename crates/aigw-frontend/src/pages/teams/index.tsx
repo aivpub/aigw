@@ -444,7 +444,7 @@ export function TeamsPage() {
                                 </TableCell>
                                 <TableCell className="text-right text-sm">
                                   {team.max_budget != null
-                                    ? `$${team.max_budget.toFixed(2)}${team.budget_duration ? ` / ${team.budget_duration}` : ""}`
+                                    ? `$${team.max_budget.toFixed(2)}`
                                     : "∞"}
                                 </TableCell>
                                 <TableCell className="text-right text-xs text-muted-foreground">
@@ -528,7 +528,7 @@ export function TeamsPage() {
                                 </span>
                                 <span>
                                   {team.max_budget != null
-                                    ? `${t("teams.mobile.budget")} $${team.max_budget.toFixed(2)}${team.budget_duration ? ` / ${team.budget_duration}` : ""}`
+                                    ? `${t("teams.mobile.budget")} $${team.max_budget.toFixed(2)}`
                                     : t("teams.noBudget")}
                                 </span>
                               </div>
