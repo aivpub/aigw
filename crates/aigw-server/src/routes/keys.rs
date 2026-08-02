@@ -626,11 +626,19 @@ pub async fn key_update(
             .and_then(|v| v.as_f64())
             .map(|v| v.to_string())
             .or_else(|| existing.soft_budget.clone()),
-        budget_duration: body
-            .get("budget_duration")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .or_else(|| existing.budget_duration.clone()),
+        // budget_duration and budget_reset_at: only override when the key is
+        // present in the body, allowing explicit clear (empty string → None).
+        budget_duration: {
+            let key_present = body.get("budget_duration").is_some();
+            if key_present {
+                body.get("budget_duration")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .filter(|s| !s.is_empty())
+            } else {
+                existing.budget_duration.clone()
+            }
+        },
         budget_reset_at: body
             .get("budget_reset_at")
             .and_then(|v| v.as_str())

@@ -917,9 +917,9 @@ export function UsersPage() {
                       ...(formEmail && { user_email: formEmail }),
                       ...(formRole && { user_role: formRole }),
                       ...(formBudget && { max_budget: parseFloat(formBudget) }),
-                      ...(formBudgetDuration.trim() && {
-                        budget_duration: formBudgetDuration.trim(),
-                      }),
+                      ...(formBudgetDuration !== selected?.budget_duration
+                        ? { budget_duration: formBudgetDuration.trim() }
+                        : undefined),
                       ...(formSoftBudget.trim() && {
                         soft_budget: parseFloat(formSoftBudget),
                       }),

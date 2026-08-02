@@ -318,7 +318,10 @@ pub async fn team_update(
         existing.blocked = v.as_bool().unwrap_or(existing.blocked);
     }
     if let Some(v) = body.get("budget_duration") {
-        existing.budget_duration = v.as_str().map(String::from);
+        existing.budget_duration = v
+            .as_str()
+            .map(String::from)
+            .filter(|s| !s.is_empty());
     }
     if let Some(v) = body.get("soft_budget") {
         existing.soft_budget = v.as_f64().map(|vv| vv.to_string());

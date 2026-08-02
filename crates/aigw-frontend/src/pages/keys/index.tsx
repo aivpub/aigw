@@ -312,9 +312,7 @@ export function KeysPage() {
         ? { models: [] }
         : selectedModels.length > 0 && { models: selectedModels }),
       ...(formBudget.trim() && { max_budget: parseFloat(formBudget) }),
-      ...(formBudgetDuration.trim() && {
-        budget_duration: formBudgetDuration.trim(),
-      }),
+      ...(formBudgetDuration !== selectedKey?.budget_duration ? { budget_duration: formBudgetDuration.trim() } : undefined),
       ...(formSoftBudget.trim() && { soft_budget: parseFloat(formSoftBudget) }),
       ...(formTPM.trim() && { tpm_limit: parseInt(formTPM) }),
       ...(formRPM.trim() && { rpm_limit: parseInt(formRPM) }),

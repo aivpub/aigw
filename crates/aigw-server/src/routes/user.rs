@@ -333,7 +333,10 @@ pub async fn user_update(
         existing.max_parallel_requests = v.as_i64().map(|v| v.to_string());
     }
     if let Some(v) = body.get("budget_duration") {
-        existing.budget_duration = v.as_str().map(String::from);
+        existing.budget_duration = v
+            .as_str()
+            .map(String::from)
+            .filter(|s| !s.is_empty());
     }
     if let Some(v) = body.get("allowed_cache_controls") {
         existing.allowed_cache_controls = v.clone();
