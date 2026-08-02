@@ -199,32 +199,33 @@ async fn batch_upsert_daily_spend(
         _ => return Err(crate::db::DbError::Other(format!("unknown daily_spend table: {}", table_name))),
     };
 
+    // SQL is generated per database backend because PostgreSQL uses $N placeholders
+    // while Sqlite and MySQL use ? placeholders. sqlx does NOT auto-convert between them.
     for entry in entries {
         let id = uuid::Uuid::new_v4().to_string();
-        let sql = format!(
-            "INSERT INTO {} (id, {}, date, api_key, model, model_group, custom_llm_provider, \
-             mcp_namespaced_tool_name, endpoint, prompt_tokens, completion_tokens, \
-             cache_read_input_tokens, cache_creation_input_tokens, spend, \
-             api_requests, successful_requests, failed_requests) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
-             ON CONFLICT ({}) DO UPDATE SET \
-             prompt_tokens = {}.prompt_tokens + EXCLUDED.prompt_tokens, \
-             completion_tokens = {}.completion_tokens + EXCLUDED.completion_tokens, \
-             cache_read_input_tokens = {}.cache_read_input_tokens + EXCLUDED.cache_read_input_tokens, \
-            cache_creation_input_tokens = {}.cache_creation_input_tokens + EXCLUDED.cache_creation_input_tokens, \
-             spend = {}.spend + EXCLUDED.spend, \
-             api_requests = {}.api_requests + EXCLUDED.api_requests, \
-             successful_requests = {}.successful_requests + EXCLUDED.successful_requests, \
-             failed_requests = {}.failed_requests + EXCLUDED.failed_requests, \
-             updated_at = CURRENT_TIMESTAMP",
-            table_name, entity_col,
-            conflict_cols,
-            table_name, table_name, table_name, table_name, table_name, table_name,
-            table_name, table_name,
-        );
-
         match db {
             Database::Sqlite(pool) => {
+                let sql = format!(
+                    "INSERT INTO {} (id, {}, date, api_key, model, model_group, custom_llm_provider, \
+                     mcp_namespaced_tool_name, endpoint, prompt_tokens, completion_tokens, \
+                     cache_read_input_tokens, cache_creation_input_tokens, spend, \
+                     api_requests, successful_requests, failed_requests) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+                     ON CONFLICT ({}) DO UPDATE SET \
+                     prompt_tokens = {}.prompt_tokens + EXCLUDED.prompt_tokens, \
+                     completion_tokens = {}.completion_tokens + EXCLUDED.completion_tokens, \
+                     cache_read_input_tokens = {}.cache_read_input_tokens + EXCLUDED.cache_read_input_tokens, \
+                    cache_creation_input_tokens = {}.cache_creation_input_tokens + EXCLUDED.cache_creation_input_tokens, \
+                     spend = {}.spend + EXCLUDED.spend, \
+                     api_requests = {}.api_requests + EXCLUDED.api_requests, \
+                     successful_requests = {}.successful_requests + EXCLUDED.successful_requests, \
+                     failed_requests = {}.failed_requests + EXCLUDED.failed_requests, \
+                     updated_at = CURRENT_TIMESTAMP",
+                    table_name, entity_col,
+                    conflict_cols,
+                    table_name, table_name, table_name, table_name, table_name, table_name,
+                    table_name, table_name,
+                );
                 sqlx::query(&sql)
                     .bind(&id)
                     .bind(&entry.0)
@@ -247,6 +248,27 @@ async fn batch_upsert_daily_spend(
                     .await?;
             }
             Database::Mysql(pool) => {
+                let sql = format!(
+                    "INSERT INTO {} (id, {}, date, api_key, model, model_group, custom_llm_provider, \
+                     mcp_namespaced_tool_name, endpoint, prompt_tokens, completion_tokens, \
+                     cache_read_input_tokens, cache_creation_input_tokens, spend, \
+                     api_requests, successful_requests, failed_requests) \
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+                     ON CONFLICT ({}) DO UPDATE SET \
+                     prompt_tokens = {}.prompt_tokens + EXCLUDED.prompt_tokens, \
+                     completion_tokens = {}.completion_tokens + EXCLUDED.completion_tokens, \
+                     cache_read_input_tokens = {}.cache_read_input_tokens + EXCLUDED.cache_read_input_tokens, \
+                    cache_creation_input_tokens = {}.cache_creation_input_tokens + EXCLUDED.cache_creation_input_tokens, \
+                     spend = {}.spend + EXCLUDED.spend, \
+                     api_requests = {}.api_requests + EXCLUDED.api_requests, \
+                     successful_requests = {}.successful_requests + EXCLUDED.successful_requests, \
+                     failed_requests = {}.failed_requests + EXCLUDED.failed_requests, \
+                     updated_at = CURRENT_TIMESTAMP",
+                    table_name, entity_col,
+                    conflict_cols,
+                    table_name, table_name, table_name, table_name, table_name, table_name,
+                    table_name, table_name,
+                );
                 sqlx::query(&sql)
                     .bind(&id)
                     .bind(&entry.0)
@@ -269,7 +291,27 @@ async fn batch_upsert_daily_spend(
                     .await?;
             }
             Database::Postgres(pool) => {
-                // PG uses $N placeholders — keep the ? syntax for sqlx which handles it
+                let sql = format!(
+                    "INSERT INTO {} (id, {}, date, api_key, model, model_group, custom_llm_provider, \
+                     mcp_namespaced_tool_name, endpoint, prompt_tokens, completion_tokens, \
+                     cache_read_input_tokens, cache_creation_input_tokens, spend, \
+                     api_requests, successful_requests, failed_requests) \
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17) \
+                     ON CONFLICT ({}) DO UPDATE SET \
+                     prompt_tokens = {}.prompt_tokens + EXCLUDED.prompt_tokens, \
+                     completion_tokens = {}.completion_tokens + EXCLUDED.completion_tokens, \
+                     cache_read_input_tokens = {}.cache_read_input_tokens + EXCLUDED.cache_read_input_tokens, \
+                    cache_creation_input_tokens = {}.cache_creation_input_tokens + EXCLUDED.cache_creation_input_tokens, \
+                     spend = {}.spend + EXCLUDED.spend, \
+                     api_requests = {}.api_requests + EXCLUDED.api_requests, \
+                     successful_requests = {}.successful_requests + EXCLUDED.successful_requests, \
+                     failed_requests = {}.failed_requests + EXCLUDED.failed_requests, \
+                     updated_at = CURRENT_TIMESTAMP",
+                    table_name, entity_col,
+                    conflict_cols,
+                    table_name, table_name, table_name, table_name, table_name, table_name,
+                    table_name, table_name,
+                );
                 sqlx::query(&sql)
                     .bind(&id)
                     .bind(&entry.0)

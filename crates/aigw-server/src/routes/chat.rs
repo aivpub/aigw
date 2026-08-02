@@ -1665,6 +1665,13 @@ pub async fn chat_completions(
                     ds_org.kind = DailySpendKind::Organization;
                     queue.queue(ds_org);
                 }
+                // Queue EndUser dimension (agent_id reserved, always None for now)
+                if let Some(ref euid) = end_user {
+                    let mut ds_eu = ds_log.clone();
+                    ds_eu.entity_id = euid.clone();
+                    ds_eu.kind = DailySpendKind::EndUser;
+                    queue.queue(ds_eu);
+                }
             }
         });
 
