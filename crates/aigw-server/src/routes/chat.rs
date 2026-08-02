@@ -1602,6 +1602,28 @@ pub async fn chat_completions(
                             cache_metadata,
                         )
                         .await;
+
+                    // Increment entity spends (async — don't block the SSE stream response)
+                    {
+                        let inc_db = state_clone.db.clone();
+                        let inc_th = token_hash.clone();
+                        let inc_uid = user_id.clone();
+                        let inc_tid = team_id.clone();
+                        let inc_oid = organization_id.clone();
+                        let inc_cost = streaming_spend;
+                        tokio::spawn(async move {
+                            let _ = inc_db.increment_key_spend(&inc_th, inc_cost).await;
+                            if let Some(ref uid) = inc_uid {
+                                let _ = inc_db.increment_user_spend(uid, inc_cost).await;
+                            }
+                            if let Some(ref tid) = inc_tid {
+                                let _ = inc_db.increment_team_spend(tid, inc_cost).await;
+                            }
+                            if let Some(ref oid) = inc_oid {
+                                let _ = inc_db.increment_org_spend(oid, inc_cost).await;
+                            }
+                        });
+                    }
                     if let Some(ref m) = stream_metrics {
                         let ttft = first_chunk_time.map(|fct| {
                             fct.signed_duration_since(start_time).num_milliseconds() as f64 / 1000.0

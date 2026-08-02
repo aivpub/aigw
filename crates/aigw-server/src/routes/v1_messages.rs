@@ -811,6 +811,8 @@ pub async fn messages_handler(
         let _upstream_base_url_clone = upstream_base_url.clone();
         let _auth_token_hash_clone = auth_token_hash.clone();
         let _auth_user_id_clone = auth_user_id.clone();
+        let _auth_team_id_clone = auth_team_id.clone();
+        let _auth_org_id_clone = auth_org_id.clone();
         let stream_metrics = state.metrics.clone();
         let stream_model = upstream_model.clone();
         let stream_user = auth_user_id.clone();
@@ -1040,6 +1042,28 @@ pub async fn messages_handler(
                     cache_metadata,
                 )
                 .await;
+
+            // Increment entity spends (async)
+            {
+                let inc_db = state_clone.db.clone();
+                let inc_th = _auth_token_hash_clone.clone();
+                let inc_uid = _auth_user_id_clone.clone();
+                let inc_tid = _auth_team_id_clone.clone();
+                let inc_oid = _auth_org_id_clone.clone();
+                let inc_cost = streaming_spend;
+                tokio::spawn(async move {
+                    let _ = inc_db.increment_key_spend(&inc_th, inc_cost).await;
+                    if let Some(ref uid) = inc_uid {
+                        let _ = inc_db.increment_user_spend(uid, inc_cost).await;
+                    }
+                    if let Some(ref tid) = inc_tid {
+                        let _ = inc_db.increment_team_spend(tid, inc_cost).await;
+                    }
+                    if let Some(ref oid) = inc_oid {
+                        let _ = inc_db.increment_org_spend(oid, inc_cost).await;
+                    }
+                });
+            }
 
             // Record streaming metrics
             if let Some(ref m) = stream_metrics {
