@@ -10,10 +10,12 @@ use crate::body_archive::config::BodyArchiveConfig;
 /// organizations) that have `budget_duration` set.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BudgetResetConfig {
-    /// Enable the periodic budget reset worker. Default: false.
-    #[serde(default)]
+    /// Enable the periodic budget reset worker. Default: true.
+    #[serde(default = "default_true")]
     pub enabled: bool,
 }
+
+fn default_true() -> bool { true }
 
 /// Top-level config (litellm-compatible)
 #[derive(Debug, Clone, Serialize, Deserialize)]
