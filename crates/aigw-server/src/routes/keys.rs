@@ -510,15 +510,30 @@ pub async fn key_update(
             )
         })?;
 
-    let hash = hash_token(token_param);
+    // If the token is already a 64-char hex SHA256 hash (e.g. from /key/list response),
+    // use it directly; otherwise hash the raw token.
+    let already_hashed = token_param.len() == 64
+        && token_param.chars().all(|c| c.is_ascii_hexdigit());
+    let hash = if already_hashed {
+        token_param.to_string()
+    } else {
+        hash_token(token_param)
+    };
 
     // Fetch existing key
-    let _existing = state.db.get_key_by_token(&hash).await.map_err(|e| {
+    let existing = state.db.get_key_by_token(&hash).await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
         )
     })?;
+
+    if existing.is_none() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": {"message": "Key not found", "type": "not_found"}})),
+        ));
+    }
 
     // Build an updated VirtualKey from the request body
     let now = Utc::now();
