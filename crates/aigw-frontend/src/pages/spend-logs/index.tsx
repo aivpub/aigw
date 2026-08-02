@@ -987,13 +987,13 @@ function extractModelType(params: Record<string, unknown>): string {
   return "—";
 }
 
-function modelDisplayLabel(m: ModelItem): string {
+function modelDisplaySuffix(m: ModelItem): string {
   const provider = extractProvider(m.litellm_params);
   const upstream = extractModelType(m.litellm_params);
   if (provider !== "—" && upstream !== "—") {
-    return `${m.model_name} (${provider}/${upstream})`;
+    return `${provider}/${upstream}`;
   }
-  return m.model_name;
+  return "";
 }
 
 const LIVE_TAIL_INTERVAL = 15_000; // 15 seconds
@@ -1255,11 +1255,19 @@ export function SpendLogsPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="_all">{t("spendLogs.filters.all")}</SelectItem>
-                  {(modelListData?.data ?? []).map((m) => (
-                    <SelectItem key={m.model_id} value={m.model_name}>
-                      {modelDisplayLabel(m)}
-                    </SelectItem>
-                  ))}
+                  {(modelListData?.data ?? []).map((m) => {
+                    const suffix = modelDisplaySuffix(m);
+                    return (
+                      <SelectItem key={m.model_id} value={m.model_name}>
+                        <span>{m.model_name}</span>
+                        {suffix && (
+                          <span className="text-muted-foreground ml-1.5 text-[11px]">
+                            {suffix}
+                          </span>
+                        )}
+                      </SelectItem>
+                    );
+                  })}
                 </SelectContent>
               </Select>
             </div>
