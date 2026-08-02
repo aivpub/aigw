@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import i18n from "@/i18n";
@@ -331,6 +331,28 @@ const DEFAULT_SETTINGS: SettingsData = {
   endpointType: "chat",
 };
 
+// ── localStorage / sessionStorage persistence ──
+
+const STORAGE_KEY_SETTINGS = "aigw-playground-settings";
+const STORAGE_KEY_MESSAGES = "aigw-playground-messages";
+
+function loadFromStorage<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key) || sessionStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function saveToStorage(key: string, value: unknown, storage: Storage) {
+  try {
+    storage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* quota exceeded — silently ignore */
+  }
+}
+
 function SettingsPanel({
   settings,
   onChange,
@@ -526,8 +548,12 @@ function SettingsPanel({
 
 export function PlaygroundPage() {
   const { t } = useTranslation();
-  const [settings, setSettings] = useState<SettingsData>(DEFAULT_SETTINGS);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [settings, setSettings] = useState<SettingsData>(() =>
+    loadFromStorage(STORAGE_KEY_SETTINGS, DEFAULT_SETTINGS),
+  );
+  const [messages, setMessages] = useState<ChatMessage[]>(() =>
+    loadFromStorage(STORAGE_KEY_MESSAGES, []),
+  );
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -542,6 +568,14 @@ export function PlaygroundPage() {
     queryFn: () => apiGet("/v1/models"),
   });
   const models = modelsData?.data ?? [];
+
+  useEffect(() => {
+    saveToStorage(STORAGE_KEY_SETTINGS, settings, localStorage);
+  }, [settings]);
+
+  useEffect(() => {
+    saveToStorage(STORAGE_KEY_MESSAGES, messages, sessionStorage);
+  }, [messages]);
 
   const scrollToBottom = () => {
     setTimeout(
@@ -571,11 +605,22 @@ export function PlaygroundPage() {
     setMessages([]);
     setInput("");
     setSettings(DEFAULT_SETTINGS);
+    try {
+      localStorage.removeItem(STORAGE_KEY_SETTINGS);
+      sessionStorage.removeItem(STORAGE_KEY_MESSAGES);
+    } catch {
+      /* */
+    }
   };
 
   const clearSession = () => {
     setMessages([]);
     setInput("");
+    try {
+      sessionStorage.removeItem(STORAGE_KEY_MESSAGES);
+    } catch {
+      /* */
+    }
   };
 
   const handleEdit = useCallback(

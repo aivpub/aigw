@@ -51,6 +51,7 @@ import { toast } from "sonner";
 import { InputCard } from "@/components/log-viewer/InputCard";
 import { OutputCard } from "@/components/log-viewer/OutputCard";
 import { parseMessages } from "@/components/log-viewer/MessageViewer";
+import type { ModelItem, ModelListResponse } from "@/pages/models/types";
 
 /* ─────────────────────────────────────────────── Types ── */
 
@@ -966,6 +967,35 @@ function saveLiveTailPref(v: boolean) {
   }
 }
 
+// ── Model display helper (reuses models page pattern) ──
+
+function extractProvider(params: Record<string, unknown>): string {
+  if (typeof params.custom_llm_provider === "string")
+    return params.custom_llm_provider;
+  if (typeof params.model === "string") {
+    const parts = params.model.split("/");
+    return parts.length > 1 ? parts[0] : params.model;
+  }
+  return "—";
+}
+
+function extractModelType(params: Record<string, unknown>): string {
+  if (typeof params.model === "string") {
+    const parts = params.model.split("/");
+    return parts.length > 1 ? parts[1] : params.model;
+  }
+  return "—";
+}
+
+function modelDisplayLabel(m: ModelItem): string {
+  const provider = extractProvider(m.litellm_params);
+  const upstream = extractModelType(m.litellm_params);
+  if (provider !== "—" && upstream !== "—") {
+    return `${m.model_name} (${provider}/${upstream})`;
+  }
+  return m.model_name;
+}
+
 const LIVE_TAIL_INTERVAL = 15_000; // 15 seconds
 
 export function SpendLogsPage() {
@@ -975,6 +1005,13 @@ export function SpendLogsPage() {
   const [startDate, setStartDate] = useState(presetRange("4h").start);
   const [endDate, setEndDate] = useState(presetRange("4h").end);
   const [modelFilter, setModelFilter] = useState("");
+
+  // Model list for filter dropdown
+  const { data: modelListData } = useQuery<ModelListResponse>({
+    queryKey: ["proxy-models", "all"],
+    queryFn: () => apiGet("/model/list?page=1&page_size=200"),
+    staleTime: 60_000,
+  });
   const [requestIdFilter, setRequestIdFilter] = useState("");
   const [requestIdInput, setRequestIdInput] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -1205,16 +1242,26 @@ export function SpendLogsPage() {
                 className="h-7 pl-7 text-xs"
               />
             </div>
-            <div className="w-32">
-              <Input
-                placeholder={t("spendLogs.filters.modelPlaceholder")}
-                value={modelFilter}
-                onChange={(e) => {
-                  setModelFilter(e.target.value);
+            <div className="w-44">
+              <Select
+                value={modelFilter || "_all"}
+                onValueChange={(v) => {
+                  setModelFilter(v === "_all" ? "" : v);
                   setPage(1);
                 }}
-                className="h-7 text-xs"
-              />
+              >
+                <SelectTrigger className="h-7 text-xs">
+                  <SelectValue placeholder={t("spendLogs.filters.modelPlaceholder")} />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="_all">{t("spendLogs.filters.all")}</SelectItem>
+                  {(modelListData?.data ?? []).map((m) => (
+                    <SelectItem key={m.model_id} value={m.model_name}>
+                      {modelDisplayLabel(m)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <Select
               value={statusFilter}
