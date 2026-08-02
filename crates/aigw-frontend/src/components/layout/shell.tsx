@@ -17,7 +17,9 @@ function loadCollapsed(): boolean {
 function saveCollapsed(v: boolean) {
   try {
     localStorage.setItem(COLLAPSED_KEY, String(v));
-  } catch { /* noop */ }
+  } catch {
+    /* noop */
+  }
 }
 
 export function Shell() {
@@ -25,7 +27,7 @@ export function Shell() {
   const [collapsed, setCollapsed] = useState(loadCollapsed);
 
   const toggleCollapse = useCallback(() => {
-    setCollapsed(prev => {
+    setCollapsed((prev) => {
       const next = !prev;
       saveCollapsed(next);
       return next;

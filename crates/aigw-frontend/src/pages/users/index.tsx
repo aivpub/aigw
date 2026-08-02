@@ -5,20 +5,38 @@ import { useTranslation } from "react-i18next";
 import { apiGet, apiPost, apiPut, apiDelete } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  Dialog, DialogContent, DialogDescription, DialogFooter,
-  DialogHeader, DialogTitle,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { toast } from "sonner";
-import { Plus, Search, Pencil, Trash2, Users, ChevronLeft, ChevronRight, Copy } from "lucide-react";
+import {
+  Plus,
+  Search,
+  Pencil,
+  Trash2,
+  Users,
+  ChevronLeft,
+  ChevronRight,
+  Copy,
+} from "lucide-react";
 import { PaginationBar } from "@/components/ui/pagination";
 import {
   Select,
@@ -95,7 +113,9 @@ export function UsersPage() {
   const totalCount = data?.total_count ?? 0;
   const totalPages = data?.total_pages ?? 0;
 
-  const { data: deletedUsers = [], isLoading: deletedLoading } = useQuery<DeletedUserItem[]>({
+  const { data: deletedUsers = [], isLoading: deletedLoading } = useQuery<
+    DeletedUserItem[]
+  >({
     queryKey: ["deleted-users"],
     queryFn: () => apiGet("/user/deleted"),
     enabled: viewMode === "deleted",
@@ -146,8 +166,15 @@ export function UsersPage() {
   });
 
   function openCreate() {
-    setFormEmail(""); setFormPassword(""); setFormAlias("");
-    setFormRole("internal_user"); setFormBudget(""); setFormBudgetDuration(""); setFormSoftBudget(""); setFormTPM(""); setFormRPM("");
+    setFormEmail("");
+    setFormPassword("");
+    setFormAlias("");
+    setFormRole("internal_user");
+    setFormBudget("");
+    setFormBudgetDuration("");
+    setFormSoftBudget("");
+    setFormTPM("");
+    setFormRPM("");
     setCreateOpen(true);
   }
 
@@ -181,12 +208,18 @@ export function UsersPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">{t("users.title")}</h1>
-          <p className="text-sm text-muted-foreground">{t("users.description")}</p>
+          <h1 className="text-2xl font-bold tracking-tight">
+            {t("users.title")}
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            {t("users.description")}
+          </p>
         </div>
-        {viewMode === "active" && (<Button onClick={openCreate}>
-          <Plus className="h-4 w-4" /> {t("users.newUser")}
-        </Button>)}
+        {viewMode === "active" && (
+          <Button onClick={openCreate}>
+            <Plus className="h-4 w-4" /> {t("users.newUser")}
+          </Button>
+        )}
       </div>
 
       <div className="flex items-center gap-2">
@@ -203,40 +236,88 @@ export function UsersPage() {
         )}
         <div className="flex-1" />
         <div className="flex items-center rounded-md border p-0.5">
-          <button type="button" onClick={() => setViewMode("active")}
-            className={`px-3 py-1 text-sm rounded-sm font-medium transition-colors ${viewMode === "active" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>{t("users.viewMode.active")}</button>
-          <button type="button" onClick={() => setViewMode("deleted")}
-            className={`px-3 py-1 text-sm rounded-sm font-medium transition-colors ${viewMode === "deleted" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>{t("users.viewMode.deleted")}</button>
+          <button
+            type="button"
+            onClick={() => setViewMode("active")}
+            className={`px-3 py-1 text-sm rounded-sm font-medium transition-colors ${viewMode === "active" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+          >
+            {t("users.viewMode.active")}
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode("deleted")}
+            className={`px-3 py-1 text-sm rounded-sm font-medium transition-colors ${viewMode === "deleted" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+          >
+            {t("users.viewMode.deleted")}
+          </button>
         </div>
       </div>
 
       {viewMode === "deleted" && (
         <Card>
-          <CardHeader className="pb-2"><CardTitle>{t("users.deletedCardTitle", { count: deletedUsers.length })}</CardTitle></CardHeader>
+          <CardHeader className="pb-2">
+            <CardTitle>
+              {t("users.deletedCardTitle", { count: deletedUsers.length })}
+            </CardTitle>
+          </CardHeader>
           <CardContent>
-            {deletedLoading ? Array.from({ length: 3 }).map((_, i) => <div key={i} className="py-2"><Skeleton className="h-4 w-full" /></div>)
-            : deletedUsers.length === 0 ? <div className="text-center text-muted-foreground py-8">{t("users.noDeletedRecords")}</div>
-            : (
+            {deletedLoading ? (
+              Array.from({ length: 3 }).map((_, i) => (
+                <div key={i} className="py-2">
+                  <Skeleton className="h-4 w-full" />
+                </div>
+              ))
+            ) : deletedUsers.length === 0 ? (
+              <div className="text-center text-muted-foreground py-8">
+                {t("users.noDeletedRecords")}
+              </div>
+            ) : (
               <>
                 <div className="hidden md:block">
                   <Table>
-                    <TableHeader><TableRow>
-                      <TableHead>{t("users.alias")}</TableHead>
-                      <TableHead>{t("users.table.userId")}</TableHead>
-                      <TableHead>{t("users.table.email")}</TableHead>
-                      <TableHead>{t("users.table.role")}</TableHead>
-                      <TableHead className="text-right">{t("users.table.spend")}</TableHead>
-                      <TableHead className="text-right">{t("users.table.deletedAt")}</TableHead>
-                    </TableRow></TableHeader>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>{t("users.alias")}</TableHead>
+                        <TableHead>{t("users.table.userId")}</TableHead>
+                        <TableHead>{t("users.table.email")}</TableHead>
+                        <TableHead>{t("users.table.role")}</TableHead>
+                        <TableHead className="text-right">
+                          {t("users.table.spend")}
+                        </TableHead>
+                        <TableHead className="text-right">
+                          {t("users.table.deletedAt")}
+                        </TableHead>
+                      </TableRow>
+                    </TableHeader>
                     <TableBody>
                       {deletedUsers.map((u) => (
                         <TableRow key={u.id}>
-                          <TableCell className="font-medium">{u.user_alias ?? "—"}</TableCell>
-                          <TableCell className="text-sm font-mono">{u.user_id}</TableCell>
-                          <TableCell className="text-sm">{u.user_email ?? "—"}</TableCell>
-                          <TableCell><Badge variant={u.user_role === "proxy_admin" ? "default" : "secondary"}>{u.user_role ?? "—"}</Badge></TableCell>
-                          <TableCell className="text-right text-sm">${u.spend.toFixed(4)}</TableCell>
-                          <TableCell className="text-right text-sm text-muted-foreground">{formatDate(u.deleted_at)}</TableCell>
+                          <TableCell className="font-medium">
+                            {u.user_alias ?? "—"}
+                          </TableCell>
+                          <TableCell className="text-sm font-mono">
+                            {u.user_id}
+                          </TableCell>
+                          <TableCell className="text-sm">
+                            {u.user_email ?? "—"}
+                          </TableCell>
+                          <TableCell>
+                            <Badge
+                              variant={
+                                u.user_role === "proxy_admin"
+                                  ? "default"
+                                  : "secondary"
+                              }
+                            >
+                              {u.user_role ?? "—"}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right text-sm">
+                            ${u.spend.toFixed(4)}
+                          </TableCell>
+                          <TableCell className="text-right text-sm text-muted-foreground">
+                            {formatDate(u.deleted_at)}
+                          </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -244,14 +325,32 @@ export function UsersPage() {
                 </div>
                 <div className="md:hidden space-y-3">
                   {deletedUsers.map((u) => (
-                    <Card key={u.id}><CardContent className="p-4 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="font-medium text-sm">{u.user_alias ?? u.user_email ?? "—"}</span>
-                        <Badge variant={u.user_role === "proxy_admin" ? "default" : "secondary"} className="text-xs">{u.user_role ?? "—"}</Badge>
-                      </div>
-                      <div className="text-xs text-muted-foreground">{t("users.mobile.id")}: {u.user_id}</div>
-                      <div className="text-xs text-muted-foreground">{t("users.mobile.deleted")}: {formatDate(u.deleted_at)}</div>
-                    </CardContent></Card>
+                    <Card key={u.id}>
+                      <CardContent className="p-4 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium text-sm">
+                            {u.user_alias ?? u.user_email ?? "—"}
+                          </span>
+                          <Badge
+                            variant={
+                              u.user_role === "proxy_admin"
+                                ? "default"
+                                : "secondary"
+                            }
+                            className="text-xs"
+                          >
+                            {u.user_role ?? "—"}
+                          </Badge>
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {t("users.mobile.id")}: {u.user_id}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {t("users.mobile.deleted")}:{" "}
+                          {formatDate(u.deleted_at)}
+                        </div>
+                      </CardContent>
+                    </Card>
                   ))}
                 </div>
               </>
@@ -260,357 +359,605 @@ export function UsersPage() {
         </Card>
       )}
 
-      {viewMode === "active" && (<>
-        <Card>
-        <CardHeader className="pb-2">
-          <CardTitle>{t("users.allCardTitle", { count: totalCount })}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {error ? (
-            <p className="text-sm text-destructive">{(error as Error).message}</p>
-          ) : (
-            <>
-              {/* Desktop table */}
-              <div className="hidden md:block">
-                <PaginationBar
-                  page={page}
-                  pageSize={pageSize}
-                  totalCount={totalCount}
-                  totalPages={totalPages}
-                  onPage={setPage}
-                  onPageSize={(s) => { setPageSize(s); setPage(1); }}
-                />
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>{t("users.table.userId")}</TableHead>
-                      <TableHead>{t("users.table.alias")}</TableHead>
-                      <TableHead>{t("users.table.email")}</TableHead>
-                      <TableHead>{t("users.table.role")}</TableHead>
-                      <TableHead className="text-right">{t("users.table.spend")}</TableHead>
-                      <TableHead className="text-right">Budget</TableHead>
-                      <TableHead className="text-right">{t("users.table.keys")}</TableHead>
-                      <TableHead>Created</TableHead>
-                      <TableHead className="text-right">{t("users.table.actions")}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
+      {viewMode === "active" && (
+        <>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle>
+                {t("users.allCardTitle", { count: totalCount })}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {error ? (
+                <p className="text-sm text-destructive">
+                  {(error as Error).message}
+                </p>
+              ) : (
+                <>
+                  {/* Desktop table */}
+                  <div className="hidden md:block">
+                    <PaginationBar
+                      page={page}
+                      pageSize={pageSize}
+                      totalCount={totalCount}
+                      totalPages={totalPages}
+                      onPage={setPage}
+                      onPageSize={(s) => {
+                        setPageSize(s);
+                        setPage(1);
+                      }}
+                    />
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>{t("users.table.userId")}</TableHead>
+                          <TableHead>{t("users.table.alias")}</TableHead>
+                          <TableHead>{t("users.table.email")}</TableHead>
+                          <TableHead>{t("users.table.role")}</TableHead>
+                          <TableHead className="text-right">
+                            {t("users.table.spend")}
+                          </TableHead>
+                          <TableHead className="text-right">Budget</TableHead>
+                          <TableHead className="text-right">
+                            {t("users.table.keys")}
+                          </TableHead>
+                          <TableHead>Created</TableHead>
+                          <TableHead className="text-right">
+                            {t("users.table.actions")}
+                          </TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {isLoading
+                          ? Array.from({ length: 3 }).map((_, i) => (
+                              <TableRow key={i}>
+                                {Array.from({ length: 9 }).map((_, j) => (
+                                  <TableCell key={j}>
+                                    <Skeleton className="h-4 w-full" />
+                                  </TableCell>
+                                ))}
+                              </TableRow>
+                            ))
+                          : filtered.map((u) => (
+                              <TableRow key={u.user_id}>
+                                <TableCell className="font-mono text-xs">
+                                  <span className="inline-flex items-center gap-1">
+                                    <span className="truncate max-w-[100px]">
+                                      {u.user_id.slice(0, 12)}…
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        navigator.clipboard.writeText(
+                                          u.user_id,
+                                        );
+                                        toast.success(t("keys.toast.copied"));
+                                      }}
+                                      className="text-muted-foreground hover:text-foreground"
+                                    >
+                                      <Copy className="h-3.5 w-3.5" />
+                                    </button>
+                                  </span>
+                                </TableCell>
+                                <TableCell className="font-medium">
+                                  {u.user_alias ?? "—"}
+                                </TableCell>
+                                <TableCell className="text-sm">
+                                  {u.user_email ?? "—"}
+                                </TableCell>
+                                <TableCell>
+                                  <Badge
+                                    variant={
+                                      u.user_role === "proxy_admin"
+                                        ? "default"
+                                        : "secondary"
+                                    }
+                                  >
+                                    {u.user_role ?? "—"}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell className="text-right text-sm">
+                                  ${u.spend.toFixed(4)}
+                                </TableCell>
+                                <TableCell className="text-right text-sm">
+                                  {u.max_budget != null
+                                    ? `$${u.max_budget.toFixed(2)}${u.budget_duration ? ` / ${u.budget_duration}` : ""}`
+                                    : "∞"}
+                                </TableCell>
+                                <TableCell className="text-right text-sm">
+                                  {(u.virtual_keys_count ?? 0) > 0 ? (
+                                    <a
+                                      href="/dash/keys"
+                                      className="text-primary hover:underline"
+                                    >
+                                      {u.virtual_keys_count}
+                                    </a>
+                                  ) : (
+                                    <span className="text-muted-foreground">
+                                      0
+                                    </span>
+                                  )}
+                                </TableCell>
+                                <TableCell className="text-xs text-muted-foreground">
+                                  {u.created_at
+                                    ? formatDate(u.created_at)
+                                    : "—"}
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  <div className="flex justify-end gap-1">
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={() => openEdit(u)}
+                                    >
+                                      <Pencil className="h-4 w-4" />
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={() => openDelete(u)}
+                                    >
+                                      <Trash2 className="h-4 w-4 text-destructive" />
+                                    </Button>
+                                  </div>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                      </TableBody>
+                    </Table>
+                    {!isLoading && filtered.length === 0 && (
+                      <div className="text-center text-muted-foreground py-8">
+                        {search ? t("users.noMatch") : t("users.noUsers")}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Mobile card list */}
+                  <div className="md:hidden space-y-3">
                     {isLoading
                       ? Array.from({ length: 3 }).map((_, i) => (
-                          <TableRow key={i}>
-                            {Array.from({ length: 9 }).map((_, j) => (
-                              <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
-                            ))}
-                          </TableRow>
+                          <Card key={i}>
+                            <CardContent className="p-4 space-y-2">
+                              <Skeleton className="h-4 w-3/4" />
+                              <Skeleton className="h-4 w-full" />
+                              <Skeleton className="h-4 w-1/2" />
+                            </CardContent>
+                          </Card>
                         ))
                       : filtered.map((u) => (
-                          <TableRow key={u.user_id}>
-                            <TableCell className="font-mono text-xs">
-                              <span className="inline-flex items-center gap-1">
-                                <span className="truncate max-w-[100px]">{u.user_id.slice(0, 12)}…</span>
-                                <button
-                                  type="button"
-                                  onClick={() => { navigator.clipboard.writeText(u.user_id); toast.success(t("keys.toast.copied")); }}
-                                  className="text-muted-foreground hover:text-foreground"
+                          <Card key={u.user_id}>
+                            <CardContent className="p-4 space-y-2">
+                              <div className="flex items-center justify-between">
+                                <span className="font-medium text-sm truncate max-w-[60%]">
+                                  {u.user_alias ?? u.user_email ?? "—"}
+                                </span>
+                                <Badge
+                                  variant={
+                                    u.user_role === "proxy_admin"
+                                      ? "default"
+                                      : "secondary"
+                                  }
+                                  className="text-xs"
                                 >
-                                  <Copy className="h-3.5 w-3.5" />
-                                </button>
-                              </span>
-                            </TableCell>
-                            <TableCell className="font-medium">{u.user_alias ?? "—"}</TableCell>
-                            <TableCell className="text-sm">{u.user_email ?? "—"}</TableCell>
-                            <TableCell>
-                              <Badge variant={u.user_role === "proxy_admin" ? "default" : "secondary"}>
-                                {u.user_role ?? "—"}
-                              </Badge>
-                            </TableCell>
-                            <TableCell className="text-right text-sm">${u.spend.toFixed(4)}</TableCell>
-                            <TableCell className="text-right text-sm">
-                              {u.max_budget != null ? `$${u.max_budget.toFixed(2)}${u.budget_duration ? ` / ${u.budget_duration}` : ""}` : "∞"}
-                            </TableCell>
-                            <TableCell className="text-right text-sm">
-                              {(u.virtual_keys_count ?? 0) > 0 ? (
-                                <a href="/dash/keys" className="text-primary hover:underline">
-                                  {u.virtual_keys_count}
-                                </a>
-                              ) : (
-                                <span className="text-muted-foreground">0</span>
-                              )}
-                            </TableCell>
-                            <TableCell className="text-xs text-muted-foreground">{u.created_at ? formatDate(u.created_at) : "—"}</TableCell>
-                            <TableCell className="text-right">
-                              <div className="flex justify-end gap-1">
-                                <Button variant="ghost" size="icon" onClick={() => openEdit(u)}>
-                                  <Pencil className="h-4 w-4" />
+                                  {u.user_role ?? "—"}
+                                </Badge>
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {u.user_email ?? "—"}
+                              </div>
+                              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                                <span>
+                                  {t("users.mobile.spent")} $
+                                  {u.spend.toFixed(4)}
+                                </span>
+                                <span>
+                                  {u.max_budget != null
+                                    ? `${t("users.mobile.budget")} $${u.max_budget.toFixed(2)}${u.budget_duration ? ` / ${u.budget_duration}` : ""}`
+                                    : t("users.mobile.noBudget")}
+                                </span>
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {t("users.mobile.created")}:{" "}
+                                {u.created_at ? formatDate(u.created_at) : "—"}
+                              </div>
+                              <div className="flex justify-end gap-1 pt-1">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => openEdit(u)}
+                                >
+                                  <Pencil className="h-3.5 w-3.5 mr-1" />{" "}
+                                  {t("common.edit")}
                                 </Button>
-                                <Button variant="ghost" size="icon" onClick={() => openDelete(u)}>
-                                  <Trash2 className="h-4 w-4 text-destructive" />
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => openDelete(u)}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5 mr-1 text-destructive" />{" "}
+                                  {t("common.delete")}
                                 </Button>
                               </div>
-                            </TableCell>
-                          </TableRow>
+                            </CardContent>
+                          </Card>
                         ))}
-                  </TableBody>
-                </Table>
-                {!isLoading && filtered.length === 0 && (
-                  <div className="text-center text-muted-foreground py-8">
-                    {search ? t("users.noMatch") : t("users.noUsers")}
+                    {!isLoading && filtered.length === 0 && (
+                      <div className="text-center text-muted-foreground py-8">
+                        {search ? t("users.noMatch") : t("users.noUsers")}
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
+                  {/* Pagination */}
+                  {totalCount > 0 && (
+                    <div className="mt-3">
+                      <PaginationBar
+                        page={page}
+                        pageSize={pageSize}
+                        totalCount={totalCount}
+                        totalPages={totalPages}
+                        onPage={setPage}
+                        onPageSize={(s) => {
+                          setPageSize(s);
+                          setPage(1);
+                        }}
+                      />
+                    </div>
+                  )}
+                </>
+              )}
+            </CardContent>
+          </Card>
 
-              {/* Mobile card list */}
-              <div className="md:hidden space-y-3">
-                {isLoading
-                  ? Array.from({ length: 3 }).map((_, i) => (
-                      <Card key={i}>
-                        <CardContent className="p-4 space-y-2">
-                          <Skeleton className="h-4 w-3/4" />
-                          <Skeleton className="h-4 w-full" />
-                          <Skeleton className="h-4 w-1/2" />
-                        </CardContent>
-                      </Card>
-                    ))
-                  : filtered.map((u) => (
-                      <Card key={u.user_id}>
-                        <CardContent className="p-4 space-y-2">
-                          <div className="flex items-center justify-between">
-                            <span className="font-medium text-sm truncate max-w-[60%]">
-                              {u.user_alias ?? u.user_email ?? "—"}
-                            </span>
-                            <Badge variant={u.user_role === "proxy_admin" ? "default" : "secondary"} className="text-xs">
-                              {u.user_role ?? "—"}
-                            </Badge>
-                          </div>
-                          <div className="text-xs text-muted-foreground">{u.user_email ?? "—"}</div>
-                          <div className="flex items-center justify-between text-xs text-muted-foreground">
-                            <span>{t("users.mobile.spent")} ${u.spend.toFixed(4)}</span>
-                            <span>{u.max_budget != null ? `${t("users.mobile.budget")} $${u.max_budget.toFixed(2)}${u.budget_duration ? ` / ${u.budget_duration}` : ""}` : t("users.mobile.noBudget")}</span>
-                          </div>
-                          <div className="text-xs text-muted-foreground">{t("users.mobile.created")}: {u.created_at ? formatDate(u.created_at) : "—"}</div>
-                          <div className="flex justify-end gap-1 pt-1">
-                            <Button variant="ghost" size="sm" onClick={() => openEdit(u)}>
-                              <Pencil className="h-3.5 w-3.5 mr-1" /> {t("common.edit")}
-                            </Button>
-                            <Button variant="ghost" size="sm" onClick={() => openDelete(u)}>
-                              <Trash2 className="h-3.5 w-3.5 mr-1 text-destructive" /> {t("common.delete")}
-                            </Button>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))}
-                {!isLoading && filtered.length === 0 && (
-                  <div className="text-center text-muted-foreground py-8">
-                    {search ? t("users.noMatch") : t("users.noUsers")}
-                  </div>
-                )}
-              </div>
-              {/* Pagination */}
-              {totalCount > 0 && (
-                <div className="mt-3">
-                  <PaginationBar
-                    page={page}
-                    pageSize={pageSize}
-                    totalCount={totalCount}
-                    totalPages={totalPages}
-                    onPage={setPage}
-                    onPageSize={(s) => { setPageSize(s); setPage(1); }}
+          {/* Create Dialog */}
+          <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>{t("users.dialog.titleCreate")}</DialogTitle>
+                <DialogDescription>
+                  {t("users.dialog.descriptionCreate")}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4">
+                <div>
+                  <Label htmlFor="u-email">
+                    {t("users.dialog.emailLabel")}
+                  </Label>
+                  <Input
+                    id="u-email"
+                    value={formEmail}
+                    onChange={(e) => setFormEmail(e.target.value)}
+                    placeholder={t("users.dialog.emailPlaceholder")}
                   />
                 </div>
-              )}
-            </>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Create Dialog */}
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t("users.dialog.titleCreate")}</DialogTitle>
-            <DialogDescription>{t("users.dialog.descriptionCreate")}</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label htmlFor="u-email">{t("users.dialog.emailLabel")}</Label>
-              <Input id="u-email" value={formEmail} onChange={(e) => setFormEmail(e.target.value)} placeholder={t("users.dialog.emailPlaceholder")} />
-            </div>
-            <div>
-              <Label htmlFor="u-password">{t("users.dialog.passwordLabel")}</Label>
-              <Input id="u-password" type="password" value={formPassword} onChange={(e) => setFormPassword(e.target.value)} placeholder={t("users.dialog.passwordPlaceholder")} />
-            </div>
-            <div>
-              <Label htmlFor="u-alias">{t("users.dialog.aliasLabel")}</Label>
-              <Input id="u-alias" value={formAlias} onChange={(e) => setFormAlias(e.target.value)} placeholder={t("users.dialog.aliasPlaceholder")} />
-            </div>
-            <div>
-              <Label htmlFor="u-role">{t("users.dialog.roleLabel")}</Label>
-              <select
-                id="u-role"
-                value={formRole}
-                onChange={(e) => setFormRole(e.target.value)}
-                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background"
-              >
-                <option value="proxy_admin">proxy_admin</option>
-                <option value="internal_user">internal_user</option>
-                <option value="internal_user_viewer">internal_user_viewer</option>
-              </select>
-            </div>
-            <div className="grid grid-cols-3 gap-4">
-              <div>
-                <Label htmlFor="u-budget">{t("users.dialog.budgetLabel")}</Label>
-                <Input id="u-budget" type="number" value={formBudget} onChange={(e) => setFormBudget(e.target.value)} placeholder="100" />
+                <div>
+                  <Label htmlFor="u-password">
+                    {t("users.dialog.passwordLabel")}
+                  </Label>
+                  <Input
+                    id="u-password"
+                    type="password"
+                    value={formPassword}
+                    onChange={(e) => setFormPassword(e.target.value)}
+                    placeholder={t("users.dialog.passwordPlaceholder")}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="u-alias">
+                    {t("users.dialog.aliasLabel")}
+                  </Label>
+                  <Input
+                    id="u-alias"
+                    value={formAlias}
+                    onChange={(e) => setFormAlias(e.target.value)}
+                    placeholder={t("users.dialog.aliasPlaceholder")}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="u-role">{t("users.dialog.roleLabel")}</Label>
+                  <select
+                    id="u-role"
+                    value={formRole}
+                    onChange={(e) => setFormRole(e.target.value)}
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background"
+                  >
+                    <option value="proxy_admin">proxy_admin</option>
+                    <option value="internal_user">internal_user</option>
+                    <option value="internal_user_viewer">
+                      internal_user_viewer
+                    </option>
+                  </select>
+                </div>
+                <div className="grid grid-cols-3 gap-4">
+                  <div>
+                    <Label htmlFor="u-budget">
+                      {t("users.dialog.budgetLabel")}
+                    </Label>
+                    <Input
+                      id="u-budget"
+                      type="number"
+                      value={formBudget}
+                      onChange={(e) => setFormBudget(e.target.value)}
+                      placeholder="100"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="u-tpm">{t("keys.tpmLabel")}</Label>
+                    <Input
+                      id="u-tpm"
+                      type="number"
+                      value={formTPM}
+                      onChange={(e) => setFormTPM(e.target.value)}
+                      placeholder="100000"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="u-rpm">{t("keys.rpmLabel")}</Label>
+                    <Input
+                      id="u-rpm"
+                      type="number"
+                      value={formRPM}
+                      onChange={(e) => setFormRPM(e.target.value)}
+                      placeholder="100"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="u-budget-duration">
+                      {t("users.dialog.budgetDurationLabel")}
+                    </Label>
+                    <select
+                      id="u-budget-duration"
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                      value={formBudgetDuration}
+                      onChange={(e) => setFormBudgetDuration(e.target.value)}
+                    >
+                      <option value="">
+                        {t("keys.createDialog.budgetDurationOptions.none")}
+                      </option>
+                      <option value="24h">
+                        {t("keys.createDialog.budgetDurationOptions.daily")}
+                      </option>
+                      <option value="7d">
+                        {t("keys.createDialog.budgetDurationOptions.weekly")}
+                      </option>
+                      <option value="30d">
+                        {t("keys.createDialog.budgetDurationOptions.monthly")}
+                      </option>
+                    </select>
+                  </div>
+                  <div>
+                    <Label htmlFor="u-soft-budget">
+                      {t("users.dialog.softBudgetLabel")}
+                    </Label>
+                    <Input
+                      id="u-soft-budget"
+                      type="number"
+                      step="0.0001"
+                      value={formSoftBudget}
+                      onChange={(e) => setFormSoftBudget(e.target.value)}
+                      placeholder="0.00 — warn but don't block"
+                    />
+                  </div>
+                </div>
               </div>
-              <div>
-                <Label htmlFor="u-tpm">{t("keys.tpmLabel")}</Label>
-                <Input id="u-tpm" type="number" value={formTPM} onChange={(e) => setFormTPM(e.target.value)} placeholder="100000" />
-              </div>
-              <div>
-                <Label htmlFor="u-rpm">{t("keys.rpmLabel")}</Label>
-                <Input id="u-rpm" type="number" value={formRPM} onChange={(e) => setFormRPM(e.target.value)} placeholder="100" />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="u-budget-duration">{t('users.dialog.budgetDurationLabel')}</Label>
-                <select
-                  id="u-budget-duration"
-                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                  value={formBudgetDuration}
-                  onChange={(e) => setFormBudgetDuration(e.target.value)}
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setCreateOpen(false)}>
+                  {t("common.cancel")}
+                </Button>
+                <Button
+                  onClick={() =>
+                    createMutation.mutate({
+                      user_email: formEmail,
+                      password: formPassword,
+                      user_alias: formAlias || undefined,
+                      user_role: formRole,
+                      ...(formBudget && { max_budget: parseFloat(formBudget) }),
+                      ...(formBudgetDuration.trim() && {
+                        budget_duration: formBudgetDuration.trim(),
+                      }),
+                      ...(formSoftBudget.trim() && {
+                        soft_budget: parseFloat(formSoftBudget),
+                      }),
+                      ...(formTPM && { tpm_limit: parseInt(formTPM) }),
+                      ...(formRPM && { rpm_limit: parseInt(formRPM) }),
+                    })
+                  }
+                  disabled={
+                    createMutation.isPending ||
+                    !formEmail.trim() ||
+                    !formPassword.trim()
+                  }
                 >
-                  <option value="">{t('keys.createDialog.budgetDurationOptions.none')}</option>
-                  <option value="24h">{t('keys.createDialog.budgetDurationOptions.daily')}</option>
-                  <option value="7d">{t('keys.createDialog.budgetDurationOptions.weekly')}</option>
-                  <option value="30d">{t('keys.createDialog.budgetDurationOptions.monthly')}</option>
-                </select>
-              </div>
-              <div>
-                <Label htmlFor="u-soft-budget">{t('users.dialog.softBudgetLabel')}</Label>
-                <Input id="u-soft-budget" type="number" step="0.0001" value={formSoftBudget} onChange={(e) => setFormSoftBudget(e.target.value)} placeholder="0.00 — warn but don't block" />
-              </div>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateOpen(false)}>{t("common.cancel")}</Button>
-            <Button onClick={() => createMutation.mutate({
-              user_email: formEmail,
-              password: formPassword,
-              user_alias: formAlias || undefined,
-              user_role: formRole,
-              ...(formBudget && { max_budget: parseFloat(formBudget) }),
-              ...(formBudgetDuration.trim() && { budget_duration: formBudgetDuration.trim() }),
-              ...(formSoftBudget.trim() && { soft_budget: parseFloat(formSoftBudget) }),
-              ...(formTPM && { tpm_limit: parseInt(formTPM) }),
-              ...(formRPM && { rpm_limit: parseInt(formRPM) }),
-            })} disabled={createMutation.isPending || !formEmail.trim() || !formPassword.trim()}>
-              {createMutation.isPending && <Spinner className="mr-2" />} {t("common.create")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+                  {createMutation.isPending && <Spinner className="mr-2" />}{" "}
+                  {t("common.create")}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
 
-      {/* Edit Dialog */}
-      <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t("users.dialog.titleEdit")}</DialogTitle>
-            <DialogDescription>{t("users.dialog.descriptionEdit", { name: selected?.user_alias ?? selected?.user_id?.slice(0, 8) })}</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label htmlFor="ue-alias">{t("users.dialog.aliasLabel")}</Label>
-              <Input id="ue-alias" value={formAlias} onChange={(e) => setFormAlias(e.target.value)} />
-            </div>
-            <div>
-              <Label htmlFor="ue-email">{t("users.dialog.emailLabel")}</Label>
-              <Input id="ue-email" value={formEmail} onChange={(e) => setFormEmail(e.target.value)} />
-            </div>
-            <div>
-              <Label htmlFor="ue-role">{t("users.dialog.roleLabel")}</Label>
-              <select
-                id="ue-role"
-                value={formRole}
-                onChange={(e) => setFormRole(e.target.value)}
-                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background"
-              >
-                <option value="proxy_admin">proxy_admin</option>
-                <option value="internal_user">internal_user</option>
-                <option value="internal_user_viewer">internal_user_viewer</option>
-              </select>
-            </div>
-            <div className="grid grid-cols-3 gap-4">
-              <div>
-                <Label htmlFor="ue-budget">{t("users.dialog.budgetLabel")}</Label>
-                <Input id="ue-budget" type="number" value={formBudget} onChange={(e) => setFormBudget(e.target.value)} />
+          {/* Edit Dialog */}
+          <Dialog open={editOpen} onOpenChange={setEditOpen}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>{t("users.dialog.titleEdit")}</DialogTitle>
+                <DialogDescription>
+                  {t("users.dialog.descriptionEdit", {
+                    name:
+                      selected?.user_alias ?? selected?.user_id?.slice(0, 8),
+                  })}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4">
+                <div>
+                  <Label htmlFor="ue-alias">
+                    {t("users.dialog.aliasLabel")}
+                  </Label>
+                  <Input
+                    id="ue-alias"
+                    value={formAlias}
+                    onChange={(e) => setFormAlias(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="ue-email">
+                    {t("users.dialog.emailLabel")}
+                  </Label>
+                  <Input
+                    id="ue-email"
+                    value={formEmail}
+                    onChange={(e) => setFormEmail(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="ue-role">{t("users.dialog.roleLabel")}</Label>
+                  <select
+                    id="ue-role"
+                    value={formRole}
+                    onChange={(e) => setFormRole(e.target.value)}
+                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background"
+                  >
+                    <option value="proxy_admin">proxy_admin</option>
+                    <option value="internal_user">internal_user</option>
+                    <option value="internal_user_viewer">
+                      internal_user_viewer
+                    </option>
+                  </select>
+                </div>
+                <div className="grid grid-cols-3 gap-4">
+                  <div>
+                    <Label htmlFor="ue-budget">
+                      {t("users.dialog.budgetLabel")}
+                    </Label>
+                    <Input
+                      id="ue-budget"
+                      type="number"
+                      value={formBudget}
+                      onChange={(e) => setFormBudget(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="ue-tpm">{t("keys.tpmLabel")}</Label>
+                    <Input
+                      id="ue-tpm"
+                      type="number"
+                      value={formTPM}
+                      onChange={(e) => setFormTPM(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="ue-rpm">{t("keys.rpmLabel")}</Label>
+                    <Input
+                      id="ue-rpm"
+                      type="number"
+                      value={formRPM}
+                      onChange={(e) => setFormRPM(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="ue-budget-duration">
+                      {t("users.dialog.budgetDurationLabel")}
+                    </Label>
+                    <select
+                      id="ue-budget-duration"
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                      value={formBudgetDuration}
+                      onChange={(e) => setFormBudgetDuration(e.target.value)}
+                    >
+                      <option value="">
+                        {t("keys.createDialog.budgetDurationOptions.none")}
+                      </option>
+                      <option value="24h">
+                        {t("keys.createDialog.budgetDurationOptions.daily")}
+                      </option>
+                      <option value="7d">
+                        {t("keys.createDialog.budgetDurationOptions.weekly")}
+                      </option>
+                      <option value="30d">
+                        {t("keys.createDialog.budgetDurationOptions.monthly")}
+                      </option>
+                    </select>
+                  </div>
+                  <div>
+                    <Label htmlFor="ue-soft-budget">
+                      {t("users.dialog.softBudgetLabel")}
+                    </Label>
+                    <Input
+                      id="ue-soft-budget"
+                      type="number"
+                      step="0.0001"
+                      value={formSoftBudget}
+                      onChange={(e) => setFormSoftBudget(e.target.value)}
+                      placeholder="0.00 — warn but don't block"
+                    />
+                  </div>
+                </div>
               </div>
-              <div>
-                <Label htmlFor="ue-tpm">{t("keys.tpmLabel")}</Label>
-                <Input id="ue-tpm" type="number" value={formTPM} onChange={(e) => setFormTPM(e.target.value)} />
-              </div>
-              <div>
-                <Label htmlFor="ue-rpm">{t("keys.rpmLabel")}</Label>
-                <Input id="ue-rpm" type="number" value={formRPM} onChange={(e) => setFormRPM(e.target.value)} />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="ue-budget-duration">{t('users.dialog.budgetDurationLabel')}</Label>
-                <select
-                  id="ue-budget-duration"
-                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                  value={formBudgetDuration}
-                  onChange={(e) => setFormBudgetDuration(e.target.value)}
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setEditOpen(false)}>
+                  {t("common.cancel")}
+                </Button>
+                <Button
+                  onClick={() =>
+                    selected &&
+                    editMutation.mutate({
+                      user_id: selected.user_id,
+                      ...(formAlias && { user_alias: formAlias }),
+                      ...(formEmail && { user_email: formEmail }),
+                      ...(formRole && { user_role: formRole }),
+                      ...(formBudget && { max_budget: parseFloat(formBudget) }),
+                      ...(formBudgetDuration.trim() && {
+                        budget_duration: formBudgetDuration.trim(),
+                      }),
+                      ...(formSoftBudget.trim() && {
+                        soft_budget: parseFloat(formSoftBudget),
+                      }),
+                      ...(formTPM && { tpm_limit: parseInt(formTPM) }),
+                      ...(formRPM && { rpm_limit: parseInt(formRPM) }),
+                    })
+                  }
+                  disabled={editMutation.isPending}
                 >
-                  <option value="">{t('keys.createDialog.budgetDurationOptions.none')}</option>
-                  <option value="24h">{t('keys.createDialog.budgetDurationOptions.daily')}</option>
-                  <option value="7d">{t('keys.createDialog.budgetDurationOptions.weekly')}</option>
-                  <option value="30d">{t('keys.createDialog.budgetDurationOptions.monthly')}</option>
-                </select>
-              </div>
-              <div>
-                <Label htmlFor="ue-soft-budget">{t('users.dialog.softBudgetLabel')}</Label>
-                <Input id="ue-soft-budget" type="number" step="0.0001" value={formSoftBudget} onChange={(e) => setFormSoftBudget(e.target.value)} placeholder="0.00 — warn but don't block" />
-              </div>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditOpen(false)}>{t("common.cancel")}</Button>
-            <Button onClick={() => selected && editMutation.mutate({
-              user_id: selected.user_id,
-              ...(formAlias && { user_alias: formAlias }),
-              ...(formEmail && { user_email: formEmail }),
-              ...(formRole && { user_role: formRole }),
-              ...(formBudget && { max_budget: parseFloat(formBudget) }),
-              ...(formBudgetDuration.trim() && { budget_duration: formBudgetDuration.trim() }),
-              ...(formSoftBudget.trim() && { soft_budget: parseFloat(formSoftBudget) }),
-              ...(formTPM && { tpm_limit: parseInt(formTPM) }),
-              ...(formRPM && { rpm_limit: parseInt(formRPM) }),
-            })} disabled={editMutation.isPending}>
-              {editMutation.isPending && <Spinner className="mr-2" />} {t("common.save")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+                  {editMutation.isPending && <Spinner className="mr-2" />}{" "}
+                  {t("common.save")}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
 
-      {/* Delete Confirmation */}
-      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t("users.deleteDialog.title")}</DialogTitle>
-            <DialogDescription>
-              {t("users.deleteDialog.confirm", { name: selected?.user_alias ?? selected?.user_id?.slice(0, 8) })}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteOpen(false)}>{t("common.cancel")}</Button>
-            <Button variant="destructive" onClick={() => selected && deleteMutation.mutate(selected.user_id)} disabled={deleteMutation.isPending}>
-              {deleteMutation.isPending && <Spinner className="mr-2" />} {t("common.delete")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-      </>)}
+          {/* Delete Confirmation */}
+          <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>{t("users.deleteDialog.title")}</DialogTitle>
+                <DialogDescription>
+                  {t("users.deleteDialog.confirm", {
+                    name:
+                      selected?.user_alias ?? selected?.user_id?.slice(0, 8),
+                  })}
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setDeleteOpen(false)}>
+                  {t("common.cancel")}
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={() =>
+                    selected && deleteMutation.mutate(selected.user_id)
+                  }
+                  disabled={deleteMutation.isPending}
+                >
+                  {deleteMutation.isPending && <Spinner className="mr-2" />}{" "}
+                  {t("common.delete")}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </>
+      )}
     </div>
   );
 }

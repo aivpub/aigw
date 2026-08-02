@@ -28,7 +28,9 @@ export function TriggerDialog({
   const navigate = useNavigate();
   const now = new Date();
   const end = now.toISOString().slice(0, 16);
-  const start = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString().slice(0, 16);
+  const start = new Date(now.getTime() - 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 16);
 
   const [form, setForm] = useState({
     start_date: start,
@@ -51,7 +53,12 @@ export function TriggerDialog({
         },
       });
 
-      toast.success(t("jobs.triggerToast", { jobId: data.job_id.slice(0, 12), totalSteps: data.total_steps }));
+      toast.success(
+        t("jobs.triggerToast", {
+          jobId: data.job_id.slice(0, 12),
+          totalSteps: data.total_steps,
+        }),
+      );
       onOpenChange(false);
       onSuccess();
       navigate(`/dash/jobs/${data.job_id}`);
@@ -66,9 +73,7 @@ export function TriggerDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{t("jobs.triggerArchive")}</DialogTitle>
-          <DialogDescription>
-            {t("jobs.triggerArchiveDesc")}
-          </DialogDescription>
+          <DialogDescription>{t("jobs.triggerArchiveDesc")}</DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           <div className="space-y-2">

@@ -1,5 +1,9 @@
 import { useState } from "react";
-import { SectionHeader, CollapsibleMessage, HistoryTree } from "./SectionHeader";
+import {
+  SectionHeader,
+  CollapsibleMessage,
+  HistoryTree,
+} from "./SectionHeader";
 import { parseMessages, type ParsedRequest } from "./MessageViewer";
 import { extractText } from "./utils";
 
@@ -8,7 +12,7 @@ import { extractText } from "./utils";
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 interface InputCardProps {
-  messages: unknown;  // raw SpendLog.messages value
+  messages: unknown; // raw SpendLog.messages value
   promptTokens: number;
   spend: number;
 }
@@ -21,13 +25,16 @@ export function InputCard({ messages, promptTokens, spend }: InputCardProps) {
 
   // Separate system, history, and last message (litellm-style)
   const systemMsg = allMsgs.find((m) => m.role === "system");
-  const nonSystem = allMsgs.filter((m) => m.role !== "system" && m.role !== "tool");
+  const nonSystem = allMsgs.filter(
+    (m) => m.role !== "system" && m.role !== "tool",
+  );
   const toolResults = allMsgs.filter((m) => m.role === "tool");
   const lastMsg = nonSystem.length > 0 ? nonSystem[nonSystem.length - 1] : null;
   const history = nonSystem.length > 1 ? nonSystem.slice(0, -1) : [];
 
   // Estimate input cost from total spend ratio (rough: prompt/total ratio)
-  const inputCost = spend > 0 ? spend * (promptTokens / (promptTokens + 1)) : undefined;
+  const inputCost =
+    spend > 0 ? spend * (promptTokens / (promptTokens + 1)) : undefined;
 
   if (allMsgs.length === 0) {
     return null;
@@ -82,13 +89,21 @@ export function InputCard({ messages, promptTokens, spend }: InputCardProps) {
                   <table className="w-full text-xs">
                     <thead>
                       <tr className="border-b bg-muted/30 text-muted-foreground">
-                        <th className="text-left px-2 py-1 text-[10px] uppercase tracking-wider w-1/4">Tool</th>
-                        <th className="text-left px-2 py-1 text-[10px] uppercase tracking-wider w-3/4">Result</th>
+                        <th className="text-left px-2 py-1 text-[10px] uppercase tracking-wider w-1/4">
+                          Tool
+                        </th>
+                        <th className="text-left px-2 py-1 text-[10px] uppercase tracking-wider w-3/4">
+                          Result
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
                       {toolResults.map((t, i) => (
-                        <ToolResultRow key={i} name={t.name ?? t.tool_call_id ?? `tool_${i}`} content={t.content} />
+                        <ToolResultRow
+                          key={i}
+                          name={t.name ?? t.tool_call_id ?? `tool_${i}`}
+                          content={t.content}
+                        />
                       ))}
                     </tbody>
                   </table>
@@ -115,11 +130,16 @@ function ToolResultRow({ name, content }: { name: string; content: unknown }) {
 
   return (
     <>
-      <tr className="border-t hover:bg-muted/20 cursor-pointer" onClick={() => setOpen(!open)}>
+      <tr
+        className="border-t hover:bg-muted/20 cursor-pointer"
+        onClick={() => setOpen(!open)}
+      >
         <td className="px-2 py-1 font-mono text-[11px] align-top">{name}</td>
         <td className="px-2 py-1 text-muted-foreground align-top">
           {open ? (
-            <pre className="whitespace-pre-wrap break-all leading-relaxed text-foreground">{text}</pre>
+            <pre className="whitespace-pre-wrap break-all leading-relaxed text-foreground">
+              {text}
+            </pre>
           ) : (
             <span>{preview || <span className="italic">(empty)</span>}</span>
           )}

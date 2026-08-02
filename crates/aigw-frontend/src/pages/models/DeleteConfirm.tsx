@@ -17,24 +17,34 @@ interface DeleteConfirmProps {
   loading?: boolean;
 }
 
-export function DeleteConfirm({ open, onOpenChange, modelName, onConfirm, loading }: DeleteConfirmProps) {
+export function DeleteConfirm({
+  open,
+  onOpenChange,
+  modelName,
+  onConfirm,
+  loading,
+}: DeleteConfirmProps) {
   const { t } = useTranslation();
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-sm">
         <DialogHeader>
-          <DialogTitle>{t('models.deleteDialog.title')}</DialogTitle>
+          <DialogTitle>{t("models.deleteDialog.title")}</DialogTitle>
           <DialogDescription>
-            {t('models.deleteDialog.description', { modelName })}
+            {t("models.deleteDialog.description", { modelName })}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
-            {t('common.cancel')}
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={loading}
+          >
+            {t("common.cancel")}
           </Button>
           <Button variant="destructive" onClick={onConfirm} disabled={loading}>
-            {loading ? t('common.deleting') : t('common.delete')}
+            {loading ? t("common.deleting") : t("common.delete")}
           </Button>
         </DialogFooter>
       </DialogContent>

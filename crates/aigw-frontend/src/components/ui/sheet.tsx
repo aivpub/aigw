@@ -65,9 +65,18 @@ export function SheetContent({
   );
 }
 
-export function SheetHeader({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
+export function SheetHeader({
+  className,
+  ...props
+}: HTMLAttributes<HTMLDivElement>) {
   return (
-    <div className={cn("flex flex-col space-y-2 text-center sm:text-left mb-4", className)} {...props} />
+    <div
+      className={cn(
+        "flex flex-col space-y-2 text-center sm:text-left mb-4",
+        className,
+      )}
+      {...props}
+    />
   );
 }
 

@@ -4,15 +4,24 @@ import { useTranslation } from "react-i18next";
 import { apiGet, apiPost } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PaginationBar } from "@/components/ui/pagination";
 import {
-  Dialog, DialogContent, DialogDescription, DialogFooter,
-  DialogHeader, DialogTitle,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
@@ -74,14 +83,17 @@ export function BudgetsPage() {
 
   const budgets = data?.data ?? [];
   const totalCount = data?.total_count ?? budgets.length;
-  const totalPages = data?.total_pages ?? (budgets.length === 0 ? 1 : Math.ceil(totalCount / pageSize));
+  const totalPages =
+    data?.total_pages ??
+    (budgets.length === 0 ? 1 : Math.ceil(totalCount / pageSize));
 
   const filtered = useMemo(() => {
     if (!search.trim()) return budgets;
     const q = search.toLowerCase();
-    return budgets.filter((b) =>
-      (b.budget_id ?? "").toLowerCase().includes(q) ||
-      (b.budget_name ?? "").toLowerCase().includes(q),
+    return budgets.filter(
+      (b) =>
+        (b.budget_id ?? "").toLowerCase().includes(q) ||
+        (b.budget_name ?? "").toLowerCase().includes(q),
     );
   }, [budgets, search]);
 
@@ -96,7 +108,8 @@ export function BudgetsPage() {
   });
 
   const editMutation = useMutation({
-    mutationFn: (body: Record<string, unknown>) => apiPost("/budget/update", body),
+    mutationFn: (body: Record<string, unknown>) =>
+      apiPost("/budget/update", body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["budgets"] });
       setEditOpen(false);
@@ -140,7 +153,11 @@ export function BudgetsPage() {
   }
 
   function formatDate(d: string) {
-    try { return format(new Date(d), "yyyy-MM-dd HH:mm"); } catch { return d; }
+    try {
+      return format(new Date(d), "yyyy-MM-dd HH:mm");
+    } catch {
+      return d;
+    }
   }
 
   function displayName(b: BudgetItem): string {
@@ -151,7 +168,8 @@ export function BudgetsPage() {
     const body: Record<string, unknown> = {};
     if (formName.trim()) body.budget_name = formName.trim();
     if (formMaxBudget.trim()) body.max_budget = parseFloat(formMaxBudget);
-    if (formBudgetDuration.trim()) body.budget_duration = formBudgetDuration.trim();
+    if (formBudgetDuration.trim())
+      body.budget_duration = formBudgetDuration.trim();
     if (formSoftBudget.trim()) body.soft_budget = parseFloat(formSoftBudget);
     return body;
   }
@@ -201,7 +219,9 @@ export function BudgetsPage() {
         </CardHeader>
         <CardContent>
           {error ? (
-            <p className="text-sm text-destructive">{(error as Error).message}</p>
+            <p className="text-sm text-destructive">
+              {(error as Error).message}
+            </p>
           ) : (
             <>
               <PaginationBar
@@ -210,7 +230,10 @@ export function BudgetsPage() {
                 totalCount={totalCount}
                 totalPages={totalPages}
                 onPage={setPage}
-                onPageSize={(s) => { setPageSize(s); setPage(1); }}
+                onPageSize={(s) => {
+                  setPageSize(s);
+                  setPage(1);
+                }}
               />
               {/* Desktop table */}
               <div className="hidden md:block">
@@ -231,7 +254,9 @@ export function BudgetsPage() {
                       ? Array.from({ length: 3 }).map((_, i) => (
                           <TableRow key={i}>
                             {Array.from({ length: 7 }).map((_, j) => (
-                              <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>
+                              <TableCell key={j}>
+                                <Skeleton className="h-4 w-full" />
+                              </TableCell>
                             ))}
                           </TableRow>
                         ))
@@ -244,23 +269,37 @@ export function BudgetsPage() {
                               {b.budget_id}
                             </TableCell>
                             <TableCell className="text-sm">
-                              {b.max_budget ? `$${parseFloat(b.max_budget).toFixed(2)}` : "∞"}
+                              {b.max_budget
+                                ? `$${parseFloat(b.max_budget).toFixed(2)}`
+                                : "∞"}
                             </TableCell>
                             <TableCell className="text-sm">
-                              {b.budget_duration ? durationLabel(b.budget_duration) : "—"}
+                              {b.budget_duration
+                                ? durationLabel(b.budget_duration)
+                                : "—"}
                             </TableCell>
                             <TableCell className="text-sm">
-                              {b.soft_budget ? `$${parseFloat(b.soft_budget).toFixed(2)}` : "—"}
+                              {b.soft_budget
+                                ? `$${parseFloat(b.soft_budget).toFixed(2)}`
+                                : "—"}
                             </TableCell>
                             <TableCell className="text-xs text-muted-foreground">
                               {b.created_at ? formatDate(b.created_at) : "—"}
                             </TableCell>
                             <TableCell className="text-right">
                               <div className="flex justify-end gap-1">
-                                <Button variant="ghost" size="icon" onClick={() => openEdit(b)}>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => openEdit(b)}
+                                >
                                   <Pencil className="h-4 w-4" />
                                 </Button>
-                                <Button variant="ghost" size="icon" onClick={() => openDelete(b)}>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => openDelete(b)}
+                                >
                                   <Trash2 className="h-4 w-4 text-destructive" />
                                 </Button>
                               </div>
@@ -295,25 +334,45 @@ export function BudgetsPage() {
                               {displayName(b)}
                             </span>
                             <span className="text-xs text-muted-foreground">
-                              {b.max_budget ? `$${parseFloat(b.max_budget).toFixed(2)}` : "∞"}
+                              {b.max_budget
+                                ? `$${parseFloat(b.max_budget).toFixed(2)}`
+                                : "∞"}
                             </span>
                           </div>
                           <div className="text-xs font-mono text-muted-foreground truncate">
                             {b.budget_id}
                           </div>
                           <div className="flex items-center justify-between text-xs text-muted-foreground">
-                            <span>{b.budget_duration ? durationLabel(b.budget_duration) : "No cycle"}</span>
-                            <span>{b.soft_budget ? `Alert: $${parseFloat(b.soft_budget).toFixed(2)}` : ""}</span>
+                            <span>
+                              {b.budget_duration
+                                ? durationLabel(b.budget_duration)
+                                : "No cycle"}
+                            </span>
+                            <span>
+                              {b.soft_budget
+                                ? `Alert: $${parseFloat(b.soft_budget).toFixed(2)}`
+                                : ""}
+                            </span>
                           </div>
                           <div className="text-xs text-muted-foreground">
-                            Created: {b.created_at ? formatDate(b.created_at) : "—"}
+                            Created:{" "}
+                            {b.created_at ? formatDate(b.created_at) : "—"}
                           </div>
                           <div className="flex justify-end gap-1 pt-1">
-                            <Button variant="ghost" size="sm" onClick={() => openEdit(b)}>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => openEdit(b)}
+                            >
                               <Pencil className="h-3.5 w-3.5 mr-1" /> Edit
                             </Button>
-                            <Button variant="ghost" size="sm" onClick={() => openDelete(b)}>
-                              <Trash2 className="h-3.5 w-3.5 mr-1 text-destructive" /> Delete
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => openDelete(b)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5 mr-1 text-destructive" />{" "}
+                              Delete
                             </Button>
                           </div>
                         </CardContent>
@@ -333,7 +392,10 @@ export function BudgetsPage() {
                     totalCount={totalCount}
                     totalPages={totalPages}
                     onPage={setPage}
-                    onPageSize={(s) => { setPageSize(s); setPage(1); }}
+                    onPageSize={(s) => {
+                      setPageSize(s);
+                      setPage(1);
+                    }}
                   />
                 </div>
               ) : null}
@@ -403,10 +465,7 @@ export function BudgetsPage() {
             <Button variant="outline" onClick={() => setCreateOpen(false)}>
               Cancel
             </Button>
-            <Button
-              onClick={handleCreate}
-              disabled={createMutation.isPending}
-            >
+            <Button onClick={handleCreate} disabled={createMutation.isPending}>
               {createMutation.isPending && <Spinner className="mr-2" />}
               Create
             </Button>
@@ -474,10 +533,7 @@ export function BudgetsPage() {
             <Button variant="outline" onClick={() => setEditOpen(false)}>
               Cancel
             </Button>
-            <Button
-              onClick={handleEdit}
-              disabled={editMutation.isPending}
-            >
+            <Button onClick={handleEdit} disabled={editMutation.isPending}>
               {editMutation.isPending && <Spinner className="mr-2" />}
               Save Changes
             </Button>
@@ -491,8 +547,8 @@ export function BudgetsPage() {
           <DialogHeader>
             <DialogTitle>Delete Budget</DialogTitle>
             <DialogDescription>
-              Delete budget "{selected ? displayName(selected) : ""}"?
-              This action cannot be undone.
+              Delete budget "{selected ? displayName(selected) : ""}"? This
+              action cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -501,7 +557,9 @@ export function BudgetsPage() {
             </Button>
             <Button
               variant="destructive"
-              onClick={() => selected && deleteMutation.mutate(selected.budget_id)}
+              onClick={() =>
+                selected && deleteMutation.mutate(selected.budget_id)
+              }
               disabled={deleteMutation.isPending}
             >
               {deleteMutation.isPending && <Spinner className="mr-2" />}

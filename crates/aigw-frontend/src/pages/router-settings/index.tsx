@@ -2,7 +2,13 @@ import { useState, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiPut, apiPatch } from "@/lib/api";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -53,77 +59,139 @@ function RouterSettingsForm({
   return (
     <div className="space-y-6">
       <div className="grid gap-4 lg:grid-cols-2">
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-lg">
-            <Shuffle className="h-5 w-5" />
-            {t('routerSettings.fields.strategy')}
-          </CardTitle>
-          <CardDescription>
-            {t('routerSettings.strategyDesc')}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-2">
-            <Label htmlFor="routing_strategy">{t('routerSettings.fields.strategy')}</Label>
-            <Select
-              value={form.routing_strategy ?? DEFAULTS.routing_strategy}
-              onValueChange={(v) => onChange({ ...form, routing_strategy: v })}
-            >
-              <SelectTrigger id="routing_strategy">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="simple-shuffle">Simple Shuffle (random)</SelectItem>
-                <SelectItem value="least-busy" disabled>Least Busy (coming soon)</SelectItem>
-                <SelectItem value="usage-based-routing" disabled>Usage-Based (coming soon)</SelectItem>
-                <SelectItem value="latency-based-routing" disabled>Latency-Based (coming soon)</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-        </CardContent>
-      </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <Shuffle className="h-5 w-5" />
+              {t("routerSettings.fields.strategy")}
+            </CardTitle>
+            <CardDescription>
+              {t("routerSettings.strategyDesc")}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-2">
+              <Label htmlFor="routing_strategy">
+                {t("routerSettings.fields.strategy")}
+              </Label>
+              <Select
+                value={form.routing_strategy ?? DEFAULTS.routing_strategy}
+                onValueChange={(v) =>
+                  onChange({ ...form, routing_strategy: v })
+                }
+              >
+                <SelectTrigger id="routing_strategy">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="simple-shuffle">
+                    Simple Shuffle (random)
+                  </SelectItem>
+                  <SelectItem value="least-busy" disabled>
+                    Least Busy (coming soon)
+                  </SelectItem>
+                  <SelectItem value="usage-based-routing" disabled>
+                    Usage-Based (coming soon)
+                  </SelectItem>
+                  <SelectItem value="latency-based-routing" disabled>
+                    Latency-Based (coming soon)
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </CardContent>
+        </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">{t('routerSettings.reliability')}</CardTitle>
-          <CardDescription>{t('routerSettings.reliabilityDesc')}</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-3 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="num_retries">{t('routerSettings.fields.numRetries')}</Label>
-              <Input id="num_retries" type="number" min={0} max={10}
-                value={form.num_retries ?? 0}
-                onChange={(e) => onChange({ ...form, num_retries: Math.max(0, parseInt(e.target.value) || 0) })} />
-              <p className="text-xs text-muted-foreground">{t('routerSettings.fields.numRetriesDesc')}</p>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">
+              {t("routerSettings.reliability")}
+            </CardTitle>
+            <CardDescription>
+              {t("routerSettings.reliabilityDesc")}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="num_retries">
+                  {t("routerSettings.fields.numRetries")}
+                </Label>
+                <Input
+                  id="num_retries"
+                  type="number"
+                  min={0}
+                  max={10}
+                  value={form.num_retries ?? 0}
+                  onChange={(e) =>
+                    onChange({
+                      ...form,
+                      num_retries: Math.max(0, parseInt(e.target.value) || 0),
+                    })
+                  }
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t("routerSettings.fields.numRetriesDesc")}
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="allowed_fails">
+                  {t("routerSettings.fields.allowedFails")}
+                </Label>
+                <Input
+                  id="allowed_fails"
+                  type="number"
+                  min={1}
+                  max={100}
+                  value={form.allowed_fails ?? 3}
+                  onChange={(e) =>
+                    onChange({
+                      ...form,
+                      allowed_fails: Math.max(1, parseInt(e.target.value) || 1),
+                    })
+                  }
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t("routerSettings.fields.allowedFailsDesc")}
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="cooldown_time">
+                  {t("routerSettings.fields.cooldown")}
+                </Label>
+                <Input
+                  id="cooldown_time"
+                  type="number"
+                  min={1}
+                  max={3600}
+                  value={form.cooldown_time ?? 5}
+                  onChange={(e) =>
+                    onChange({
+                      ...form,
+                      cooldown_time: Math.max(1, parseInt(e.target.value) || 1),
+                    })
+                  }
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t("routerSettings.fields.cooldownDesc")}
+                </p>
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="allowed_fails">{t('routerSettings.fields.allowedFails')}</Label>
-              <Input id="allowed_fails" type="number" min={1} max={100}
-                value={form.allowed_fails ?? 3}
-                onChange={(e) => onChange({ ...form, allowed_fails: Math.max(1, parseInt(e.target.value) || 1) })} />
-              <p className="text-xs text-muted-foreground">{t('routerSettings.fields.allowedFailsDesc')}</p>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="cooldown_time">{t('routerSettings.fields.cooldown')}</Label>
-              <Input id="cooldown_time" type="number" min={1} max={3600}
-                value={form.cooldown_time ?? 5}
-                onChange={(e) => onChange({ ...form, cooldown_time: Math.max(1, parseInt(e.target.value) || 1) })} />
-              <p className="text-xs text-muted-foreground">{t('routerSettings.fields.cooldownDesc')}</p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
       </div>
 
       <div className="flex justify-between">
         <Button variant="outline" onClick={() => onChange({ ...DEFAULTS })}>
-          <RotateCcw className="mr-2 h-4 w-4" /> {t('common.reset')}
+          <RotateCcw className="mr-2 h-4 w-4" /> {t("common.reset")}
         </Button>
         <Button onClick={onSave} disabled={saving}>
-          {saving ? <Spinner className="mr-2 h-4 w-4" /> : <Save className="mr-2 h-4 w-4" />}
-          {t('common.save')}
+          {saving ? (
+            <Spinner className="mr-2 h-4 w-4" />
+          ) : (
+            <Save className="mr-2 h-4 w-4" />
+          )}
+          {t("common.save")}
         </Button>
       </div>
     </div>
@@ -149,7 +217,8 @@ function GlobalTab() {
     if (data) {
       const d = data as Record<string, unknown>;
       setForm({
-        routing_strategy: (d.routing_strategy as string) ?? DEFAULTS.routing_strategy,
+        routing_strategy:
+          (d.routing_strategy as string) ?? DEFAULTS.routing_strategy,
         num_retries: (d.num_retries as number) ?? DEFAULTS.num_retries,
         allowed_fails: (d.allowed_fails as number) ?? DEFAULTS.allowed_fails,
         cooldown_time: (d.cooldown_time as number) ?? DEFAULTS.cooldown_time,
@@ -161,9 +230,12 @@ function GlobalTab() {
     mutationFn: (body: RouterSettingsValue) => apiPut("/router/settings", body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["router-settings-global"] });
-      toast.success(t('routerSettings.toast.globalSaved'));
+      toast.success(t("routerSettings.toast.globalSaved"));
     },
-    onError: (err: Error) => toast.error(t('routerSettings.toast.saveFailed'), { description: err.message }),
+    onError: (err: Error) =>
+      toast.error(t("routerSettings.toast.saveFailed"), {
+        description: err.message,
+      }),
   });
 
   if (isLoading) return <Skeleton className="h-64 w-full" />;
@@ -219,12 +291,16 @@ function KeysTab() {
   }, [selectedToken, keys]);
 
   const saveMutation = useMutation({
-    mutationFn: (body: RouterSettingsValue) => apiPatch(`/key/${selectedToken}/router/settings`, body),
+    mutationFn: (body: RouterSettingsValue) =>
+      apiPatch(`/key/${selectedToken}/router/settings`, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["keys-list"] });
-      toast.success(t('routerSettings.toast.keySaved'));
+      toast.success(t("routerSettings.toast.keySaved"));
     },
-    onError: (err: Error) => toast.error(t('routerSettings.toast.saveFailed'), { description: err.message }),
+    onError: (err: Error) =>
+      toast.error(t("routerSettings.toast.saveFailed"), {
+        description: err.message,
+      }),
   });
 
   if (isLoading) return <Skeleton className="h-64 w-full" />;
@@ -232,13 +308,18 @@ function KeysTab() {
   return (
     <div className="space-y-4">
       <div className="space-y-2">
-        <Label htmlFor="key-select">{t('routerSettings.selectKeyLabel')}</Label>
-        <Select value={selectedToken || "none"} onValueChange={(v) => setSelectedToken(v === "none" ? "" : v)}>
+        <Label htmlFor="key-select">{t("routerSettings.selectKeyLabel")}</Label>
+        <Select
+          value={selectedToken || "none"}
+          onValueChange={(v) => setSelectedToken(v === "none" ? "" : v)}
+        >
           <SelectTrigger id="key-select">
-            <SelectValue placeholder={t('routerSettings.selectKey')} />
+            <SelectValue placeholder={t("routerSettings.selectKey")} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="none">{t('routerSettings.selectKeyPlaceholder')}</SelectItem>
+            <SelectItem value="none">
+              {t("routerSettings.selectKeyPlaceholder")}
+            </SelectItem>
             {keys.map((k) => (
               <SelectItem key={k.token} value={k.token}>
                 {k.key_alias || k.key_name || k.token.slice(0, 16) + "…"}
@@ -257,7 +338,7 @@ function KeysTab() {
         />
       ) : (
         <p className="text-sm text-muted-foreground py-8 text-center">
-          {t('routerSettings.selectKeyHint')}
+          {t("routerSettings.selectKeyHint")}
         </p>
       )}
     </div>
@@ -305,12 +386,16 @@ function TeamsTab() {
   }, [selectedId, teams]);
 
   const saveMutation = useMutation({
-    mutationFn: (body: RouterSettingsValue) => apiPatch(`/team/${selectedId}/router/settings`, body),
+    mutationFn: (body: RouterSettingsValue) =>
+      apiPatch(`/team/${selectedId}/router/settings`, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["teams-list"] });
-      toast.success(t('routerSettings.toast.teamSaved'));
+      toast.success(t("routerSettings.toast.teamSaved"));
     },
-    onError: (err: Error) => toast.error(t('routerSettings.toast.saveFailed'), { description: err.message }),
+    onError: (err: Error) =>
+      toast.error(t("routerSettings.toast.saveFailed"), {
+        description: err.message,
+      }),
   });
 
   if (isLoading) return <Skeleton className="h-64 w-full" />;
@@ -318,13 +403,20 @@ function TeamsTab() {
   return (
     <div className="space-y-4">
       <div className="space-y-2">
-        <Label htmlFor="team-select">{t('routerSettings.selectTeamLabel')}</Label>
-        <Select value={selectedId || "none"} onValueChange={(v) => setSelectedId(v === "none" ? "" : v)}>
+        <Label htmlFor="team-select">
+          {t("routerSettings.selectTeamLabel")}
+        </Label>
+        <Select
+          value={selectedId || "none"}
+          onValueChange={(v) => setSelectedId(v === "none" ? "" : v)}
+        >
           <SelectTrigger id="team-select">
-            <SelectValue placeholder={t('routerSettings.selectTeam')} />
+            <SelectValue placeholder={t("routerSettings.selectTeam")} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="none">{t('routerSettings.selectTeamPlaceholder')}</SelectItem>
+            <SelectItem value="none">
+              {t("routerSettings.selectTeamPlaceholder")}
+            </SelectItem>
             {teams.map((t) => (
               <SelectItem key={t.team_id} value={t.team_id}>
                 {t.team_alias || t.team_name || t.team_id}
@@ -343,7 +435,7 @@ function TeamsTab() {
         />
       ) : (
         <p className="text-sm text-muted-foreground py-8 text-center">
-          {t('routerSettings.selectTeamHint')}
+          {t("routerSettings.selectTeamHint")}
         </p>
       )}
     </div>
@@ -362,9 +454,11 @@ export function RouterSettingsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">{t('routerSettings.title')}</h1>
+          <h1 className="text-2xl font-bold tracking-tight">
+            {t("routerSettings.title")}
+          </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            {t('routerSettings.description')}
+            {t("routerSettings.description")}
           </p>
         </div>
         <Tabs
@@ -373,8 +467,10 @@ export function RouterSettingsPage() {
           onValueChange={(v) => setSearchParams({ tab: v }, { replace: true })}
         >
           <TabsList>
-            <TabsTrigger value="global">{t('routerSettings.global')}</TabsTrigger>
-            <TabsTrigger value="teams">{t('routerSettings.team')}</TabsTrigger>
+            <TabsTrigger value="global">
+              {t("routerSettings.global")}
+            </TabsTrigger>
+            <TabsTrigger value="teams">{t("routerSettings.team")}</TabsTrigger>
           </TabsList>
         </Tabs>
       </div>

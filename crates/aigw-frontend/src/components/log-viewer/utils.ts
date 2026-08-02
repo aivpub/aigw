@@ -10,9 +10,12 @@ export function extractText(content: unknown): string {
   if (Array.isArray(content)) {
     return content
       .map((part: Record<string, unknown>) => {
-        if (part.type === "text" || part.type === "input_text") return String(part.text ?? "");
-        if (part.type === "image_url" || part.type === "image") return "[Image]";
-        if (part.type === "tool_use") return `[Tool: ${part.name ?? "unknown"}]`;
+        if (part.type === "text" || part.type === "input_text")
+          return String(part.text ?? "");
+        if (part.type === "image_url" || part.type === "image")
+          return "[Image]";
+        if (part.type === "tool_use")
+          return `[Tool: ${part.name ?? "unknown"}]`;
         return JSON.stringify(part);
       })
       .join("\n");

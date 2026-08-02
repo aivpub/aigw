@@ -12,40 +12,66 @@ interface ParsedResponse {
 }
 
 function parseResponse(raw: unknown): ParsedResponse {
-  const empty: ParsedResponse = { text: "", toolCalls: null, usage: null, finishReason: null };
+  const empty: ParsedResponse = {
+    text: "",
+    toolCalls: null,
+    usage: null,
+    finishReason: null,
+  };
   if (!raw) return empty;
 
   try {
-    const r = typeof raw === "string" ? JSON.parse(raw) : (raw as Record<string, unknown>);
+    const r =
+      typeof raw === "string"
+        ? JSON.parse(raw)
+        : (raw as Record<string, unknown>);
     if (!r || typeof r !== "object") return empty;
 
     // OpenAI format: choices[0].message.content + choices[0].message.tool_calls
     if (Array.isArray((r as Record<string, unknown>).choices)) {
-      const choices = (r as Record<string, unknown>).choices as Array<Record<string, unknown>>;
+      const choices = (r as Record<string, unknown>).choices as Array<
+        Record<string, unknown>
+      >;
       const first = choices[0];
       if (first) {
-        const msg = (first.message ?? first.delta ?? {}) as Record<string, unknown>;
+        const msg = (first.message ?? first.delta ?? {}) as Record<
+          string,
+          unknown
+        >;
         const text = extractTextContent(msg.content);
         const tc = msg.tool_calls as unknown[] | null;
         return {
           text,
           toolCalls: tc,
-          usage: (r as Record<string, unknown>).usage as Record<string, unknown> | null ?? null,
-          finishReason: (first.finish_reason as string) ?? msg.finish_reason as string ?? null,
+          usage:
+            ((r as Record<string, unknown>).usage as Record<
+              string,
+              unknown
+            > | null) ?? null,
+          finishReason:
+            (first.finish_reason as string) ??
+            (msg.finish_reason as string) ??
+            null,
         };
       }
     }
 
     // Anthropic format: content[] blocks + stop_reason
     if (Array.isArray((r as Record<string, unknown>).content)) {
-      const content = (r as Record<string, unknown>).content as Array<Record<string, unknown>>;
+      const content = (r as Record<string, unknown>).content as Array<
+        Record<string, unknown>
+      >;
       const textParts: string[] = [];
       const toolCalls: unknown[] = [];
       for (const block of content) {
         if (block.type === "text" || block.type === "text_delta") {
           textParts.push(String(block.text ?? ""));
         } else if (block.type === "tool_use") {
-          toolCalls.push({ name: block.name, input: block.input, id: block.id });
+          toolCalls.push({
+            name: block.name,
+            input: block.input,
+            id: block.id,
+          });
         } else {
           textParts.push(`[${block.type}]`);
         }
@@ -53,8 +79,13 @@ function parseResponse(raw: unknown): ParsedResponse {
       return {
         text: textParts.join(""),
         toolCalls: toolCalls.length > 0 ? toolCalls : null,
-        usage: (r as Record<string, unknown>).usage as Record<string, unknown> | null ?? null,
-        finishReason: ((r as Record<string, unknown>).stop_reason as string) ?? null,
+        usage:
+          ((r as Record<string, unknown>).usage as Record<
+            string,
+            unknown
+          > | null) ?? null,
+        finishReason:
+          ((r as Record<string, unknown>).stop_reason as string) ?? null,
       };
     }
 
@@ -138,7 +169,9 @@ export function ResponseViewer({ response }: ResponseViewerProps) {
       {parsed.finishReason && (
         <div className="flex items-center gap-2 text-xs">
           <span className="text-muted-foreground">Finish reason:</span>
-          <code className="font-mono bg-muted px-1 rounded">{parsed.finishReason}</code>
+          <code className="font-mono bg-muted px-1 rounded">
+            {parsed.finishReason}
+          </code>
         </div>
       )}
     </div>

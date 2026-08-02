@@ -18,11 +18,20 @@ interface ParsedOutput {
 }
 
 function parseOutput(raw: unknown): ParsedOutput {
-  const empty: ParsedOutput = { text: "", toolCalls: null, usage: null, finishReason: null, error: null };
+  const empty: ParsedOutput = {
+    text: "",
+    toolCalls: null,
+    usage: null,
+    finishReason: null,
+    error: null,
+  };
   if (!raw) return empty;
 
   try {
-    const r = typeof raw === "string" ? JSON.parse(raw) : (raw as Record<string, unknown>);
+    const r =
+      typeof raw === "string"
+        ? JSON.parse(raw)
+        : (raw as Record<string, unknown>);
     if (!r || typeof r !== "object") return empty;
 
     // Detect error responses first
@@ -33,17 +42,23 @@ function parseOutput(raw: unknown): ParsedOutput {
         errMsg = err;
       } else if (typeof err === "object" && err !== null) {
         const e = err as Record<string, unknown>;
-        errMsg = (e.message as string) || (e.code as string) || JSON.stringify(err);
+        errMsg =
+          (e.message as string) || (e.code as string) || JSON.stringify(err);
       }
       return { ...empty, error: errMsg };
     }
 
     // OpenAI: choices[0].message
     if (Array.isArray((r as Record<string, unknown>).choices)) {
-      const choices = (r as Record<string, unknown>).choices as Array<Record<string, unknown>>;
+      const choices = (r as Record<string, unknown>).choices as Array<
+        Record<string, unknown>
+      >;
       const first = choices[0];
       if (first) {
-        const msg = (first.message ?? first.delta ?? {}) as Record<string, unknown>;
+        const msg = (first.message ?? first.delta ?? {}) as Record<
+          string,
+          unknown
+        >;
         // Detect error in message (e.g. content filter)
         if (msg.refusal) {
           return { ...empty, error: `Refused: ${String(msg.refusal)}` };
@@ -51,8 +66,15 @@ function parseOutput(raw: unknown): ParsedOutput {
         return {
           text: extractText(msg.content),
           toolCalls: (msg.tool_calls as unknown[]) ?? null,
-          usage: (r as Record<string, unknown>).usage as Record<string, unknown> | null ?? null,
-          finishReason: (first.finish_reason as string) ?? (msg.finish_reason as string) ?? null,
+          usage:
+            ((r as Record<string, unknown>).usage as Record<
+              string,
+              unknown
+            > | null) ?? null,
+          finishReason:
+            (first.finish_reason as string) ??
+            (msg.finish_reason as string) ??
+            null,
           error: null,
         };
       }
@@ -60,28 +82,39 @@ function parseOutput(raw: unknown): ParsedOutput {
 
     // Anthropic: content[] blocks
     if (Array.isArray((r as Record<string, unknown>).content)) {
-      const content = (r as Record<string, unknown>).content as Array<Record<string, unknown>>;
+      const content = (r as Record<string, unknown>).content as Array<
+        Record<string, unknown>
+      >;
       const textParts: string[] = [];
       const toolCalls: unknown[] = [];
       for (const block of content) {
         if (block.type === "text" || block.type === "text_delta") {
           textParts.push(String(block.text ?? ""));
         } else if (block.type === "tool_use") {
-          toolCalls.push({ name: block.name, input: block.input, id: block.id });
+          toolCalls.push({
+            name: block.name,
+            input: block.input,
+            id: block.id,
+          });
         }
       }
       return {
         text: textParts.join(""),
         toolCalls: toolCalls.length > 0 ? toolCalls : null,
-        usage: (r as Record<string, unknown>).usage as Record<string, unknown> | null ?? null,
-        finishReason: ((r as Record<string, unknown>).stop_reason as string) ?? null,
+        usage:
+          ((r as Record<string, unknown>).usage as Record<
+            string,
+            unknown
+          > | null) ?? null,
+        finishReason:
+          ((r as Record<string, unknown>).stop_reason as string) ?? null,
         error: null,
       };
     }
 
     return empty;
   } catch {
-    return { ...empty, error: i18n.t('logViewer.parseError') };
+    return { ...empty, error: i18n.t("logViewer.parseError") };
   }
 }
 
@@ -91,15 +124,18 @@ interface OutputCardProps {
   spend: number;
 }
 
-export function OutputCard({ response, completionTokens, spend }: OutputCardProps) {
+export function OutputCard({
+  response,
+  completionTokens,
+  spend,
+}: OutputCardProps) {
   const { t } = useTranslation();
   const [collapsed, setCollapsed] = useState(false);
 
   const parsed = parseOutput(response);
 
-  const outputCost = spend > 0
-    ? spend * (completionTokens / (completionTokens + 1))
-    : undefined;
+  const outputCost =
+    spend > 0 ? spend * (completionTokens / (completionTokens + 1)) : undefined;
 
   return (
     <div className="border rounded-lg overflow-hidden">
@@ -117,7 +153,9 @@ export function OutputCard({ response, completionTokens, spend }: OutputCardProp
           {parsed.error ? (
             <div className="bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-lg p-3">
               <div className="flex items-center gap-1.5 mb-1">
-                <span className="text-[10px] uppercase tracking-wider text-red-600 dark:text-red-400 font-medium">{t('playground.error')}</span>
+                <span className="text-[10px] uppercase tracking-wider text-red-600 dark:text-red-400 font-medium">
+                  {t("playground.error")}
+                </span>
               </div>
               <pre className="text-xs text-red-700 dark:text-red-300 whitespace-pre-wrap break-all leading-relaxed font-mono">
                 {parsed.error}
@@ -152,14 +190,20 @@ export function OutputCard({ response, completionTokens, spend }: OutputCardProp
           {/* Finish reason */}
           {parsed.finishReason ? (
             <div className="text-[11px] text-muted-foreground">
-              {t('logViewer.finishReason')}: <code className="font-mono bg-muted px-1 rounded">{parsed.finishReason}</code>
+              {t("logViewer.finishReason")}:{" "}
+              <code className="font-mono bg-muted px-1 rounded">
+                {parsed.finishReason}
+              </code>
             </div>
           ) : null}
 
           {/* Empty state */}
-          {!parsed.error && !parsed.text && !parsed.toolCalls && !parsed.usage ? (
+          {!parsed.error &&
+          !parsed.text &&
+          !parsed.toolCalls &&
+          !parsed.usage ? (
             <p className="text-xs text-muted-foreground italic py-2 text-center">
-              {t('logViewer.noContent')}
+              {t("logViewer.noContent")}
             </p>
           ) : null}
         </div>

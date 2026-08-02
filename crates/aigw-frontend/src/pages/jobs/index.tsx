@@ -9,7 +9,12 @@ import {
   triggerJob,
   KNOWN_STEP_TYPES,
 } from "@/lib/api/jobs";
-import type { JobItem, JobStats, ArchiveStats, TriggerJobResponse } from "@/lib/api/jobs";
+import type {
+  JobItem,
+  JobStats,
+  ArchiveStats,
+  TriggerJobResponse,
+} from "@/lib/api/jobs";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -29,7 +34,13 @@ import { TriggerDialog } from "./components/trigger-dialog";
 import { toast } from "sonner";
 
 // ── Status Badge ──
-function StatusBadge({ status, className }: { status: string; className?: string }) {
+function StatusBadge({
+  status,
+  className,
+}: {
+  status: string;
+  className?: string;
+}) {
   const { t } = useTranslation();
   const colors: Record<string, string> = {
     pending: "bg-yellow-500/10 text-yellow-500 border-yellow-500/20",
@@ -44,8 +55,20 @@ function StatusBadge({ status, className }: { status: string; className?: string
       className={colors[status] || "bg-muted"}
       aria-label={`Status: ${status}`}
     >
-      {status === "running" && <span className="mr-1 inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" />}
-      {status === "pending" ? t("jobs.status.pending") : status === "running" ? t("jobs.status.running") : status === "completed" ? t("jobs.status.completed") : status === "failed" ? t("jobs.status.failed") : status === "partially_failed" ? t("jobs.status.partiallyFailed") : status}
+      {status === "running" && (
+        <span className="mr-1 inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+      )}
+      {status === "pending"
+        ? t("jobs.status.pending")
+        : status === "running"
+          ? t("jobs.status.running")
+          : status === "completed"
+            ? t("jobs.status.completed")
+            : status === "failed"
+              ? t("jobs.status.failed")
+              : status === "partially_failed"
+                ? t("jobs.status.partiallyFailed")
+                : status}
     </Badge>
   );
 }
@@ -72,22 +95,43 @@ function PaginationBar({
   return (
     <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
       <div className="flex items-center gap-3">
-        <span className="text-xs text-muted-foreground">{_t('pagination.showing', { from, to, total: totalCount })}</span>
-        <span className="text-xs text-muted-foreground">{_t('pagination.pageInfo', { page, total: Math.max(totalPages, 1) })}</span>
+        <span className="text-xs text-muted-foreground">
+          {_t("pagination.showing", { from, to, total: totalCount })}
+        </span>
+        <span className="text-xs text-muted-foreground">
+          {_t("pagination.pageInfo", { page, total: Math.max(totalPages, 1) })}
+        </span>
       </div>
       <div className="flex items-center gap-2">
-        <Select value={String(pageSize)} onValueChange={(v) => onPageSize(Number(v))}>
-          <SelectTrigger className="h-7 w-[70px] text-xs"><SelectValue /></SelectTrigger>
+        <Select
+          value={String(pageSize)}
+          onValueChange={(v) => onPageSize(Number(v))}
+        >
+          <SelectTrigger className="h-7 w-[70px] text-xs">
+            <SelectValue />
+          </SelectTrigger>
           <SelectContent>
             <SelectItem value="30">30</SelectItem>
             <SelectItem value="50">50</SelectItem>
             <SelectItem value="100">100</SelectItem>
           </SelectContent>
         </Select>
-        <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => onPage(page - 1)} className="h-7 px-2">
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={page <= 1}
+          onClick={() => onPage(page - 1)}
+          className="h-7 px-2"
+        >
           <ChevronLeft className="h-3.5 w-3.5" />
         </Button>
-        <Button variant="outline" size="sm" disabled={page >= totalPages || totalPages === 0} onClick={() => onPage(page + 1)} className="h-7 px-2">
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={page >= totalPages || totalPages === 0}
+          onClick={() => onPage(page + 1)}
+          className="h-7 px-2"
+        >
           <ChevronRight className="h-3.5 w-3.5" />
         </Button>
       </div>
@@ -131,7 +175,9 @@ function JobListTable({
         onPageSize={onPageSize}
       />
       {jobs.length === 0 ? (
-        <p className="text-muted-foreground text-center py-4">{t("jobs.noJobs")}</p>
+        <p className="text-muted-foreground text-center py-4">
+          {t("jobs.noJobs")}
+        </p>
       ) : (
         <div className="border rounded overflow-hidden">
           <table className="w-full text-sm">
@@ -164,23 +210,34 @@ function JobListTable({
                     role="button"
                     aria-label={`Job ${job.id.slice(0, 12)}`}
                   >
-                    <td className="p-2 font-mono text-xs truncate max-w-[120px]" title={job.id}>
-                      {job.id.length > 20 ? `${job.id.slice(0, 20)}...` : job.id}
+                    <td
+                      className="p-2 font-mono text-xs truncate max-w-[120px]"
+                      title={job.id}
+                    >
+                      {job.id.length > 20
+                        ? `${job.id.slice(0, 20)}...`
+                        : job.id}
                     </td>
                     <td className="p-2">{stepTypeLabel(job.step_type)}</td>
                     <td className="p-2">{job.trigger_type}</td>
-                    <td className="p-2"><StatusBadge status={ds} /></td>
+                    <td className="p-2">
+                      <StatusBadge status={ds} />
+                    </td>
                     <td className="p-2 text-xs">
                       {job.completed_steps + job.failed_steps}/{job.total_steps}
                       {job.failed_steps > 0 && (
-                        <span className="text-red-500 ml-1">{t("jobs.failedSteps", { count: job.failed_steps })}</span>
+                        <span className="text-red-500 ml-1">
+                          {t("jobs.failedSteps", { count: job.failed_steps })}
+                        </span>
                       )}
                     </td>
                     <td className="p-2 text-xs text-muted-foreground">
                       {new Date(job.created_at).toLocaleString()}
                     </td>
                     <td className="p-2 text-xs text-muted-foreground">
-                      {["completed", "failed", "partially_failed"].includes(job.status)
+                      {["completed", "failed", "partially_failed"].includes(
+                        job.status,
+                      )
                         ? new Date(job.updated_at).toLocaleString()
                         : "—"}
                     </td>
@@ -218,24 +275,34 @@ function ArchiveStatsCard({ archiveStats }: { archiveStats: ArchiveStats }) {
           <div>
             <div className="text-muted-foreground">{t("jobs.autoArchive")}</div>
             <Badge variant={auto ? "default" : "secondary"}>
-              <span className={`mr-1 inline-block w-2 h-2 rounded-full ${auto ? "bg-green-500" : "bg-gray-400"}`} />
+              <span
+                className={`mr-1 inline-block w-2 h-2 rounded-full ${auto ? "bg-green-500" : "bg-gray-400"}`}
+              />
               {auto ? t("jobs.on") : t("jobs.off")}
             </Badge>
           </div>
           <div>
             <div className="text-muted-foreground">{t("jobs.storage")}</div>
             <Badge variant={sc ? "default" : "secondary"}>
-              <span className={`mr-1 inline-block w-2 h-2 rounded-full ${sc ? "bg-green-500" : "bg-yellow-500"}`} />
+              <span
+                className={`mr-1 inline-block w-2 h-2 rounded-full ${sc ? "bg-green-500" : "bg-yellow-500"}`}
+              />
               {sc ? t("jobs.configured") : t("jobs.notConfigured")}
             </Badge>
           </div>
           <div>
-            <div className="text-muted-foreground">{t("jobs.archivedRows")}</div>
-            <div className="font-medium">{formatCount(archiveStats.total_archived_rows)}</div>
+            <div className="text-muted-foreground">
+              {t("jobs.archivedRows")}
+            </div>
+            <div className="font-medium">
+              {formatCount(archiveStats.total_archived_rows)}
+            </div>
           </div>
           <div>
             <div className="text-muted-foreground">{t("jobs.pendingRows")}</div>
-            <div className="font-medium">{formatCount(archiveStats.pending_rows)}</div>
+            <div className="font-medium">
+              {formatCount(archiveStats.pending_rows)}
+            </div>
           </div>
         </div>
       </CardContent>
@@ -275,7 +342,7 @@ function BudgetResetTrigger({ onTriggered }: { onTriggered: () => void }) {
           t("jobs.triggerToast", {
             jobId: result.job_id.slice(0, 12),
             totalSteps: result.total_steps,
-          })
+          }),
         );
         onTriggered();
       }
@@ -302,18 +369,16 @@ function BudgetResetTrigger({ onTriggered }: { onTriggered: () => void }) {
         </SelectContent>
       </Select>
       <Button onClick={handleTrigger} disabled={loading} size="sm">
-        <RefreshCw className={`h-3.5 w-3.5 mr-1 ${loading ? "animate-spin" : ""}`} />
+        <RefreshCw
+          className={`h-3.5 w-3.5 mr-1 ${loading ? "animate-spin" : ""}`}
+        />
         {t("jobs.budgetReset.triggerReset")}
       </Button>
     </div>
   );
 }
 
-function BudgetResetPanel({
-  stats,
-}: {
-  stats: JobStats | null;
-}) {
+function BudgetResetPanel({ stats }: { stats: JobStats | null }) {
   const { t } = useTranslation();
 
   // Countdown timer for next periodic check.
@@ -334,35 +399,56 @@ function BudgetResetPanel({
     };
   }, []);
 
-  const budgetQueue = stats?.["budget_reset"]?.queue ?? { pending: 0, running: 0, completed: 0, failed: 0 };
+  const budgetQueue = stats?.["budget_reset"]?.queue ?? {
+    pending: 0,
+    running: 0,
+    completed: 0,
+    failed: 0,
+  };
   const formatCountdown = (s: number): string => {
-    const m = Math.floor(s/60);
-    const sec = s%60;
-    if (m>0) return `${m}m ${sec.toString().padStart(2,"0")}s`;
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    if (m > 0) return `${m}m ${sec.toString().padStart(2, "0")}s`;
     return `${sec}s`;
   };
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">{t("jobs.budgetReset.overview")}</CardTitle>
+        <CardTitle className="text-base">
+          {t("jobs.budgetReset.overview")}
+        </CardTitle>
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
           <div>
-            <div className="text-muted-foreground">{t("jobs.budgetReset.readyToReset")}</div>
-            <div className="font-medium text-lg">{budgetQueue.pending > 0 ? budgetQueue.pending : "—"}</div>
+            <div className="text-muted-foreground">
+              {t("jobs.budgetReset.readyToReset")}
+            </div>
+            <div className="font-medium text-lg">
+              {budgetQueue.pending > 0 ? budgetQueue.pending : "—"}
+            </div>
           </div>
           <div>
-            <div className="text-muted-foreground">{t("jobs.status.running")}</div>
-            <div className="font-medium text-lg">{budgetQueue.running > 0 ? budgetQueue.running : "—"}</div>
+            <div className="text-muted-foreground">
+              {t("jobs.status.running")}
+            </div>
+            <div className="font-medium text-lg">
+              {budgetQueue.running > 0 ? budgetQueue.running : "—"}
+            </div>
           </div>
           <div>
-            <div className="text-muted-foreground">{t("jobs.status.completed")}</div>
-            <div className="font-medium text-lg">{budgetQueue.completed > 0 ? budgetQueue.completed : "—"}</div>
+            <div className="text-muted-foreground">
+              {t("jobs.status.completed")}
+            </div>
+            <div className="font-medium text-lg">
+              {budgetQueue.completed > 0 ? budgetQueue.completed : "—"}
+            </div>
           </div>
           <div>
-            <div className="text-muted-foreground">{t("jobs.budgetReset.nextCheck")}</div>
+            <div className="text-muted-foreground">
+              {t("jobs.budgetReset.nextCheck")}
+            </div>
             <div className="font-medium flex items-center gap-1">
               <RefreshCw className="h-3 w-3" />
               <span>{formatCountdown(countdown)}</span>
@@ -397,7 +483,12 @@ function OverviewCards({
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
       {stepTypes.map((st) => {
-        const s = stats?.[st]?.queue ?? { pending: 0, running: 0, completed: 0, failed: 0 };
+        const s = stats?.[st]?.queue ?? {
+          pending: 0,
+          running: 0,
+          completed: 0,
+          failed: 0,
+        };
         return (
           <Card
             key={st}
@@ -418,10 +509,22 @@ function OverviewCards({
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-2 gap-2 text-sm">
-                <div className="flex justify-between"><span>{t("jobs.status.pending")}</span><Badge variant="secondary">{s.pending}</Badge></div>
-                <div className="flex justify-between"><span>{t("jobs.status.running")}</span><Badge variant="secondary">{s.running}</Badge></div>
-                <div className="flex justify-between"><span>{t("jobs.status.completed")}</span><Badge variant="secondary">{s.completed}</Badge></div>
-                <div className="flex justify-between"><span>{t("jobs.status.failed")}</span><Badge variant="secondary">{s.failed}</Badge></div>
+                <div className="flex justify-between">
+                  <span>{t("jobs.status.pending")}</span>
+                  <Badge variant="secondary">{s.pending}</Badge>
+                </div>
+                <div className="flex justify-between">
+                  <span>{t("jobs.status.running")}</span>
+                  <Badge variant="secondary">{s.running}</Badge>
+                </div>
+                <div className="flex justify-between">
+                  <span>{t("jobs.status.completed")}</span>
+                  <Badge variant="secondary">{s.completed}</Badge>
+                </div>
+                <div className="flex justify-between">
+                  <span>{t("jobs.status.failed")}</span>
+                  <Badge variant="secondary">{s.failed}</Badge>
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -458,7 +561,9 @@ export function JobsPage() {
   // so on a fresh DB it returns `{}` and the implemented AsyncTask UI would be invisible. Seed
   // the known types first, then append any extra keys the backend reports (deduped, order-stable).
   const reportedTypes = stats ? Object.keys(stats) : [];
-  const stepTypes = Array.from(new Set<string>([...KNOWN_STEP_TYPES, ...reportedTypes]));
+  const stepTypes = Array.from(
+    new Set<string>([...KNOWN_STEP_TYPES, ...reportedTypes]),
+  );
   const limit = 50;
 
   // URL helpers
@@ -474,7 +579,7 @@ export function JobsPage() {
       }
       setSearchParams(next, { replace: true });
     },
-    [searchParams, setSearchParams]
+    [searchParams, setSearchParams],
   );
 
   // Navigate to detail
@@ -482,7 +587,7 @@ export function JobsPage() {
     (jobId: string) => {
       navigate(`/dash/jobs/${jobId}`);
     },
-    [navigate]
+    [navigate],
   );
 
   // Fetch functions
@@ -523,7 +628,11 @@ export function JobsPage() {
 
   const loadBudgetResetJobs = useCallback(async () => {
     try {
-      const data = await fetchJobs({ step_type: "budget_reset", limit: 10, page: 1 });
+      const data = await fetchJobs({
+        step_type: "budget_reset",
+        limit: 10,
+        page: 1,
+      });
       setBudgetResetJobs(data.jobs || []);
     } catch {
       // silently ignore
@@ -574,8 +683,14 @@ export function JobsPage() {
           {tab === "body_archive" && (
             <Button
               onClick={() => setTriggerOpen(true)}
-              disabled={archiveStats !== null && !archiveStats.storage_configured}
-              title={archiveStats && !archiveStats.storage_configured ? t("jobs.storageNotConfigured") : t("jobs.triggerArchive")}
+              disabled={
+                archiveStats !== null && !archiveStats.storage_configured
+              }
+              title={
+                archiveStats && !archiveStats.storage_configured
+                  ? t("jobs.storageNotConfigured")
+                  : t("jobs.triggerArchive")
+              }
               size="sm"
             >
               {t("jobs.triggerArchive")}
@@ -583,30 +698,55 @@ export function JobsPage() {
           )}
           {tab === "budget_reset" && (
             <BudgetResetTrigger
-              onTriggered={() => { loadBudgetResetJobs(); loadJobs(); loadStats(); }}
+              onTriggered={() => {
+                loadBudgetResetJobs();
+                loadJobs();
+                loadStats();
+              }}
             />
           )}
         </div>
 
         {/* Overview Tab */}
         <TabsContent value="overview" className="space-y-4 mt-4">
-          <OverviewCards stepTypes={stepTypes} stats={stats} onSelectTab={(st) => setUrlParam({ tab: st })} />
+          <OverviewCards
+            stepTypes={stepTypes}
+            stats={stats}
+            onSelectTab={(st) => setUrlParam({ tab: st })}
+          />
 
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle className="text-base">{t("jobs.allJobs")}</CardTitle>
-                <Select value={statusFilter} onValueChange={(v) => setUrlParam({ status: v === "all" ? null : v, page: null })}>
+                <Select
+                  value={statusFilter}
+                  onValueChange={(v) =>
+                    setUrlParam({ status: v === "all" ? null : v, page: null })
+                  }
+                >
                   <SelectTrigger className="w-32">
                     <SelectValue placeholder={t("common.status")} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">{t("spendLogs.filters.all")}</SelectItem>
-                    <SelectItem value="pending">{t("jobs.status.pending")}</SelectItem>
-                    <SelectItem value="running">{t("jobs.status.running")}</SelectItem>
-                    <SelectItem value="completed">{t("jobs.status.completed")}</SelectItem>
-                    <SelectItem value="failed">{t("jobs.status.failed")}</SelectItem>
-                    <SelectItem value="partially_failed">{t("jobs.status.partiallyFailed")}</SelectItem>
+                    <SelectItem value="all">
+                      {t("spendLogs.filters.all")}
+                    </SelectItem>
+                    <SelectItem value="pending">
+                      {t("jobs.status.pending")}
+                    </SelectItem>
+                    <SelectItem value="running">
+                      {t("jobs.status.running")}
+                    </SelectItem>
+                    <SelectItem value="completed">
+                      {t("jobs.status.completed")}
+                    </SelectItem>
+                    <SelectItem value="failed">
+                      {t("jobs.status.failed")}
+                    </SelectItem>
+                    <SelectItem value="partially_failed">
+                      {t("jobs.status.partiallyFailed")}
+                    </SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -641,8 +781,18 @@ export function JobsPage() {
             <Card>
               <CardHeader>
                 <div className="flex items-center justify-between">
-                  <CardTitle className="text-base">{t("jobs.stepJobs", { type: stepTypeLabel(st) })}</CardTitle>
-                  <Select value={statusFilter} onValueChange={(v) => setUrlParam({ status: v === "all" ? null : v, page: null })}>
+                  <CardTitle className="text-base">
+                    {t("jobs.stepJobs", { type: stepTypeLabel(st) })}
+                  </CardTitle>
+                  <Select
+                    value={statusFilter}
+                    onValueChange={(v) =>
+                      setUrlParam({
+                        status: v === "all" ? null : v,
+                        page: null,
+                      })
+                    }
+                  >
                     <SelectTrigger className="w-32">
                       <SelectValue placeholder="Status" />
                     </SelectTrigger>
@@ -664,7 +814,9 @@ export function JobsPage() {
                   total={totalJobs}
                   page={page}
                   limit={limit}
-                  onPage={(p) => setUrlParam({ page: p > 1 ? String(p) : null })}
+                  onPage={(p) =>
+                    setUrlParam({ page: p > 1 ? String(p) : null })
+                  }
                   onPageSize={() => {}}
                   onJobClick={goToDetail}
                 />

@@ -20,27 +20,50 @@ interface TabsProps {
   children: React.ReactNode;
 }
 
-export function Tabs({ defaultValue, value, onValueChange, children }: TabsProps) {
+export function Tabs({
+  defaultValue,
+  value,
+  onValueChange,
+  children,
+}: TabsProps) {
   const [internalValue, setInternalValue] = React.useState(defaultValue);
   const resolvedValue = value ?? internalValue;
   const handleChange = onValueChange ?? setInternalValue;
 
   return (
-    <TabsContext.Provider value={{ value: resolvedValue, onValueChange: handleChange }}>
+    <TabsContext.Provider
+      value={{ value: resolvedValue, onValueChange: handleChange }}
+    >
       <div className="space-y-2">{children}</div>
     </TabsContext.Provider>
   );
 }
 
-export function TabsList({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+export function TabsList({
+  children,
+  className = "",
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
   return (
-    <div className={`inline-flex h-9 items-center justify-center rounded-lg bg-muted p-1 text-muted-foreground ${className}`}>
+    <div
+      className={`inline-flex h-9 items-center justify-center rounded-lg bg-muted p-1 text-muted-foreground ${className}`}
+    >
       {children}
     </div>
   );
 }
 
-export function TabsTrigger({ value, children, className = "" }: { value: string; children: React.ReactNode; className?: string }) {
+export function TabsTrigger({
+  value,
+  children,
+  className = "",
+}: {
+  value: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
   const { value: selectedValue, onValueChange } = useTabs();
   const isActive = selectedValue === value;
 
@@ -61,9 +84,21 @@ export function TabsTrigger({ value, children, className = "" }: { value: string
   );
 }
 
-export function TabsContent({ value, children, className = "" }: { value: string; children: React.ReactNode; className?: string }) {
+export function TabsContent({
+  value,
+  children,
+  className = "",
+}: {
+  value: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
   const { value: selectedValue } = useTabs();
   if (selectedValue !== value) return null;
 
-  return <div role="tabpanel" className={className}>{children}</div>;
+  return (
+    <div role="tabpanel" className={className}>
+      {children}
+    </div>
+  );
 }

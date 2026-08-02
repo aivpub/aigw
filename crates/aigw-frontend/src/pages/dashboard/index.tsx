@@ -130,35 +130,45 @@ export function DashboardPage() {
   const [endDate, setEndDate] = useState(todayStr());
 
   // Total global spend
-  const { data: totalSpend, isLoading: totalLoading } = useQuery<SpendResponse>({
-    queryKey: ["global-spend"],
-    queryFn: () => apiGet("/global/spend"),
-    refetchInterval: 30_000,
-  });
+  const { data: totalSpend, isLoading: totalLoading } = useQuery<SpendResponse>(
+    {
+      queryKey: ["global-spend"],
+      queryFn: () => apiGet("/global/spend"),
+      refetchInterval: 30_000,
+    },
+  );
 
   // Spend logs (filtered by date range)
-  const { data: logsData, isLoading: logsLoading } = useQuery<SpendLogsResponse>({
-    queryKey: ["global-spend-logs", startDate, endDate],
-    queryFn: () =>
-      apiGet(
-        `/global/spend/logs?start_date=${startDate}&end_date=${endDate}&limit=100`,
-      ),
-    refetchInterval: 30_000,
-  });
+  const { data: logsData, isLoading: logsLoading } =
+    useQuery<SpendLogsResponse>({
+      queryKey: ["global-spend-logs", startDate, endDate],
+      queryFn: () =>
+        apiGet(
+          `/global/spend/logs?start_date=${startDate}&end_date=${endDate}&limit=100`,
+        ),
+      refetchInterval: 30_000,
+    });
 
   // Model aggregation
   const { data: modelData, isLoading: modelLoading } = useQuery<AggResponse>({
     queryKey: ["spend-models", startDate, endDate],
-    queryFn: () => apiGet(`/global/spend/models?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`),
+    queryFn: () =>
+      apiGet(
+        `/global/spend/models?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`,
+      ),
     refetchInterval: 30_000,
   });
 
   // Provider aggregation
-  const { data: providerData, isLoading: providerLoading } = useQuery<AggResponse>({
-    queryKey: ["spend-providers", startDate, endDate],
-    queryFn: () => apiGet(`/spend/providers?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`),
-    refetchInterval: 30_000,
-  });
+  const { data: providerData, isLoading: providerLoading } =
+    useQuery<AggResponse>({
+      queryKey: ["spend-providers", startDate, endDate],
+      queryFn: () =>
+        apiGet(
+          `/spend/providers?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`,
+        ),
+      refetchInterval: 30_000,
+    });
 
   // Compute period spend from logs
   const periodSpend = useMemo(() => {
@@ -186,14 +196,17 @@ export function DashboardPage() {
   }, [providerData]);
 
   const logs = logsData?.data ?? [];
-  const isLoading = totalLoading || logsLoading || modelLoading || providerLoading;
+  const isLoading =
+    totalLoading || logsLoading || modelLoading || providerLoading;
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">{t('dashboard.title')}</h1>
+        <h1 className="text-2xl font-bold tracking-tight">
+          {t("dashboard.title")}
+        </h1>
         <p className="text-sm text-muted-foreground">
-          {t('dashboard.description')}
+          {t("dashboard.description")}
         </p>
       </div>
 
@@ -201,7 +214,9 @@ export function DashboardPage() {
       <div className="grid gap-4 grid-cols-2 md:grid-cols-3">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">{t('dashboard.totalSpend')}</CardTitle>
+            <CardTitle className="text-sm font-medium">
+              {t("dashboard.totalSpend")}
+            </CardTitle>
             <DollarSign className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -217,7 +232,9 @@ export function DashboardPage() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">{t('dashboard.periodSpend')}</CardTitle>
+            <CardTitle className="text-sm font-medium">
+              {t("dashboard.periodSpend")}
+            </CardTitle>
             <TrendingUp className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -234,7 +251,9 @@ export function DashboardPage() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">{t('dashboard.totalRequests')}</CardTitle>
+            <CardTitle className="text-sm font-medium">
+              {t("dashboard.totalRequests")}
+            </CardTitle>
             <BarChart3 className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -252,7 +271,9 @@ export function DashboardPage() {
         {/* Model Bar Chart */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">{t('dashboard.spendByModel')}</CardTitle>
+            <CardTitle className="text-sm font-medium">
+              {t("dashboard.spendByModel")}
+            </CardTitle>
             <BarChart3 className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -260,13 +281,19 @@ export function DashboardPage() {
               <Skeleton className="h-64 w-full" />
             ) : modelChartData.length === 0 ? (
               <div className="flex items-center justify-center h-64 text-sm text-muted-foreground">
-                {t('dashboard.noData')}
+                {t("dashboard.noData")}
               </div>
             ) : (
               <div className="h-[200px] md:h-[280px]">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={modelChartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                  <BarChart
+                    data={modelChartData}
+                    margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
+                  >
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      className="stroke-muted"
+                    />
                     <XAxis
                       dataKey="name"
                       tick={{ fontSize: 11 }}
@@ -282,9 +309,16 @@ export function DashboardPage() {
                         border: "1px solid hsl(var(--border))",
                         borderRadius: "6px",
                       }}
-                      formatter={(value) => [fmtSpend(value as number), t('dashboard.spend')]}
+                      formatter={(value) => [
+                        fmtSpend(value as number),
+                        t("dashboard.spend"),
+                      ]}
                     />
-                    <Bar dataKey="spend" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+                    <Bar
+                      dataKey="spend"
+                      fill="hsl(var(--primary))"
+                      radius={[4, 4, 0, 0]}
+                    />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -295,7 +329,9 @@ export function DashboardPage() {
         {/* Provider Donut Chart */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">{t('dashboard.spendByProvider')}</CardTitle>
+            <CardTitle className="text-sm font-medium">
+              {t("dashboard.spendByProvider")}
+            </CardTitle>
             <PieChartIcon className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -303,7 +339,7 @@ export function DashboardPage() {
               <Skeleton className="h-64 w-full" />
             ) : providerChartData.length === 0 ? (
               <div className="flex items-center justify-center h-64 text-sm text-muted-foreground">
-                {t('dashboard.noData')}
+                {t("dashboard.noData")}
               </div>
             ) : (
               <div className="h-[200px] md:h-[280px]">
@@ -330,7 +366,10 @@ export function DashboardPage() {
                         border: "1px solid hsl(var(--border))",
                         borderRadius: "6px",
                       }}
-                      formatter={(value) => [fmtSpend(value as number), t('dashboard.spend')]}
+                      formatter={(value) => [
+                        fmtSpend(value as number),
+                        t("dashboard.spend"),
+                      ]}
                     />
                     <Legend />
                   </PieChart>
@@ -345,11 +384,15 @@ export function DashboardPage() {
       <Card>
         <CardHeader className="pb-2">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
-            <CardTitle className="text-sm font-medium">{t('dashboard.spendLogs')}</CardTitle>
+            <CardTitle className="text-sm font-medium">
+              {t("dashboard.spendLogs")}
+            </CardTitle>
             <div className="flex items-center gap-2 flex-wrap">
               <Calendar className="h-4 w-4 text-muted-foreground hidden sm:block" />
               <div className="flex items-center gap-1.5">
-                <Label className="text-xs" htmlFor="start-date">{t('dashboard.from')}</Label>
+                <Label className="text-xs" htmlFor="start-date">
+                  {t("dashboard.from")}
+                </Label>
                 <Input
                   id="start-date"
                   type="date"
@@ -359,7 +402,9 @@ export function DashboardPage() {
                 />
               </div>
               <div className="flex items-center gap-1.5">
-                <Label className="text-xs" htmlFor="end-date">{t('dashboard.to')}</Label>
+                <Label className="text-xs" htmlFor="end-date">
+                  {t("dashboard.to")}
+                </Label>
                 <Input
                   id="end-date"
                   type="date"
@@ -380,7 +425,7 @@ export function DashboardPage() {
             </div>
           ) : logs.length === 0 ? (
             <div className="flex items-center justify-center h-32 text-sm text-muted-foreground">
-              {t('dashboard.noSpendLogs')}
+              {t("dashboard.noSpendLogs")}
             </div>
           ) : (
             <>
@@ -389,11 +434,15 @@ export function DashboardPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>{t('dashboard.table.time')}</TableHead>
-                      <TableHead>{t('dashboard.table.model')}</TableHead>
-                      <TableHead className="text-right">{t('dashboard.table.tokens')}</TableHead>
-                      <TableHead className="text-right">{t('dashboard.table.cost')}</TableHead>
-                      <TableHead>{t('dashboard.table.status')}</TableHead>
+                      <TableHead>{t("dashboard.table.time")}</TableHead>
+                      <TableHead>{t("dashboard.table.model")}</TableHead>
+                      <TableHead className="text-right">
+                        {t("dashboard.table.tokens")}
+                      </TableHead>
+                      <TableHead className="text-right">
+                        {t("dashboard.table.cost")}
+                      </TableHead>
+                      <TableHead>{t("dashboard.table.status")}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -461,7 +510,7 @@ export function DashboardPage() {
                         {fmtSpend(log.spend)}
                       </div>
                       <div className="text-xs text-muted-foreground">
-                        {fmtTokens(log.total_tokens)} {t('dashboard.tokens')}
+                        {fmtTokens(log.total_tokens)} {t("dashboard.tokens")}
                       </div>
                     </div>
                   </div>

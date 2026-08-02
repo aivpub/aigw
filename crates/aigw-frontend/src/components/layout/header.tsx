@@ -1,4 +1,10 @@
-import { Menu, LogOut, PanelLeftOpen, PanelLeftClose, Languages } from "lucide-react";
+import {
+  Menu,
+  LogOut,
+  PanelLeftOpen,
+  PanelLeftClose,
+  Languages,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,10 +21,14 @@ interface HeaderProps {
   onToggleCollapse: () => void;
 }
 
-export function Header({ onMenuClick, collapsed, onToggleCollapse }: HeaderProps) {
+export function Header({
+  onMenuClick,
+  collapsed,
+  onToggleCollapse,
+}: HeaderProps) {
   const { t, i18n } = useTranslation();
   const { logout } = useAuth();
-  const currentLang = i18n.language?.startsWith('zh') ? 'zh-CN' : 'en';
+  const currentLang = i18n.language?.startsWith("zh") ? "zh-CN" : "en";
 
   const switchLanguage = (lang: string) => {
     i18n.changeLanguage(lang);
@@ -41,9 +51,15 @@ export function Header({ onMenuClick, collapsed, onToggleCollapse }: HeaderProps
         size="icon"
         className="hidden lg:flex"
         onClick={onToggleCollapse}
-        title={collapsed ? t('header.expandSidebar') : t('header.collapseSidebar')}
+        title={
+          collapsed ? t("header.expandSidebar") : t("header.collapseSidebar")
+        }
       >
-        {collapsed ? <PanelLeftOpen className="h-5 w-5" /> : <PanelLeftClose className="h-5 w-5" />}
+        {collapsed ? (
+          <PanelLeftOpen className="h-5 w-5" />
+        ) : (
+          <PanelLeftClose className="h-5 w-5" />
+        )}
       </Button>
 
       <div className="flex-1" />
@@ -51,24 +67,30 @@ export function Header({ onMenuClick, collapsed, onToggleCollapse }: HeaderProps
       {/* Language Switcher */}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="sm" aria-label={t('header.switchLanguage')}>
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label={t("header.switchLanguage")}
+          >
             <Languages className="h-4 w-4" />
-            <span className="ml-1.5 hidden sm:inline">{currentLang === 'zh-CN' ? '中文' : 'English'}</span>
+            <span className="ml-1.5 hidden sm:inline">
+              {currentLang === "zh-CN" ? "中文" : "English"}
+            </span>
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          <DropdownMenuItem onClick={() => switchLanguage('zh-CN')}>
-            中文 {currentLang === 'zh-CN' && '✓'}
+          <DropdownMenuItem onClick={() => switchLanguage("zh-CN")}>
+            中文 {currentLang === "zh-CN" && "✓"}
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => switchLanguage('en')}>
-            English {currentLang === 'en' && '✓'}
+          <DropdownMenuItem onClick={() => switchLanguage("en")}>
+            English {currentLang === "en" && "✓"}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
 
       <Button variant="ghost" size="sm" onClick={logout}>
         <LogOut className="h-4 w-4 mr-2" />
-        <span className="hidden sm:inline">{t('header.logout')}</span>
+        <span className="hidden sm:inline">{t("header.logout")}</span>
       </Button>
     </header>
   );

@@ -53,21 +53,28 @@ export function MultiModelSelect({
   }, [allModels, search]);
 
   const unselectedModels = useMemo(
-    () => (selected.includes("*") ? [] : filteredModels.filter((m) => !selected.includes(m.model_name))),
+    () =>
+      selected.includes("*")
+        ? []
+        : filteredModels.filter((m) => !selected.includes(m.model_name)),
     [filteredModels, selected],
   );
 
   // Close on outside click
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node)
+      ) {
         setOpen(false);
         setSearch("");
       }
     }
     if (open) {
       document.addEventListener("mousedown", handleClickOutside);
-      return () => document.removeEventListener("mousedown", handleClickOutside);
+      return () =>
+        document.removeEventListener("mousedown", handleClickOutside);
     }
   }, [open]);
 
@@ -115,9 +122,9 @@ export function MultiModelSelect({
           inputRef.current?.focus();
         }}
       >
-      {selected.includes("*") ? (
+        {selected.includes("*") ? (
           <Badge variant="default" className="gap-1 pr-1 cursor-default">
-            {t('common.all')}
+            {t("common.all")}
             <button
               type="button"
               onClick={(e) => {
@@ -125,31 +132,31 @@ export function MultiModelSelect({
                 onChange([]);
               }}
               className="ml-0.5 rounded-full p-0.5 hover:bg-primary-foreground/20 transition-colors"
-              aria-label={t('common.removeAll')}
+              aria-label={t("common.removeAll")}
             >
               <X className="h-3 w-3" />
             </button>
           </Badge>
         ) : (
           selected.map((model) => (
-          <Badge
-            key={model}
-            variant="secondary"
-            className="gap-1 pr-1 cursor-default"
-          >
-            {model}
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                removeModel(model);
-              }}
-              className="ml-0.5 rounded-full p-0.5 hover:bg-muted-foreground/20 transition-colors"
-              aria-label={`Remove ${model}`}
+            <Badge
+              key={model}
+              variant="secondary"
+              className="gap-1 pr-1 cursor-default"
             >
-              <X className="h-3 w-3" />
-            </button>
-          </Badge>
+              {model}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  removeModel(model);
+                }}
+                className="ml-0.5 rounded-full p-0.5 hover:bg-muted-foreground/20 transition-colors"
+                aria-label={`Remove ${model}`}
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </Badge>
           ))
         )}
         <input
@@ -162,7 +169,7 @@ export function MultiModelSelect({
           }}
           onFocus={() => setOpen(true)}
           onKeyDown={handleKeyDown}
-          placeholder={selected.length === 0 ? t('common.search') + "..." : ""}
+          placeholder={selected.length === 0 ? t("common.search") + "..." : ""}
           className="flex-1 min-w-[120px] bg-transparent border-0 outline-none text-sm placeholder:text-muted-foreground p-0"
           tabIndex={selected.includes("*") ? -1 : undefined}
         />
@@ -183,14 +190,14 @@ export function MultiModelSelect({
                   "border-b border-border mb-1 pb-2",
                 )}
               >
-                <span className="flex-1 text-left">{t('keys.allModels')}</span>
+                <span className="flex-1 text-left">{t("keys.allModels")}</span>
               </button>
             )}
             {unselectedModels.length === 0 ? (
               <div className="px-2 py-4 text-sm text-center text-muted-foreground">
                 {allModels.length === 0
-                  ? t('common.loading')
-                  : t('common.noResults')}
+                  ? t("common.loading")
+                  : t("common.noResults")}
               </div>
             ) : (
               unselectedModels.map((model) => (

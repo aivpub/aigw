@@ -8,7 +8,13 @@ import { useState } from "react";
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 export interface ParsedRequest {
-  messages: Array<{ role: string; content: unknown; tool_calls?: unknown[]; name?: string; tool_call_id?: string }>;
+  messages: Array<{
+    role: string;
+    content: unknown;
+    tool_calls?: unknown[];
+    name?: string;
+    tool_call_id?: string;
+  }>;
   tools: unknown[] | null;
 }
 
@@ -45,7 +51,9 @@ export function parseMessages(raw: unknown): ParsedRequest {
     // Case 3/4: request body wrapper — extract { messages, tools }
     if (Array.isArray(record.messages)) {
       return {
-        messages: (record.messages as Array<Record<string, unknown>>).map(normalizeMsg),
+        messages: (record.messages as Array<Record<string, unknown>>).map(
+          normalizeMsg,
+        ),
         tools: Array.isArray(record.tools) ? (record.tools as unknown[]) : null,
       };
     }
@@ -89,7 +97,9 @@ export function MessageViewer({ messages }: MessageViewerProps) {
     );
   }
 
-  const visible = showAll ? parsed.messages : parsed.messages.slice(0, MAX_VISIBLE);
+  const visible = showAll
+    ? parsed.messages
+    : parsed.messages.slice(0, MAX_VISIBLE);
 
   return (
     <div className="space-y-2">
@@ -103,7 +113,9 @@ export function MessageViewer({ messages }: MessageViewerProps) {
           case "system":
             return <SystemBlock key={i} content={msg.content} />;
           case "tool":
-            return <ToolResultBlock key={i} content={msg.content} name={msg.name} />;
+            return (
+              <ToolResultBlock key={i} content={msg.content} name={msg.name} />
+            );
           case "assistant":
             return (
               <div key={i} className="space-y-1.5">
@@ -115,7 +127,9 @@ export function MessageViewer({ messages }: MessageViewerProps) {
             );
           case "user":
           default:
-            return <MessageBubble key={i} role={msg.role} content={msg.content} />;
+            return (
+              <MessageBubble key={i} role={msg.role} content={msg.content} />
+            );
         }
       })}
       {parsed.messages.length > MAX_VISIBLE && !showAll && (
@@ -146,7 +160,9 @@ function ToolsSection({ tools }: { tools: unknown[] }) {
         onClick={() => setOpen(!open)}
       >
         <span className="text-[10px]">{open ? "▾" : "▸"}</span>
-        <span>{tools.length} tool{tools.length !== 1 ? "s" : ""} available</span>
+        <span>
+          {tools.length} tool{tools.length !== 1 ? "s" : ""} available
+        </span>
       </button>
       {open && (
         <div className="mt-1.5 space-y-1">
@@ -154,10 +170,17 @@ function ToolsSection({ tools }: { tools: unknown[] }) {
             const tool = t as Record<string, unknown>;
             const func = (tool.function ?? {}) as Record<string, unknown>;
             return (
-              <div key={i} className="bg-background/50 rounded p-1.5 text-[11px]">
-                <div className="font-mono font-medium">{String(func.name ?? `tool_${i}`)}</div>
+              <div
+                key={i}
+                className="bg-background/50 rounded p-1.5 text-[11px]"
+              >
+                <div className="font-mono font-medium">
+                  {String(func.name ?? `tool_${i}`)}
+                </div>
                 {(func.description as string) && (
-                  <div className="text-muted-foreground mt-0.5">{String(func.description)}</div>
+                  <div className="text-muted-foreground mt-0.5">
+                    {String(func.description)}
+                  </div>
                 )}
               </div>
             );
@@ -181,7 +204,13 @@ function SystemBlock({ content }: { content: unknown }) {
   );
 }
 
-function ToolResultBlock({ content, name }: { content: unknown; name?: string }) {
+function ToolResultBlock({
+  content,
+  name,
+}: {
+  content: unknown;
+  name?: string;
+}) {
   const [open, setOpen] = useState(false);
   const text = extractText(content);
   const label = name ? `tool: ${name}` : "tool result";

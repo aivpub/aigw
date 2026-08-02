@@ -1,7 +1,13 @@
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "@/lib/api";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CheckCircle, XCircle } from "lucide-react";
 
@@ -36,8 +42,12 @@ export function HealthPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">{t('health.title')}</h1>
-        <p className="text-sm text-muted-foreground">{t('health.description')}</p>
+        <h1 className="text-2xl font-bold tracking-tight">
+          {t("health.title")}
+        </h1>
+        <p className="text-sm text-muted-foreground">
+          {t("health.description")}
+        </p>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
@@ -55,23 +65,31 @@ export function HealthPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {isLoading ? <Skeleton className="h-4 w-16" /> : <p className="text-2xl font-bold">{data?.status}</p>}
+            {isLoading ? (
+              <Skeleton className="h-4 w-16" />
+            ) : (
+              <p className="text-2xl font-bold">{data?.status}</p>
+            )}
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle>{t('health.version')}</CardTitle>
+            <CardTitle>{t("health.version")}</CardTitle>
           </CardHeader>
           <CardContent>
-            {isLoading ? <Skeleton className="h-4 w-24" /> : <p className="text-2xl font-bold">{data?.version}</p>}
+            {isLoading ? (
+              <Skeleton className="h-4 w-24" />
+            ) : (
+              <p className="text-2xl font-bold">{data?.version}</p>
+            )}
           </CardContent>
         </Card>
 
         <Card className="md:col-span-2">
           <CardHeader>
-            <CardTitle>{t('health.database')}</CardTitle>
-            <CardDescription>{t('health.dbDescription')}</CardDescription>
+            <CardTitle>{t("health.database")}</CardTitle>
+            <CardDescription>{t("health.dbDescription")}</CardDescription>
           </CardHeader>
           <CardContent>
             {isLoading ? (
@@ -82,16 +100,22 @@ export function HealthPage() {
             ) : (
               <dl className="grid grid-cols-3 gap-4 text-sm">
                 <div>
-                  <dt className="text-muted-foreground">{t('health.min')}</dt>
-                  <dd className="text-lg font-semibold">{data?.db.connections.pool_min}</dd>
+                  <dt className="text-muted-foreground">{t("health.min")}</dt>
+                  <dd className="text-lg font-semibold">
+                    {data?.db.connections.pool_min}
+                  </dd>
                 </div>
                 <div>
-                  <dt className="text-muted-foreground">{t('health.max')}</dt>
-                  <dd className="text-lg font-semibold">{data?.db.connections.pool_max}</dd>
+                  <dt className="text-muted-foreground">{t("health.max")}</dt>
+                  <dd className="text-lg font-semibold">
+                    {data?.db.connections.pool_max}
+                  </dd>
                 </div>
                 <div>
-                  <dt className="text-muted-foreground">{t('health.idle')}</dt>
-                  <dd className="text-lg font-semibold">{data?.db.connections.pool_idle}</dd>
+                  <dt className="text-muted-foreground">{t("health.idle")}</dt>
+                  <dd className="text-lg font-semibold">
+                    {data?.db.connections.pool_idle}
+                  </dd>
                 </div>
               </dl>
             )}

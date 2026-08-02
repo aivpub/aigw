@@ -1,8 +1,8 @@
-import i18n from 'i18next';
-import { initReactI18next } from 'react-i18next';
-import LanguageDetector from 'i18next-browser-languagedetector';
-import en from './locales/en.json';
-import zhCN from './locales/zh-CN.json';
+import i18n from "i18next";
+import { initReactI18next } from "react-i18next";
+import LanguageDetector from "i18next-browser-languagedetector";
+import en from "./locales/en.json";
+import zhCN from "./locales/zh-CN.json";
 
 i18n
   .use(LanguageDetector)
@@ -10,14 +10,14 @@ i18n
   .init({
     resources: {
       en: { translation: en },
-      'zh-CN': { translation: zhCN },
+      "zh-CN": { translation: zhCN },
     },
-    fallbackLng: 'en',
-    defaultNS: 'translation',
+    fallbackLng: "en",
+    defaultNS: "translation",
     detection: {
-      order: ['localStorage', 'navigator'],
-      lookupLocalStorage: 'aigw-language',
-      caches: ['localStorage'],
+      order: ["localStorage", "navigator"],
+      lookupLocalStorage: "aigw-language",
+      caches: ["localStorage"],
     },
     interpolation: {
       escapeValue: false,
@@ -26,7 +26,7 @@ i18n
   });
 
 // Sync <html lang> attribute on language change
-i18n.on('languageChanged', (lng) => {
+i18n.on("languageChanged", (lng) => {
   document.documentElement.lang = lng;
 });
 

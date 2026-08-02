@@ -20,11 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Tabs,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Plus } from "lucide-react";
 import type { ModelItem } from "./types";
@@ -85,10 +81,17 @@ const emptyForm = (): ModelFormData => ({
 function populateForm(model: ModelItem): ModelFormData {
   const p = (model.litellm_params ?? {}) as Record<string, unknown>;
   const info = (model.model_info ?? {}) as Record<string, unknown>;
-  const rawInput = (info.input_cost_per_token as number) ?? (p.input_cost_per_token as number);
-  const rawOutput = (info.output_cost_per_token as number) ?? (p.output_cost_per_token as number);
-  const rawCacheRead = (info.cache_read_input_token_cost as number) ?? (p.cache_read_input_token_cost as number);
-  const rawCacheCreate = (info.cache_creation_input_token_cost as number) ?? (p.cache_creation_input_token_cost as number);
+  const rawInput =
+    (info.input_cost_per_token as number) ?? (p.input_cost_per_token as number);
+  const rawOutput =
+    (info.output_cost_per_token as number) ??
+    (p.output_cost_per_token as number);
+  const rawCacheRead =
+    (info.cache_read_input_token_cost as number) ??
+    (p.cache_read_input_token_cost as number);
+  const rawCacheCreate =
+    (info.cache_creation_input_token_cost as number) ??
+    (p.cache_creation_input_token_cost as number);
   const hasCredential = !!(p.litellm_credential_name as string);
 
   return {
@@ -101,27 +104,50 @@ function populateForm(model: ModelItem): ModelFormData {
     credential_name: (p.litellm_credential_name as string) || "",
     rpm: p.rpm != null ? String(p.rpm) : "",
     tpm: p.tpm != null ? String(p.tpm) : "",
-    input_price_per_million: rawInput != null ? String(rawInput * 1_000_000) : "",
-    output_price_per_million: rawOutput != null ? String(rawOutput * 1_000_000) : "",
-    cache_read_price_per_million: rawCacheRead != null ? String(rawCacheRead * 1_000_000) : "",
-    cache_create_price_per_million: rawCacheCreate != null ? String(rawCacheCreate * 1_000_000) : "",
+    input_price_per_million:
+      rawInput != null ? String(rawInput * 1_000_000) : "",
+    output_price_per_million:
+      rawOutput != null ? String(rawOutput * 1_000_000) : "",
+    cache_read_price_per_million:
+      rawCacheRead != null ? String(rawCacheRead * 1_000_000) : "",
+    cache_create_price_per_million:
+      rawCacheCreate != null ? String(rawCacheCreate * 1_000_000) : "",
     chat_template_compat: (info.chat_template_compat as string) || "",
   };
 }
 
-function buildBody(form: ModelFormData, _original?: ModelItem): Record<string, unknown> {
-  const inputCostPerToken = form.input_price_per_million !== ""
-    ? parseFloat((parseFloat(form.input_price_per_million) / 1_000_000).toFixed(10))
-    : undefined;
-  const outputCostPerToken = form.output_price_per_million !== ""
-    ? parseFloat((parseFloat(form.output_price_per_million) / 1_000_000).toFixed(10))
-    : undefined;
-  const cacheReadCost = form.cache_read_price_per_million !== ""
-    ? parseFloat((parseFloat(form.cache_read_price_per_million) / 1_000_000).toFixed(10))
-    : undefined;
-  const cacheCreateCost = form.cache_create_price_per_million !== ""
-    ? parseFloat((parseFloat(form.cache_create_price_per_million) / 1_000_000).toFixed(10))
-    : undefined;
+function buildBody(
+  form: ModelFormData,
+  _original?: ModelItem,
+): Record<string, unknown> {
+  const inputCostPerToken =
+    form.input_price_per_million !== ""
+      ? parseFloat(
+          (parseFloat(form.input_price_per_million) / 1_000_000).toFixed(10),
+        )
+      : undefined;
+  const outputCostPerToken =
+    form.output_price_per_million !== ""
+      ? parseFloat(
+          (parseFloat(form.output_price_per_million) / 1_000_000).toFixed(10),
+        )
+      : undefined;
+  const cacheReadCost =
+    form.cache_read_price_per_million !== ""
+      ? parseFloat(
+          (parseFloat(form.cache_read_price_per_million) / 1_000_000).toFixed(
+            10,
+          ),
+        )
+      : undefined;
+  const cacheCreateCost =
+    form.cache_create_price_per_million !== ""
+      ? parseFloat(
+          (parseFloat(form.cache_create_price_per_million) / 1_000_000).toFixed(
+            10,
+          ),
+        )
+      : undefined;
 
   const litellm_params: Record<string, unknown> = {
     model: form.upstream_model || form.model_name,
@@ -182,7 +208,13 @@ interface FormFieldProps {
   htmlFor?: string;
 }
 
-function FormField({ label, required, description, children, htmlFor }: FormFieldProps) {
+function FormField({
+  label,
+  required,
+  description,
+  children,
+  htmlFor,
+}: FormFieldProps) {
   return (
     <div className="space-y-1">
       <Label className="text-xs font-medium" htmlFor={htmlFor}>
@@ -209,14 +241,22 @@ interface ModelDialogProps {
   onError: (msg: string) => void;
 }
 
-export function ModelDialog({ open, onOpenChange, model, onSaved, onError }: ModelDialogProps) {
+export function ModelDialog({
+  open,
+  onOpenChange,
+  model,
+  onSaved,
+  onError,
+}: ModelDialogProps) {
   const { t } = useTranslation();
   const isEdit = model != null;
   const [form, setForm] = useState<ModelFormData>(emptyForm());
   const [upstreamManuallyEdited, setUpstreamManuallyEdited] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
-  const { data: credData } = useQuery<{ data?: Array<{ credential_name: string }> }>({
+  const { data: credData } = useQuery<{
+    data?: Array<{ credential_name: string }>;
+  }>({
     queryKey: ["credentials-list"],
     queryFn: () => apiGet("/credential/list"),
     enabled: open,
@@ -288,7 +328,11 @@ export function ModelDialog({ open, onOpenChange, model, onSaved, onError }: Mod
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{isEdit ? t("models.dialog.title.edit") : t("models.dialog.title.create")}</DialogTitle>
+          <DialogTitle>
+            {isEdit
+              ? t("models.dialog.title.edit")
+              : t("models.dialog.title.create")}
+          </DialogTitle>
           <DialogDescription>
             {isEdit
               ? `${t("models.dialog.editDescription")} "${model!.model_name}"`
@@ -298,7 +342,12 @@ export function ModelDialog({ open, onOpenChange, model, onSaved, onError }: Mod
 
         <div className="space-y-4 py-2">
           {/* Model Name */}
-          <FormField label={t("models.dialog.modelName.label")} required htmlFor="model_name" description={t("models.dialog.modelName.description")}>
+          <FormField
+            label={t("models.dialog.modelName.label")}
+            required
+            htmlFor="model_name"
+            description={t("models.dialog.modelName.description")}
+          >
             <Input
               id="model_name"
               value={form.model_name}
@@ -309,7 +358,12 @@ export function ModelDialog({ open, onOpenChange, model, onSaved, onError }: Mod
           </FormField>
 
           {/* Upstream Model */}
-          <FormField label={t("models.dialog.upstreamModel.label")} required htmlFor="upstream_model" description={t("models.dialog.upstreamModel.description")}>
+          <FormField
+            label={t("models.dialog.upstreamModel.label")}
+            required
+            htmlFor="upstream_model"
+            description={t("models.dialog.upstreamModel.description")}
+          >
             <Input
               id="upstream_model"
               value={form.upstream_model}
@@ -318,16 +372,23 @@ export function ModelDialog({ open, onOpenChange, model, onSaved, onError }: Mod
           </FormField>
 
           {/* Provider */}
-          <FormField label={t("models.dialog.provider.label")} description={t("models.dialog.provider.description")}>
+          <FormField
+            label={t("models.dialog.provider.label")}
+            description={t("models.dialog.provider.description")}
+          >
             <Select
               value={form.custom_llm_provider || "none"}
-              onValueChange={(v) => update("custom_llm_provider", v === "none" ? "" : v)}
+              onValueChange={(v) =>
+                update("custom_llm_provider", v === "none" ? "" : v)
+              }
             >
               <SelectTrigger className="h-9">
                 <SelectValue placeholder={t("models.dialog.selectProvider")} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="none">{t("models.dialog.autoDetect")}</SelectItem>
+                <SelectItem value="none">
+                  {t("models.dialog.autoDetect")}
+                </SelectItem>
                 {PROVIDERS.map((p) => (
                   <SelectItem key={p.value} value={p.value}>
                     {p.label}
@@ -339,7 +400,9 @@ export function ModelDialog({ open, onOpenChange, model, onSaved, onError }: Mod
 
           {/* Authentication Mode */}
           <div className="space-y-1">
-            <Label className="text-xs font-medium">{t("models.dialog.authentication")}</Label>
+            <Label className="text-xs font-medium">
+              {t("models.dialog.authentication")}
+            </Label>
             <Tabs
               defaultValue={form.auth_mode}
               value={form.auth_mode}
@@ -380,20 +443,30 @@ export function ModelDialog({ open, onOpenChange, model, onSaved, onError }: Mod
           {/* Credential fields */}
           {form.auth_mode === "credential" && (
             <div className="pl-1 border-l-2 border-muted">
-              <FormField label={t("models.dialog.credential.label")} description={t("models.dialog.credential.description")}>
+              <FormField
+                label={t("models.dialog.credential.label")}
+                description={t("models.dialog.credential.description")}
+              >
                 <div className="flex items-end gap-2">
                   <div className="flex-1">
                     <Select
                       value={form.credential_name || "none"}
-                      onValueChange={(v) => update("credential_name", v === "none" ? "" : v)}
+                      onValueChange={(v) =>
+                        update("credential_name", v === "none" ? "" : v)
+                      }
                     >
                       <SelectTrigger className="h-9">
-                        <SelectValue placeholder={t("models.dialog.selectCredential")} />
+                        <SelectValue
+                          placeholder={t("models.dialog.selectCredential")}
+                        />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="none">{t("common.none")}</SelectItem>
                         {credentials.map((c) => (
-                          <SelectItem key={c.credential_name} value={c.credential_name}>
+                          <SelectItem
+                            key={c.credential_name}
+                            value={c.credential_name}
+                          >
                             {c.credential_name}
                           </SelectItem>
                         ))}
@@ -420,43 +493,63 @@ export function ModelDialog({ open, onOpenChange, model, onSaved, onError }: Mod
               {t("models.dialog.pricingSection")}
             </Label>
             <div className="grid grid-cols-2 gap-3">
-              <FormField label={t("models.dialog.inputPrice.label")} description={t("models.dialog.inputPrice.description")}>
+              <FormField
+                label={t("models.dialog.inputPrice.label")}
+                description={t("models.dialog.inputPrice.description")}
+              >
                 <Input
                   type="number"
                   step="0.0001"
                   min="0"
                   value={form.input_price_per_million}
-                  onChange={(e) => update("input_price_per_million", e.target.value)}
+                  onChange={(e) =>
+                    update("input_price_per_million", e.target.value)
+                  }
                   placeholder="30.00"
                 />
               </FormField>
-              <FormField label={t("models.dialog.outputPrice.label")} description={t("models.dialog.outputPrice.description")}>
+              <FormField
+                label={t("models.dialog.outputPrice.label")}
+                description={t("models.dialog.outputPrice.description")}
+              >
                 <Input
                   type="number"
                   step="0.0001"
                   min="0"
                   value={form.output_price_per_million}
-                  onChange={(e) => update("output_price_per_million", e.target.value)}
+                  onChange={(e) =>
+                    update("output_price_per_million", e.target.value)
+                  }
                   placeholder="60.00"
                 />
               </FormField>
-              <FormField label={t("models.dialog.cacheReadPrice.label")} description={t("models.dialog.cacheReadPrice.description")}>
+              <FormField
+                label={t("models.dialog.cacheReadPrice.label")}
+                description={t("models.dialog.cacheReadPrice.description")}
+              >
                 <Input
                   type="number"
                   step="0.0001"
                   min="0"
                   value={form.cache_read_price_per_million}
-                  onChange={(e) => update("cache_read_price_per_million", e.target.value)}
+                  onChange={(e) =>
+                    update("cache_read_price_per_million", e.target.value)
+                  }
                   placeholder="3.00"
                 />
               </FormField>
-              <FormField label={t("models.dialog.cacheWritePrice.label")} description={t("models.dialog.cacheWritePrice.description")}>
+              <FormField
+                label={t("models.dialog.cacheWritePrice.label")}
+                description={t("models.dialog.cacheWritePrice.description")}
+              >
                 <Input
                   type="number"
                   step="0.0001"
                   min="0"
                   value={form.cache_create_price_per_million}
-                  onChange={(e) => update("cache_create_price_per_million", e.target.value)}
+                  onChange={(e) =>
+                    update("cache_create_price_per_million", e.target.value)
+                  }
                   placeholder="37.50"
                 />
               </FormField>
@@ -469,7 +562,10 @@ export function ModelDialog({ open, onOpenChange, model, onSaved, onError }: Mod
               {t("models.dialog.rateLimits")}
             </Label>
             <div className="grid grid-cols-2 gap-3">
-              <FormField label={t("models.dialog.rpm.label")} description={t("models.dialog.rpm.description")}>
+              <FormField
+                label={t("models.dialog.rpm.label")}
+                description={t("models.dialog.rpm.description")}
+              >
                 <Input
                   type="number"
                   step="1"
@@ -479,7 +575,10 @@ export function ModelDialog({ open, onOpenChange, model, onSaved, onError }: Mod
                   placeholder={t("common.unlimited")}
                 />
               </FormField>
-              <FormField label={t("models.dialog.tpm.label")} description={t("models.dialog.tpm.description")}>
+              <FormField
+                label={t("models.dialog.tpm.label")}
+                description={t("models.dialog.tpm.description")}
+              >
                 <Input
                   type="number"
                   step="1"
@@ -503,15 +602,23 @@ export function ModelDialog({ open, onOpenChange, model, onSaved, onError }: Mod
             >
               <Select
                 value={form.chat_template_compat || "auto"}
-                onValueChange={(v) => update("chat_template_compat", v === "auto" ? "" : v)}
+                onValueChange={(v) =>
+                  update("chat_template_compat", v === "auto" ? "" : v)
+                }
               >
                 <SelectTrigger className="h-9">
                   <SelectValue placeholder={t("models.dialog.autoDetect")} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="auto">{t("models.dialog.autoDetect")}</SelectItem>
-                  <SelectItem value="strict">{t("models.dialog.strictOption")}</SelectItem>
-                  <SelectItem value="loose">{t("models.dialog.looseOption")}</SelectItem>
+                  <SelectItem value="auto">
+                    {t("models.dialog.autoDetect")}
+                  </SelectItem>
+                  <SelectItem value="strict">
+                    {t("models.dialog.strictOption")}
+                  </SelectItem>
+                  <SelectItem value="loose">
+                    {t("models.dialog.looseOption")}
+                  </SelectItem>
                 </SelectContent>
               </Select>
             </FormField>
@@ -533,11 +640,19 @@ export function ModelDialog({ open, onOpenChange, model, onSaved, onError }: Mod
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={submitting}
+          >
             {t("common.cancel")}
           </Button>
           <Button onClick={handleSubmit} disabled={submitting}>
-            {submitting ? t("common.saving") : isEdit ? t("models.dialog.saveChanges") : t("models.dialog.title.create")}
+            {submitting
+              ? t("common.saving")
+              : isEdit
+                ? t("models.dialog.saveChanges")
+                : t("models.dialog.title.create")}
           </Button>
         </DialogFooter>
       </DialogContent>

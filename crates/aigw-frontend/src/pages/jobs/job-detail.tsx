@@ -8,7 +8,12 @@ import {
   formatDuration,
   displayJobStatus,
 } from "@/lib/api/jobs";
-import type { JobDetailResponse, JobItem, StepItem, LogEntry } from "@/lib/api/jobs";
+import type {
+  JobDetailResponse,
+  JobItem,
+  StepItem,
+  LogEntry,
+} from "@/lib/api/jobs";
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -26,7 +31,13 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 
 // ── Status Badge ──
-function StatusBadge({ status, className }: { status: string; className?: string }) {
+function StatusBadge({
+  status,
+  className,
+}: {
+  status: string;
+  className?: string;
+}) {
   const { t } = useTranslation();
   const colors: Record<string, string> = {
     pending: "bg-yellow-500/10 text-yellow-500 border-yellow-500/20",
@@ -41,18 +52,44 @@ function StatusBadge({ status, className }: { status: string; className?: string
       className={colors[status] || "bg-muted"}
       aria-label={`Status: ${status}`}
     >
-      {status === "running" && <span className="mr-1 inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" />}
-      {status === "pending" ? t("jobs.status.pending") : status === "running" ? t("jobs.status.running") : status === "completed" ? t("jobs.status.completed") : status === "failed" ? t("jobs.status.failed") : status === "partially_failed" ? t("jobs.status.partiallyFailed") : status}
+      {status === "running" && (
+        <span className="mr-1 inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+      )}
+      {status === "pending"
+        ? t("jobs.status.pending")
+        : status === "running"
+          ? t("jobs.status.running")
+          : status === "completed"
+            ? t("jobs.status.completed")
+            : status === "failed"
+              ? t("jobs.status.failed")
+              : status === "partially_failed"
+                ? t("jobs.status.partiallyFailed")
+                : status}
     </Badge>
   );
 }
 
 // ── Step Status Icon ──
-function StepStatus({ status, result }: { status: string; result: Record<string, unknown> | null }) {
+function StepStatus({
+  status,
+  result,
+}: {
+  status: string;
+  result: Record<string, unknown> | null;
+}) {
   // Q3: completed + rows_archived=0 → no-op
-  if (status === "completed" && result && (result.rows_archived === 0 || result.rows_archived === "0")) {
+  if (
+    status === "completed" &&
+    result &&
+    (result.rows_archived === 0 || result.rows_archived === "0")
+  ) {
     return (
-      <Badge variant="outline" className="bg-gray-100 text-gray-500 border-gray-300" aria-label="completed no-op">
+      <Badge
+        variant="outline"
+        className="bg-gray-100 text-gray-500 border-gray-300"
+        aria-label="completed no-op"
+      >
         completed (no-op)
       </Badge>
     );
@@ -64,7 +101,11 @@ function StepStatus({ status, result }: { status: string; result: Record<string,
     failed: "❌",
   };
   return (
-    <Badge variant="outline" className={(status === "failed" ? "text-red-500" : "") || ""} aria-label={status}>
+    <Badge
+      variant="outline"
+      className={(status === "failed" ? "text-red-500" : "") || ""}
+      aria-label={status}
+    >
       {icons[status] || ""} {status}
     </Badge>
   );
@@ -96,7 +137,9 @@ function formatStepResult(result: Record<string, unknown> | null): string {
   if (result.message && typeof result.message === "string") {
     parts.push(result.message);
   }
-  return parts.length > 0 ? parts.join(" · ") : JSON.stringify(result).slice(0, 60);
+  return parts.length > 0
+    ? parts.join(" · ")
+    : JSON.stringify(result).slice(0, 60);
 }
 
 // ── Steps Pagination (SpendLogs-style) ──
@@ -121,22 +164,43 @@ function StepsPagination({
   return (
     <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 mt-2">
       <div className="flex items-center gap-3">
-        <span className="text-xs text-muted-foreground">{_t('pagination.showing', { from, to, total: totalCount })}</span>
-        <span className="text-xs text-muted-foreground">{_t('pagination.pageInfo', { page, total: Math.max(totalPages, 1) })}</span>
+        <span className="text-xs text-muted-foreground">
+          {_t("pagination.showing", { from, to, total: totalCount })}
+        </span>
+        <span className="text-xs text-muted-foreground">
+          {_t("pagination.pageInfo", { page, total: Math.max(totalPages, 1) })}
+        </span>
       </div>
       <div className="flex items-center gap-2">
-        <Select value={String(pageSize)} onValueChange={(v) => onPageSize(Number(v))}>
-          <SelectTrigger className="h-7 w-[70px] text-xs"><SelectValue /></SelectTrigger>
+        <Select
+          value={String(pageSize)}
+          onValueChange={(v) => onPageSize(Number(v))}
+        >
+          <SelectTrigger className="h-7 w-[70px] text-xs">
+            <SelectValue />
+          </SelectTrigger>
           <SelectContent>
             <SelectItem value="20">20</SelectItem>
             <SelectItem value="50">50</SelectItem>
             <SelectItem value="100">100</SelectItem>
           </SelectContent>
         </Select>
-        <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => onPage(page - 1)} className="h-7 px-2">
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={page <= 1}
+          onClick={() => onPage(page - 1)}
+          className="h-7 px-2"
+        >
           <ChevronLeft className="h-3.5 w-3.5" />
         </Button>
-        <Button variant="outline" size="sm" disabled={page >= totalPages || totalPages === 0} onClick={() => onPage(page + 1)} className="h-7 px-2">
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={page >= totalPages || totalPages === 0}
+          onClick={() => onPage(page + 1)}
+          className="h-7 px-2"
+        >
           <ChevronRight className="h-3.5 w-3.5" />
         </Button>
       </div>
@@ -148,7 +212,9 @@ function StepsPagination({
 function StepLogRows({ logs }: { logs: LogEntry[] }) {
   const { t } = useTranslation();
   if (logs.length === 0) {
-    return <p className="p-2 text-xs text-muted-foreground">{t("jobs.noLogs")}</p>;
+    return (
+      <p className="p-2 text-xs text-muted-foreground">{t("jobs.noLogs")}</p>
+    );
   }
   return (
     <table className="w-full text-sm">
@@ -165,9 +231,11 @@ function StepLogRows({ logs }: { logs: LogEntry[] }) {
             <td className="p-2">
               <Badge
                 variant={
-                  log.level === "error" ? "destructive"
-                  : log.level === "warn" ? "secondary"
-                  : "outline"
+                  log.level === "error"
+                    ? "destructive"
+                    : log.level === "warn"
+                      ? "secondary"
+                      : "outline"
                 }
               >
                 {log.level}
@@ -313,19 +381,21 @@ export function JobDetailPage() {
     return <Skeleton className="h-60 w-full" />;
   }
 
-  const {
-    job,
-    steps: rawSteps = [],
-    summary: rawSummary,
-  } = detail;
+  const { job, steps: rawSteps = [], summary: rawSummary } = detail;
   const steps = rawSteps ?? [];
-  const summary = rawSummary ?? { total_steps: steps.length, completed: 0, failed: 0, pending: 0, running: 0 };
+  const summary = rawSummary ?? {
+    total_steps: steps.length,
+    completed: 0,
+    failed: 0,
+    pending: 0,
+    running: 0,
+  };
   const ds = displayJobStatus(job.status, summary);
   const totalSteps = summary.total_steps || steps.length;
   const stepsTotalPages = Math.max(1, Math.ceil(steps.length / stepsPageSize));
   const stepsSlice = steps.slice(
     (stepsPage - 1) * stepsPageSize,
-    stepsPage * stepsPageSize
+    stepsPage * stepsPageSize,
   );
 
   // Global logs
@@ -361,44 +431,54 @@ export function JobDetailPage() {
               {totalSteps}
             </div>
             <div>
-              <span className="text-muted-foreground">{t("jobs.status.completed")}:</span>{" "}
+              <span className="text-muted-foreground">
+                {t("jobs.status.completed")}:
+              </span>{" "}
               {summary.completed}
             </div>
             <div>
-              <span className="text-muted-foreground">{t("jobs.status.failed")}:</span>{" "}
+              <span className="text-muted-foreground">
+                {t("jobs.status.failed")}:
+              </span>{" "}
               {summary.failed}
             </div>
             <div>
-              <span className="text-muted-foreground">{t("jobs.status.pending")}:</span>{" "}
+              <span className="text-muted-foreground">
+                {t("jobs.status.pending")}:
+              </span>{" "}
               {summary.pending}
             </div>
             <div>
-              <span className="text-muted-foreground">{t("jobs.status.running")}:</span>{" "}
+              <span className="text-muted-foreground">
+                {t("jobs.status.running")}:
+              </span>{" "}
               {summary.running}
             </div>
           </div>
           {/* Progress bar */}
-          {totalSteps > 0 && (() => {
-            const done = summary.completed + summary.failed;
-            const pct = Math.round((done / totalSteps) * 100);
-            return (
-            <div className="mt-4 space-y-1">
-              <div className="flex justify-between text-xs text-muted-foreground">
-                <span>{t("jobs.progress")}</span>
-                <span>
-                  {done}/{totalSteps} ({summary.failed > 0 ? `${summary.failed} failed · ` : ""}
-                  {pct}%)
-                </span>
-              </div>
-              <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
-                <div
-                  className="bg-green-500 h-2 transition-all"
-                  style={{ width: `${Math.min(pct, 100)}%` }}
-                />
-              </div>
-            </div>
-            );
-          })()}
+          {totalSteps > 0 &&
+            (() => {
+              const done = summary.completed + summary.failed;
+              const pct = Math.round((done / totalSteps) * 100);
+              return (
+                <div className="mt-4 space-y-1">
+                  <div className="flex justify-between text-xs text-muted-foreground">
+                    <span>{t("jobs.progress")}</span>
+                    <span>
+                      {done}/{totalSteps} (
+                      {summary.failed > 0 ? `${summary.failed} failed · ` : ""}
+                      {pct}%)
+                    </span>
+                  </div>
+                  <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
+                    <div
+                      className="bg-green-500 h-2 transition-all"
+                      style={{ width: `${Math.min(pct, 100)}%` }}
+                    />
+                  </div>
+                </div>
+              );
+            })()}
         </CardContent>
       </Card>
 
@@ -414,90 +494,113 @@ export function JobDetailPage() {
             totalCount={steps.length}
             totalPages={stepsTotalPages}
             onPage={(p) => setStepsPage(p)}
-            onPageSize={(s) => { setStepsPageSize(s); setStepsPage(1); }}
+            onPageSize={(s) => {
+              setStepsPageSize(s);
+              setStepsPage(1);
+            }}
           />
           <div className="border rounded overflow-hidden mt-2">
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-muted">
                   <tr>
-                    <th className="text-left p-2">{t("jobs.detail.stepsTitle")}</th>
-                  <th className="text-left p-2">{t("jobs.detail.status")}</th>
-                  <th className="text-left p-2">{t("jobs.detail.payload")}</th>
-                  <th className="text-left p-2">{t("jobs.detail.result")}</th>
-                  <th className="text-left p-2">{t("jobs.detail.duration")}</th>
+                    <th className="text-left p-2">
+                      {t("jobs.detail.stepsTitle")}
+                    </th>
+                    <th className="text-left p-2">{t("jobs.detail.status")}</th>
+                    <th className="text-left p-2">
+                      {t("jobs.detail.payload")}
+                    </th>
+                    <th className="text-left p-2">{t("jobs.detail.result")}</th>
+                    <th className="text-left p-2">
+                      {t("jobs.detail.duration")}
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   {stepsSlice.map((step) => {
-                    const duration = step.started_at && step.completed_at
-                      ? new Date(step.completed_at).getTime() - new Date(step.started_at).getTime()
-                      : null;
+                    const duration =
+                      step.started_at && step.completed_at
+                        ? new Date(step.completed_at).getTime() -
+                          new Date(step.started_at).getTime()
+                        : null;
                     const stepLogs = logsByStep.get(step.step_key) || [];
                     const isLogExpanded = expandedLogStep === step.step_key;
                     return (
                       <React.Fragment key={step.id}>
-                      <tr
-                        className={`border-t cursor-pointer hover:bg-accent/50 ${isLogExpanded ? "bg-accent/30" : ""}`}
-                        onClick={() => setExpandedLogStep(isLogExpanded ? null : step.step_key)}
-                        tabIndex={0}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault();
-                            setExpandedLogStep(isLogExpanded ? null : step.step_key);
+                        <tr
+                          className={`border-t cursor-pointer hover:bg-accent/50 ${isLogExpanded ? "bg-accent/30" : ""}`}
+                          onClick={() =>
+                            setExpandedLogStep(
+                              isLogExpanded ? null : step.step_key,
+                            )
                           }
-                        }}
-                        aria-expanded={isLogExpanded}
-                      >
-                        <td className="p-2 font-mono text-xs">
-                          {step.step_key}
-                          {stepLogs.length > 0 && (
-                            <span className="ml-1 text-muted-foreground">
-                              {isLogExpanded ? "▲" : "▼"}
-                            </span>
-                          )}
-                        </td>
-                        <td className="p-2">
-                          <StepStatus status={step.status} result={step.result} />
-                        </td>
-                        <td className="p-2 font-mono text-xs max-w-[200px]">
-                          {expandedPayload === step.id ? (
-                            <pre className="whitespace-pre-wrap text-xs break-all">
-                              {JSON.stringify(step.payload, null, 2)}
-                            </pre>
-                          ) : (
-                            <span
-                              className="cursor-pointer text-blue-500 hover:underline"
-                              onClick={() => setExpandedPayload(step.id)}
-                              role="button"
-                              tabIndex={0}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter" || e.key === " ") {
-                                  e.preventDefault();
-                                  setExpandedPayload(step.id);
-                                }
-                              }}
-                              aria-label={t("jobs.detail.expandPayload")}
-                            >
-                              {JSON.stringify(step.payload).slice(0, 40)}...
-                            </span>
-                          )}
-                        </td>
-                        <td className="p-2 font-mono text-xs">
-                          {formatStepResult(step.result)}
-                        </td>
-                        <td className="p-2 text-xs text-muted-foreground">
-                          {duration !== null ? formatDuration(duration) : "-"}
-                        </td>
-                      </tr>
-                      {/* Expandable log rows */}
-                      {isLogExpanded && (
-                        <tr key={`${step.id}-logs`} className="border-t bg-muted/20">
-                          <td colSpan={5} className="p-0">
-                            <StepLogRows logs={stepLogs} />
+                          tabIndex={0}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              setExpandedLogStep(
+                                isLogExpanded ? null : step.step_key,
+                              );
+                            }
+                          }}
+                          aria-expanded={isLogExpanded}
+                        >
+                          <td className="p-2 font-mono text-xs">
+                            {step.step_key}
+                            {stepLogs.length > 0 && (
+                              <span className="ml-1 text-muted-foreground">
+                                {isLogExpanded ? "▲" : "▼"}
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-2">
+                            <StepStatus
+                              status={step.status}
+                              result={step.result}
+                            />
+                          </td>
+                          <td className="p-2 font-mono text-xs max-w-[200px]">
+                            {expandedPayload === step.id ? (
+                              <pre className="whitespace-pre-wrap text-xs break-all">
+                                {JSON.stringify(step.payload, null, 2)}
+                              </pre>
+                            ) : (
+                              <span
+                                className="cursor-pointer text-blue-500 hover:underline"
+                                onClick={() => setExpandedPayload(step.id)}
+                                role="button"
+                                tabIndex={0}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter" || e.key === " ") {
+                                    e.preventDefault();
+                                    setExpandedPayload(step.id);
+                                  }
+                                }}
+                                aria-label={t("jobs.detail.expandPayload")}
+                              >
+                                {JSON.stringify(step.payload).slice(0, 40)}...
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-2 font-mono text-xs">
+                            {formatStepResult(step.result)}
+                          </td>
+                          <td className="p-2 text-xs text-muted-foreground">
+                            {duration !== null ? formatDuration(duration) : "-"}
                           </td>
                         </tr>
-                      )}
+                        {/* Expandable log rows */}
+                        {isLogExpanded && (
+                          <tr
+                            key={`${step.id}-logs`}
+                            className="border-t bg-muted/20"
+                          >
+                            <td colSpan={5} className="p-0">
+                              <StepLogRows logs={stepLogs} />
+                            </td>
+                          </tr>
+                        )}
                       </React.Fragment>
                     );
                   })}
@@ -511,7 +614,10 @@ export function JobDetailPage() {
             totalCount={steps.length}
             totalPages={stepsTotalPages}
             onPage={(p) => setStepsPage(p)}
-            onPageSize={(s) => { setStepsPageSize(s); setStepsPage(1); }}
+            onPageSize={(s) => {
+              setStepsPageSize(s);
+              setStepsPage(1);
+            }}
           />
         </CardContent>
       </Card>

@@ -43,14 +43,17 @@ export function PaginationBar({
     <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
       <div className="flex items-center gap-3">
         <span className="text-xs text-muted-foreground">
-          {t('pagination.showing', { from, to, total: totalCount })}
+          {t("pagination.showing", { from, to, total: totalCount })}
         </span>
         <span className="text-xs text-muted-foreground">
-          {t('pagination.pageInfo', { page, total: Math.max(totalPages, 1) })}
+          {t("pagination.pageInfo", { page, total: Math.max(totalPages, 1) })}
         </span>
       </div>
       <div className="flex items-center gap-2">
-        <Select value={String(pageSize)} onValueChange={(v) => onPageSize(Number(v))}>
+        <Select
+          value={String(pageSize)}
+          onValueChange={(v) => onPageSize(Number(v))}
+        >
           <SelectTrigger className="h-7 w-[70px] text-xs">
             <SelectValue />
           </SelectTrigger>

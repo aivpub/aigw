@@ -13,7 +13,7 @@ interface CopyButtonProps {
 export function CopyButton({ text, label, className = "" }: CopyButtonProps) {
   const { t } = useTranslation();
   const { copied, copy } = useCopyToClipboard({
-    onError: () => toast.error(t('keys.toast.copyFailed')),
+    onError: () => toast.error(t("keys.toast.copyFailed")),
   });
 
   return (

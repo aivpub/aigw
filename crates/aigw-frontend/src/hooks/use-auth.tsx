@@ -1,4 +1,11 @@
-import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useState,
+  useCallback,
+  useEffect,
+  type ReactNode,
+} from "react";
 import i18n from "@/i18n";
 
 interface AuthState {
@@ -38,7 +45,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .finally(() => {
         if (!cancelled) setIsLoading(false);
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Listen for global auth:unauthenticated events (fired by handleResponse on 401)
@@ -61,7 +70,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err.error?.message || i18n.t('auth.loginFailed'));
+      throw new Error(err.error?.message || i18n.t("auth.loginFailed"));
     }
     setIsAuthenticated(true);
   }, []);
@@ -75,7 +84,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ isAuthenticated, isLoading, login, logout, setUnauthenticated }}>
+    <AuthContext.Provider
+      value={{ isAuthenticated, isLoading, login, logout, setUnauthenticated }}
+    >
       {children}
     </AuthContext.Provider>
   );

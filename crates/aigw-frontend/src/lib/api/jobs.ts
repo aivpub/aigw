@@ -5,7 +5,12 @@ import i18n from "@/i18n";
 
 export interface JobStats {
   [stepType: string]: {
-    queue: { pending: number; running: number; completed: number; failed: number };
+    queue: {
+      pending: number;
+      running: number;
+      completed: number;
+      failed: number;
+    };
   };
 }
 
@@ -106,14 +111,17 @@ export function fetchJobDetail(jobId: string): Promise<JobDetailResponse> {
 
 export function fetchJobLogs(
   jobId: string,
-  params: { page?: number; limit?: number; level?: string }
+  params: { page?: number; limit?: number; level?: string },
 ): Promise<JobLogsResponse> {
   const searchParams = new URLSearchParams();
   if (params.page) searchParams.set("page", String(params.page));
   if (params.limit) searchParams.set("limit", String(params.limit));
-  if (params.level && params.level !== "all") searchParams.set("level", params.level);
+  if (params.level && params.level !== "all")
+    searchParams.set("level", params.level);
   const qs = searchParams.toString();
-  return apiGet<JobLogsResponse>(`/admin/jobs/${jobId}/logs${qs ? `?${qs}` : ""}`);
+  return apiGet<JobLogsResponse>(
+    `/admin/jobs/${jobId}/logs${qs ? `?${qs}` : ""}`,
+  );
 }
 
 export function fetchArchiveStats(): Promise<ArchiveStats> {
@@ -187,7 +195,7 @@ export function formatDuration(ms: number): string {
  */
 export function displayJobStatus(
   jobStatus: string,
-  summary?: { running: number; pending: number }
+  summary?: { running: number; pending: number },
 ): string {
   if (summary?.running && summary.running > 0) return "running";
   return jobStatus;

@@ -34,7 +34,7 @@ export async function apiGet<T = unknown>(path: string): Promise<T> {
 
 export async function apiPost<T = unknown>(
   path: string,
-  body?: unknown
+  body?: unknown,
 ): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     method: "POST",
@@ -47,7 +47,7 @@ export async function apiPost<T = unknown>(
 
 export async function apiPut<T = unknown>(
   path: string,
-  body: unknown
+  body: unknown,
 ): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     method: "PUT",
@@ -60,7 +60,7 @@ export async function apiPut<T = unknown>(
 
 export async function apiPatch<T = unknown>(
   path: string,
-  body: unknown
+  body: unknown,
 ): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     method: "PATCH",

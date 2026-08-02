@@ -70,9 +70,14 @@ interface CollapsibleMessageProps {
   customContent?: React.ReactNode;
 }
 
-export function CollapsibleMessage({ label, content, defaultExpanded, customContent }: CollapsibleMessageProps) {
+export function CollapsibleMessage({
+  label,
+  content,
+  defaultExpanded,
+  customContent,
+}: CollapsibleMessageProps) {
   const text = extractText(content);
-  const [open, setOpen] = useState(defaultExpanded ?? (text.length < 200));
+  const [open, setOpen] = useState(defaultExpanded ?? text.length < 200);
 
   return (
     <div>
@@ -91,7 +96,12 @@ export function CollapsibleMessage({ label, content, defaultExpanded, customCont
       </button>
       {open && (
         <div className="border-t bg-background/50">
-          {customContent ?? (text ? <div className="px-3 py-2 text-xs whitespace-pre-wrap leading-relaxed">{text}</div> : null)}
+          {customContent ??
+            (text ? (
+              <div className="px-3 py-2 text-xs whitespace-pre-wrap leading-relaxed">
+                {text}
+              </div>
+            ) : null)}
         </div>
       )}
     </div>
@@ -120,7 +130,9 @@ export function HistoryTree({ messages, defaultExpanded }: HistoryTreeProps) {
         onClick={() => setOpen(!open)}
       >
         <span className="text-[10px]">{open ? "▾" : "▸"}</span>
-        <span>HISTORY ({messages.length} turn{messages.length !== 1 ? "s" : ""})</span>
+        <span>
+          HISTORY ({messages.length} turn{messages.length !== 1 ? "s" : ""})
+        </span>
       </button>
       {open ? (
         <div className="px-2 py-1.5 border-t bg-background/50 space-y-1 max-h-48 overflow-y-auto">
