@@ -360,21 +360,21 @@ export function TeamsPage() {
                 <div><Label htmlFor="t-budget">{t("teams.dialog.budgetLabel")}</Label><Input id="t-budget" type="number" value={formBudget} onChange={(e) => setFormBudget(e.target.value)} placeholder={t("teams.dialog.budgetPlaceholder")} /></div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <Label htmlFor="t-budget-duration">Reset Cycle</Label>
+                    <Label htmlFor="t-budget-duration">{t('teams.dialog.budgetDurationLabel')}</Label>
                     <select
                       id="t-budget-duration"
                       className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                       value={formBudgetDuration}
                       onChange={(e) => setFormBudgetDuration(e.target.value)}
                     >
-                      <option value="">None (no reset)</option>
-                      <option value="24h">Daily (24h)</option>
-                      <option value="7d">Weekly (7d)</option>
-                      <option value="30d">Monthly (30d)</option>
+                      <option value="">{t('keys.createDialog.budgetDurationOptions.none')}</option>
+                      <option value="24h">{t('keys.createDialog.budgetDurationOptions.daily')}</option>
+                      <option value="7d">{t('keys.createDialog.budgetDurationOptions.weekly')}</option>
+                      <option value="30d">{t('keys.createDialog.budgetDurationOptions.monthly')}</option>
                     </select>
                   </div>
                   <div>
-                    <Label htmlFor="t-soft-budget">Soft Budget Alert ($)</Label>
+                    <Label htmlFor="t-soft-budget">{t('teams.dialog.softBudgetLabel')}</Label>
                     <Input id="t-soft-budget" type="number" step="0.0001" value={formSoftBudget} onChange={(e) => setFormSoftBudget(e.target.value)} placeholder="0.00 — warn but don't block" />
                   </div>
                 </div>
@@ -398,21 +398,21 @@ export function TeamsPage() {
                 <div><Label htmlFor="te-budget">{t("teams.dialog.budgetLabel")}</Label><Input id="te-budget" type="number" value={formBudget} onChange={(e) => setFormBudget(e.target.value)} /></div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <Label htmlFor="te-budget-duration">Reset Cycle</Label>
+                    <Label htmlFor="te-budget-duration">{t('teams.dialog.budgetDurationLabel')}</Label>
                     <select
                       id="te-budget-duration"
                       className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                       value={formBudgetDuration}
                       onChange={(e) => setFormBudgetDuration(e.target.value)}
                     >
-                      <option value="">None (no reset)</option>
-                      <option value="24h">Daily (24h)</option>
-                      <option value="7d">Weekly (7d)</option>
-                      <option value="30d">Monthly (30d)</option>
+                      <option value="">{t('keys.createDialog.budgetDurationOptions.none')}</option>
+                      <option value="24h">{t('keys.createDialog.budgetDurationOptions.daily')}</option>
+                      <option value="7d">{t('keys.createDialog.budgetDurationOptions.weekly')}</option>
+                      <option value="30d">{t('keys.createDialog.budgetDurationOptions.monthly')}</option>
                     </select>
                   </div>
                   <div>
-                    <Label htmlFor="te-soft-budget">Soft Budget Alert ($)</Label>
+                    <Label htmlFor="te-soft-budget">{t('teams.dialog.softBudgetLabel')}</Label>
                     <Input id="te-soft-budget" type="number" step="0.0001" value={formSoftBudget} onChange={(e) => setFormSoftBudget(e.target.value)} placeholder="0.00 — warn but don't block" />
                   </div>
                 </div>

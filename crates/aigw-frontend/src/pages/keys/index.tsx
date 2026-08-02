@@ -591,12 +591,30 @@ export function KeysPage() {
                                 "—"
                               )}
                             </TableCell>
-                            <TableCell className="text-sm">
+                            <TableCell className="text-sm max-w-[160px]">
                               {!Array.isArray(key.models) || key.models.length === 0
                                 ? t('keys.allModels')
-                                : key.models.length > 3
-                                  ? key.models.slice(0, 3).join(", ") + " ..."
-                                  : key.models.join(", ")}
+                                : key.models.length <= 3
+                                  ? <span className="truncate block">{key.models.join(", ")}</span>
+                                  : (
+                                    <TooltipProvider>
+                                      <Tooltip delayDuration={300}>
+                                        <TooltipTrigger asChild>
+                                          <span className="cursor-default truncate block">
+                                            {key.models.slice(0, 2).join(", ")}{" "}
+                                            <Badge variant="secondary" className="text-[10px] px-1 py-0 align-middle">+{key.models.length - 2}</Badge>
+                                          </span>
+                                        </TooltipTrigger>
+                                        <TooltipContent side="bottom" className="max-w-xs p-2">
+                                          <div className="flex flex-wrap gap-1">
+                                            {key.models.map((m) => (
+                                              <Badge key={m} variant="secondary" className="text-xs">{m}</Badge>
+                                            ))}
+                                          </div>
+                                        </TooltipContent>
+                                      </Tooltip>
+                                    </TooltipProvider>
+                                  )}
                             </TableCell>
                             <TableCell className="text-right text-sm">
                               ${key.spend.toFixed(4)}
@@ -887,23 +905,23 @@ export function KeysPage() {
                 <div className="grid grid-cols-2 gap-4">
                   {/* Budget Duration */}
                   <div className="space-y-2">
-                    <Label htmlFor="budget-duration">Reset Cycle</Label>
+                    <Label htmlFor="budget-duration">{t('keys.createDialog.budgetDurationLabel')}</Label>
                     <select
                       id="budget-duration"
                       className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                       value={formBudgetDuration}
                       onChange={(e) => setFormBudgetDuration(e.target.value)}
                     >
-                      <option value="">None (no reset)</option>
-                      <option value="24h">Daily (24h)</option>
-                      <option value="7d">Weekly (7d)</option>
-                      <option value="30d">Monthly (30d)</option>
+                      <option value="">{t('keys.createDialog.budgetDurationOptions.none')}</option>
+                      <option value="24h">{t('keys.createDialog.budgetDurationOptions.daily')}</option>
+                      <option value="7d">{t('keys.createDialog.budgetDurationOptions.weekly')}</option>
+                      <option value="30d">{t('keys.createDialog.budgetDurationOptions.monthly')}</option>
                     </select>
                   </div>
 
                   {/* Soft Budget */}
                   <div className="space-y-2">
-                    <Label htmlFor="soft-budget">Soft Budget Alert ($)</Label>
+                    <Label htmlFor="soft-budget">{t('keys.createDialog.softBudgetLabel')}</Label>
                     <Input
                       id="soft-budget"
                       type="number"
@@ -1012,23 +1030,23 @@ export function KeysPage() {
             <div className="grid grid-cols-2 gap-4">
               {/* Budget Duration */}
               <div className="space-y-2">
-                <Label htmlFor="edit-budget-duration">Reset Cycle</Label>
+                <Label htmlFor="edit-budget-duration">{t('keys.createDialog.budgetDurationLabel')}</Label>
                 <select
                   id="edit-budget-duration"
                   className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                   value={formBudgetDuration}
                   onChange={(e) => setFormBudgetDuration(e.target.value)}
                 >
-                  <option value="">None (no reset)</option>
-                  <option value="24h">Daily (24h)</option>
-                  <option value="7d">Weekly (7d)</option>
-                  <option value="30d">Monthly (30d)</option>
+                  <option value="">{t('keys.createDialog.budgetDurationOptions.none')}</option>
+                  <option value="24h">{t('keys.createDialog.budgetDurationOptions.daily')}</option>
+                  <option value="7d">{t('keys.createDialog.budgetDurationOptions.weekly')}</option>
+                  <option value="30d">{t('keys.createDialog.budgetDurationOptions.monthly')}</option>
                 </select>
               </div>
 
               {/* Soft Budget */}
               <div className="space-y-2">
-                <Label htmlFor="edit-soft-budget">Soft Budget Alert ($)</Label>
+                <Label htmlFor="edit-soft-budget">{t('keys.createDialog.softBudgetLabel')}</Label>
                 <Input
                   id="edit-soft-budget"
                   type="number"

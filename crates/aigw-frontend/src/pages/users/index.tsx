@@ -472,21 +472,21 @@ export function UsersPage() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label htmlFor="u-budget-duration">Reset Cycle</Label>
+                <Label htmlFor="u-budget-duration">{t('users.dialog.budgetDurationLabel')}</Label>
                 <select
                   id="u-budget-duration"
                   className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                   value={formBudgetDuration}
                   onChange={(e) => setFormBudgetDuration(e.target.value)}
                 >
-                  <option value="">None (no reset)</option>
-                  <option value="24h">Daily (24h)</option>
-                  <option value="7d">Weekly (7d)</option>
-                  <option value="30d">Monthly (30d)</option>
+                  <option value="">{t('keys.createDialog.budgetDurationOptions.none')}</option>
+                  <option value="24h">{t('keys.createDialog.budgetDurationOptions.daily')}</option>
+                  <option value="7d">{t('keys.createDialog.budgetDurationOptions.weekly')}</option>
+                  <option value="30d">{t('keys.createDialog.budgetDurationOptions.monthly')}</option>
                 </select>
               </div>
               <div>
-                <Label htmlFor="u-soft-budget">Soft Budget Alert ($)</Label>
+                <Label htmlFor="u-soft-budget">{t('users.dialog.softBudgetLabel')}</Label>
                 <Input id="u-soft-budget" type="number" step="0.0001" value={formSoftBudget} onChange={(e) => setFormSoftBudget(e.target.value)} placeholder="0.00 — warn but don't block" />
               </div>
             </div>
@@ -555,21 +555,21 @@ export function UsersPage() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label htmlFor="ue-budget-duration">Reset Cycle</Label>
+                <Label htmlFor="ue-budget-duration">{t('users.dialog.budgetDurationLabel')}</Label>
                 <select
                   id="ue-budget-duration"
                   className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                   value={formBudgetDuration}
                   onChange={(e) => setFormBudgetDuration(e.target.value)}
                 >
-                  <option value="">None (no reset)</option>
-                  <option value="24h">Daily (24h)</option>
-                  <option value="7d">Weekly (7d)</option>
-                  <option value="30d">Monthly (30d)</option>
+                  <option value="">{t('keys.createDialog.budgetDurationOptions.none')}</option>
+                  <option value="24h">{t('keys.createDialog.budgetDurationOptions.daily')}</option>
+                  <option value="7d">{t('keys.createDialog.budgetDurationOptions.weekly')}</option>
+                  <option value="30d">{t('keys.createDialog.budgetDurationOptions.monthly')}</option>
                 </select>
               </div>
               <div>
-                <Label htmlFor="ue-soft-budget">Soft Budget Alert ($)</Label>
+                <Label htmlFor="ue-soft-budget">{t('users.dialog.softBudgetLabel')}</Label>
                 <Input id="ue-soft-budget" type="number" step="0.0001" value={formSoftBudget} onChange={(e) => setFormSoftBudget(e.target.value)} placeholder="0.00 — warn but don't block" />
               </div>
             </div>

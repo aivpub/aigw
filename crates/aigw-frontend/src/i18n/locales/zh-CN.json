@@ -214,6 +214,14 @@
       "aliasPlaceholder": "my-app-key",
       "modelsLabel": "模型",
       "budgetLabel": "最大预算 ($)",
+      "budgetDurationLabel": "重置周期",
+      "budgetDurationOptions": {
+        "none": "无（不重置）",
+        "daily": "每天 (24h)",
+        "weekly": "每周 (7d)",
+        "monthly": "每月 (30d)"
+      },
+      "softBudgetLabel": "软预算提醒 ($)",
       "tpmLabel": "TPM 限制",
       "rpmLabel": "RPM 限制",
       "expiresLabel": "过期时间",
@@ -485,7 +493,9 @@
       "aliasPlaceholder": "显示名称",
       "roleLabel": "角色",
       "spendLabel": "消费",
-      "budgetLabel": "最大预算 ($)"
+      "budgetLabel": "最大预算 ($)",
+      "budgetDurationLabel": "重置周期",
+      "softBudgetLabel": "软预算提醒 ($)"
     },
     "deleteDialog": {
       "title": "删除用户",
@@ -586,6 +596,8 @@
       "orgIdLabel": "组织 ID",
       "orgIdPlaceholder": "org-1",
       "budgetLabel": "最大预算 ($)",
+      "budgetDurationLabel": "重置周期",
+      "softBudgetLabel": "软预算提醒 ($)",
       "budgetPlaceholder": "500",
       "confirmDelete": "删除 {{name}}？该团队将被归档，可在已删除标签页查看。"
     },

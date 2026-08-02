@@ -275,6 +275,12 @@ pub async fn team_update(
     if let Some(v) = body.get("blocked") {
         existing.blocked = v.as_bool().unwrap_or(existing.blocked);
     }
+    if let Some(v) = body.get("budget_duration") {
+        existing.budget_duration = v.as_str().map(String::from);
+    }
+    if let Some(v) = body.get("soft_budget") {
+        existing.soft_budget = v.as_f64().map(|vv| vv.to_string());
+    }
     existing.updated_at = chrono::Utc::now();
 
     // Validate budget hierarchy: team budget cannot exceed organization budget

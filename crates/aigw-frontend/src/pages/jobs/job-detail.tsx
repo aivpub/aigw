@@ -184,6 +184,64 @@ function StepLogRows({ logs }: { logs: LogEntry[] }) {
   );
 }
 
+// ── Error Boundary ──
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+export class ErrorBoundary extends React.Component<
+  { children: React.ReactNode; fallbackLabel?: string },
+  ErrorBoundaryState
+> {
+  constructor(props: { children: React.ReactNode; fallbackLabel?: string }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.error("JobDetailPage render error:", error, info.componentStack);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <Card className="border-red-500/30">
+          <CardHeader>
+            <CardTitle className="text-lg text-red-600 dark:text-red-400">
+              {this.props.fallbackLabel || "Something went wrong"}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground mb-2">
+              An unexpected error occurred while rendering this page.
+            </p>
+            {this.state.error && (
+              <pre className="text-xs font-mono bg-muted p-2 rounded overflow-auto max-h-40">
+                {this.state.error.message}
+              </pre>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-3"
+              onClick={() => this.setState({ hasError: false, error: null })}
+            >
+              Try again
+            </Button>
+          </CardContent>
+        </Card>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
 // ── Job Detail Page Component ──
 export function JobDetailPage() {
   const { t } = useTranslation();
@@ -257,9 +315,11 @@ export function JobDetailPage() {
 
   const {
     job,
-    steps,
-    summary,
+    steps: rawSteps = [],
+    summary: rawSummary,
   } = detail;
+  const steps = rawSteps ?? [];
+  const summary = rawSummary ?? { total_steps: steps.length, completed: 0, failed: 0, pending: 0, running: 0 };
   const ds = displayJobStatus(job.status, summary);
   const totalSteps = summary.total_steps || steps.length;
   const stepsTotalPages = Math.max(1, Math.ceil(steps.length / stepsPageSize));

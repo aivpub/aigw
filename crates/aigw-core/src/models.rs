@@ -49,6 +49,8 @@ pub struct VirtualKey {
     pub rpm_limit: Option<String>,
     #[sqlx(default)]
     pub max_budget: Option<String>,
+    #[sqlx(default)]
+    pub soft_budget: Option<String>,
     pub budget_duration: Option<String>,
     pub budget_reset_at: Option<DateTime<Utc>>,
     pub allowed_cache_controls: serde_json::Value, // String[] → JSON
@@ -113,6 +115,11 @@ impl VirtualKey {
     /// Parse `rpm_limit` as Option<i64> from TEXT-compatible string.
     pub fn rpm_limit_i64(&self) -> Option<i64> {
         self.rpm_limit.as_deref().and_then(|s| s.parse().ok())
+    }
+
+    /// Parse `soft_budget` as Option<f64> from TEXT-compatible string.
+    pub fn soft_budget_f64(&self) -> Option<f64> {
+        self.soft_budget.as_deref().and_then(|s| s.parse().ok())
     }
 }
 

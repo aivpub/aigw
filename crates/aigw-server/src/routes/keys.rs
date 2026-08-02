@@ -269,6 +269,7 @@ fn build_virtual_key(hash: &str, req: &GenerateKeyRequest) -> VirtualKey {
         tpm_limit: req.tpm_limit.map(|v| v.to_string()),
         rpm_limit: req.rpm_limit.map(|v| v.to_string()),
         max_budget: req.max_budget.map(|v| v.to_string()),
+        soft_budget: None,
         budget_duration: req.budget_duration.clone(),
         budget_reset_at: req.budget_reset_at,
         allowed_cache_controls: json!([]),
@@ -458,6 +459,8 @@ pub async fn key_list(
                 "team_id": k.team_id,
                 "spend": k.spend,
                 "max_budget": k.max_budget_f64(),
+                "budget_duration": k.budget_duration,
+                "soft_budget": k.soft_budget.as_ref().and_then(|s| s.parse::<f64>().ok()),
                 "max_parallel_requests": k.max_parallel_requests_i32(),
                 "tpm_limit": k.tpm_limit_i64(),
                 "rpm_limit": k.rpm_limit_i64(),
@@ -570,6 +573,7 @@ pub async fn key_update(
         tpm_limit: body.get("tpm_limit").and_then(|v| v.as_i64()).map(|v| v.to_string()),
         rpm_limit: body.get("rpm_limit").and_then(|v| v.as_i64()).map(|v| v.to_string()),
         max_budget: body.get("max_budget").and_then(|v| v.as_f64()).map(|v| v.to_string()),
+        soft_budget: body.get("soft_budget").and_then(|v| v.as_f64()).map(|v| v.to_string()),
         budget_duration: body
             .get("budget_duration")
             .and_then(|v| v.as_str())

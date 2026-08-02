@@ -214,6 +214,14 @@
       "aliasPlaceholder": "my-app-key",
       "modelsLabel": "Models",
       "budgetLabel": "Max Budget ($)",
+      "budgetDurationLabel": "Reset Cycle",
+      "budgetDurationOptions": {
+        "none": "None (no reset)",
+        "daily": "Daily (24h)",
+        "weekly": "Weekly (7d)",
+        "monthly": "Monthly (30d)"
+      },
+      "softBudgetLabel": "Soft Budget Alert ($)",
       "tpmLabel": "TPM Limit",
       "rpmLabel": "RPM Limit",
       "expiresLabel": "Expires",
@@ -485,7 +493,9 @@
       "aliasPlaceholder": "Display name",
       "roleLabel": "Role",
       "spendLabel": "Spend",
-      "budgetLabel": "Max Budget ($)"
+      "budgetLabel": "Max Budget ($)",
+      "budgetDurationLabel": "Reset Cycle",
+      "softBudgetLabel": "Soft Budget Alert ($)"
     },
     "deleteDialog": {
       "title": "Delete User",
@@ -586,6 +596,8 @@
       "orgIdLabel": "Organization ID",
       "orgIdPlaceholder": "org-1",
       "budgetLabel": "Max Budget ($)",
+      "budgetDurationLabel": "Reset Cycle",
+      "softBudgetLabel": "Soft Budget Alert ($)",
       "budgetPlaceholder": "500",
       "confirmDelete": "Delete {{name}}? It will be archived and viewable in the Deleted tab."
     },
