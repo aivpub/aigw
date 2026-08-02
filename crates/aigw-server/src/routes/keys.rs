@@ -535,140 +535,174 @@ pub async fn key_update(
         ));
     }
 
+    let existing = existing.unwrap();
+
     // Build an updated VirtualKey from the request body
+    // IMPORTANT: only include fields explicitly sent by the client.
+    // Use existing values as defaults so that partial updates (like
+    // setting only budget_duration) don't wipe unrelated columns.
     let now = Utc::now();
     let updated = VirtualKey {
         token: hash.clone(),
         key_name: body
             .get("key_name")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string()),
+            .map(|s| s.to_string())
+            .or_else(|| existing.key_name.clone()),
         key_alias: body
             .get("key_alias")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string()),
+            .map(|s| s.to_string())
+            .or_else(|| existing.key_alias.clone()),
         soft_budget_cooldown: body
             .get("soft_budget_cooldown")
             .and_then(|v| v.as_bool())
             .map(|v| v.to_string())
-            .unwrap_or_else(|| "false".to_string()),
-        spend: body.get("spend").and_then(|v| v.as_f64()).unwrap_or(0.0),
+            .unwrap_or_else(|| existing.soft_budget_cooldown.clone()),
+        spend: body.get("spend").and_then(|v| v.as_f64()).unwrap_or(existing.spend),
         expires: body
             .get("expires")
             .and_then(|v| v.as_str())
-            .and_then(parse_rfc3339),
-        models: body.get("models").cloned().unwrap_or_else(|| json!([])),
-        aliases: body.get("aliases").cloned().unwrap_or_else(|| json!({})),
-        config: body.get("config").cloned().unwrap_or_else(|| json!({})),
-        router_settings: body.get("router_settings").cloned(),
+            .and_then(parse_rfc3339)
+            .or(existing.expires),
+        models: body.get("models").cloned().unwrap_or_else(|| existing.models.clone()),
+        aliases: body.get("aliases").cloned().unwrap_or_else(|| existing.aliases.clone()),
+        config: body.get("config").cloned().unwrap_or_else(|| existing.config.clone()),
+        router_settings: body
+            .get("router_settings")
+            .cloned()
+            .or_else(|| existing.router_settings.clone()),
         user_id: body
             .get("user_id")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string()),
+            .map(|s| s.to_string())
+            .or_else(|| existing.user_id.clone()),
         team_id: body
             .get("team_id")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string()),
+            .map(|s| s.to_string())
+            .or_else(|| existing.team_id.clone()),
         agent_id: body
             .get("agent_id")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string()),
+            .map(|s| s.to_string())
+            .or_else(|| existing.agent_id.clone()),
         project_id: body
             .get("project_id")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string()),
+            .map(|s| s.to_string())
+            .or_else(|| existing.project_id.clone()),
         permissions: body
             .get("permissions")
             .cloned()
-            .unwrap_or_else(|| json!({})),
+            .unwrap_or_else(|| existing.permissions.clone()),
         max_parallel_requests: body
             .get("max_parallel_requests")
             .and_then(|v| v.as_i64())
-            .map(|v| v.to_string()),
-        metadata: body.get("metadata").cloned().unwrap_or_else(|| json!({})),
-        blocked: body.get("blocked").and_then(|v| v.as_bool()),
+            .map(|v| v.to_string())
+            .or_else(|| existing.max_parallel_requests.clone()),
+        metadata: body.get("metadata").cloned().unwrap_or_else(|| existing.metadata.clone()),
+        blocked: body
+            .get("blocked")
+            .and_then(|v| v.as_bool())
+            .or(existing.blocked),
         tpm_limit: body
             .get("tpm_limit")
             .and_then(|v| v.as_i64())
-            .map(|v| v.to_string()),
+            .map(|v| v.to_string())
+            .or_else(|| existing.tpm_limit.clone()),
         rpm_limit: body
             .get("rpm_limit")
             .and_then(|v| v.as_i64())
-            .map(|v| v.to_string()),
+            .map(|v| v.to_string())
+            .or_else(|| existing.rpm_limit.clone()),
         max_budget: body
             .get("max_budget")
             .and_then(|v| v.as_f64())
-            .map(|v| v.to_string()),
+            .map(|v| v.to_string())
+            .or_else(|| existing.max_budget.clone()),
         soft_budget: body
             .get("soft_budget")
             .and_then(|v| v.as_f64())
-            .map(|v| v.to_string()),
+            .map(|v| v.to_string())
+            .or_else(|| existing.soft_budget.clone()),
         budget_duration: body
             .get("budget_duration")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string()),
+            .map(|s| s.to_string())
+            .or_else(|| existing.budget_duration.clone()),
         budget_reset_at: body
             .get("budget_reset_at")
             .and_then(|v| v.as_str())
-            .and_then(parse_rfc3339),
+            .and_then(parse_rfc3339)
+            .or(existing.budget_reset_at),
         allowed_cache_controls: body
             .get("allowed_cache_controls")
             .cloned()
-            .unwrap_or_else(|| json!([])),
+            .unwrap_or_else(|| existing.allowed_cache_controls.clone()),
         allowed_routes: body
             .get("allowed_routes")
             .cloned()
-            .unwrap_or_else(|| json!([])),
-        policies: body.get("policies").cloned().unwrap_or_else(|| json!([])),
+            .unwrap_or_else(|| existing.allowed_routes.clone()),
+        policies: body.get("policies").cloned().unwrap_or_else(|| existing.policies.clone()),
         access_group_ids: body
             .get("access_group_ids")
             .cloned()
-            .unwrap_or_else(|| json!([])),
+            .unwrap_or_else(|| existing.access_group_ids.clone()),
         model_spend: body
             .get("model_spend")
             .cloned()
-            .unwrap_or_else(|| json!({})),
+            .unwrap_or_else(|| existing.model_spend.clone()),
         model_max_budget: body
             .get("model_max_budget")
             .cloned()
-            .unwrap_or_else(|| json!({})),
+            .unwrap_or_else(|| existing.model_max_budget.clone()),
         budget_id: body
             .get("budget_id")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string()),
+            .map(|s| s.to_string())
+            .or_else(|| existing.budget_id.clone()),
         organization_id: body
             .get("organization_id")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string()),
+            .map(|s| s.to_string())
+            .or_else(|| existing.organization_id.clone()),
         object_permission_id: body
             .get("object_permission_id")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string()),
-        created_at: None, // preserve original
-        created_by: None,
+            .map(|s| s.to_string())
+            .or_else(|| existing.object_permission_id.clone()),
+        created_at: existing.created_at, // preserve original
+        created_by: existing.created_by.clone(),
         updated_at: Some(now),
         updated_by: body
             .get("updated_by")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string()),
-        last_active: None,
+        last_active: existing.last_active,
         rotation_count: body
             .get("rotation_count")
             .and_then(|v| v.as_i64())
-            .map(|v| v as i32),
+            .map(|v| v as i32)
+            .or(existing.rotation_count),
         auto_rotate: body
             .get("auto_rotate")
             .and_then(|v| v.as_bool())
-            .map(|v| v.to_string()),
+            .map(|v| v.to_string())
+            .or_else(|| existing.auto_rotate.clone()),
         rotation_interval: body
             .get("rotation_interval")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string()),
-        last_rotation_at: None,
-        key_rotation_at: None,
-        budget_limits: body.get("budget_limits").cloned(),
-        user_email: None,
-        user_alias: None,
+            .map(|s| s.to_string())
+            .or_else(|| existing.rotation_interval.clone()),
+        last_rotation_at: existing.last_rotation_at,
+        key_rotation_at: existing.key_rotation_at,
+        budget_limits: body
+            .get("budget_limits")
+            .cloned()
+            .or_else(|| existing.budget_limits.clone()),
+        user_email: existing.user_email.clone(),
+        user_alias: existing.user_alias.clone(),
     };
 
     // Validate budget hierarchy: key budget cannot exceed parent user/team budget
