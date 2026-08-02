@@ -107,7 +107,7 @@ Feature: Jobs 管理页面
 
   Scenario: Budget Reset Sub-Tab 显示占位和统计
     When I click the "Budget Reset" Sub-Tab
-    Then I should see a placeholder message "No jobs yet"
+    Then I should see a placeholder message "No jobs found"
     And GET /admin/jobs?step_type=budget_reset is called
     And the stats card shows loop and queue stats for budget_reset
 

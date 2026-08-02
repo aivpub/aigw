@@ -692,7 +692,7 @@ export function UsagePage() {
                       />
                       <Bar
                         dataKey="successful_requests"
-                        name={t("usage.cards.ok")}
+                        name={t("usage.chart.success")}
                         fill="#22c55e"
                         stackId="requests"
                         radius={[4, 4, 0, 0]}

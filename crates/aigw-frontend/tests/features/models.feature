@@ -25,7 +25,7 @@ Feature: Model Management
   Scenario: Create a new model via dialog
     When I click "Add Model" on the Models page
     And I fill the model form with name "test-model" provider "openai" input price "15" output price "30"
-    And I click the "Create Model" button in the dialog
+    And I click the "Add Model" button in the dialog
     Then the dialog closes
 
   Scenario: Edit a model via dialog
