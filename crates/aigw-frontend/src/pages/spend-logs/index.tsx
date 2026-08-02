@@ -217,9 +217,7 @@ function truncateUuid(s: string) {
   if (s.length <= 10) return s;
   return s.slice(0, 5) + "…" + s.slice(-5);
 }
-function extractCacheTokens(
-  metadata: unknown,
-): {
+function extractCacheTokens(metadata: unknown): {
   cache_read_tokens?: number;
   cache_creation_tokens?: number;
   cache_read_spend?: number;
@@ -1251,10 +1249,14 @@ export function SpendLogsPage() {
                 }}
               >
                 <SelectTrigger className="h-7 text-xs">
-                  <SelectValue placeholder={t("spendLogs.filters.modelPlaceholder")} />
+                  <SelectValue
+                    placeholder={t("spendLogs.filters.modelPlaceholder")}
+                  />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="_all">{t("spendLogs.filters.all")}</SelectItem>
+                  <SelectItem value="_all">
+                    {t("spendLogs.filters.all")}
+                  </SelectItem>
                   {(modelListData?.data ?? []).map((m) => {
                     const suffix = modelDisplaySuffix(m);
                     return (
