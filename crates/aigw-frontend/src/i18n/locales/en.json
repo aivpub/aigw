@@ -186,6 +186,7 @@
       "models": "Models",
       "spend": "Spend",
       "budget": "Budget",
+      "resetPeriod": "Reset Period",
       "expires": "Expires",
       "created": "Created",
       "status": "Status",
@@ -472,6 +473,7 @@
       "email": "Email",
       "role": "Role",
       "spend": "Spend",
+      "resetPeriod": "Reset Period",
       "deletedAt": "Deleted At",
       "actions": "Actions",
       "keys": "Keys"

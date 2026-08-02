@@ -545,6 +545,9 @@ export function KeysPage() {
                           <TableHead className="text-right">
                             {t("keys.table.budget")}
                           </TableHead>
+                          <TableHead className="text-right text-xs">
+                            {t("keys.table.resetPeriod")}
+                          </TableHead>
                           <TableHead>{t("keys.table.expires")}</TableHead>
                           <TableHead>{t("keys.table.created")}</TableHead>
                           <TableHead>{t("keys.table.status")}</TableHead>
@@ -557,7 +560,7 @@ export function KeysPage() {
                         {isLoading
                           ? Array.from({ length: 3 }).map((_, i) => (
                               <TableRow key={i}>
-                                {Array.from({ length: 11 }).map((_, j) => (
+                                {Array.from({ length: 12 }).map((_, j) => (
                                   <TableCell key={j}>
                                     <Skeleton className="h-4 w-full" />
                                   </TableCell>
@@ -739,6 +742,9 @@ export function KeysPage() {
                                     ? `$${key.max_budget.toFixed(2)}${key.budget_duration ? ` / ${key.budget_duration}` : ""}`
                                     : "∞"}
                                 </TableCell>
+                                <TableCell className="text-right text-xs text-muted-foreground">
+                                  {key.budget_duration ?? "—"}
+                                </TableCell>
                                 <TableCell className="text-xs text-muted-foreground">
                                   {key.expires
                                     ? new Date(key.expires).toLocaleDateString()
@@ -893,6 +899,9 @@ export function KeysPage() {
                                     ? `$${key.max_budget.toFixed(2)}${key.budget_duration ? ` / ${key.budget_duration}` : ""}`
                                     : "∞"}
                                 </span>
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {t("keys.table.resetPeriod")}: {key.budget_duration ?? "—"}
                               </div>
                               <div className="text-xs text-muted-foreground">
                                 {t("keys.mobile.expires")}{" "}

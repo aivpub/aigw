@@ -398,6 +398,9 @@ export function UsersPage() {
                             {t("users.table.spend")}
                           </TableHead>
                           <TableHead className="text-right">Budget</TableHead>
+                          <TableHead className="text-right text-xs">
+                            {t("users.table.resetPeriod")}
+                          </TableHead>
                           <TableHead className="text-right">
                             {t("users.table.keys")}
                           </TableHead>
@@ -411,7 +414,7 @@ export function UsersPage() {
                         {isLoading
                           ? Array.from({ length: 3 }).map((_, i) => (
                               <TableRow key={i}>
-                                {Array.from({ length: 9 }).map((_, j) => (
+                                {Array.from({ length: 10 }).map((_, j) => (
                                   <TableCell key={j}>
                                     <Skeleton className="h-4 w-full" />
                                   </TableCell>
@@ -463,6 +466,9 @@ export function UsersPage() {
                                   {u.max_budget != null
                                     ? `$${u.max_budget.toFixed(2)}${u.budget_duration ? ` / ${u.budget_duration}` : ""}`
                                     : "∞"}
+                                </TableCell>
+                                <TableCell className="text-right text-xs text-muted-foreground">
+                                  {u.budget_duration ?? "—"}
                                 </TableCell>
                                 <TableCell className="text-right text-sm">
                                   {(u.virtual_keys_count ?? 0) > 0 ? (
@@ -555,6 +561,9 @@ export function UsersPage() {
                                     ? `${t("users.mobile.budget")} $${u.max_budget.toFixed(2)}${u.budget_duration ? ` / ${u.budget_duration}` : ""}`
                                     : t("users.mobile.noBudget")}
                                 </span>
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {t("users.table.resetPeriod")}: {u.budget_duration ?? "—"}
                               </div>
                               <div className="text-xs text-muted-foreground">
                                 {t("users.mobile.created")}:{" "}
