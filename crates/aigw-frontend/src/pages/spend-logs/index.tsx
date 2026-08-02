@@ -1248,7 +1248,7 @@ export function SpendLogsPage() {
                   setPage(1);
                 }}
               >
-                <SelectTrigger className="h-7 text-xs">
+                <SelectTrigger className="h-7 text-[11px]">
                   <SelectValue
                     placeholder={t("spendLogs.filters.modelPlaceholder")}
                   />
