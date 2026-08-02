@@ -395,6 +395,9 @@ export function TeamsPage() {
                           <TableHead className="text-right">
                             {t("teams.table.budget")}
                           </TableHead>
+                          <TableHead className="text-right text-xs">
+                            {t("teams.table.resetPeriod")}
+                          </TableHead>
                           <TableHead>{t("teams.table.created")}</TableHead>
                           <TableHead className="text-right">
                             {t("teams.table.actions")}
@@ -405,7 +408,7 @@ export function TeamsPage() {
                         {isLoading
                           ? Array.from({ length: 3 }).map((_, i) => (
                               <TableRow key={i}>
-                                {Array.from({ length: 8 }).map((_, j) => (
+                                {Array.from({ length: 9 }).map((_, j) => (
                                   <TableCell key={j}>
                                     <Skeleton className="h-4 w-full" />
                                   </TableCell>
@@ -443,6 +446,9 @@ export function TeamsPage() {
                                   {team.max_budget != null
                                     ? `$${team.max_budget.toFixed(2)}${team.budget_duration ? ` / ${team.budget_duration}` : ""}`
                                     : "∞"}
+                                </TableCell>
+                                <TableCell className="text-right text-xs text-muted-foreground">
+                                  {team.budget_duration ?? "—"}
                                 </TableCell>
                                 <TableCell className="text-xs text-muted-foreground">
                                   {team.created_at
@@ -525,6 +531,9 @@ export function TeamsPage() {
                                     ? `${t("teams.mobile.budget")} $${team.max_budget.toFixed(2)}${team.budget_duration ? ` / ${team.budget_duration}` : ""}`
                                     : t("teams.noBudget")}
                                 </span>
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {t("teams.table.resetPeriod")}: {team.budget_duration ?? "—"}
                               </div>
                               <div className="text-xs text-muted-foreground">
                                 {t("teams.mobile.created")}:{" "}

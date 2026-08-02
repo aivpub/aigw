@@ -50,11 +50,11 @@ interface BudgetListResponse {
   total_pages?: number;
 }
 
-function durationLabel(d: string): string {
+function durationLabel(d: string, t: ReturnType<typeof useTranslation>["t"]): string {
   const m: Record<string, string> = {
-    "24h": "Daily (24h)",
-    "7d": "Weekly (7d)",
-    "30d": "Monthly (30d)",
+    "24h": t("budgets.resetCycleOptions.daily"),
+    "7d": t("budgets.resetCycleOptions.weekly"),
+    "30d": t("budgets.resetCycleOptions.monthly"),
   };
   return m[d] ?? d;
 }
@@ -102,7 +102,7 @@ export function BudgetsPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["budgets"] });
       setCreateOpen(false);
-      toast.success("Budget created");
+      toast.success(t("budgets.toast.created"));
     },
     onError: (err: Error) => toast.error(err.message),
   });
@@ -114,7 +114,7 @@ export function BudgetsPage() {
       queryClient.invalidateQueries({ queryKey: ["budgets"] });
       setEditOpen(false);
       setSelected(null);
-      toast.success("Budget updated");
+      toast.success(t("budgets.toast.updated"));
     },
     onError: (err: Error) => toast.error(err.message),
   });
@@ -125,7 +125,7 @@ export function BudgetsPage() {
       queryClient.invalidateQueries({ queryKey: ["budgets"] });
       setDeleteOpen(false);
       setSelected(null);
-      toast.success("Budget deleted");
+      toast.success(t("budgets.toast.deleted"));
     },
     onError: (err: Error) => toast.error(err.message),
   });
@@ -190,13 +190,15 @@ export function BudgetsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Budgets</h1>
+          <h1 className="text-2xl font-bold tracking-tight">
+            {t("budgets.title")}
+          </h1>
           <p className="text-sm text-muted-foreground">
-            Manage budget limits and reset cycles
+            {t("budgets.description")}
           </p>
         </div>
         <Button onClick={openCreate}>
-          <Plus className="h-4 w-4" /> New Budget
+          <Plus className="h-4 w-4" /> {t("budgets.newBudget")}
         </Button>
       </div>
 
@@ -204,7 +206,7 @@ export function BudgetsPage() {
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
-            placeholder="Search by name or ID..."
+            placeholder={t("budgets.searchPlaceholder")}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9"
@@ -215,7 +217,7 @@ export function BudgetsPage() {
 
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle>All Budgets ({totalCount})</CardTitle>
+          <CardTitle>{t("budgets.allBudgets")} ({totalCount})</CardTitle>
         </CardHeader>
         <CardContent>
           {error ? (
@@ -240,13 +242,15 @@ export function BudgetsPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Budget ID</TableHead>
-                      <TableHead>Budget Limit</TableHead>
-                      <TableHead>Reset Cycle</TableHead>
-                      <TableHead>Soft Alert</TableHead>
-                      <TableHead>Created</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
+                      <TableHead>{t("budgets.table.name")}</TableHead>
+                      <TableHead>{t("budgets.table.budgetId")}</TableHead>
+                      <TableHead>{t("budgets.table.limit")}</TableHead>
+                      <TableHead>{t("budgets.table.resetPeriod")}</TableHead>
+                      <TableHead>{t("budgets.table.softAlert")}</TableHead>
+                      <TableHead>{t("budgets.table.created")}</TableHead>
+                      <TableHead className="text-right">
+                        {t("budgets.table.actions")}
+                      </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -275,7 +279,7 @@ export function BudgetsPage() {
                             </TableCell>
                             <TableCell className="text-sm">
                               {b.budget_duration
-                                ? durationLabel(b.budget_duration)
+                                ? durationLabel(b.budget_duration, t)
                                 : "—"}
                             </TableCell>
                             <TableCell className="text-sm">
@@ -310,7 +314,7 @@ export function BudgetsPage() {
                 </Table>
                 {!isLoading && filtered.length === 0 && (
                   <div className="text-center text-muted-foreground py-8">
-                    {search ? "No budgets match your search" : "No budgets yet"}
+                    {search ? t("budgets.noMatch") : t("budgets.noBudgets")}
                   </div>
                 )}
               </div>
@@ -345,17 +349,17 @@ export function BudgetsPage() {
                           <div className="flex items-center justify-between text-xs text-muted-foreground">
                             <span>
                               {b.budget_duration
-                                ? durationLabel(b.budget_duration)
-                                : "No cycle"}
+                                ? durationLabel(b.budget_duration, t)
+                                : t("budgets.mobile.noCycle")}
                             </span>
                             <span>
                               {b.soft_budget
-                                ? `Alert: $${parseFloat(b.soft_budget).toFixed(2)}`
+                                ? `${t("budgets.mobile.alert")}: $${parseFloat(b.soft_budget).toFixed(2)}`
                                 : ""}
                             </span>
                           </div>
                           <div className="text-xs text-muted-foreground">
-                            Created:{" "}
+                            {t("budgets.mobile.created")}:{" "}
                             {b.created_at ? formatDate(b.created_at) : "—"}
                           </div>
                           <div className="flex justify-end gap-1 pt-1">
@@ -364,7 +368,8 @@ export function BudgetsPage() {
                               size="sm"
                               onClick={() => openEdit(b)}
                             >
-                              <Pencil className="h-3.5 w-3.5 mr-1" /> Edit
+                              <Pencil className="h-3.5 w-3.5 mr-1" />{" "}
+                              {t("common.edit")}
                             </Button>
                             <Button
                               variant="ghost"
@@ -372,7 +377,7 @@ export function BudgetsPage() {
                               onClick={() => openDelete(b)}
                             >
                               <Trash2 className="h-3.5 w-3.5 mr-1 text-destructive" />{" "}
-                              Delete
+                              {t("common.delete")}
                             </Button>
                           </div>
                         </CardContent>
@@ -380,7 +385,7 @@ export function BudgetsPage() {
                     ))}
                 {!isLoading && filtered.length === 0 && (
                   <div className="text-center text-muted-foreground py-8">
-                    {search ? "No budgets match your search" : "No budgets yet"}
+                    {search ? t("budgets.noMatch") : t("budgets.noBudgets")}
                   </div>
                 )}
               </div>
@@ -408,66 +413,66 @@ export function BudgetsPage() {
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Create Budget</DialogTitle>
+            <DialogTitle>{t("budgets.dialog.titleCreate")}</DialogTitle>
             <DialogDescription>
-              Define a budget with optional limits and reset cycle.
+              {t("budgets.dialog.descriptionCreate")}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <Label htmlFor="b-name">Budget Name</Label>
+              <Label htmlFor="b-name">{t("budgets.dialog.nameLabel")}</Label>
               <Input
                 id="b-name"
                 value={formName}
                 onChange={(e) => setFormName(e.target.value)}
-                placeholder="e.g. Monthly GPT-4 Budget"
+                placeholder={t("budgets.dialog.namePlaceholder")}
               />
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label htmlFor="b-max">Max Budget ($)</Label>
+                <Label htmlFor="b-max">{t("budgets.dialog.maxBudgetLabel")}</Label>
                 <Input
                   id="b-max"
                   type="number"
                   value={formMaxBudget}
                   onChange={(e) => setFormMaxBudget(e.target.value)}
-                  placeholder="50"
+                  placeholder={t("budgets.dialog.maxBudgetPlaceholder")}
                 />
               </div>
               <div>
-                <Label htmlFor="b-soft">Soft Budget Alert ($)</Label>
+                <Label htmlFor="b-soft">{t("budgets.dialog.softBudgetLabel")}</Label>
                 <Input
                   id="b-soft"
                   type="number"
                   step="0.0001"
                   value={formSoftBudget}
                   onChange={(e) => setFormSoftBudget(e.target.value)}
-                  placeholder="0.00 — warn but don't block"
+                  placeholder={t("budgets.dialog.softBudgetPlaceholder")}
                 />
               </div>
             </div>
             <div>
-              <Label htmlFor="b-duration">Reset Cycle</Label>
+              <Label htmlFor="b-duration">{t("budgets.dialog.resetCycleLabel")}</Label>
               <select
                 id="b-duration"
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                 value={formBudgetDuration}
                 onChange={(e) => setFormBudgetDuration(e.target.value)}
               >
-                <option value="">None (no reset)</option>
-                <option value="24h">Daily (24h)</option>
-                <option value="7d">Weekly (7d)</option>
-                <option value="30d">Monthly (30d)</option>
+                <option value="">{t("budgets.resetCycleOptions.none")}</option>
+                <option value="24h">{t("budgets.resetCycleOptions.daily")}</option>
+                <option value="7d">{t("budgets.resetCycleOptions.weekly")}</option>
+                <option value="30d">{t("budgets.resetCycleOptions.monthly")}</option>
               </select>
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateOpen(false)}>
-              Cancel
+              {t("common.cancel")}
             </Button>
             <Button onClick={handleCreate} disabled={createMutation.isPending}>
               {createMutation.isPending && <Spinner className="mr-2" />}
-              Create
+              {t("common.create")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -477,24 +482,26 @@ export function BudgetsPage() {
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Edit Budget</DialogTitle>
+            <DialogTitle>{t("budgets.dialog.titleEdit")}</DialogTitle>
             <DialogDescription>
-              Update budget {selected ? displayName(selected) : ""}
+              {t("budgets.dialog.descriptionEdit", {
+                name: selected ? displayName(selected) : "",
+              })}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <Label htmlFor="be-name">Budget Name</Label>
+              <Label htmlFor="be-name">{t("budgets.dialog.nameLabel")}</Label>
               <Input
                 id="be-name"
                 value={formName}
                 onChange={(e) => setFormName(e.target.value)}
-                placeholder="e.g. Monthly GPT-4 Budget"
+                placeholder={t("budgets.dialog.namePlaceholder")}
               />
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label htmlFor="be-max">Max Budget ($)</Label>
+                <Label htmlFor="be-max">{t("budgets.dialog.maxBudgetLabel")}</Label>
                 <Input
                   id="be-max"
                   type="number"
@@ -503,39 +510,39 @@ export function BudgetsPage() {
                 />
               </div>
               <div>
-                <Label htmlFor="be-soft">Soft Budget Alert ($)</Label>
+                <Label htmlFor="be-soft">{t("budgets.dialog.softBudgetLabel")}</Label>
                 <Input
                   id="be-soft"
                   type="number"
                   step="0.0001"
                   value={formSoftBudget}
                   onChange={(e) => setFormSoftBudget(e.target.value)}
-                  placeholder="0.00 — warn but don't block"
+                  placeholder={t("budgets.dialog.softBudgetPlaceholder")}
                 />
               </div>
             </div>
             <div>
-              <Label htmlFor="be-duration">Reset Cycle</Label>
+              <Label htmlFor="be-duration">{t("budgets.dialog.resetCycleLabel")}</Label>
               <select
                 id="be-duration"
                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                 value={formBudgetDuration}
                 onChange={(e) => setFormBudgetDuration(e.target.value)}
               >
-                <option value="">None (no reset)</option>
-                <option value="24h">Daily (24h)</option>
-                <option value="7d">Weekly (7d)</option>
-                <option value="30d">Monthly (30d)</option>
+                <option value="">{t("budgets.resetCycleOptions.none")}</option>
+                <option value="24h">{t("budgets.resetCycleOptions.daily")}</option>
+                <option value="7d">{t("budgets.resetCycleOptions.weekly")}</option>
+                <option value="30d">{t("budgets.resetCycleOptions.monthly")}</option>
               </select>
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditOpen(false)}>
-              Cancel
+              {t("common.cancel")}
             </Button>
             <Button onClick={handleEdit} disabled={editMutation.isPending}>
               {editMutation.isPending && <Spinner className="mr-2" />}
-              Save Changes
+              {t("budgets.dialog.saveBtn")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -545,15 +552,16 @@ export function BudgetsPage() {
       <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete Budget</DialogTitle>
+            <DialogTitle>{t("budgets.dialog.titleDelete")}</DialogTitle>
             <DialogDescription>
-              Delete budget "{selected ? displayName(selected) : ""}"? This
-              action cannot be undone.
+              {t("budgets.dialog.descriptionDelete", {
+                name: selected ? displayName(selected) : "",
+              })}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteOpen(false)}>
-              Cancel
+              {t("common.cancel")}
             </Button>
             <Button
               variant="destructive"
@@ -563,7 +571,7 @@ export function BudgetsPage() {
               disabled={deleteMutation.isPending}
             >
               {deleteMutation.isPending && <Spinner className="mr-2" />}
-              Delete
+              {t("common.delete")}
             </Button>
           </DialogFooter>
         </DialogContent>

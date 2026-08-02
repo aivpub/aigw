@@ -584,6 +584,7 @@
       "status": "状态",
       "spend": "消费",
       "budget": "预算",
+      "resetPeriod": "重置周期",
       "created": "创建",
       "actions": "操作",
       "deletedAt": "删除时间"
@@ -996,5 +997,55 @@
   },
   "auth": {
     "loginFailed": "登录失败"
+  },
+  "budgets": {
+    "title": "预算管理",
+    "description": "管理预算额度与重置周期",
+    "newBudget": "新建预算",
+    "allBudgets": "所有预算",
+    "searchPlaceholder": "按名称或ID搜索...",
+    "noBudgets": "暂无预算",
+    "noMatch": "没有匹配的预算",
+    "table": {
+      "name": "名称",
+      "budgetId": "预算 ID",
+      "limit": "预算额度",
+      "resetPeriod": "重置周期",
+      "softAlert": "软提醒",
+      "created": "创建",
+      "actions": "操作"
+    },
+    "mobile": {
+      "noCycle": "无周期",
+      "alert": "提醒",
+      "created": "创建"
+    },
+    "dialog": {
+      "titleCreate": "创建预算",
+      "titleEdit": "编辑预算",
+      "titleDelete": "删除预算",
+      "descriptionCreate": "定义预算额度和可选的重置周期。",
+      "descriptionEdit": "更新预算 {{name}}",
+      "descriptionDelete": "删除预算 \"{{name}}\"？此操作不可撤销。",
+      "nameLabel": "预算名称",
+      "namePlaceholder": "如：GPT-4 月度预算",
+      "maxBudgetLabel": "最大预算 ($)",
+      "maxBudgetPlaceholder": "50",
+      "resetCycleLabel": "重置周期",
+      "softBudgetLabel": "软预算提醒 ($)",
+      "softBudgetPlaceholder": "0.00 — 提醒但不拦截",
+      "saveBtn": "保存修改"
+    },
+    "resetCycleOptions": {
+      "none": "无（不重置）",
+      "daily": "每日 (24h)",
+      "weekly": "每周 (7d)",
+      "monthly": "每月 (30d)"
+    },
+    "toast": {
+      "created": "预算已创建",
+      "updated": "预算已更新",
+      "deleted": "预算已删除"
+    }
   }
 }

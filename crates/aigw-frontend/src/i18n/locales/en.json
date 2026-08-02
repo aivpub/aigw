@@ -584,6 +584,7 @@
       "status": "Status",
       "spend": "Spend",
       "budget": "Budget",
+      "resetPeriod": "Reset Period",
       "created": "Created",
       "actions": "Actions",
       "deletedAt": "Deleted At"
@@ -996,5 +997,55 @@
   },
   "auth": {
     "loginFailed": "Login failed"
+  },
+  "budgets": {
+    "title": "Budgets",
+    "description": "Manage budget limits and reset cycles",
+    "newBudget": "New Budget",
+    "allBudgets": "All Budgets",
+    "searchPlaceholder": "Search by name or ID...",
+    "noBudgets": "No budgets yet",
+    "noMatch": "No budgets match your search",
+    "table": {
+      "name": "Name",
+      "budgetId": "Budget ID",
+      "limit": "Budget Limit",
+      "resetPeriod": "Reset Cycle",
+      "softAlert": "Soft Alert",
+      "created": "Created",
+      "actions": "Actions"
+    },
+    "mobile": {
+      "noCycle": "No cycle",
+      "alert": "Alert",
+      "created": "Created"
+    },
+    "dialog": {
+      "titleCreate": "Create Budget",
+      "titleEdit": "Edit Budget",
+      "titleDelete": "Delete Budget",
+      "descriptionCreate": "Define a budget with optional limits and reset cycle.",
+      "descriptionEdit": "Update budget {{name}}",
+      "descriptionDelete": "Delete budget \"{{name}}\"? This action cannot be undone.",
+      "nameLabel": "Budget Name",
+      "namePlaceholder": "e.g. Monthly GPT-4 Budget",
+      "maxBudgetLabel": "Max Budget ($)",
+      "maxBudgetPlaceholder": "50",
+      "resetCycleLabel": "Reset Cycle",
+      "softBudgetLabel": "Soft Budget Alert ($)",
+      "softBudgetPlaceholder": "0.00 — warn but don't block",
+      "saveBtn": "Save Changes"
+    },
+    "resetCycleOptions": {
+      "none": "None (no reset)",
+      "daily": "Daily (24h)",
+      "weekly": "Weekly (7d)",
+      "monthly": "Monthly (30d)"
+    },
+    "toast": {
+      "created": "Budget created",
+      "updated": "Budget updated",
+      "deleted": "Budget deleted"
+    }
   }
 }
