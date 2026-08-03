@@ -778,15 +778,10 @@ export function KeysPage() {
                                       checked={!key.blocked}
                                       onCheckedChange={async (checked) => {
                                         try {
-                                          if (checked) {
-                                            await apiPost("/key/unblock", {
-                                              key: key.token,
-                                            });
-                                          } else {
-                                            await apiPost("/key/block", {
-                                              key: key.token,
-                                            });
-                                          }
+                                          await apiPut("/key/update", {
+                                            key: key.token,
+                                            blocked: !checked,
+                                          });
                                           queryClient.invalidateQueries({
                                             queryKey: ["virtual-keys"],
                                           });
