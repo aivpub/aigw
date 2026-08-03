@@ -3,7 +3,7 @@
 //! This module provides `enforce_limits`, a guard function that should be
 //! called at the start of each LLM request handler. It performs:
 //!
-//! 1. **Budget check** — verifies the key has not exceeded its max_budget
+//! 1. **Multi-level budget check** — verifies key → user → team → org spend against max_budget
 //! 2. **Rate limit check** — verifies RPM/TPM limits are not exceeded
 //!
 //! # Usage
@@ -24,7 +24,8 @@ use axum::http::StatusCode;
 use axum::Json;
 use serde_json::json;
 
-use crate::budget::{BudgetEnforcer, BudgetError};
+use crate::budget::BudgetEnforcer;
+use crate::budget::BudgetError;
 use crate::db::Database;
 use crate::middleware::KeyIdentity;
 use crate::rate_limiter::RateLimiter;
@@ -40,7 +41,11 @@ use crate::rate_limiter::RateLimiter;
 #[derive(Debug)]
 pub enum LimitError {
     /// The key has exceeded its budget.
-    BudgetExceeded { spent: f64, limit: f64 },
+    BudgetExceeded {
+        entity_type: String,
+        spent: f64,
+        limit: f64,
+    },
     /// The key has exceeded its RPM or TPM limit.
     RateLimited { message: String },
     /// A database error occurred during budget check.
@@ -50,14 +55,15 @@ pub enum LimitError {
 impl axum::response::IntoResponse for LimitError {
     fn into_response(self) -> axum::response::Response {
         let (status, error_body) = match self {
-            LimitError::BudgetExceeded { spent, limit } => (
+            LimitError::BudgetExceeded { entity_type, spent, limit } => (
                 StatusCode::TOO_MANY_REQUESTS,
                 json!({
                     "error": {
-                        "message": format!("Budget exceeded: spent {:.4}, limit {:.4}", spent, limit),
+                        "message": format!("{} budget exceeded: spent {:.4}, limit {:.4}", entity_type, spent, limit),
                         "type": "budget_exceeded",
                         "param": null,
                         "code": 429,
+                        "entity_type": entity_type,
                         "spent": spent,
                         "limit": limit,
                     }
@@ -124,11 +130,13 @@ pub async fn enforce_limits(
         return Ok(());
     }
 
-    // 1. Check budget
-    BudgetEnforcer::check_budget(db, &key.token_hash)
+    // 1. Multi-level budget check (key → user → team → org)
+    BudgetEnforcer::check_budget_multi(db, key)
         .await
         .map_err(|e| match e {
-            BudgetError::Exceeded { spent, limit } => LimitError::BudgetExceeded { spent, limit },
+            BudgetError::Exceeded { entity_type, spent, limit } => {
+                LimitError::BudgetExceeded { entity_type, spent, limit }
+            }
             BudgetError::DbError(err) => {
                 LimitError::Internal(format!("Budget check failed: {}", err))
             }

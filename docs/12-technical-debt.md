@@ -53,10 +53,11 @@
 
 - **Date**: 2026-07-30
 - **Priority**: P2
-- **Source**: Phase 37 规划（docs/plans/2026-07-30-budget-reset-phase-37.md §1.3）
-- **Description**: Phase 37 实现 soft_budget 超限检查时只记 tracing warn 日志，不拒绝请求（对齐 litellm async alert 语义）。litellm 的完整 soft_budget 告警走 Slack/Email/Webhook 外部通知通道，aigw 当前无任何外部通知集成。Stage 93 的 soft/hard 双轨检查落地后，soft 超限只在日志可见，无法主动通知管理员。
-- **Impact**: soft_budget 超限需管理员主动查日志才能发现，无法实时告警。不阻塞 Phase 37 核心预期（hard reset + max_budget 检查 + 周期重置已完整）。
-- **Resolution**: 后续接入通知通道（webhook / 邮件 / 企微），在 BudgetResetter 或 BudgetEnforcer soft 超限分支触发。需评估告警去重（soft_budget_cooldown）与通知模板。
+- **Source**: Phase 37/39 规划
+- **Status Update 2026-08-04**: Stage 97 实现了 soft_budget 超限 `tracing::warn!` 结构化日志（含 entity_type、entity_id、spent、soft_budget 字段）。生产环境可通过 tracing subscriber（OpenTelemetry exporter、log aggregator）消费这些事件。外部通知通道（Slack/Email/Webhook）仍待接入。
+- **Description**: soft_budget 超限检查记 tracing warn 日志但放行请求。litellm 的完整 soft_budget 告警走 Slack/Email/Webhook 外部通知通道，aigw 当前无外部通知集成。
+- **Impact**: soft_budget 超限需管理员主动查日志才能发现，无法实时告警。不阻塞核心预期（hard budget check + 周期 reset 已完整）。
+- **Resolution**: 后续接入通知通道（webhook / 邮件 / 企微），在 BudgetEnforcer soft 超限分支触发。需评估告警去重（soft_budget_cooldown）与通知模板。
 - **Target Phase**: 视运维告警需求触发，暂不排期。
 
 ### TD-008: i18n 后续改进项

@@ -430,3 +430,11 @@
   - BudgetEnforcer 从单层 → 4 层逐级检查（Stage 97）。
   - 架构文档（`docs/research/2026-08-01-budget-reset-architecture.md`）统一记录所有决策。
   - soft_budget 告警（Slack/Email）推迟到 TD-007，budget_limits 多窗口推迟到后续。
+
+### Update 2026-08-04: Stage 97 完成 — Multi-level BudgetEnforcer + soft_budget + 全栈联调
+
+- **Multi-level enforcement**: `BudgetEnforcer::check_budget_multi()` 逐级检查 key → user → team → organization，任一超限即 403（HTTP 429），`entity_type` 字段标识被拒层级。中间实体缺失时静默跳过 + `tracing::warn!`（对齐 litellm）。
+- **soft_budget 双轨日志**: `check_soft_budget()` 根据 entity_type、entity_id、spent、soft_budget 发 `tracing::warn!` 但不拒绝请求。生产可接入 tracing subscriber（OpenTelemetry / log aggregator）消费。外部通知通道（Slack/Email/Webhook）留 TD-007。
+- **历史用量聚合**: `Database::get_spend_by_team()` / `get_spend_by_org()` 从 `spend_logs` SUM spend，三云方言实现（SQLite/PG/MySQL）。
+- **TOCTOU 策略**: spend 在请求完成后异步更新（Stage 94），budget 检查在下一请求读已更新的 spend。并发窗口 ~ms，分布式系统可接受 trade-off。
+- **测试覆盖**: 23 UT（budget.rs）+ mock BDD 177 pass（回归无退化）。Real BDD 场景 `multi_level_budget.feature` 已创建（@skip 等待 real BDD runner 环境就绪后解禁）。

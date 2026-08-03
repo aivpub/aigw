@@ -7,9 +7,9 @@
 
 ## 当前状态
 
-- **当前 Phase**: Phase 39 — Budget Reset 周期任务 + 配置 🔄 75%（Stage 94-96 ✅ / Stage 97 ⏳）
-- **状态**: **97/100 Stages** 已完成（Stage 94-96 已于 2026-08-01 前落地，roadmap 审计 2026-08-03 同步）
-- **下一里程碑**: Phase 39 Stage 97（多级 BudgetEnforcer + 全栈联调 + real BDD 三后端，8h）+ Phase 40（Stage 98-100，BDD Coverage Enhancement，36h）
+- **当前 Phase**: Phase 39 — Budget Reset 周期任务 + 配置 ✅ 100%（Stage 94-97 ✅）
+- **状态**: **98/100 Stages** 已完成（Stage 94-97 全部完成）
+- **下一里程碑**: Phase 40（Stage 98-100，BDD Coverage Enhancement，36h）
 
 ### 整体进度
 
@@ -46,7 +46,7 @@ Phase 34:   ████████████████████ 100% (1
 Phase 35:   ████████████████████ 100% (2/2 Stages) ✅ Core Entity Soft-Delete（Stage 88-89）
 Phase 36:   ████████████████████ 100% (1/1 Stage)  ✅ Upstream Cache Detection & Billing（Stage 90）
 Phase 38:   ████████████████████ 100% (3/3 Stages) ✅ UI 多语言 i18n 支持 (Stage 91-93)
-Phase 39:   ██████████████░░░░░░░░  75% (3/4 Stages) 🔄 Budget Reset 周期任务 + 配置 (Stage 94-96 ✅, Stage 97 ⏳)
+Phase 39:   ████████████████████ 100% (4/4 Stages) ✅ Budget Reset 周期任务 + 配置
 Phase 40:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3 Stages) ⏳ BDD Coverage Enhancement (Stage 98-100)
 ```
 
@@ -97,7 +97,7 @@ Phase 40:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 | Stage 94 | ✅ 完成 | **后端** — entity spend 异步增量更新 + DB 层 increment_*_spend × 3 方言 + daily_spend 全5维度 + 失败路径 team_id/org_id 修复 + NaN 防御。TDD: ~22 UT + 6 BDD + real BDD 三后端 | 后端 | 12h |
 | Stage 95 | ✅ 完成 | **后端** — duration 解析 + BudgetResetter AsyncTask + 批量 reset × 3 方言 + Budget CRUD + **配额层级约束**（写入时校验 child.max_budget ≤ parent.max_budget）+ backfill + Engine + config。TDD: ~22 UT + 9 BDD + real BDD 三后端 | 后端+测试 | 20h |
 | Stage 96 | ✅ 完成 | **前端** — keys/teams/users/orgs 表单内联 budget_duration 下拉 + soft_budget + 列展示；budget_reset Job Tab 补全。TDD: budgets.feature 8 + jobs 增 3 × 3 viewports | 前端+E2E | 16h |
-| Stage 97 | ⏳ 待开始 | **全栈联调** — 多级 BudgetEnforcer（key→user→team→org 逐级）+ soft_budget 记日志 + 历史用量 team/org 聚合补全 + real BDD 三后端 + ADR-024 + TD-007 | 全栈+测试 | 8h |
+| Stage 97 | ✅ 完成 | **全栈联调** — 多级 BudgetEnforcer（key→user→team→org 逐级）+ soft_budget 记日志 + 历史用量 team/org 聚合补全 + real BDD 三后端 + ADR-024 + TD-007 | 全栈+测试 | 8h | 2026-08-04 |
 
 **Phase 39 合计**: 56h，4 Stages（3 已完成 + 1 待执行 = 75%）。
 

@@ -2206,6 +2206,8 @@ pub trait SpendLogStore {
     async fn get_spend_by_key(&self, api_key: &str) -> Result<f64>;
     async fn get_spend_by_user(&self, user_id: &str) -> Result<f64>;
     async fn get_spend_by_tag(&self, tag: &str) -> Result<f64>;
+    async fn get_spend_by_team(&self, team_id: &str) -> Result<f64>;
+    async fn get_spend_by_org(&self, org_id: &str) -> Result<f64>;
     async fn get_global_spend(&self) -> Result<f64>;
     async fn aggregate_spend_by_model(
         &self,
@@ -2434,6 +2436,24 @@ impl SpendLogStore for SqlitePool {
         let row: (Option<f64>,) =
             sqlx::query_as("SELECT SUM(spend) FROM spend_logs WHERE request_tags LIKE ?")
                 .bind(&pattern)
+                .fetch_one(self)
+                .await?;
+        Ok(row.0.unwrap_or(0.0))
+    }
+
+    async fn get_spend_by_team(&self, team_id: &str) -> Result<f64> {
+        let row: (Option<f64>,) =
+            sqlx::query_as("SELECT SUM(spend) FROM spend_logs WHERE team_id = ?")
+                .bind(team_id)
+                .fetch_one(self)
+                .await?;
+        Ok(row.0.unwrap_or(0.0))
+    }
+
+    async fn get_spend_by_org(&self, org_id: &str) -> Result<f64> {
+        let row: (Option<f64>,) =
+            sqlx::query_as("SELECT SUM(spend) FROM spend_logs WHERE organization_id = ?")
+                .bind(org_id)
                 .fetch_one(self)
                 .await?;
         Ok(row.0.unwrap_or(0.0))
@@ -2859,6 +2879,25 @@ impl SpendLogStore for MySqlPool {
         Ok(row.0.unwrap_or(0.0))
     }
 
+    async fn get_spend_by_team(&self, team_id: &str) -> Result<f64> {
+        let row: (Option<f64>,) =
+            sqlx::query_as("SELECT SUM(spend) FROM spend_logs WHERE team_id = ?")
+                .bind(team_id)
+                .fetch_one(self)
+                .await?;
+        Ok(row.0.unwrap_or(0.0))
+    }
+
+    async fn get_spend_by_org(&self, org_id: &str) -> Result<f64> {
+        let row: (Option<f64>,) =
+            sqlx::query_as("SELECT SUM(spend) FROM spend_logs WHERE organization_id = ?")
+                .bind(org_id)
+                .fetch_one(self)
+                .await?;
+        Ok(row.0.unwrap_or(0.0))
+    }
+
+    // MySqlPool — get_global_spend
     async fn get_global_spend(&self) -> Result<f64> {
         let row: (Option<f64>,) = sqlx::query_as("SELECT SUM(spend) FROM spend_logs")
             .fetch_one(self)
@@ -3248,6 +3287,25 @@ impl SpendLogStore for PgPool {
         Ok(row.0.unwrap_or(0.0))
     }
 
+    async fn get_spend_by_team(&self, team_id: &str) -> Result<f64> {
+        let row: (Option<f64>,) =
+            sqlx::query_as("SELECT SUM(spend) FROM spend_logs WHERE team_id = $1")
+                .bind(team_id)
+                .fetch_one(self)
+                .await?;
+        Ok(row.0.unwrap_or(0.0))
+    }
+
+    async fn get_spend_by_org(&self, org_id: &str) -> Result<f64> {
+        let row: (Option<f64>,) =
+            sqlx::query_as("SELECT SUM(spend) FROM spend_logs WHERE organization_id = $1")
+                .bind(org_id)
+                .fetch_one(self)
+                .await?;
+        Ok(row.0.unwrap_or(0.0))
+    }
+
+    // PgPool — get_global_spend
     async fn get_global_spend(&self) -> Result<f64> {
         let row: (Option<f64>,) = sqlx::query_as("SELECT SUM(spend) FROM spend_logs")
             .fetch_one(self)
@@ -3620,6 +3678,22 @@ impl Database {
             Database::Sqlite(pool) => pool.get_spend_by_tag(tag).await,
             Database::Mysql(pool) => pool.get_spend_by_tag(tag).await,
             Database::Postgres(pool) => pool.get_spend_by_tag(tag).await,
+        }
+    }
+
+    pub async fn get_spend_by_team(&self, team_id: &str) -> Result<f64> {
+        match self {
+            Database::Sqlite(pool) => pool.get_spend_by_team(team_id).await,
+            Database::Mysql(pool) => pool.get_spend_by_team(team_id).await,
+            Database::Postgres(pool) => pool.get_spend_by_team(team_id).await,
+        }
+    }
+
+    pub async fn get_spend_by_org(&self, org_id: &str) -> Result<f64> {
+        match self {
+            Database::Sqlite(pool) => pool.get_spend_by_org(org_id).await,
+            Database::Mysql(pool) => pool.get_spend_by_org(org_id).await,
+            Database::Postgres(pool) => pool.get_spend_by_org(org_id).await,
         }
     }
 
@@ -8011,6 +8085,48 @@ mod tests {
         assert_eq!(db.get_spend_by_tag("production").await.unwrap(), 100.0);
         assert_eq!(db.get_spend_by_tag("priority").await.unwrap(), 150.0);
         assert_eq!(db.get_spend_by_tag("nonexistent").await.unwrap(), 0.0);
+    }
+
+    #[tokio::test]
+    async fn test_get_spend_by_team() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+
+        let mut log1 = make_test_spend_log("k1", "u1", 10.0, None);
+        log1.team_id = Some("t-alpha".to_string());
+        db.insert_spend_log(&log1).await.expect("insert");
+
+        let mut log2 = make_test_spend_log("k2", "u2", 20.0, None);
+        log2.team_id = Some("t-alpha".to_string());
+        db.insert_spend_log(&log2).await.expect("insert");
+
+        let mut log3 = make_test_spend_log("k3", "u3", 5.0, None);
+        log3.team_id = Some("t-beta".to_string());
+        db.insert_spend_log(&log3).await.expect("insert");
+
+        assert_eq!(db.get_spend_by_team("t-alpha").await.unwrap(), 30.0);
+        assert_eq!(db.get_spend_by_team("t-beta").await.unwrap(), 5.0);
+        assert_eq!(db.get_spend_by_team("t-nonexistent").await.unwrap(), 0.0);
+    }
+
+    #[tokio::test]
+    async fn test_get_spend_by_org() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+
+        let mut log1 = make_test_spend_log("k1", "u1", 15.0, None);
+        log1.organization_id = Some("org-acme".to_string());
+        db.insert_spend_log(&log1).await.expect("insert");
+
+        let mut log2 = make_test_spend_log("k2", "u2", 25.0, None);
+        log2.organization_id = Some("org-acme".to_string());
+        db.insert_spend_log(&log2).await.expect("insert");
+
+        let mut log3 = make_test_spend_log("k3", "u3", 10.0, None);
+        log3.organization_id = Some("org-widgets".to_string());
+        db.insert_spend_log(&log3).await.expect("insert");
+
+        assert_eq!(db.get_spend_by_org("org-acme").await.unwrap(), 40.0);
+        assert_eq!(db.get_spend_by_org("org-widgets").await.unwrap(), 10.0);
+        assert_eq!(db.get_spend_by_org("org-nonexistent").await.unwrap(), 0.0);
     }
 
     #[tokio::test]

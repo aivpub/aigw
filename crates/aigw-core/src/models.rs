@@ -440,6 +440,11 @@ impl Budget {
         self.max_budget.as_deref().and_then(|s| s.parse().ok())
     }
 
+    /// Parse `soft_budget` as Option<f64> from TEXT-compatible string.
+    pub fn soft_budget_f64(&self) -> Option<f64> {
+        self.soft_budget.as_deref().and_then(|s| s.parse().ok())
+    }
+
     /// Parse `max_parallel_requests` as Option<i32> from TEXT-compatible string.
     pub fn max_parallel_requests_i32(&self) -> Option<i32> {
         self.max_parallel_requests

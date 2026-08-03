@@ -210,3 +210,171 @@ fn encode_tags_literal(tags: &Option<String>) -> String {
         format!("'{}'", json_str.to_string().replace('\'', "''"))
     }
 }
+
+// ── Multi-level budget enforcement seed helpers ──
+
+/// Insert or update a user row in the test database.
+/// Deletes any existing user with the same user_id first (idempotent).
+pub(crate) async fn ensure_user(
+    db_url: &str,
+    user_id: &str,
+    team_id: Option<&str>,
+    max_budget: Option<f64>,
+    spend: f64,
+) -> anyhow::Result<()> {
+    let pool = aigw_migrate::native::SourcePool::connect(db_url).await?;
+    let del_sql = format!("DELETE FROM users WHERE user_id = '{}'", user_id);
+    let _ = pool.execute_raw(&del_sql).await;
+
+    let team_val = match team_id {
+        Some(tid) => format!("'{}'", tid.replace('\'', "''")),
+        None => "NULL".to_string(),
+    };
+    let max_budget_val = match max_budget {
+        Some(v) => format!("'{}'", v),
+        None => "NULL".to_string(),
+    };
+    let now = pool.time_literal("2026-07-20T00:00:00");
+
+    let sql = format!(
+        r#"INSERT INTO users
+        (user_id, user_alias, team_id, organization_id, object_permission_id,
+         password, teams, user_role, max_budget, spend, user_email, models, metadata,
+         max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at,
+         allowed_cache_controls, policies, model_spend, model_max_budget,
+         created_at, updated_at)
+        VALUES ('{}', 'user-{}', {}, NULL, NULL,
+                NULL, '[]', NULL, {}, {}, NULL, '[]', '{{}}',
+                NULL, NULL, NULL, NULL, NULL,
+                '[]', '[]', '{{}}', '{{}}',
+                {}, {})"#,
+        user_id, user_id, team_val, max_budget_val, spend, now, now,
+    );
+    pool.execute_raw(&sql).await?;
+    Ok(())
+}
+
+/// Insert or update a team row in the test database.
+/// Deletes any existing team with the same team_id first (idempotent).
+pub(crate) async fn ensure_team(
+    db_url: &str,
+    team_id: &str,
+    org_id: Option<&str>,
+    max_budget: Option<f64>,
+    soft_budget: Option<f64>,
+    spend: f64,
+) -> anyhow::Result<()> {
+    let pool = aigw_migrate::native::SourcePool::connect(db_url).await?;
+    let del_sql = format!("DELETE FROM teams WHERE team_id = '{}'", team_id);
+    let _ = pool.execute_raw(&del_sql).await;
+
+    let org_val = match org_id {
+        Some(oid) => format!("'{}'", oid.replace('\'', "''")),
+        None => "NULL".to_string(),
+    };
+    let max_budget_val = match max_budget {
+        Some(v) => format!("'{}'", v),
+        None => "NULL".to_string(),
+    };
+    let soft_budget_val = match soft_budget {
+        Some(v) => format!("'{}'", v),
+        None => "NULL".to_string(),
+    };
+    let now = pool.time_literal("2026-07-20T00:00:00");
+
+    let sql = format!(
+        r#"INSERT INTO teams
+        (team_id, team_alias, organization_id, object_permission_id, admins, members,
+         members_with_roles, metadata, max_budget, soft_budget, spend, models,
+         max_parallel_requests, tpm_limit, rpm_limit, budget_duration, budget_reset_at,
+         blocked, created_at, updated_at, model_spend, model_max_budget,
+         router_settings, team_member_permissions, access_group_ids, policies,
+         default_team_member_models, budget_limits, model_id, allow_team_guardrail_config)
+        VALUES ('{}', 'team-{}', {}, NULL, '[]', '[]', '{{}}', '{{}}', {}, {}, {}, '[]',
+                NULL, NULL, NULL, NULL, NULL,
+                0, {}, {}, '{{}}', '{{}}',
+                NULL, '[]', '[]', '[]', '[]', NULL, NULL, 0)"#,
+        team_id, team_id, org_val, max_budget_val, soft_budget_val, spend, now, now,
+    );
+    pool.execute_raw(&sql).await?;
+    Ok(())
+}
+
+/// Insert or update an organization row in the test database.
+/// Deletes any existing org with the same organization_id first (idempotent).
+pub(crate) async fn ensure_organization(
+    db_url: &str,
+    org_id: &str,
+    budget_id: &str,
+    spend: f64,
+) -> anyhow::Result<()> {
+    let pool = aigw_migrate::native::SourcePool::connect(db_url).await?;
+    let del_sql = format!("DELETE FROM organizations WHERE organization_id = '{}'", org_id);
+    let _ = pool.execute_raw(&del_sql).await;
+
+    let now = pool.time_literal("2026-07-20T00:00:00");
+
+    let sql = format!(
+        r#"INSERT INTO organizations
+        (organization_id, organization_alias, budget_id, metadata, models, spend,
+         model_spend, object_permission_id, created_at, created_by, updated_at, updated_by)
+        VALUES ('{}', 'org-{}', '{}', '{{}}', '[]', {},
+                '{{}}', NULL, {}, 'aigw-test', {}, 'aigw-test')"#,
+        org_id, org_id, budget_id, spend, now, now,
+    );
+    pool.execute_raw(&sql).await?;
+    Ok(())
+}
+
+/// Insert or update a budget row in the test database.
+/// Deletes any existing budget with the same budget_id first (idempotent).
+pub(crate) async fn ensure_budget(
+    db_url: &str,
+    budget_id: &str,
+    max_budget: f64,
+    soft_budget: Option<f64>,
+) -> anyhow::Result<()> {
+    let pool = aigw_migrate::native::SourcePool::connect(db_url).await?;
+    let del_sql = format!("DELETE FROM budgets WHERE budget_id = '{}'", budget_id);
+    let _ = pool.execute_raw(&del_sql).await;
+
+    let soft_budget_val = match soft_budget {
+        Some(v) => format!("'{}'", v),
+        None => "NULL".to_string(),
+    };
+    let now = pool.time_literal("2026-07-20T00:00:00");
+
+    let sql = format!(
+        r#"INSERT INTO budgets
+        (budget_id, max_budget, soft_budget, max_parallel_requests, tpm_limit, rpm_limit,
+         model_max_budget, budget_duration, budget_reset_at, allowed_models,
+         created_at, created_by, updated_at, updated_by)
+        VALUES ('{}', '{}', {}, NULL, NULL, NULL,
+                '{{}}', NULL, NULL, '[]',
+                {}, 'aigw-test', {}, 'aigw-test')"#,
+        budget_id, max_budget, soft_budget_val, now, now,
+    );
+    pool.execute_raw(&sql).await?;
+    Ok(())
+}
+
+/// Generic cleanup by entity type + ID. Deletes the row matching the given
+/// entity_id from the appropriate table. Idempotent.
+pub(crate) async fn cleanup_entity(
+    db_url: &str,
+    entity_type: &str,
+    entity_id: &str,
+) -> anyhow::Result<()> {
+    let pool = aigw_migrate::native::SourcePool::connect(db_url).await?;
+    let (table, id_col) = match entity_type {
+        "key" | "virtual_key" => ("virtual_keys", "token"),
+        "user" => ("users", "user_id"),
+        "team" => ("teams", "team_id"),
+        "organization" => ("organizations", "organization_id"),
+        "budget" => ("budgets", "budget_id"),
+        _ => return Ok(()),
+    };
+    let sql = format!("DELETE FROM {} WHERE {} = '{}'", table, id_col, entity_id);
+    pool.execute_raw(&sql).await?;
+    Ok(())
+}
