@@ -25,6 +25,9 @@ pub struct TestWorld {
     /// Created keys by alias → raw token
     #[world(skip)]
     pub created_keys: std::collections::HashMap<String, String>,
+    /// Created users by user_id → (email, password)
+    #[world(skip)]
+    pub created_users: std::collections::HashMap<String, (String, String)>,
 }
 
 impl Default for TestWorld {
@@ -36,6 +39,7 @@ impl Default for TestWorld {
             last_status: None,
             last_body: None,
             created_keys: std::collections::HashMap::new(),
+            created_users: std::collections::HashMap::new(),
         }
     }
 }

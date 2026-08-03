@@ -36,6 +36,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { PaginationBar } from "@/components/ui/pagination";
 import {
@@ -103,6 +105,8 @@ export function UsersPage() {
   const [formSoftBudget, setFormSoftBudget] = useState("");
   const [formTPM, setFormTPM] = useState("");
   const [formRPM, setFormRPM] = useState("");
+  const [formResetPassword, setFormResetPassword] = useState("");
+  const [showResetPassword, setShowResetPassword] = useState(false);
 
   const { data, isLoading, error } = useQuery<UserListResponse>({
     queryKey: ["users", page, pageSize],
@@ -188,6 +192,8 @@ export function UsersPage() {
     setFormSoftBudget(u.soft_budget?.toString() ?? "");
     setFormTPM(u.tpm_limit?.toString() ?? "");
     setFormRPM(u.rpm_limit?.toString() ?? "");
+    setFormResetPassword("");
+    setShowResetPassword(false);
     setEditOpen(true);
   }
 
@@ -690,7 +696,7 @@ export function UsersPage() {
                     />
                   </div>
                   <div>
-                    <Label htmlFor="u-tpm">{t("keys.tpmLabel")}</Label>
+                    <Label htmlFor="u-tpm">{t("users.dialog.tpmLabel")}</Label>
                     <Input
                       id="u-tpm"
                       type="number"
@@ -700,7 +706,7 @@ export function UsersPage() {
                     />
                   </div>
                   <div>
-                    <Label htmlFor="u-rpm">{t("keys.rpmLabel")}</Label>
+                    <Label htmlFor="u-rpm">{t("users.dialog.rpmLabel")}</Label>
                     <Input
                       id="u-rpm"
                       type="number"
@@ -833,6 +839,32 @@ export function UsersPage() {
                     </option>
                   </select>
                 </div>
+                <div>
+                  <Label htmlFor="ue-reset-password">
+                    {t("users.dialog.resetPasswordLabel")}
+                  </Label>
+                  <div className="relative">
+                    <Input
+                      id="ue-reset-password"
+                      type={showResetPassword ? "text" : "password"}
+                      value={formResetPassword}
+                      onChange={(e) => setFormResetPassword(e.target.value)}
+                      placeholder={t("users.dialog.resetPasswordPlaceholder")}
+                      className="pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowResetPassword(!showResetPassword)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    >
+                      {showResetPassword ? (
+                        <EyeOff className="h-4 w-4" />
+                      ) : (
+                        <Eye className="h-4 w-4" />
+                      )}
+                    </button>
+                  </div>
+                </div>
                 <div className="grid grid-cols-3 gap-4">
                   <div>
                     <Label htmlFor="ue-budget">
@@ -846,7 +878,7 @@ export function UsersPage() {
                     />
                   </div>
                   <div>
-                    <Label htmlFor="ue-tpm">{t("keys.tpmLabel")}</Label>
+                    <Label htmlFor="ue-tpm">{t("users.dialog.tpmLabel")}</Label>
                     <Input
                       id="ue-tpm"
                       type="number"
@@ -925,6 +957,9 @@ export function UsersPage() {
                       }),
                       ...(formTPM && { tpm_limit: parseInt(formTPM) }),
                       ...(formRPM && { rpm_limit: parseInt(formRPM) }),
+                      ...(formResetPassword.trim() && {
+                        password: formResetPassword.trim(),
+                      }),
                     })
                   }
                   disabled={editMutation.isPending}

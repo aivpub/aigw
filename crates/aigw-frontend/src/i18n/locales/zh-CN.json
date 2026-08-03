@@ -228,7 +228,9 @@
       "expiresLabel": "过期时间",
       "generateBtn": "生成密钥",
       "created": "密钥已创建！请立即复制 — 之后将不再显示。",
-      "savedBtn": "我已保存密钥"
+      "savedBtn": "我已保存密钥",
+      "userSelectorLabel": "分配给用户",
+      "userSelectorNone": "未分配（管理员密钥）"
     },
     "editDialog": {
       "title": "编辑密钥",
@@ -497,7 +499,11 @@
       "spendLabel": "消费",
       "budgetLabel": "最大预算 ($)",
       "budgetDurationLabel": "重置周期",
-      "softBudgetLabel": "软预算提醒 ($)"
+      "softBudgetLabel": "软预算提醒 ($)",
+      "resetPasswordLabel": "重置密码（留空则不修改）",
+      "resetPasswordPlaceholder": "新密码",
+      "tpmLabel": "TPM 限制",
+      "rpmLabel": "RPM 限制"
     },
     "deleteDialog": {
       "title": "删除用户",

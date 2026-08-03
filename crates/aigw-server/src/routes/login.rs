@@ -124,6 +124,7 @@ pub async fn login(
     // Determine user_id
     let expected_username = ui_username();
     let user_id: String;
+    let user_role: String;
 
     if username == expected_username {
         // Admin login: password must match master_key or UI_PASSWORD env var
@@ -135,6 +136,7 @@ pub async fn login(
             ));
         }
         user_id = "default_user_id".to_string();
+        user_role = "proxy_admin".to_string();
     } else {
         // Database user login: look up by user_email
         match state.db.get_user_by_email(username).await {
@@ -151,6 +153,8 @@ pub async fn login(
                     ));
                 }
                 user_id = user.user_id;
+                // Read real user_role from DB — non-admin users get their actual role
+                user_role = user.user_role.unwrap_or_else(|| "internal_user".to_string());
             }
             Ok(None) => {
                 return Err((
@@ -240,7 +244,7 @@ pub async fn login(
         } else {
             Some(username.to_string())
         },
-        user_role: "proxy_admin".to_string(),
+        user_role,
         login_method: "username_password".to_string(),
     };
 

@@ -13,6 +13,7 @@ use aigw_core::crypto::hash_token;
 use aigw_core::daily_spend_queue::DailySpendQueue;
 use aigw_core::db::Database;
 use aigw_core::metrics::MetricsRecorder;
+use aigw_core::middleware::KeyIdentity;
 use aigw_core::models::{GenerateKeyRequest, VirtualKey};
 use aigw_core::provider::ProviderRegistry;
 use aigw_core::rate_limiter::RateLimiter;
@@ -331,16 +332,50 @@ fn key_to_response(raw_token: &str, key: &VirtualKey) -> GenerateKeyResponse {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+/// Check if the auth identity has admin privileges.
+fn is_admin(auth: &KeyIdentity) -> bool {
+    auth.is_master_key || auth.user_role.as_deref() == Some("proxy_admin")
+}
+
+/// Check key ownership: admin sees all, non-admin only sees own keys.
+/// Returns true if the authenticated user is allowed to access this key.
+fn check_key_ownership(auth: &KeyIdentity, key_user_id: Option<&str>) -> bool {
+    if is_admin(auth) {
+        return true;
+    }
+    // Non-admin can only access keys belonging to themselves
+    key_user_id == auth.user_id.as_deref()
+}
+
 // Handlers
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/// POST /key/generate — Generate a new virtual API key (admin only)
+/// POST /key/generate — Generate a new virtual API key
+///
+/// Admin users can specify any `user_id` to create keys for others.
+/// Non-admin users automatically get keys assigned to their own user_id.
 pub async fn generate_key(
     State(state): State<SharedState>,
     SpendAuth(auth): SpendAuth,
-    Json(req): Json<GenerateKeyRequest>,
+    Json(mut req): Json<GenerateKeyRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    require_admin(&auth)?;
+    // Admin can assign keys to anyone; non-admin gets their own user_id forced
+    if !is_admin(&auth) {
+        // Non-admin: if user_id is set and different from auth user_id, reject
+        if let Some(ref uid) = req.user_id {
+            if Some(uid.as_str()) != auth.user_id.as_deref() {
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    Json(json!({"error": {"message": "Cannot create keys for other users", "type": "forbidden"}})),
+                ));
+            }
+        }
+        // Auto-assign to the authenticated user
+        if req.user_id.is_none() {
+            req.user_id = auth.user_id.clone();
+        }
+    }
+
     let raw_token = req.key.clone().unwrap_or_else(|| generate_key_token());
     let hash = hash_token(&raw_token);
 
@@ -378,13 +413,14 @@ pub async fn generate_key(
     Ok(Json(json!(response)))
 }
 
-/// GET /key/info — Get key info by token (admin only)
+/// GET /key/info — Get key info by token
+///
+/// Admin users can look up any key. Non-admin users can only look up their own keys.
 pub async fn key_info(
     State(state): State<SharedState>,
     SpendAuth(auth): SpendAuth,
     Query(query): Query<KeyInfoQuery>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    require_admin(&auth)?;
     let token = query
         .key
         .as_deref()
@@ -407,6 +443,12 @@ pub async fn key_info(
 
     match key {
         Some(k) => {
+            if !check_key_ownership(&auth, k.user_id.as_deref()) {
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    Json(json!({"error": {"message": "Access denied", "type": "forbidden"}})),
+                ));
+            }
             let response = key_to_response(token, &k);
             Ok(Json(json!(response)))
         }
@@ -417,14 +459,27 @@ pub async fn key_info(
     }
 }
 
-/// GET /key/list — List all keys with optional filters (admin only)
+/// GET /key/list — List keys with optional filters
+///
+/// Admin users see all keys. Non-admin users only see their own keys.
 /// Server-side paginated (page/page_size), mirrors /global/spend/logs.
 pub async fn key_list(
     State(state): State<SharedState>,
     SpendAuth(auth): SpendAuth,
     Query(query): Query<KeyListQuery>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    require_admin(&auth)?;
+    // Non-admin: force user_id filter to their own
+    let effective_user_id = if is_admin(&auth) {
+        query.user_id.clone()
+    } else {
+        auth.user_id.clone()
+    };
+    let effective_team_id = if is_admin(&auth) {
+        query.team_id.clone()
+    } else {
+        None
+    };
+
     let page = query.page.unwrap_or(1).max(1);
     let page_size = query.page_size.unwrap_or(30).max(1).min(100);
     let offset = ((page - 1) * page_size) as i64;
@@ -432,14 +487,14 @@ pub async fn key_list(
 
     let (keys, total_count) = tokio::try_join!(
         state.db.list_keys_paged(
-            query.team_id.as_deref(),
-            query.user_id.as_deref(),
+            effective_team_id.as_deref(),
+            effective_user_id.as_deref(),
             limit,
             offset,
         ),
         state
             .db
-            .count_keys(query.team_id.as_deref(), query.user_id.as_deref()),
+            .count_keys(effective_team_id.as_deref(), effective_user_id.as_deref()),
     )
     .map_err(|e| {
         (
@@ -492,13 +547,14 @@ pub async fn key_list(
     })))
 }
 
-/// PUT /key/update — Update a key (admin only)
+/// PUT /key/update — Update a key
+///
+/// Admin users can update any key. Non-admin users can only update their own keys.
 pub async fn key_update(
     State(state): State<SharedState>,
     SpendAuth(auth): SpendAuth,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    require_admin(&auth)?;
     let token_param = body
         .get("key")
         .and_then(|v| v.as_str())
@@ -528,14 +584,32 @@ pub async fn key_update(
         )
     })?;
 
-    if existing.is_none() {
+    let Some(existing) = existing else {
         return Err((
             StatusCode::NOT_FOUND,
             Json(json!({"error": {"message": "Key not found", "type": "not_found"}})),
         ));
+    };
+
+    // Check ownership for non-admin users
+    if !check_key_ownership(&auth, existing.user_id.as_deref()) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": {"message": "Access denied", "type": "forbidden"}})),
+        ));
     }
 
-    let existing = existing.unwrap();
+    // Non-admin cannot change user_id to a different user
+    if !is_admin(&auth) {
+        if let Some(new_uid) = body.get("user_id").and_then(|v| v.as_str()) {
+            if new_uid != auth.user_id.as_deref().unwrap_or("") {
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    Json(json!({"error": {"message": "Cannot reassign key to another user", "type": "forbidden"}})),
+                ));
+            }
+        }
+    }
 
     // Build an updated VirtualKey from the request body
     // IMPORTANT: only include fields explicitly sent by the client.
@@ -738,13 +812,14 @@ pub async fn key_update(
     ))
 }
 
-/// DELETE /key/delete — Delete (soft-delete) a key (admin only)
+/// DELETE /key/delete — Delete (soft-delete) a key
+///
+/// Admin users can delete any key. Non-admin users can only delete their own keys.
 pub async fn key_delete(
     State(state): State<SharedState>,
     SpendAuth(auth): SpendAuth,
     Query(query): Query<KeyDeleteQuery>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    require_admin(&auth)?;
     let token_param = query
         .key
         .as_deref()
@@ -766,10 +841,18 @@ pub async fn key_delete(
         )
     })?;
 
-    if exists.is_none() {
+    let Some(key) = exists else {
         return Err((
             StatusCode::NOT_FOUND,
             Json(json!({"error": {"message": "Key not found", "type": "not_found"}})),
+        ));
+    };
+
+    // Check ownership for non-admin users
+    if !check_key_ownership(&auth, key.user_id.as_deref()) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": {"message": "Access denied", "type": "forbidden"}})),
         ));
     }
 
@@ -785,7 +868,7 @@ pub async fn key_delete(
     ))
 }
 
-/// GET /key/deleted — list archived (soft-deleted) keys (paginated)
+/// GET /key/deleted — list archived (soft-deleted) keys (paginated, admin only)
 pub async fn key_deleted_list(
     State(state): State<SharedState>,
     SpendAuth(auth): SpendAuth,
@@ -830,13 +913,14 @@ pub async fn key_deleted_list(
     })))
 }
 
-/// POST /key/regenerate — Regenerate a key (new token, copy config) (admin only)
+/// POST /key/regenerate — Regenerate a key (new token, copy config)
+///
+/// Admin users can regenerate any key. Non-admin users can only regenerate their own keys.
 pub async fn key_regenerate(
     State(state): State<SharedState>,
     SpendAuth(auth): SpendAuth,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    require_admin(&auth)?;
     let old_token = body
         .get("key")
         .and_then(|v| v.as_str())
@@ -866,6 +950,14 @@ pub async fn key_regenerate(
                 Json(json!({"error": {"message": "Key not found", "type": "not_found"}})),
             )
         })?;
+
+    // Check ownership for non-admin users
+    if !check_key_ownership(&auth, existing.user_id.as_deref()) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": {"message": "Access denied", "type": "forbidden"}})),
+        ));
+    }
 
     // Generate new token
     let new_raw = generate_key_token();

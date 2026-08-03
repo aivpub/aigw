@@ -11,6 +11,7 @@
 use aigw_core::db::Database;
 use aigw_core::models::DeletedUser;
 use aigw_core::models::User;
+use aigw_core::password::hash_password;
 use axum::{extract::State, http::StatusCode, Json};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -104,7 +105,10 @@ pub async fn user_new(
         password: body
             .get("password")
             .and_then(|v| v.as_str())
-            .map(String::from),
+            .filter(|s| !s.is_empty())
+            .map(|plain| {
+                hash_password(plain).unwrap_or_else(|_| plain.to_string())
+            }),
         teams: body.get("teams").cloned().unwrap_or(json!([])),
         user_role: body
             .get("user_role")
@@ -303,7 +307,14 @@ pub async fn user_update(
         existing.object_permission_id = v.as_str().map(String::from);
     }
     if let Some(v) = body.get("password") {
-        existing.password = v.as_str().map(String::from);
+        if let Some(plain) = v.as_str() {
+            if !plain.is_empty() {
+                existing.password = Some(
+                    hash_password(plain)
+                        .unwrap_or_else(|_| plain.to_string()),
+                );
+            }
+        }
     }
     if let Some(v) = body.get("teams") {
         existing.teams = v.clone();

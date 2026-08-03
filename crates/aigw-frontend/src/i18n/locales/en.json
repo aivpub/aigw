@@ -228,7 +228,9 @@
       "expiresLabel": "Expires",
       "generateBtn": "Generate Key",
       "created": "Key created! Copy it now — it won't be shown again.",
-      "savedBtn": "I've saved my key"
+      "savedBtn": "I've saved my key",
+      "userSelectorLabel": "Assign to User",
+      "userSelectorNone": "Unassigned (admin key)"
     },
     "editDialog": {
       "title": "Edit Key",
@@ -497,7 +499,11 @@
       "spendLabel": "Spend",
       "budgetLabel": "Max Budget ($)",
       "budgetDurationLabel": "Reset Cycle",
-      "softBudgetLabel": "Soft Budget Alert ($)"
+      "softBudgetLabel": "Soft Budget Alert ($)",
+      "resetPasswordLabel": "Reset Password (leave empty to keep current)",
+      "resetPasswordPlaceholder": "New password",
+      "tpmLabel": "TPM Limit",
+      "rpmLabel": "RPM Limit"
     },
     "deleteDialog": {
       "title": "Delete User",

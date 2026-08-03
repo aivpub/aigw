@@ -12,10 +12,10 @@ Feature: 授权 (Authorization)
     When 使用 invalid key 发送 GET /key/list 请求
     Then 响应状态码为 401
 
-  Scenario: 普通 key 无法访问管理接口
+  Scenario: 普通 key 可以访问自己的 key/list
     Given 一个普通 key "auth-regular" 已生成
     When 使用 key "auth-regular" 发送 GET /key/list 请求
-    Then 响应状态码为 403
+    Then 响应状态码为 200
 
   Scenario: Master key 拥有完整访问权限
     When 使用 master-key 发送 GET /key/list 请求

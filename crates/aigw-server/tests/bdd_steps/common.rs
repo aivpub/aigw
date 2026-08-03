@@ -1,6 +1,7 @@
 //! Common BDD helpers — axum Router builder and HTTP request utilities
 
 use aigw_server::routes::keys::SharedState;
+use aigw_server::routes::user;
 use axum::{
     body::Body,
     http::{header, Method, Request},
@@ -8,7 +9,7 @@ use axum::{
 };
 use tower::util::ServiceExt;
 
-/// Build an axum Router with the given SharedState and all key routes
+/// Build an axum Router with the given SharedState, all key routes, and user routes
 pub fn build_key_router(state: SharedState) -> Router {
     Router::new()
         .route(
@@ -35,6 +36,7 @@ pub fn build_key_router(state: SharedState) -> Router {
             "/key/regenerate",
             axum::routing::post(aigw_server::routes::keys::key_regenerate),
         )
+        .route("/user/new", axum::routing::post(user::user_new))
         .with_state(state)
 }
 
@@ -175,6 +177,39 @@ pub async fn make_request(
 
     if let Some(token) = auth {
         req = req.header(header::AUTHORIZATION, format!("Bearer {}", token));
+    }
+
+    let req_body = body
+        .map(|b| Body::from(b.to_string()))
+        .unwrap_or(Body::empty());
+
+    let request = req.body(req_body).unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    let status = response.status().as_u16();
+
+    let json_body = match axum::body::to_bytes(response.into_body(), usize::MAX).await {
+        Ok(bytes) => serde_json::from_slice(&bytes).ok(),
+        Err(_) => None,
+    };
+
+    (status, json_body)
+}
+
+/// Helper: send an HTTP request with a Cookie header and return (status, json_body)
+pub async fn make_request_with_cookie(
+    app: &Router,
+    method: Method,
+    uri: &str,
+    cookie: Option<&str>,
+    body: Option<&str>,
+) -> (u16, Option<serde_json::Value>) {
+    let mut req = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header(header::CONTENT_TYPE, "application/json");
+
+    if let Some(c) = cookie {
+        req = req.header(header::COOKIE, c);
     }
 
     let req_body = body

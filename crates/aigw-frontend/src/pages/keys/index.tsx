@@ -2,6 +2,7 @@ import { useState, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiPost, apiPut, apiDelete } from "@/lib/api";
+import { useAuth } from "@/hooks/use-auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -95,6 +96,8 @@ function maskToken(token: string): string {
 
 export function KeysPage() {
   const { t } = useTranslation();
+  const { userRole } = useAuth();
+  const isAdmin = userRole === "proxy_admin";
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [visibleTokens, setVisibleTokens] = useState<Set<string>>(new Set());
@@ -119,6 +122,20 @@ export function KeysPage() {
   const [formTPM, setFormTPM] = useState("");
   const [formRPM, setFormRPM] = useState("");
   const [formExpires, setFormExpires] = useState("");
+  const [formUserId, setFormUserId] = useState("");
+
+  const [userList, setUserList] = useState<Array<{ user_id: string; user_alias: string | null; user_email: string | null }>>([]);
+
+  // Fetch user list for admin user_id selection
+  useQuery({
+    queryKey: ["user-list-for-keys"],
+    queryFn: async () => {
+      const resp = await apiGet<{ data: Array<{ user_id: string; user_alias: string | null; user_email: string | null }> }>("/user/list?page=1&page_size=500");
+      setUserList(resp.data ?? []);
+      return resp;
+    },
+    enabled: isAdmin,
+  });
 
   const { data, isLoading, error } = useQuery<KeyListResponse>({
     queryKey: ["virtual-keys", page, pageSize],
@@ -244,6 +261,7 @@ export function KeysPage() {
     setFormTPM("");
     setFormRPM("");
     setFormExpires("");
+    setFormUserId("");
     setGeneratedToken(null);
     setCreateOpen(true);
   }
@@ -295,6 +313,7 @@ export function KeysPage() {
     if (formTPM.trim()) body.tpm_limit = parseInt(formTPM);
     if (formRPM.trim()) body.rpm_limit = parseInt(formRPM);
     if (formExpires.trim()) body.expires = formExpires.trim();
+    if (isAdmin && formUserId.trim()) body.user_id = formUserId.trim();
     return body;
   }
 
@@ -1032,6 +1051,26 @@ export function KeysPage() {
                         onChange={setSelectedModels}
                       />
                     </div>
+                    {isAdmin && (
+                      <div>
+                        <Label htmlFor="user-id">
+                          {t("keys.createDialog.userSelectorLabel")}
+                        </Label>
+                        <select
+                          id="user-id"
+                          value={formUserId}
+                          onChange={(e) => setFormUserId(e.target.value)}
+                          className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background"
+                        >
+                          <option value="">{t("keys.createDialog.userSelectorNone")}</option>
+                          {userList.map((u) => (
+                            <option key={u.user_id} value={u.user_id}>
+                              {u.user_email ?? u.user_alias ?? u.user_id}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
                     <div className="grid grid-cols-3 gap-4">
                       <div>
                         <Label htmlFor="budget">
