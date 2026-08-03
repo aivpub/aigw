@@ -1,17 +1,56 @@
 # aigw -- 下一步行动
 
-**上次更新**: 2026-08-01
-**当前阶段**: Phase 38 ✅（Stage 91-93 UI 多语言 i18n）；Phase 39 ⏳ 待开始（Stage 94-97 Budget Reset）
+**上次更新**: 2026-08-03
+**当前阶段**: Phase 39 🔄 75%（Stage 94-96 ✅，Stage 97 ⏳ 多级 BudgetEnforcer 待执行）；Phase 40 ⏳ 待开始（Stage 98-100 BDD Coverage Enhancement）
 
 ---
 
-## 当前状态：92/92 Stages ✅ ALL STAGES COMPLETE
+## 当前状态：97/100 Stages（94-96 已完成 + 97 待执行 + 98-100 待开始）
 
-**待办**: ① Phase 30（Stage 78-81）代码已落地 + Phase 31 修复完成，待一并回写为 ✅；② TD-006 客户端 call_id 响应头回写；③ 长期路线 LT-BodyMetrics/LT-BodyCompact/LT-BodyLifecycle 视数据量触发。
+**2026-08-03 审计发现**: Phase 39 Stage 94-96 代码已落地但 roadmap 未同步更新。已纠正——94 ✅ / 95 ✅ / 96 ✅ / 97 ⏳。
+
+**待办**: 
+1. **Stage 97**（P0, 8h）：多级 BudgetEnforcer key→user→team→org 逐级检查 + soft_budget 记日志 + 全栈联调 + real BDD 三后端
+2. **Phase 40 Stage 98**（P0, 12h）：路由端点 BDD 补全（health 5 + router_settings 4 + deleted_list 4 = 13 mock BDD）
+3. **Phase 40 Stage 99**（P0, 14h）：内部模块补测（daily_spend_queue 7 UT + rate_limiter 3 BDD + auth_gateway 4 UT + rate_limit 5 UT）
+4. **Phase 40 Stage 100**（P1, 10h）：aigw-migrate 高级功能 BDD（11 real BDD 三后端）
+5. Phase 30（Stage 78-81）代码已落地 + Phase 31 修复完成，待一并回写为 ✅
+6. TD-006 客户端 call_id 响应头回写
+7. 长期路线 LT-BodyMetrics/LT-BodyCompact/LT-BodyLifecycle 视数据量触发
 
 ---
 
-## Phase 38: UI 多语言 i18n 支持（中文 + English）✅ 完成
+## Phase 39: Budget Reset 周期任务 + 配置 🔄 75%
+
+**2026-08-03 审计**: Stage 94-96 已完成（entity spend 增量、daily_spend 5D、BudgetResetter、配额层级约束、前端），Stage 97（多级 BudgetEnforcer）待执行。详见 `docs/stages/stage-roadmap.md` 和 `docs/stages/stage-97.md`。
+
+### Stage 97（待执行, 8h）
+
+**目标**: 扩展 `BudgetEnforcer::check_budget` → `enforce_limits()` 逐级检查 key→user→team→org 四级的 spend vs max_budget；soft_budget 超限记 audit 日志（不返回 429）；team/org 历史用量聚合端点补全（`/spend/teams` + `/spend/orgs` + 对应的 `/global/spend/` variants）。
+
+**关键变更**:
+- `crates/aigw-core/src/budget.rs`: `BudgetEnforcer::check_budget` 改签名为接收 `&[EntityBudget]` → 逐级遍历
+- `crates/aigw-core/src/middleware/rate_limit.rs`: `enforce_limits` 在 budget 阶段查询 user/team/org spend → 逐级检查
+- `crates/aigw-server/src/routes/spend.rs`: 新增 `spend_teams` / `spend_orgs` / `global_spend_teams` / `global_spend_orgs` 4 端点 + DB 层查询方法
+- **real BDD 三后端**: 多级 budget 超限逐级拦截场景 × 3 后端
+
+**门禁**: aigw-core lib UT 全绿 + mock BDD 全绿 + real BDD SQLite/PG/MySQL 全绿 + 前端回归
+
+---
+
+## Phase 40: BDD Coverage Enhancement ⏳（36h，3 Stages）
+
+**背景**: 2026-08-03 全量 BDD 覆盖审计（三路 subagent 并行扫描 `docs/research/2026-08-03-bdd-coverage-audit.md`）。RDD 驱动——补测试防回归优先于新功能。
+
+| Stage | 目标 | 类型 | 预估 | 状态 |
+|-------|------|------|------|------|
+| Stage 98 | 路由端点 BDD 补全 — health 追加 5 场景 + router_settings.feature 新建 4 场景 + deleted_list.feature 新建 4 场景。共 13 mock BDD，3 个 feature 文件 | 测试 | 12h | ⏳ 待开始 |
+| Stage 99 | 内部模块 + middleware 补测 — daily_spend_queue UT ×7（P0）+ rate_limiter 429 BDD ×3 + auth_gateway UT ×4 + rate_limit middleware UT ×5。共 19 测试 | 测试 | 14h | ⏳ 待开始 |
+| Stage 100 | aigw-migrate 高级功能 BDD — precheck.feature ×4 + verify.feature ×2 + advanced.feature ×3 + cursor.feature ×2。共 11 real BDD（SQLite 全量 + PG/MySQL 选 5） | 测试 | 10h | ⏳ 待开始 |
+
+**依赖**: Stage 98/99/100 修改文件不重叠，可并行。
+
+**设计文档**: `docs/plans/2026-08-03-bdd-coverage-enhancement-phase-39.md`、`docs/stages/stage-98~100.md`、`docs/research/2026-08-03-bdd-coverage-audit.md`
 
 **交付日期**: 2026-08-01。3 Stage，42h。
 
@@ -137,12 +176,12 @@ Phase 39:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 ### 测试目标
 
-| 层 | 框架 | 当前 |
-|---|------|------|
-| 后端单元 | libtest | ~277 tests（aigw-core 254 + Stage 87 单测 2）|
-| 后端 BDD | cucumber-rust | 178 scenarios（mock 163 pass / 15 skip，含 Stage 85 核心预期 2：双列返回 + 双列搜索）|
-| 后端 real BDD | cucumber-rust + testcontainers | 36 scenarios × 3 后端（sqlite/pg/mysql 全绿；real 上游 key 失败为环境问题非 Stage 85）|
-| 前端 BDD | Playwright + playwright-bdd | 261 tests（含 jobs 81 + Stage 87 9 = 27 new scenarios × 3 viewports）|
+| 层 | 框架 | 当前 | Phase 40 后目标 |
+|---|------|------|----------------|
+| 后端单元 | libtest | ~277 tests（aigw-core 264 + Stage 87 单测） | ≥ 293（+16 UT from Stage 99） |
+| 后端 BDD | cucumber-rust | ~178 scenarios（mock） | ≥ 194（+13 from Stage 98 + 3 from Stage 99） |
+| 后端 real BDD | cucumber-rust + testcontainers | 36 scenarios × 3 后端（sqlite/pg/mysql） | ≥ 47 SQLite + ≥ 41 PG + ≥ 41 MySQL（+11 from Stage 100） |
+| 前端 BDD | Playwright + playwright-bdd | ~261 tests | 无新增（本 Phase 无前端变更） |
 
 ---
 
