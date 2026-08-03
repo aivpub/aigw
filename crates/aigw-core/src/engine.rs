@@ -356,7 +356,7 @@ async fn create_job_pg(
     let total = steps.len() as i32;
     sqlx::query(
         "INSERT INTO async_jobs (id, step_type, trigger_type, triggered_by, status, total_steps, max_retries, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7, $8)"
+         VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7::timestamptz, $8::timestamptz)"
     )
     .bind(job_id).bind(step_type).bind(trigger_type).bind(triggered_by)
     .bind(total).bind(max_retries).bind(now).bind(now)

@@ -92,6 +92,17 @@ pub struct ResetCandidate {
 // Scanning logic
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+/// Return the database-specific current-time function for use in SQL WHERE clauses.
+///
+/// SQLite uses `datetime('now')`; MySQL and PostgreSQL use `NOW()`.
+fn now_func(db: &Database) -> &'static str {
+    match db {
+        Database::Sqlite(_) => "datetime('now')",
+        Database::Mysql(_) => "NOW()",
+        Database::Postgres(_) => "NOW()",
+    }
+}
+
 /// Scan a single entity table (virtual_keys, teams, users) for rows needing reset.
 ///
 /// The WHERE clause finds rows where:
@@ -103,10 +114,11 @@ async fn scan_entity_table(
 ) -> Result<Vec<ResetCandidate>, DbError> {
     let table = entity_type.table_name();
     let pk = entity_type.pk_column();
+    let now_f = now_func(db);
     let sql = format!(
         "SELECT {pk}, budget_duration FROM {table}
          WHERE budget_duration IS NOT NULL
-           AND (budget_reset_at IS NULL OR budget_reset_at < datetime('now'))"
+           AND (budget_reset_at IS NULL OR budget_reset_at < {now_f})"
     );
 
     let rows: Vec<(String, String)> = match db {
@@ -142,27 +154,28 @@ async fn scan_entity_table(
 /// organizations.budget_id -> budgets.budget_id, where budget_duration IS NOT NULL
 /// and budget_reset_at has passed or is unset.
 async fn scan_organizations(db: &Database) -> Result<Vec<ResetCandidate>, DbError> {
-    let sql = r#"
-        SELECT o.organization_id, b.budget_duration
+    let now_f = now_func(db);
+    let sql = format!(
+        r#"SELECT o.organization_id, b.budget_duration
         FROM organizations o
         JOIN budgets b ON o.budget_id = b.budget_id
         WHERE b.budget_duration IS NOT NULL
-          AND (b.budget_reset_at IS NULL OR b.budget_reset_at < datetime('now'))
-    "#;
+          AND (b.budget_reset_at IS NULL OR b.budget_reset_at < {now_f})"#
+    );
 
     let rows: Vec<(String, String)> = match db {
         Database::Sqlite(pool) => {
-            sqlx::query_as::<_, (String, String)>(sql)
+            sqlx::query_as::<_, (String, String)>(&sql)
                 .fetch_all(pool)
                 .await?
         }
         Database::Mysql(pool) => {
-            sqlx::query_as::<_, (String, String)>(sql)
+            sqlx::query_as::<_, (String, String)>(&sql)
                 .fetch_all(pool)
                 .await?
         }
         Database::Postgres(pool) => {
-            sqlx::query_as::<_, (String, String)>(sql)
+            sqlx::query_as::<_, (String, String)>(&sql)
                 .fetch_all(pool)
                 .await?
         }
@@ -707,5 +720,162 @@ mod tests {
 
         let candidates = scan_entity_table(&db, EntityType::Key).await.unwrap();
         assert!(candidates.is_empty());
+    }
+
+    // ── now_func unit tests ──────────────────────────────────
+
+    #[tokio::test]
+    async fn test_now_func_sqlite() {
+        let db = Database::Sqlite(sqlx::SqlitePool::connect_lazy("sqlite::memory:").unwrap());
+        assert_eq!(now_func(&db), "datetime('now')");
+    }
+
+    #[tokio::test]
+    async fn test_now_func_mysql_uses_now() {
+        // MySQL lazy pool won't connect — now_func only inspects the variant
+        let pool = sqlx::MySqlPool::connect_lazy("mysql://localhost").unwrap();
+        let db = Database::Mysql(pool);
+        assert_eq!(now_func(&db), "NOW()");
+    }
+
+    #[tokio::test]
+    async fn test_now_func_postgres_uses_now() {
+        // Postgres lazy pool won't connect — now_func only inspects the variant
+        let pool = sqlx::PgPool::connect_lazy("postgres://localhost").unwrap();
+        let db = Database::Postgres(pool);
+        assert_eq!(now_func(&db), "NOW()");
+    }
+
+    // ── scan_entity_table edge case tests ────────────────────
+
+    #[tokio::test]
+    async fn test_scan_entity_table_mixed_states() {
+        use crate::crypto::hash_token;
+        use chrono::Duration;
+
+        let db = Database::init("sqlite::memory:").await.unwrap();
+
+        let past = (Utc::now() - Duration::hours(2))
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        let future = (Utc::now() + Duration::hours(24))
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+
+        let pool = sqlite_pool(&db);
+
+        let expired = hash_token("sk-expired");
+        let null_rst = hash_token("sk-null");
+        let fresh = hash_token("sk-fresh");
+        let no_dur = hash_token("sk-no-dur");
+
+        sqlx::query(
+            r#"INSERT INTO virtual_keys (token, key_name, spend, budget_duration, budget_reset_at, models, aliases, config, permissions, metadata, allowed_cache_controls, allowed_routes, policies, access_group_ids, model_spend, model_max_budget, soft_budget_cooldown)
+               VALUES (?, 'test', 0, '1mo', ?, '[]', '{}', '{}', '{}', '{}', '[]', '[]', '[]', '[]', '{}', '{}', 'false')"#,
+        )
+        .bind(&expired).bind(&past)
+        .execute(pool).await.unwrap();
+
+        sqlx::query(
+            r#"INSERT INTO virtual_keys (token, key_name, spend, budget_duration, budget_reset_at, models, aliases, config, permissions, metadata, allowed_cache_controls, allowed_routes, policies, access_group_ids, model_spend, model_max_budget, soft_budget_cooldown)
+               VALUES (?, 'test', 0, 'daily', NULL, '[]', '{}', '{}', '{}', '{}', '[]', '[]', '[]', '[]', '{}', '{}', 'false')"#,
+        )
+        .bind(&null_rst)
+        .execute(pool).await.unwrap();
+
+        sqlx::query(
+            r#"INSERT INTO virtual_keys (token, key_name, spend, budget_duration, budget_reset_at, models, aliases, config, permissions, metadata, allowed_cache_controls, allowed_routes, policies, access_group_ids, model_spend, model_max_budget, soft_budget_cooldown)
+               VALUES (?, 'test', 0, '1mo', ?, '[]', '{}', '{}', '{}', '{}', '[]', '[]', '[]', '[]', '{}', '{}', 'false')"#,
+        )
+        .bind(&fresh).bind(&future)
+        .execute(pool).await.unwrap();
+
+        sqlx::query(
+            r#"INSERT INTO virtual_keys (token, key_name, spend, budget_duration, budget_reset_at, models, aliases, config, permissions, metadata, allowed_cache_controls, allowed_routes, policies, access_group_ids, model_spend, model_max_budget, soft_budget_cooldown)
+               VALUES (?, 'test', 0, NULL, NULL, '[]', '{}', '{}', '{}', '{}', '[]', '[]', '[]', '[]', '{}', '{}', 'false')"#,
+        )
+        .bind(&no_dur)
+        .execute(pool).await.unwrap();
+
+        let candidates = scan_entity_table(&db, EntityType::Key).await.unwrap();
+        assert_eq!(candidates.len(), 2, "should find only expired and null-reset-at keys");
+
+        let ids: Vec<&str> = candidates.iter().map(|c| c.entity_id.as_str()).collect();
+        assert!(ids.contains(&expired.as_str()), "should contain expired key");
+        assert!(ids.contains(&null_rst.as_str()), "should contain null-reset-at key");
+    }
+
+    #[tokio::test]
+    async fn test_scan_entity_table_skips_budget_duration_null() {
+        use crate::crypto::hash_token;
+
+        let db = Database::init("sqlite::memory:").await.unwrap();
+        let hash = hash_token("sk-no-bud-dur");
+        let past = (Utc::now() - chrono::Duration::hours(2))
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+
+        sqlx::query(
+            r#"INSERT INTO virtual_keys (token, key_name, spend, budget_duration, budget_reset_at, models, aliases, config, permissions, metadata, allowed_cache_controls, allowed_routes, policies, access_group_ids, model_spend, model_max_budget, soft_budget_cooldown)
+               VALUES (?, 'no-dur', 0, NULL, ?, '[]', '{}', '{}', '{}', '{}', '[]', '[]', '[]', '[]', '{}', '{}', 'false')"#,
+        )
+        .bind(&hash)
+        .bind(&past)
+        .execute(sqlite_pool(&db))
+        .await
+        .unwrap();
+
+        let candidates = scan_entity_table(&db, EntityType::Key).await.unwrap();
+        assert!(candidates.is_empty(), "key without budget_duration should not be scanned");
+    }
+
+    #[tokio::test]
+    async fn test_scan_all_combines_all_types() {
+        use crate::crypto::hash_token;
+
+        let db = Database::init("sqlite::memory:").await.unwrap();
+        let pool = sqlite_pool(&db);
+        let past = (Utc::now() - chrono::Duration::hours(1))
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+
+        // Insert key
+        let kh = hash_token("sk-scan-all");
+        sqlx::query(
+            r#"INSERT INTO virtual_keys (token, key_name, spend, budget_duration, budget_reset_at, models, aliases, config, permissions, metadata, allowed_cache_controls, allowed_routes, policies, access_group_ids, model_spend, model_max_budget, soft_budget_cooldown)
+               VALUES (?, 'scan-all', 0, 'daily', ?, '[]', '{}', '{}', '{}', '{}', '[]', '[]', '[]', '[]', '{}', '{}', 'false')"#,
+        )
+        .bind(&kh).bind(&past).execute(pool).await.unwrap();
+
+        // Insert team
+        sqlx::query(
+            "INSERT INTO teams (team_id, spend, budget_duration, budget_reset_at, models, admins, members, members_with_roles, metadata, access_group_ids, policies, team_member_permissions, model_spend, model_max_budget, default_team_member_models, created_at, updated_at) VALUES ('t1', 0, '7d', ?, '[]','{}','{}','{}','{}','[]','[]','{}','{}','{}','[]', datetime('now'), datetime('now'))",
+        )
+        .bind(&past).execute(pool).await.unwrap();
+
+        // Insert user
+        sqlx::query(
+            "INSERT INTO users (user_id, spend, budget_duration, budget_reset_at, models, metadata, allowed_cache_controls, policies, model_spend, model_max_budget, teams, user_email, created_at, updated_at) VALUES ('u1', 0, 'daily', ?, '[]','{}','[]','[]','{}','{}','{}','u1@test.com', datetime('now'), datetime('now'))",
+        )
+        .bind(&past).execute(pool).await.unwrap();
+
+        // Insert org + budget (with expired reset)
+        sqlx::query(
+            "INSERT INTO budgets (budget_id, max_budget, budget_duration, budget_reset_at, model_max_budget, allowed_models, created_at, created_by, updated_at, updated_by) VALUES ('b1', '100', '1mo', ?, '{}', '[]', datetime('now'), 'test', datetime('now'), 'test')",
+        )
+        .bind(&past).execute(pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO organizations (organization_id, organization_alias, budget_id, spend, models, metadata, model_spend, created_at, created_by, updated_at, updated_by) VALUES ('o1', 'org1', 'b1', 0, '[]','{}','{}', datetime('now'), 'test', datetime('now'), 'test')",
+        )
+        .execute(pool).await.unwrap();
+
+        let candidates = scan_all(&db).await.unwrap();
+        assert_eq!(candidates.len(), 4, "should find 4 expired entities (key, team, user, org)");
+
+        let types: Vec<&str> = candidates.iter().map(|c| c.entity_type.as_str()).collect();
+        assert!(types.contains(&"key"));
+        assert!(types.contains(&"team"));
+        assert!(types.contains(&"user"));
+        assert!(types.contains(&"org"));
     }
 }
