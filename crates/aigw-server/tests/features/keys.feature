@@ -47,3 +47,16 @@ Feature: Virtual Key 管理
     When 直接查询 virtual_keys 表
     Then token 列存储的是 SHA256 hash
     And token 列不等于明文 key
+
+  Scenario: 更新 key blocked 字段不影响其他字段
+    Given 管理员已认证
+    And 已存在 key "partial-update-test" 且 key_alias="partial-alias" max_budget=50.0
+    When 发送 PUT /key/update 请求
+      """
+      {"key": "partial-update-test", "blocked": true}
+      """
+    Then 响应状态码为 200
+    When 发送 GET /key/list
+    Then 响应状态码为 200
+    And 列表中的 key "partial-update-test" blocked 值为 true
+    And 列表中 key "partial-update-test" 的 其他字段不变 原值为 {"key_alias": "partial-alias", "max_budget": 50.0}
