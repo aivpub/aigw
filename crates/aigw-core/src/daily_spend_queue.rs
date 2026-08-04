@@ -338,3 +338,149 @@ async fn batch_upsert_daily_spend(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mk_log(
+        kind: DailySpendKind,
+        entity_id: &str,
+        date: &str,
+        api_key: &str,
+        model: &str,
+        spend: f64,
+        prompt_tokens: i64,
+        completion_tokens: i64,
+        requests: i64,
+    ) -> PendingDailySpend {
+        PendingDailySpend {
+            log: DailySpendLog {
+                kind,
+                entity_id: entity_id.to_string(),
+                date: date.to_string(),
+                api_key: api_key.to_string(),
+                model: model.to_string(),
+                custom_llm_provider: "openai".to_string(),
+                mcp_namespaced_tool_name: String::new(),
+                endpoint: "/chat/completions".to_string(),
+                model_group: model.to_string(),
+                prompt_tokens,
+                completion_tokens,
+                cache_read_input_tokens: 0,
+                cache_creation_input_tokens: 0,
+                spend,
+                api_requests: requests,
+                successful_requests: requests,
+                failed_requests: 0,
+            },
+        }
+    }
+
+    #[test]
+    fn test_aggregate_single_kind_user() {
+        let items = vec![mk_log(
+            DailySpendKind::User,
+            "user-a",
+            "2026-01-01",
+            "sk-test",
+            "gpt-4",
+            0.05,
+            100,
+            50,
+            1,
+        )];
+        let result = aggregate_daily_spend(items);
+        assert_eq!(result.len(), 1);
+        let entries = result.get("daily_user_spend").expect("user table");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].0, "user-a"); // entity_id
+        assert_eq!(entries[0].1, "2026-01-01"); // date
+        assert_eq!(entries[0].12, 0.05); // spend
+    }
+
+    #[test]
+    fn test_aggregate_multiple_kinds() {
+        let items = vec![
+            mk_log(DailySpendKind::User, "u1", "2026-01-01", "sk", "m", 1.0, 10, 20, 1),
+            mk_log(DailySpendKind::Team, "t1", "2026-01-01", "sk", "m", 2.0, 30, 40, 1),
+            mk_log(
+                DailySpendKind::Organization,
+                "o1",
+                "2026-01-01",
+                "sk",
+                "m",
+                3.0,
+                50,
+                60,
+                1,
+            ),
+        ];
+        let result = aggregate_daily_spend(items);
+        assert_eq!(result.len(), 3);
+        assert!(result.contains_key("daily_user_spend"));
+        assert!(result.contains_key("daily_team_spend"));
+        assert!(result.contains_key("daily_organization_spend"));
+    }
+
+    #[test]
+    fn test_aggregate_empty_returns_empty() {
+        let result = aggregate_daily_spend(vec![]);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_aggregate_sum_correct() {
+        // Same key → aggregated into one entry with summed tokens/spend
+        let items = vec![
+            mk_log(DailySpendKind::User, "u1", "2026-01-01", "sk", "gpt-4", 0.05, 100, 50, 1),
+            mk_log(DailySpendKind::User, "u1", "2026-01-01", "sk", "gpt-4", 0.03, 200, 100, 1),
+            mk_log(DailySpendKind::User, "u1", "2026-01-01", "sk", "gpt-4", 0.02, 300, 150, 1),
+        ];
+        let result = aggregate_daily_spend(items);
+        let entries = result.get("daily_user_spend").expect("user table");
+        assert_eq!(entries.len(), 1, "same key should aggregate to 1 entry");
+        assert_eq!(entries[0].8, 600, "prompt_tokens: 100+200+300");
+        assert_eq!(entries[0].9, 300, "completion_tokens: 50+100+150");
+        assert!(
+            (entries[0].12 - 0.10).abs() < 0.001,
+            "spend: 0.05+0.03+0.02 = {}",
+            entries[0].12
+        );
+        assert_eq!(entries[0].13, 3, "api_requests: 1+1+1");
+        assert_eq!(entries[0].14, 3, "successful_requests: 1+1+1");
+    }
+
+    #[test]
+    fn test_aggregate_different_entities_not_merged() {
+        let items = vec![
+            mk_log(DailySpendKind::User, "u1", "2026-01-01", "sk", "m", 1.0, 10, 20, 1),
+            mk_log(DailySpendKind::User, "u2", "2026-01-01", "sk", "m", 2.0, 30, 40, 1),
+        ];
+        let result = aggregate_daily_spend(items);
+        let entries = result.get("daily_user_spend").expect("user table");
+        assert_eq!(entries.len(), 2, "different entity_id → 2 entries");
+    }
+
+    #[test]
+    fn test_aggregate_different_dates_not_merged() {
+        let items = vec![
+            mk_log(DailySpendKind::User, "u1", "2026-01-01", "sk", "m", 1.0, 10, 20, 1),
+            mk_log(DailySpendKind::User, "u1", "2026-01-02", "sk", "m", 2.0, 30, 40, 1),
+        ];
+        let result = aggregate_daily_spend(items);
+        let entries = result.get("daily_user_spend").expect("user table");
+        assert_eq!(entries.len(), 2, "different date → 2 entries");
+    }
+
+    #[test]
+    fn test_aggregate_different_models_not_merged() {
+        let items = vec![
+            mk_log(DailySpendKind::User, "u1", "2026-01-01", "sk", "gpt-4", 1.0, 10, 20, 1),
+            mk_log(DailySpendKind::User, "u1", "2026-01-01", "sk", "claude-3", 2.0, 30, 40, 1),
+        ];
+        let result = aggregate_daily_spend(items);
+        let entries = result.get("daily_user_spend").expect("user table");
+        assert_eq!(entries.len(), 2, "different model → 2 entries");
+    }
+}
