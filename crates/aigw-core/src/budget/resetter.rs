@@ -272,7 +272,12 @@ async fn execute_reset(
                     .fetch_optional(pool)
                     .await?
                     .flatten(),
-                Database::Postgres(pool) => sqlx::query_scalar(sql)
+                Database::Postgres(pool) => sqlx::query_scalar(
+                    r#"SELECT b.budget_reset_at
+                        FROM organizations o
+                        JOIN budgets b ON o.budget_id = b.budget_id
+                        WHERE o.organization_id = $1"#
+                )
                     .bind(entity_id)
                     .fetch_optional(pool)
                     .await?
@@ -296,11 +301,18 @@ async fn execute_reset(
                     .fetch_optional(pool)
                     .await?
                     .flatten(),
-                Database::Postgres(pool) => sqlx::query_scalar(&sql)
-                    .bind(entity_id)
-                    .fetch_optional(pool)
-                    .await?
-                    .flatten(),
+                Database::Postgres(pool) => {
+                    let pg_sql = format!(
+                        "SELECT budget_reset_at FROM {} WHERE {} = $1",
+                        entity_type.table_name(),
+                        entity_type.pk_column()
+                    );
+                    sqlx::query_scalar(&pg_sql)
+                        .bind(entity_id)
+                        .fetch_optional(pool)
+                        .await?
+                        .flatten()
+                }
             }
         }
     };
@@ -342,12 +354,17 @@ async fn execute_reset(
                     sqlx::query(sql_spend).bind(entity_id).execute(pool).await?;
                 }
                 Database::Postgres(pool) => {
-                    sqlx::query(sql_budget)
+                    let pg_sql_budget = r#"
+                        UPDATE budgets SET budget_reset_at = $1
+                        WHERE budget_id = (SELECT budget_id FROM organizations WHERE organization_id = $2)
+                    "#;
+                    sqlx::query(pg_sql_budget)
                         .bind(&next_reset_at_str)
                         .bind(entity_id)
                         .execute(pool)
                         .await?;
-                    sqlx::query(sql_spend).bind(entity_id).execute(pool).await?;
+                    sqlx::query("UPDATE organizations SET spend = 0 WHERE organization_id = $1")
+                        .bind(entity_id).execute(pool).await?;
                 }
             }
         }
@@ -374,7 +391,12 @@ async fn execute_reset(
                         .await?;
                 }
                 Database::Postgres(pool) => {
-                    sqlx::query(&sql)
+                    let pg_sql = format!(
+                        "UPDATE {} SET spend = 0, budget_reset_at = $1 WHERE {} = $2",
+                        entity_type.table_name(),
+                        entity_type.pk_column()
+                    );
+                    sqlx::query(&pg_sql)
                         .bind(&next_reset_at_str)
                         .bind(entity_id)
                         .execute(pool)

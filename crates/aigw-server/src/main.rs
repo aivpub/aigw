@@ -644,7 +644,7 @@ async fn backfill_missing_reset_at(db: &Arc<Database>) -> anyhow::Result<()> {
                         .await?;
                 }
                 Database::Postgres(pool) => {
-                    sqlx::query("UPDATE virtual_keys SET budget_reset_at = ? WHERE token = ?")
+                    sqlx::query("UPDATE virtual_keys SET budget_reset_at = $1 WHERE token = $2")
                         .bind(&next_str)
                         .bind(token)
                         .execute(pool)
@@ -707,7 +707,7 @@ async fn backfill_missing_reset_at(db: &Arc<Database>) -> anyhow::Result<()> {
                         .await?;
                 }
                 Database::Postgres(pool) => {
-                    sqlx::query("UPDATE teams SET budget_reset_at = ? WHERE team_id = ?")
+                    sqlx::query("UPDATE teams SET budget_reset_at = $1 WHERE team_id = $2")
                         .bind(&next_str)
                         .bind(team_id)
                         .execute(pool)
@@ -770,7 +770,7 @@ async fn backfill_missing_reset_at(db: &Arc<Database>) -> anyhow::Result<()> {
                         .await?;
                 }
                 Database::Postgres(pool) => {
-                    sqlx::query("UPDATE users SET budget_reset_at = ? WHERE user_id = ?")
+                    sqlx::query("UPDATE users SET budget_reset_at = $1 WHERE user_id = $2")
                         .bind(&next_str)
                         .bind(user_id)
                         .execute(pool)
@@ -836,7 +836,7 @@ async fn backfill_missing_reset_at(db: &Arc<Database>) -> anyhow::Result<()> {
                         .await?;
                 }
                 Database::Postgres(pool) => {
-                    sqlx::query("UPDATE budgets SET budget_reset_at = ? WHERE budget_id = ?")
+                    sqlx::query("UPDATE budgets SET budget_reset_at = $1 WHERE budget_id = $2")
                         .bind(&next_str)
                         .bind(budget_id)
                         .execute(pool)
