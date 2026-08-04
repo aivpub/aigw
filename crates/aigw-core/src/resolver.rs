@@ -332,16 +332,13 @@ impl ModelResolver {
                 .map(|s| s.to_string());
 
             // When proxy_models has api_key=None (encrypted/empty), fall back to env vars.
-            let (api_base, api_key) = if api_key.is_none() {
-                let env_key = std::env::var("OPENAI_API_KEY")
+            // api_base from DB is authoritative — only fill missing api_key from env.
+            let api_key = if api_key.is_none() {
+                std::env::var("OPENAI_API_KEY")
                     .ok()
-                    .or_else(|| std::env::var("OPENAPI_KEY").ok());
-                let env_base = std::env::var("OPENAI_BASE_URL")
-                    .or_else(|_| std::env::var("OPENAPI_BASE_URL"))
-                    .unwrap_or_else(|_| api_base);
-                (env_base, env_key)
+                    .or_else(|| std::env::var("OPENAPI_KEY").ok())
             } else {
-                (api_base, api_key)
+                api_key
             };
 
             tracing::warn!(%model_name, %api_base, ?api_key, %upstream_model, "resolve: DIRECT PARAMS RESOLVED");
