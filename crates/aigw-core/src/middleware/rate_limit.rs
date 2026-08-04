@@ -166,3 +166,75 @@ pub async fn enforce_limits(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::Database;
+    use crate::rate_limiter::RateLimiter;
+
+    async fn setup() -> (Database, RateLimiter) {
+        let db = Database::init("sqlite::memory:").await.expect("db init");
+        let rl = RateLimiter::new();
+        (db, rl)
+    }
+
+    fn master_key() -> KeyIdentity {
+        KeyIdentity {
+            token_hash: "master-hash".to_string(),
+            key_alias: Some("master".to_string()),
+            user_id: None,
+            team_id: None,
+            organization_id: None,
+            is_master_key: true,
+            user_role: Some("proxy_admin".to_string()),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_enforce_limits_passes_for_master_key() {
+        let (db, rl) = setup().await;
+        let mk = master_key();
+        let result = enforce_limits(&db, &rl, &mk, 0).await;
+        assert!(result.is_ok(), "master key should bypass limits");
+    }
+
+    #[tokio::test]
+    async fn test_limit_error_to_into_response() {
+        use axum::response::IntoResponse;
+        let err = LimitError::RateLimited {
+            message: "RPM limit exceeded".to_string(),
+        };
+        let resp = err.into_response();
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[tokio::test]
+    async fn test_budget_exceeded_into_response() {
+        use axum::response::IntoResponse;
+        let err = LimitError::BudgetExceeded {
+            entity_type: "key".to_string(),
+            spent: 150.0,
+            limit: 100.0,
+        };
+        let resp = err.into_response();
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[tokio::test]
+    async fn test_internal_error_into_response() {
+        use axum::response::IntoResponse;
+        let err = LimitError::Internal("DB connection lost".to_string());
+        let resp = err.into_response();
+        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[tokio::test]
+    async fn test_limit_error_display() {
+        let err = LimitError::RateLimited {
+            message: "test".to_string(),
+        };
+        let debug = format!("{:?}", err);
+        assert!(debug.contains("RateLimited"));
+    }
+}
