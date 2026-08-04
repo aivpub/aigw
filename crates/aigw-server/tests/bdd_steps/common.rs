@@ -60,6 +60,14 @@ pub fn build_health_router(state: SharedState) -> Router {
             axum::routing::get(aigw_server::routes::health::health_latest),
         )
         .route(
+            "/health/metrics",
+            axum::routing::get(aigw_server::routes::health::health_metrics),
+        )
+        .route(
+            "/metrics",
+            axum::routing::get(aigw_server::routes::health::prometheus_metrics),
+        )
+        .route(
             "/model/health-check",
             axum::routing::post(aigw_server::routes::health::model_health_check),
         )
@@ -226,4 +234,38 @@ pub async fn make_request_with_cookie(
     };
 
     (status, json_body)
+}
+
+/// Like make_request, but returns the raw body text as String instead of JSON.
+/// Useful for endpoints that don't return JSON (e.g., Prometheus /metrics).
+pub async fn make_raw_request(
+    app: &Router,
+    method: Method,
+    uri: &str,
+    auth: Option<&str>,
+    body: Option<&str>,
+) -> (u16, Option<String>) {
+    let mut req = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header(header::CONTENT_TYPE, "application/json");
+
+    if let Some(token) = auth {
+        req = req.header(header::AUTHORIZATION, format!("Bearer {}", token));
+    }
+
+    let req_body = body
+        .map(|b| Body::from(b.to_string()))
+        .unwrap_or(Body::empty());
+
+    let request = req.body(req_body).unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    let status = response.status().as_u16();
+
+    let text = match axum::body::to_bytes(response.into_body(), usize::MAX).await {
+        Ok(bytes) => String::from_utf8(bytes.to_vec()).ok(),
+        Err(_) => None,
+    };
+
+    (status, text)
 }

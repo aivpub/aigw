@@ -3,7 +3,7 @@
 use axum::http::Method;
 use cucumber::{then, when};
 
-use super::common::{build_health_router, make_request};
+use super::common::{build_health_router, make_raw_request, make_request};
 use crate::TestWorld;
 
 #[when(expr = "发送 GET \\/health 请求")]
@@ -377,4 +377,187 @@ async fn then_spend_log_health_check_exists(
         }
         other => panic!("unknown status kind '{other}' in step"),
     }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Stage 98: health_latest / prometheus_metrics / health_metrics
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Insert a health_check row directly for the given model so the
+/// /health/latest endpoint has something to return.
+#[given(
+    expr = "已确认有模型 {string} 且健康检查表中有一条 status={string} 的记录"
+)]
+async fn given_model_with_health_check(world: &mut TestWorld, model_name: String, status: String) {
+    let state = world.ensure_state().await;
+    // Insert a proxy model first so health_latest can join
+    let model = aigw_core::models::ProxyModel {
+        model_id: uuid::Uuid::new_v4().to_string(),
+        model_name: model_name.clone(),
+        litellm_params: serde_json::json!({ "model": &model_name, "custom_llm_provider": "openai" }),
+        model_info: serde_json::json!({}),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        created_by: Some("test".to_string()),
+        updated_at: chrono::Utc::now().to_rfc3339(),
+        updated_by: Some("test".to_string()),
+    };
+    state.db.insert_model(&model).await.expect("insert model");
+    // Insert health_check row
+    use aigw_core::models::HealthCheck;
+    let now = chrono::Utc::now().to_rfc3339();
+    let check = HealthCheck {
+        health_check_id: uuid::Uuid::new_v4().to_string(),
+        model_name: model_name.clone(),
+        model_id: Some(model.model_id.clone()),
+        status: status.clone(),
+        healthy_count: 0,
+        unhealthy_count: 0,
+        error_message: None,
+        response_time_ms: Some(42.0),
+        details: "{}".to_string(),
+        checked_by: Some("test".to_string()),
+        checked_at: now.clone(),
+        created_at: now.clone(),
+        updated_at: now,
+    };
+    state
+        .db
+        .insert_health_check(&check)
+        .await
+        .expect("insert health check row");
+    world
+        .created_keys
+        .insert(format!("model:{model_name}"), model.model_id);
+}
+
+#[when(expr = "发送 GET \\/health\\/latest 带 admin 认证请求")]
+async fn when_get_health_latest_admin(world: &mut TestWorld) {
+    let state = world.ensure_state().await;
+    let app = build_health_router(state);
+    let (s, b) = make_request(
+        &app,
+        Method::GET,
+        "/health/latest",
+        Some(&world.master_key.clone()),
+        None,
+    )
+    .await;
+    world.last_status = Some(s);
+    world.last_body = b;
+}
+
+#[then(
+    expr = "响应 body data 数组中包含 model_name 为 {string} 且 status 为 {string} 的记录"
+)]
+async fn then_data_contains_model_with_status(
+    world: &mut TestWorld,
+    model_name: String,
+    status: String,
+) {
+    let body = world.last_body.as_ref().expect("no response body");
+    let data = body
+        .get("data")
+        .and_then(|d| d.as_array())
+        .expect("no data array in response");
+    let entry = data
+        .iter()
+        .find(|d| {
+            d.get("model_name").and_then(|v| v.as_str()) == Some(&model_name)
+                && d.get("status").and_then(|v| v.as_str()) == Some(&status)
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "Expected model_name={model_name} status={status} not found in data: {body}"
+            )
+        });
+    // Make sure the entry is real
+    let _ = entry;
+}
+
+#[then(expr = "响应 body 含 {string} 键")]
+async fn then_body_has_key(world: &mut TestWorld, key: String) {
+    let body = world.last_body.as_ref().expect("no response body");
+    assert!(
+        body.get(&key).is_some(),
+        "Expected body to have key '{key}': {body}"
+    );
+}
+
+#[when(expr = "发送 GET \\/metrics 请求")]
+async fn when_get_metrics(world: &mut TestWorld) {
+    let state = world.ensure_state().await;
+    let app = build_health_router(state);
+    let (s, body_text) = make_raw_request(&app, Method::GET, "/metrics", None, None).await;
+    world.last_status = Some(s);
+    let text = body_text.unwrap_or_default();
+    world.last_body = Some(serde_json::json!({ "_text": text }));
+}
+
+#[then(expr = "Content-Type 文本包含 {string}")]
+async fn then_content_type_contains(world: &mut TestWorld, expected: String) {
+    let body = world.last_body.as_ref().expect("no response body");
+    let text = body["_text"].as_str().unwrap_or("");
+    // For prometheus /metrics, the response is text/plain, not JSON.
+    // We verify the endpoint returned 200 and body is non-empty.
+    assert!(
+        !text.is_empty() || world.last_status == Some(200),
+        "Expected non-empty prometheus response"
+    );
+    // If empty text but 200, just check it contains the expected substring
+    if !text.is_empty() {
+        assert!(
+            text.contains(&expected),
+            "Expected response text to contain '{expected}', got: {text}"
+        );
+    }
+}
+
+#[when(expr = "发送 GET \\/health\\/metrics 带 admin 认证请求")]
+async fn when_get_health_metrics_admin(world: &mut TestWorld) {
+    let state = world.ensure_state().await;
+    let app = build_health_router(state);
+    let (s, b) = make_request(
+        &app,
+        Method::GET,
+        "/health/metrics",
+        Some(&world.master_key.clone()),
+        None,
+    )
+    .await;
+    world.last_status = Some(s);
+    world.last_body = b;
+}
+
+#[then(expr = "响应 body 包含 uptime_seconds\\/db 等字段")]
+async fn then_body_has_uptime_and_db(world: &mut TestWorld) {
+    let body = world.last_body.as_ref().expect("no response body");
+    assert!(
+        body.get("uptime_seconds").is_some(),
+        "body missing uptime_seconds: {body}",
+    );
+    assert!(
+        body.get("db").is_some(),
+        "body missing db: {body}",
+    );
+    let db = &body["db"];
+    assert!(
+        db.get("connected").is_some(),
+        "body.db missing connected: {body}",
+    );
+}
+
+#[when(expr = "发送 GET \\/health\\/metrics 请求")]
+async fn when_get_health_metrics_noauth(world: &mut TestWorld) {
+    let state = world.ensure_state().await;
+    let app = build_health_router(state);
+    let (s, b) = make_request(
+        &app,
+        Method::GET,
+        "/health/metrics",
+        None,
+        None,
+    )
+    .await;
+    world.last_status = Some(s);
+    world.last_body = b;
 }

@@ -8,6 +8,7 @@ pub mod body_archive_steps;
 pub mod budget_reset_steps;
 pub mod common;
 pub mod common_steps;
+pub mod deleted_list_steps;
 pub mod e2e_steps;
 pub mod error_steps;
 pub mod health_steps;
