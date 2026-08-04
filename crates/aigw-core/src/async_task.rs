@@ -40,8 +40,8 @@ pub struct JobRecord {
     pub max_retries: i32,
     pub started_at: Option<String>,
     pub completed_at: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
 }
 
 /// A log entry from the `async_job_logs` table.
@@ -53,7 +53,7 @@ pub struct JobLogEntry {
     pub step_key: Option<String>,
     pub level: String,
     pub message: String,
-    pub created_at: String,
+    pub created_at: Option<String>,
 }
 
 /// A record from the `async_job_steps` table.

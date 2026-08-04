@@ -273,7 +273,7 @@ async fn execute_reset(
                     .await?
                     .flatten(),
                 Database::Postgres(pool) => sqlx::query_scalar(
-                    r#"SELECT b.budget_reset_at
+                    r#"SELECT b.budget_reset_at::text
                         FROM organizations o
                         JOIN budgets b ON o.budget_id = b.budget_id
                         WHERE o.organization_id = $1"#
@@ -303,7 +303,7 @@ async fn execute_reset(
                     .flatten(),
                 Database::Postgres(pool) => {
                     let pg_sql = format!(
-                        "SELECT budget_reset_at FROM {} WHERE {} = $1",
+                        "SELECT budget_reset_at::text FROM {} WHERE {} = $1",
                         entity_type.table_name(),
                         entity_type.pk_column()
                     );
@@ -324,7 +324,7 @@ async fn execute_reset(
                 "unable to compute next_reset_at for '{budget_duration}'"
             ))
         })?;
-    let next_reset_at_str = next_reset_at.format("%Y-%m-%d %H:%M:%S").to_string();
+    let next_reset_at_str = next_reset_at.to_rfc3339();
 
     // Execute the UPDATE(s)
     match entity_type {
@@ -355,7 +355,7 @@ async fn execute_reset(
                 }
                 Database::Postgres(pool) => {
                     let pg_sql_budget = r#"
-                        UPDATE budgets SET budget_reset_at = $1
+                        UPDATE budgets SET budget_reset_at = $1::timestamptz
                         WHERE budget_id = (SELECT budget_id FROM organizations WHERE organization_id = $2)
                     "#;
                     sqlx::query(pg_sql_budget)

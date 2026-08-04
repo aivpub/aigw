@@ -8,11 +8,17 @@ use serde::{Deserialize, Serialize};
 ///
 /// Controls periodic spend reset for entities (virtual_keys, teams, users,
 /// organizations) that have `budget_duration` set.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BudgetResetConfig {
     /// Enable the periodic budget reset worker. Default: true.
     #[serde(default = "default_true")]
     pub enabled: bool,
+}
+
+impl Default for BudgetResetConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
 }
 
 fn default_true() -> bool {

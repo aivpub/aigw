@@ -710,8 +710,8 @@ async fn do_finalize(world: &mut TestWorld, null_body_after_archive: bool) {
         max_retries: 3,
         started_at: None,
         completed_at: None,
-        created_at: String::new(),
-        updated_at: String::new(),
+        created_at: Some(String::new()),
+        updated_at: Some(String::new()),
     };
     let result = archiver.finalize(&state.db, &job).await;
     match result {

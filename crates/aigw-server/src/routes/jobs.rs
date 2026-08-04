@@ -80,8 +80,8 @@ impl From<JobRecord> for JobListItem {
             total_steps: j.total_steps,
             completed_steps: j.completed_steps,
             failed_steps: j.failed_steps,
-            created_at: j.created_at,
-            updated_at: j.updated_at,
+            created_at: j.created_at.unwrap_or_default(),
+            updated_at: j.updated_at.unwrap_or_default(),
         }
     }
 }

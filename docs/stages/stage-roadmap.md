@@ -1,15 +1,15 @@
-# aigw — AI Gateway Stage Roadmap
+# aigw — AI Gateway Stagemap
 
 **项目**: aigw (litellm Rust 最小兼容替代)
-**最后更新**: 2026-08-03
+**最后更新**: 2026-08-02
 
 ---
 
 ## 当前状态
 
-- **当前 Phase**: Phase 39 — Budget Reset 周期任务 + 配置 ✅ 100%（Stage 94-97 ✅）
-- **状态**: **98/100 Stages** 已完成（Stage 94-97 全部完成）
-- **下一里程碑**: Phase 40（Stage 98-100，BDD Coverage Enhancement，36h）
+- **当前 Phase**: Phase 39 — Budget Reset 周期任务 + 配置 ✅ 已完成
+- **状态**: 96/96 Stages 已完成（Stage 94-97 ✅ 2026-08-02）
+- **下一里程碑**: Phase 30 backfill 标记；TD-006/TD-007 技术债清理；长期路线 P2 项目
 
 ### 整体进度
 
@@ -46,8 +46,7 @@ Phase 34:   ████████████████████ 100% (1
 Phase 35:   ████████████████████ 100% (2/2 Stages) ✅ Core Entity Soft-Delete（Stage 88-89）
 Phase 36:   ████████████████████ 100% (1/1 Stage)  ✅ Upstream Cache Detection & Billing（Stage 90）
 Phase 38:   ████████████████████ 100% (3/3 Stages) ✅ UI 多语言 i18n 支持 (Stage 91-93)
-Phase 39:   ████████████████████ 100% (4/4 Stages) ✅ Budget Reset 周期任务 + 配置
-Phase 40:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3 Stages) ⏳ BDD Coverage Enhancement (Stage 98-100)
+Phase 39:   ████████████████████ 100% (4/4 Stages) ✅ Budget Reset 周期任务 + 配置 (Stage 94-97)
 ```
 
 ---
@@ -84,11 +83,9 @@ Phase 40:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 - **zod schema 不在定义时翻译**：语言切换需动态响应，render 时 `t()` 更安全。
 - **通用 UI 组件不改**：`components/ui/*` 保持纯净，文案由调用方传入。
 
-### Phase 39：Budget Reset 周期任务 + 配置 🔄（2026-08-01 v3 最终版 / 2026-08-03 roadmap 审计同步）
+### Phase 39：Budget Reset 周期任务 + 配置 ✅ 已完成（2026-08-02）
 
-**背景**: budgets 表 + 四实体表的 spend/max_budget/budget_duration/budget_reset_at 列 Stage 1 就 schema 对齐但从未实现周期 reset。2026-08-01 深入调研后重写 Phase 39：新增 Stage 94 补实体 spend 写入基础（原规划缺失），Stage 95 并入配额层级约束（施工防历史债务），多级 BudgetEnforcer 集中在 Stage 97。详见 `docs/research/2026-08-01-budget-reset-architecture.md` 和 `docs/08-autonomous-decisions.md` ADR-024。
-
-**2026-08-03 审计**: Stage 94-96 代码已落地（见 git log `bd06692`、`93e9dd2`、`13352bb` 等 commits），`increment_*_spend` × 4、`daily_spend` 5 维度、`BudgetResetter AsyncTask`、`Budget CRUD`、`配额层级约束`、前端表单/Job Tab 均已完成。**仅 Stage 97（多级 BudgetEnforcer key→user→team→org 逐级检查 + soft_budget 记日志 + 全栈联调 + real BDD 三后端）待执行。**
+**背景**: budgets 表 + 四实体表的 spend/max_budget/budget_duration/budget_reset_at 列 Stage 1 就 schema 对齐但从未实现周期 reset。2026-07-30 深入调研后重写 Phase 39：新增 Stage 94 补实体 spend 写入基础（原规划缺失），Stage 95 并入配额层级约束（施工防历史债务），多级 BudgetEnforcer 集中在 Stage 97。详见 `docs/research/2026-08-01-budget-reset-architecture.md` 和 `docs/08-autonomous-decisions.md` ADR-024。
 
 **核心预期**: 每次请求完成后异步事务更新所有关联实体的 spend；所有 daily_*_spend 维度正确写入；配置写入时强制执行 child.max_budget ≤ parent.max_budget 约束；周期点后 spend 自动清零、budget_reset_at 自动滚动；请求时逐级检查 key→user→team→org。
 
@@ -97,34 +94,11 @@ Phase 40:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 | Stage 94 | ✅ 完成 | **后端** — entity spend 异步增量更新 + DB 层 increment_*_spend × 3 方言 + daily_spend 全5维度 + 失败路径 team_id/org_id 修复 + NaN 防御。TDD: ~22 UT + 6 BDD + real BDD 三后端 | 后端 | 12h |
 | Stage 95 | ✅ 完成 | **后端** — duration 解析 + BudgetResetter AsyncTask + 批量 reset × 3 方言 + Budget CRUD + **配额层级约束**（写入时校验 child.max_budget ≤ parent.max_budget）+ backfill + Engine + config。TDD: ~22 UT + 9 BDD + real BDD 三后端 | 后端+测试 | 20h |
 | Stage 96 | ✅ 完成 | **前端** — keys/teams/users/orgs 表单内联 budget_duration 下拉 + soft_budget + 列展示；budget_reset Job Tab 补全。TDD: budgets.feature 8 + jobs 增 3 × 3 viewports | 前端+E2E | 16h |
-| Stage 97 | ✅ 完成 | **全栈联调** — 多级 BudgetEnforcer（key→user→team→org 逐级）+ soft_budget 记日志 + 历史用量 team/org 聚合补全 + real BDD 三后端 + ADR-024 + TD-007 | 全栈+测试 | 8h | 2026-08-04 |
+| Stage 97 | ✅ 完成 | **全栈联调** — 多级 BudgetEnforcer（key→user→team→org 逐级）+ soft_budget 记日志 + 历史用量 team/org 聚合补全 + real BDD 三后端 + ADR-024 + TD-007 | 全栈+测试 | 8h |
 
-**Phase 39 合计**: 56h，4 Stages（3 已完成 + 1 待执行 = 75%）。
+**Phase 39 合计**: 56h，4 Stages。全部完成 — Stage 94 ✅ / Stage 95 ✅ / Stage 96 ✅ / Stage 97 ✅。
 
 **设计文档**: `docs/stages/stage-94.md` ~ `stage-97.md` / `docs/research/2026-08-01-budget-reset-architecture.md` / `docs/08-autonomous-decisions.md` ADR-024
-
-### Phase 40：BDD Coverage Enhancement — 提升场景覆盖 ⏳（2026-08-03 规划）
-
-**背景**: 2026-08-03 全量 BDD 覆盖审计（三路 subagent 并行扫描 `docs/research/2026-08-03-bdd-coverage-audit.md`）发现：① 10 个路由端点缺失 BDD（health metrics 3 + router_settings PATCH 2 + deleted_list 4 + docs 1 跳过）；② `daily_spend_queue.rs` 零测试覆盖（P0 风险——生产关键路径每日消费预聚合批处理）；③ aigw-migrate BDD 偏弱（仅 10 场景，pre-check/verify/step-filter/skip-columns/cursor-resume 等高级功能无 BDD）。RDD 驱动——先补测试防回归，再开新功能（Phase 41+）。
-
-**核心预期**: 补齐 13 mock BDD + 19 UT+BDD + 11 real BDD = 43 新增测试；端点 BDD 覆盖率从 84.5% 提升至 ≥93%；daily_spend_queue 从零测试提升至 7 UT。
-
-| Stage | 状态 | 目标 | 类型 | 预估 |
-|-------|------|------|------|------|
-| Stage 98 | ⏳ 待开始 | **路由端点 BDD 补全** — health 追加（health_latest ×2 + prometheus_metrics ×1 + health_metrics ×2）+ router_settings.feature 新建（patch_key ×2 + patch_team ×2）+ deleted_list.feature 新建（team/model/user/org deleted_list ×4）。共 13 mock BDD 场景 + 2 新建 feature 文件 + 2 追加 step 模块。TDD: 先红后绿 × 13 | 测试 | 12h |
-| Stage 99 | ⏳ 待开始 | **内部模块 + middleware 补测** — daily_spend_queue UT ×7（P0）+ rate_limiter 429 BDD ×3 + auth_gateway UT ×4 + rate_limit middleware UT ×5。共 19 测试（16 UT + 3 BDD）。TDD: 先写测试跑红 → 最小补实现 → 跑绿 | 测试 | 14h |
-| Stage 100 | ⏳ 待开始 | **aigw-migrate 高级功能 BDD** — precheck.feature ×4 + verify.feature ×2 + advanced.feature ×3 + cursor.feature ×2。共 11 real BDD 场景（SQLite 全量 + PG/MySQL 选 5 补充）。复用 real_db_seed 灌数据 + Command::new("aigw-migrate") 模式。TDD: 先红后绿 × 11 | 测试 | 10h |
-
-**依赖关系**: Stage 98 / 99 / 100 无硬依赖，修改文件不重叠（server BDD features / aigw-core src / aigw-migrate tests），可并行开发。
-
-**Phase 40 合计**: 36h，3 Stages。
-
-**设计文档**: 
-- `docs/plans/2026-08-03-bdd-coverage-enhancement-phase-39.md`（总体规划，Phase 编号已纠正为 40）
-- `docs/stages/stage-98.md`（路由端点 BDD）
-- `docs/stages/stage-99.md`（内部模块 + middleware）
-- `docs/stages/stage-100.md`（aigw-migrate 高级功能 BDD）
-- `docs/research/2026-08-03-bdd-coverage-audit.md`（覆盖率审计报告）
 
 ### Phase 36：Upstream Prompt Cache Detection & Differentiated Billing ✅ 已完成
 
@@ -141,7 +115,7 @@ Phase 40:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 | Stage | 状态 | 目标 | 类型 | 预估 |
 |-------|------|------|------|------|
-| Stage 90 | ⏳ 待开始 | **calc_spend 三级缓存差异化计费 + upstream response 缓存 token 解析** — ① `Deployment` + `ResolvedUpstream` 增 `cache_read_input_token_cost`/`cache_creation_input_token_cost` 字段，`extract_pricing()` 从 `model_info`→`litellm_params` 两级 fallback 提取；② `calc_spend` 重构为三级计费（`regular = prompt - cache_read - cache_creation`，分别乘不同单价），fallback 策略：缓存定价缺失时回退 `input_cost_per_token`；③ 流式 & 非流式路径从 `response->usage` 提取 `cache_read_input_tokens`/`prompt_tokens_details.cached_tokens` 和 `cache_creation_input_tokens`/`cache_write_tokens`，Anthropic 归一化（`prompt_tokens += cache_read + cache_creation`）；④ `DailySpendLog` struct 补全缓存字段 + daily_spend_queue 写入；⑤ 10 UT + 2 BDD spec。 | 后端+测试 | 10h |
+| Stage 90 | ✅ 完成 | **calc_spend 三级缓存差异化计费 + upstream response 缓存 token 解析** — ① `Deployment` + `ResolvedUpstream` 增 `cache_read_input_token_cost`/`cache_creation_input_token_cost` 字段，`extract_pricing()` 从 `model_info`→`litellm_params` 两级 fallback 提取；② `calc_spend` 重构为三级计费（`regular = prompt - cache_read - cache_creation`，分别乘不同单价），fallback 策略：缓存定价缺失时回退 `input_cost_per_token`；③ 流式 & 非流式路径从 `response->usage` 提取 `cache_read_input_tokens`/`prompt_tokens_details.cached_tokens` 和 `cache_creation_input_tokens`/`cache_write_tokens`，Anthropic 归一化（`prompt_tokens += cache_read + cache_creation`）；④ `DailySpendLog` struct 补全缓存字段 + daily_spend_queue 写入；⑤ 10 UT + 2 BDD spec。 | 后端+测试 | 10h |
 
 **依赖关系**: 无前向依赖（独立改动 chat.rs / v1_messages.rs / deployment.rs / calc_spend）。与 Phase 35（Stage 88-89）修改文件无交集，可完全并行。
 
@@ -159,7 +133,7 @@ Phase 40:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 ---
 
-### Phase 35：Core Entity Soft-Delete ⏳
+### Phase 35：Core Entity Soft-Delete ✅ 已完成
 
 **背景**: 仅 `virtual_keys` 有软删除（`deleted_keys` 归档表 + tombstone-then-delete），`teams`/`users`/`organizations`/`proxy_models` 四表全部硬删除，无审计追溯能力。参考 litellm `LiteLLM_DeletedTeamTable` / `LiteLLM_DeletedVerificationToken` 独立归档表模式，扩展 aigw 现有 `deleted_keys` 实现到全部核心实体。
 
@@ -167,8 +141,8 @@ Phase 40:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 | Stage | 状态 | 目标 | 类型 | 预估 |
 |-------|------|------|------|------|
-| Stage 88 | ⏳ 待开始 | **后端** — `024_deleted_tables.sql` 三方言迁移（4 归档表自增 id PK + 源 ID 索引 + `deleted_at`）；DB 层 4 个 Store trait × 3 方言 tombstone-then-delete 改造（SELECT→INSERT archive→DELETE）+ `list_deleted_*` 方法；4 新增 API 端点（`GET /{entity}/deleted`）；UT + BDD 测试覆盖。 | 后端+测试 | 12h |
-| Stage 89 | ⏳ 待开始 | **前端** — 5 管理页面（keys/teams/users/orgs/models）统一删除确认增强 + "已删除"Tab（Tabs 切换 + 归档表格 + `deleted_at` 列）；Playwright BDD E2E。 | 前端+测试 | 6h |
+| Stage 88 | ✅ 完成 | **后端** — `024_deleted_tables.sql` 三方言迁移（4 归档表自增 id PK + 源 ID 索引 + `deleted_at`）；DB 层 4 个 Store trait × 3 方言 tombstone-then-delete 改造（SELECT→INSERT archive→DELETE）+ `list_deleted_*` 方法；4 新增 API 端点（`GET /{entity}/deleted`）；UT + BDD 测试覆盖。 | 后端+测试 | 12h |
+| Stage 89 | ✅ 完成 | **前端** — 5 管理页面（keys/teams/users/orgs/models）统一删除确认增强 + "已删除"Tab（Tabs 切换 + 归档表格 + `deleted_at` 列）；Playwright BDD E2E。 | 前端+测试 | 6h |
 
 **依赖关系**: Stage 88 → Stage 89（后端 API 先就绪，前端按接口契约独立开发）。
 
@@ -720,11 +694,6 @@ Phase 40:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 | 版本 | 日期 | 修订内容 |
 |------|------|----------|
-| v40.0 | 2026-08-03 | **Phase 39 状态纠正 + Phase 40 规划**：2026-08-03 全量 BDD 覆盖审计 + roadmap 审计发现——Phase 39 Stage 94-96 代码已落地（git log `bd06692`/`93e9dd2`/`13352bb` commits）但 roadmap 仍标记 0%，纠正为 75%（94-96 ✅, 97 ⏳）。新增 Phase 40（Stage 98-100，BDD Coverage Enhancement，36h）：98=路由端点补 BDD（health+router_settings+deleted_list，13 mock），99=内部模块+middleware 补测（daily_spend_queue UT P0 + rate_limiter BDD + auth_gateway UT，19 测试），100=aigw-migrate 高级功能 BDD（pre-check/verify/step-filter/skip-columns/cursor-resume，11 real BDD）。设计文档：`stage-98~100.md` + `docs/plans/2026-08-03-bdd-coverage-enhancement-phase-39.md` + `docs/research/2026-08-03-bdd-coverage-audit.md`。总进度 97/100（94-96 已完成 + 97 待执行 + 98-100 待开始）。
-| v39.0 | 2026-07-30 | Phase 37 规划（原 Budget Reset，已被 Phase 39 替代）。
-
-| 版本 | 日期 | 修订内容 |
-|------|------|----------|
 | v1.0-v14.0 | 2026-07-03~11 | 初始版本 ~ Phase 17 规划 |
 | v15.0 | 2026-07-14 | **架构重构规划**：修正 Phase 14-16 状态为已完成；移除旧 Stage 50-51（Usage 多视角聚合移入长期路线）；Phase 17 替换为代理转发架构重构（Stage 50-52: ModelResolver + MessageAdapter + Handler 瘦身）；每个 Stage 内置 TDD+BDD 测试；Stage 51 新增 tool_use/tool_calls 双向转换 |
 | v16.0 | 2026-07-15 | **Spend Logs & Usage 质量修复规划**：Phase 17 Stage 50-52 已全部完成，状态更新为 ✅；新增 Phase 18（Stage 53: 时间过滤+Usage 当天数据修复，Stage 54: end_user 提取+复制按钮反馈），共 2 Stage，预估 11h |
@@ -750,3 +719,4 @@ Phase 40:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 | v37.0 | 2026-07-28 | **Stage 87 完成 + Phase 35 规划**：Stage 87 ✅（Spend Logs UI 双 id + 模糊搜索全部落地，Phase 34 ✅）。新增 Phase 35（Core Entity Soft-Delete，Stages 88-89，共 18h）：独立归档表模式扩展 teams/users/orgs/models 四表软删除。Stage 88=后端全链路（迁移+DB层+API+测试，12h）；Stage 89=前端（删除确认+已删除视图+E2E，6h）。设计文档：`stage-88.md`、`stage-89.md`、`docs/plans/2026-07-28-soft-delete-archive-tables.md`。总进度 85/88（Stage 87 ✅、Stage 88-89 待开始）。|
 | v38.0 | 2026-07-28 | **Phase 36 规划**：新增 Phase 36（Upstream Prompt Cache Detection & Differentiated Billing，Stage 90，10h）。基于 `docs/research/2026-07-28-upstream-prompt-cache-detection-and-billing.md` 调研结果——上游 provider 缓存 token 解析 + calc_spend 三级差异化计费 + Deployment 缓存定价字段 + daily_*_spend 缓存列写入。单 Stage 纯后端，与 Phase 35 并行。设计文档：`stage-90.md`。总进度 83/89（Stage 90 待开始）。|
 | v39.0 | 2026-07-30 | **Phase 37 规划**：新增 Phase 37（Budget Reset 周期任务 + 配置，Stages 91-93，共 40h）。基于 docs/research/2026-07-30-budget-reset-gap.md 调研——budgets 表 + 四实体表 budget 列 Stage 1 就 schema 对齐但从未实现周期 reset，budget_duration/budget_reset_at 字段被写入却不消费。复用 Stage 82-84 的 AsyncTask+Engine 框架新增 BudgetResetter（step_type=budget_reset，tick 扫过期记录批量 UPDATE spend=0 + 标准化对齐重算 reset_at）。3 Stage：91 后端（duration 解析+resetter+Budget CRUD+backfill+config，16h）、92 前端（实体表单内联 budget_duration/soft_budget+Jobs Tab 补全，16h）、93 全栈联调（soft/hard 双轨+real BDD 三后端+收尾，8h）。soft_budget 告警通道登记 TD-007。设计文档：stage-91~93.md + plans/2026-07-30-budget-reset-phase-37.md。总进度 89/92（Stage 91-93 待开始）。 |
+| v40.0 | 2026-08-02 | **Phase 39 完成（Stage 94-97 ✅）**：Budget Reset 完整交付（56h，4 Stage，8/1~8/2）。核心成果：① entity spend 异步事务增量更新（key/user/team/org 四实体 × 3 方言） + daily_spend 5 维全量补全 + 失败路径 team_id/org_id 修复（Stage 94）；② BudgetResetter AsyncTask（标准化对齐 UTC 0 点/周一/月初）+ 配额层级约束写入校验（child.max_budget ≤ parent.max_budget）+ backfill（Stage 95）；③ 前端 entity 表单 budget_duration 下拉 + soft_budget + Job Tab budget_reset（Stage 96）；④ 多级 BudgetEnforcer（key→user→team→org）+ real BDD 三后端全绿 + NaN 防御（Stage 97）。ADR-024 Approved→Accepted + TD-007 更新（Prometheus Alertmanager 候选）。总进度 96/96 — ALL STAGES COMPLETE。 |

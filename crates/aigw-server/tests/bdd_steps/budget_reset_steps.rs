@@ -190,6 +190,34 @@ async fn when_wait_for_budget_reset_job(world: &mut TestWorld) {
         }
 
         if tokio::time::Instant::now() > deadline {
+            // Probe step + log state directly from DB to diagnose. The job is
+            // genuinely stuck if it reaches here: the spawned aigw-server runs
+            // the Engine exec loop, so steps should be claimed within poll_interval
+            // (10s default). A hang means the exec loop never claimed the step.
+            let db_url = test_db_url();
+            let pool = aigw_migrate::native::SourcePool::connect(&db_url)
+                .await
+                .expect("connect to test DB for diag");
+            let step_sql = "SELECT id, job_id, step_key, status, error_message, retry_count FROM async_job_steps WHERE step_type='budget_reset' ORDER BY step_key";
+            let step_rows = pool.read_rows_sql(step_sql).await.unwrap_or_default();
+            eprintln!("[DIAG] budget_reset steps: {:?}", step_rows);
+            // Also check if any steps got consumed (completed)
+            let completed_sql = "SELECT id, job_id, step_key, status, retry_count FROM async_job_steps WHERE step_type='budget_reset' AND status IN ('running', 'completed', 'failed') ORDER BY step_key";
+            let completed_rows = pool.read_rows_sql(completed_sql).await.unwrap_or_default();
+            eprintln!("[DIAG] budget_reset consumed steps: {:?}", completed_rows);
+            let log_sql = format!("SELECT id, job_id, step_key, level, message, created_at FROM async_job_logs WHERE job_id IN (SELECT id FROM async_jobs WHERE step_type='budget_reset') ORDER BY created_at DESC LIMIT 5");
+            let log_rows = pool.read_rows_sql(&log_sql).await.unwrap_or_default();
+            eprintln!("[DIAG] budget_reset logs: {:?}", log_rows);
+
+            // Try querying the test key directly
+            let raw_key = world.created_keys.get("reset-exec").cloned();
+            if let Some(ref rk) = raw_key {
+                let hash = aigw_core::crypto::hash_token(rk);
+                let key_sql = format!("SELECT spend, budget_reset_at, budget_duration FROM virtual_keys WHERE token = '{}'", hash);
+                let key_rows = pool.read_rows_sql(&key_sql).await.unwrap_or_default();
+                eprintln!("[DIAG] reset-exec key state: {:?}", key_rows);
+            }
+
             eprintln!(
                 "WARNING: budget_reset job did not complete within 20s, final state:\n{}",
                 serde_json::to_string_pretty(&body).unwrap_or_default()
@@ -200,6 +228,45 @@ async fn when_wait_for_budget_reset_job(world: &mut TestWorld) {
         }
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
+}
+
+#[given(expr = "通过 API 创建 key {string} budget_duration={string} max_budget={int}")]
+async fn given_create_key_with_budget_duration_and_max(
+    world: &mut TestWorld,
+    alias: String,
+    budget_duration: String,
+    max_budget: i64,
+) {
+    if !real_api_enabled() {
+        return;
+    }
+    create_key_with_budget_and_max(world, &alias, &budget_duration, max_budget).await;
+}
+
+#[given(expr = "将 key {string} 的 spend 设为 {int} 且 budget_reset_at 设为已过期")]
+async fn given_set_key_spend_and_expired_reset(world: &mut TestWorld, alias: String, spend: i64) {
+    if !real_api_enabled() {
+        return;
+    }
+    let raw_key = world
+        .created_keys
+        .get(&alias)
+        .expect("key not found in world.created_keys");
+    let hash = aigw_core::crypto::hash_token(raw_key);
+    let db_url = test_db_url();
+    let pool = aigw_migrate::native::SourcePool::connect(&db_url)
+        .await
+        .expect("connect to test DB");
+    let past = chrono::Utc::now()
+        .checked_sub_signed(chrono::Duration::hours(2))
+        .unwrap()
+        .format("%Y-%m-%d %H:%M:%S")
+        .to_string();
+    let sql = format!(
+        "UPDATE virtual_keys SET spend = {}, budget_reset_at = '{}' WHERE token = '{}'",
+        spend, past, hash,
+    );
+    pool.execute_raw(&sql).await.expect("set spend + expired reset_at");
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -364,6 +431,59 @@ async fn get_or_fetch_key(world: &TestWorld, alias: &str) -> String {
         return t.clone();
     }
     world.master_key.clone()
+}
+
+/// Create a virtual key with a specific budget_duration and max_budget via the HTTP API.
+/// Stores the key in world.created_keys on success.
+async fn create_key_with_budget_and_max(
+    world: &mut TestWorld,
+    alias: &str,
+    budget_duration: &str,
+    max_budget: i64,
+) -> String {
+    let url = format!("{}/key/generate", base_url());
+    let body = serde_json::json!({
+        "key_alias": alias,
+        "budget_duration": budget_duration,
+        "models": ["gpt-4"],
+        "max_budget": max_budget,
+    });
+    let mk = world.master_key.clone();
+    let resp = client()
+        .post(&url)
+        .header("Authorization", format!("Bearer {}", mk))
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .send()
+        .await
+        .expect("key/generate request failed");
+
+    let status = resp.status().as_u16();
+    let resp_body: serde_json::Value = resp.json().await.expect("key/generate body");
+    world.last_status = Some(status);
+    world.last_body = Some(resp_body.clone());
+
+    if status < 200 || status >= 300 {
+        let detail = &resp_body.to_string();
+        eprintln!(
+            "key/generate returned {} for alias '{}' (budget_duration={}, max_budget={}): {}",
+            status,
+            alias,
+            budget_duration,
+            max_budget,
+            &detail[..detail.len().min(300)]
+        );
+        return String::new();
+    }
+
+    let raw_key = resp_body["key"]
+        .as_str()
+        .expect("key field missing")
+        .to_string();
+    world
+        .created_keys
+        .insert(alias.to_string(), raw_key.clone());
+    raw_key
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -716,5 +836,37 @@ async fn then_body_contains_entity_type(world: &mut TestWorld, expected_type: St
         actual, expected_type,
         "expected entity_type={}, got={}",
         expected_type, actual
+    );
+}
+
+#[then(expr = "key {string} 的 spend 应为 {int}")]
+async fn then_key_spend_is(world: &mut TestWorld, alias: String, expected_spend: i64) {
+    if !real_api_enabled() {
+        return;
+    }
+    let raw_key = world
+        .created_keys
+        .get(&alias)
+        .expect("key not found in world.created_keys");
+    let hash = aigw_core::crypto::hash_token(raw_key);
+    let db_url = test_db_url();
+    let pool = aigw_migrate::native::SourcePool::connect(&db_url)
+        .await
+        .expect("connect to test DB");
+    let sql = format!(
+        "SELECT spend FROM virtual_keys WHERE token = '{}'",
+        hash,
+    );
+    let rows = pool.read_rows_sql(&sql).await.expect("query spend");
+    assert!(!rows.is_empty(), "key '{}' not found via spend query", alias);
+    let spend: f64 = rows[0]
+        .iter()
+        .find(|(col, _)| col == "spend")
+        .and_then(|(_, v)| v.as_f64())
+        .expect("spend column missing or not f64");
+    assert_eq!(
+        spend, expected_spend as f64,
+        "expected spend={} for key '{}', got spend={}",
+        expected_spend, alias, spend,
     );
 }

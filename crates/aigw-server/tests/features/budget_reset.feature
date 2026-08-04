@@ -26,3 +26,14 @@ Feature: Budget Reset Flow
     When 发送 POST admin jobs trigger budget_reset 扫描 key 类型
     Then 响应状态码为 200
     And 响应 body 中 total_steps 大于 0
+
+  Scenario: BudgetResetter execute 实际重置 spend 为 0 并设置新的 budget_reset_at
+    # 创建一个 key 并直接修改 DB：设 spend=50、设 budget_reset_at 为过去时间（模拟已过期）
+    Given 通过 API 创建 key "reset-exec" budget_duration="daily" max_budget=100
+    And 将 key "reset-exec" 的 spend 设为 50 且 budget_reset_at 设为已过期
+    # 触发 budget_reset 扫描并执行
+    When 发送 POST admin jobs trigger budget_reset 扫描 key 类型
+    And 等待 budget_reset job 执行完成
+    # 验证 spend 已归零且 budget_reset_at 已更新为未来的时间
+    Then key "reset-exec" 的 spend 应为 0
+    And key "reset-exec" 的 budget_reset_at 不为空

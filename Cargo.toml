@@ -19,7 +19,7 @@ tokio = { version = "1", features = ["full"] }
 # Web framework
 axum = { version = "0.8", features = ["macros"] }
 # Database
-sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "mysql", "postgres", "uuid", "chrono"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "mysql", "postgres", "uuid", "chrono", "json"] }
 # HTTP client
 reqwest = { version = "0.12", features = ["json", "stream"] }
 # Serialization

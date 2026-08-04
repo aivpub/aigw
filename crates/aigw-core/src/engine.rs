@@ -569,10 +569,13 @@ pub async fn claim_next_step(db: &Database, step_type: &str) -> Result<Option<St
         Database::Postgres(pool) => {
             let mut tx = pool.begin().await?;
             let step = sqlx::query_as::<_, StepRecord>(
-                "SELECT id, job_id, step_key, step_type, status, payload, result, error_message, retry_count, started_at, completed_at, next_retry_at
+                "SELECT id, job_id, step_key, step_type, status, payload, result, error_message, retry_count,
+                        started_at::text as started_at,
+                        completed_at::text as completed_at,
+                        next_retry_at::text as next_retry_at
                  FROM async_job_steps
                  WHERE step_type = $1 AND status = 'pending'
-                   AND (next_retry_at IS NULL OR next_retry_at <= $2)
+                   AND (next_retry_at IS NULL OR next_retry_at <= $2::timestamptz)
                  ORDER BY step_key
                  LIMIT 1
                  FOR UPDATE SKIP LOCKED"
@@ -1635,5 +1638,87 @@ mod tests {
             second.is_none(),
             "should return None when all steps are claimed"
         );
+    }
+
+    /// Regression: a claim leaves the step 'pending' until the exec loop settles it.
+    ///
+    /// Prior to the exec_loop rework, a single pending step with a pending claim
+    /// could be re-claimed by a second loop before the first executed it — and
+    /// worse, a job could sit in 'pending' forever when the empty-claim path kept
+    /// sleeping instead of executing. This test drives the full claim+complete
+    /// cycle on a no-op task and asserts the job reaches 'completed', which the
+    /// budget_reset real-BDD relies on (manual trigger → wait → spend reset).
+    #[tokio::test]
+    async fn test_exec_loop_claim_execute_completes_job() {
+        use crate::async_task::AsyncTask;
+        use std::sync::Arc;
+
+        struct NoopTask;
+        #[async_trait::async_trait]
+        impl AsyncTask for NoopTask {
+            fn step_type(&self) -> &'static str {
+                "test_task"
+            }
+            async fn tick(&self, _db: &Database) -> Result<Option<Vec<NewStep>>> {
+                Ok(None)
+            }
+            fn tick_interval(&self) -> Duration {
+                Duration::from_secs(60)
+            }
+            async fn execute(&self, _db: &Database, _step: &StepRecord) -> Result<StepOutput> {
+                Ok(StepOutput {
+                    result: serde_json::json!({"ok": true}),
+                })
+            }
+        }
+
+        let db = Database::init("sqlite::memory:").await.expect("db init");
+        let exec_db = db.clone();
+        // Register a NoopTask in the engine so a budget_reset-style manual job
+        // gets a real exec loop, then run the engine for a bounded window.
+        let mut engine = Engine::new(Arc::new(db.clone()), EngineConfig::default());
+        engine.register(Arc::new(NoopTask));
+
+        // Manual trigger equivalent: create_job + wait for the exec loop to
+        // claim + execute + complete within ~2s.
+        let steps = vec![NewStep {
+            key: "k1".into(),
+            payload: serde_json::json!({"a": 1}),
+        }];
+        let job_id = create_job(&db, "test_task", "manual", Some("admin"), &steps, 3)
+            .await
+            .expect("create_job");
+
+        // Drive the engine's loops directly: spawn exec_loop with a short poll
+        // so the claim+execute+complete path runs to completion.
+        let task: Arc<dyn AsyncTask> = Arc::new(NoopTask);
+        tokio::spawn(async move {
+            exec_loop(Arc::new(exec_db), task, Duration::from_millis(50)).await;
+        });
+
+        // Wait for the job to reach a terminal state.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let row: Option<(String,)> = sqlx::query_as(
+                "SELECT status FROM async_jobs WHERE id = ?",
+            )
+            .bind(&job_id)
+            .fetch_optional(match &db {
+                Database::Sqlite(p) => p,
+                _ => unreachable!(),
+            })
+            .await
+            .expect("fetch job status");
+            let status = row.map(|r| r.0).unwrap_or_default();
+            if status == "completed" {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "job did not reach completed; status={}",
+                status
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
     }
 }

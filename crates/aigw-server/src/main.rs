@@ -770,7 +770,7 @@ async fn backfill_missing_reset_at(db: &Arc<Database>) -> anyhow::Result<()> {
                         .await?;
                 }
                 Database::Postgres(pool) => {
-                    sqlx::query("UPDATE users SET budget_reset_at = $1 WHERE user_id = $2")
+                    sqlx::query("UPDATE users SET budget_reset_at = $1::timestamptz WHERE user_id = $2")
                         .bind(&next_str)
                         .bind(user_id)
                         .execute(pool)
@@ -836,7 +836,7 @@ async fn backfill_missing_reset_at(db: &Arc<Database>) -> anyhow::Result<()> {
                         .await?;
                 }
                 Database::Postgres(pool) => {
-                    sqlx::query("UPDATE budgets SET budget_reset_at = $1 WHERE budget_id = $2")
+                    sqlx::query("UPDATE budgets SET budget_reset_at = $1::timestamptz WHERE budget_id = $2")
                         .bind(&next_str)
                         .bind(budget_id)
                         .execute(pool)
