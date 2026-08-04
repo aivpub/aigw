@@ -267,7 +267,12 @@ async fn execute_reset(
                     .fetch_optional(pool)
                     .await?
                     .flatten(),
-                Database::Mysql(pool) => sqlx::query_scalar(sql)
+                Database::Mysql(pool) => sqlx::query_scalar(
+                    r#"SELECT DATE_FORMAT(b.budget_reset_at, '%Y-%m-%d %H:%i:%s')
+                        FROM organizations o
+                        JOIN budgets b ON o.budget_id = b.budget_id
+                        WHERE o.organization_id = ?"#
+                )
                     .bind(entity_id)
                     .fetch_optional(pool)
                     .await?
@@ -296,11 +301,18 @@ async fn execute_reset(
                     .fetch_optional(pool)
                     .await?
                     .flatten(),
-                Database::Mysql(pool) => sqlx::query_scalar(&sql)
-                    .bind(entity_id)
-                    .fetch_optional(pool)
-                    .await?
-                    .flatten(),
+                Database::Mysql(pool) => {
+                    let mysql_sql = format!(
+                        "SELECT DATE_FORMAT(budget_reset_at, '%Y-%m-%d %H:%i:%s') FROM {} WHERE {} = ?",
+                        entity_type.table_name(),
+                        entity_type.pk_column()
+                    );
+                    sqlx::query_scalar(&mysql_sql)
+                        .bind(entity_id)
+                        .fetch_optional(pool)
+                        .await?
+                        .flatten()
+                }
                 Database::Postgres(pool) => {
                     let pg_sql = format!(
                         "SELECT budget_reset_at::text FROM {} WHERE {} = $1",
@@ -392,7 +404,7 @@ async fn execute_reset(
                 }
                 Database::Postgres(pool) => {
                     let pg_sql = format!(
-                        "UPDATE {} SET spend = 0, budget_reset_at = $1 WHERE {} = $2",
+                        "UPDATE {} SET spend = 0, budget_reset_at = $1::timestamptz WHERE {} = $2",
                         entity_type.table_name(),
                         entity_type.pk_column()
                     );

@@ -681,7 +681,7 @@ async fn test_execute_rejects_when_storage_unconfigured() {
         step_type: "body_archive".into(),
         status: "pending".into(),
         payload: serde_json::json!({"hour": "2026-07-22T14", "batch_size": 100}),
-        result: serde_json::json!({}),
+        result: Some(serde_json::json!({})),
         error_message: None,
         retry_count: 0,
         started_at: None,

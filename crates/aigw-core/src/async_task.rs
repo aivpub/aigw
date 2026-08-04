@@ -65,7 +65,11 @@ pub struct StepRecord {
     pub step_type: String,
     pub status: String,
     pub payload: serde_json::Value,
-    pub result: serde_json::Value,
+    /// `result` is nullable in the DB (SQLite/MySQL `result JSON`); sqlx decodes
+    /// it as Option and we default to `{}` so claim/complete code can treat it
+    /// as a value without matching on null.
+    #[sqlx(default)]
+    pub result: Option<serde_json::Value>,
     pub error_message: Option<String>,
     pub retry_count: i32,
     pub started_at: Option<String>,

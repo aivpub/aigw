@@ -1876,7 +1876,7 @@ impl KeyStore for PgPool {
         match entity_type {
             "key" => {
                 sqlx::query(
-                    "UPDATE virtual_keys SET spend = 0, budget_reset_at = $1 WHERE token = $2",
+                    "UPDATE virtual_keys SET spend = 0, budget_reset_at = $1::timestamptz WHERE token = $2",
                 )
                 .bind(next_reset_at)
                 .bind(entity_id)
@@ -1884,14 +1884,14 @@ impl KeyStore for PgPool {
                 .await?;
             }
             "user" => {
-                sqlx::query("UPDATE users SET spend = 0, budget_reset_at = $1 WHERE user_id = $2")
+                sqlx::query("UPDATE users SET spend = 0, budget_reset_at = $1::timestamptz WHERE user_id = $2")
                     .bind(next_reset_at)
                     .bind(entity_id)
                     .execute(self)
                     .await?;
             }
             "team" => {
-                sqlx::query("UPDATE teams SET spend = 0, budget_reset_at = $1 WHERE team_id = $2")
+                sqlx::query("UPDATE teams SET spend = 0, budget_reset_at = $1::timestamptz WHERE team_id = $2")
                     .bind(next_reset_at)
                     .bind(entity_id)
                     .execute(self)
@@ -1902,7 +1902,7 @@ impl KeyStore for PgPool {
                     .bind(entity_id)
                     .execute(self)
                     .await?;
-                sqlx::query("UPDATE budgets SET budget_reset_at = $1 FROM organizations WHERE budgets.budget_id = organizations.budget_id AND organizations.organization_id = $2")
+                sqlx::query("UPDATE budgets SET budget_reset_at = $1::timestamptz FROM organizations WHERE budgets.budget_id = organizations.budget_id AND organizations.organization_id = $2")
                     .bind(next_reset_at)
                     .bind(entity_id)
                     .execute(self)

@@ -413,7 +413,7 @@ async fn when_execute_step(world: &mut TestWorld) {
         step_type: "body_archive".to_string(),
         status: "pending".to_string(),
         payload: serde_json::json!({"hour": test_hour, "batch_size": 5000}),
-        result: serde_json::json!({}),
+        result: Some(serde_json::json!({})),
         error_message: None,
         retry_count: 0,
         started_at: None,

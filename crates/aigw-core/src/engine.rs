@@ -587,7 +587,7 @@ pub async fn claim_next_step(db: &Database, step_type: &str) -> Result<Option<St
 
             if let Some(ref step) = step {
                 sqlx::query(
-                    "UPDATE async_job_steps SET status = 'running', started_at = $1, retry_count = retry_count + 1, next_retry_at = NULL WHERE id = $2"
+                    "UPDATE async_job_steps SET status = 'running', started_at = $1::timestamptz, retry_count = retry_count + 1, next_retry_at = NULL WHERE id = $2"
                 )
                 .bind(&now).bind(&step.id)
                 .execute(&mut *tx).await?;
@@ -624,7 +624,7 @@ pub async fn complete_step(
         }
         Database::Postgres(pool) => {
             sqlx::query(
-                "UPDATE async_job_steps SET status = 'completed', result = $1, completed_at = $2 WHERE id = $3"
+                "UPDATE async_job_steps SET status = 'completed', result = $1, completed_at = $2::timestamptz WHERE id = $3"
             )
             .bind(&output.result).bind(&now).bind(&step.id)
             .execute(pool).await.map(|_| ()).map_err(DbError::from)
@@ -732,7 +732,7 @@ pub async fn fail_step(
         }
         Database::Postgres(pool) => {
             sqlx::query(
-                "UPDATE async_job_steps SET status = $1, error_message = $2, completed_at = $3, next_retry_at = $4 WHERE id = $5"
+                "UPDATE async_job_steps SET status = $1, error_message = $2, completed_at = $3::timestamptz, next_retry_at = $4::timestamptz WHERE id = $5"
             )
             .bind(new_status).bind(error_msg).bind(&now_str).bind(&next_retry_at).bind(&step.id)
             .execute(pool).await.map(|_| ()).map_err(DbError::from)
@@ -831,7 +831,7 @@ pub async fn cleanup_stale_steps(db: &Database, timeout: Duration) -> Result<()>
         .map_err(DbError::from),
         Database::Postgres(pool) => sqlx::query(
             "UPDATE async_job_steps SET status = 'pending', started_at = NULL
-                 WHERE status = 'running' AND started_at IS NOT NULL AND started_at < $1",
+                 WHERE status = 'running' AND started_at IS NOT NULL AND started_at < $1::timestamptz",
         )
         .bind(&cutoff)
         .execute(pool)
@@ -1019,11 +1019,13 @@ async fn get_job_by_id(db: &Database, job_id: &str) -> Result<Option<JobRecord>>
                 .map_err(DbError::from)
         }
         Database::Postgres(pool) => {
-            sqlx::query_as::<_, JobRecord>("SELECT * FROM async_jobs WHERE id = $1")
-                .bind(job_id)
-                .fetch_optional(pool)
-                .await
-                .map_err(DbError::from)
+            sqlx::query_as::<_, JobRecord>(
+                "SELECT id, step_type, trigger_type, triggered_by, status, total_steps, completed_steps, failed_steps, error_message, max_retries, started_at::text as started_at, completed_at::text as completed_at, created_at::text as created_at, updated_at::text as updated_at FROM async_jobs WHERE id = $1",
+            )
+            .bind(job_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(DbError::from)
         }
     }
 }
@@ -1065,7 +1067,7 @@ async fn mark_job_completed(db: &Database, job_id: &str, now: &str) {
             .bind(now).bind(now).bind(job_id).execute(pool).await.ok();
         }
         Database::Postgres(pool) => {
-            sqlx::query("UPDATE async_jobs SET status = 'completed', completed_at = $1, updated_at = $2 WHERE id = $3")
+            sqlx::query("UPDATE async_jobs SET status = 'completed', completed_at = $1::timestamptz, updated_at = $2::timestamptz WHERE id = $3")
             .bind(now).bind(now).bind(job_id).execute(pool).await.ok();
         }
     }
@@ -1089,7 +1091,7 @@ async fn mark_job_running(db: &Database, job_id: &str) {
         }
         Database::Postgres(pool) => {
             sqlx::query(
-                "UPDATE async_jobs SET status = 'running', started_at = $1 WHERE id = $2 AND status = 'pending'"
+                "UPDATE async_jobs SET status = 'running', started_at = $1::timestamptz WHERE id = $2 AND status = 'pending'"
             )
             .bind(&now).bind(job_id).execute(pool).await.ok();
         }
@@ -1116,7 +1118,7 @@ async fn mark_job_failed(db: &Database, job_id: &str, now: &str) {
                 .ok();
         }
         Database::Postgres(pool) => {
-            sqlx::query("UPDATE async_jobs SET status = 'failed', completed_at = $1 WHERE id = $2")
+            sqlx::query("UPDATE async_jobs SET status = 'failed', completed_at = $1::timestamptz WHERE id = $2")
                 .bind(now)
                 .bind(job_id)
                 .execute(pool)
@@ -1150,7 +1152,7 @@ async fn mark_job_partially_failed(db: &Database, job_id: &str, now: &str) {
             .ok();
         }
         Database::Postgres(pool) => {
-            sqlx::query("UPDATE async_jobs SET status = 'partially_failed', completed_at = $1 WHERE id = $2")
+            sqlx::query("UPDATE async_jobs SET status = 'partially_failed', completed_at = $1::timestamptz WHERE id = $2")
             .bind(now).bind(job_id).execute(pool).await.ok();
         }
     }
@@ -1297,7 +1299,7 @@ async fn list_jobs_with_count_pg(
     let (count,) = cq.fetch_one(pool).await?;
 
     let list_sql = format!(
-        "SELECT * FROM async_jobs WHERE {} ORDER BY created_at DESC LIMIT ${} OFFSET ${}",
+        "SELECT id, step_type, trigger_type, triggered_by, status, total_steps, completed_steps, failed_steps, error_message, max_retries, started_at::text as started_at, completed_at::text as completed_at, created_at::text as created_at, updated_at::text as updated_at FROM async_jobs WHERE {} ORDER BY created_at DESC LIMIT ${} OFFSET ${}",
         where_clause,
         idx,
         idx + 1
@@ -1356,10 +1358,12 @@ pub async fn get_job_detail(
                 .await?
         }
         Database::Postgres(pool) => {
-            sqlx::query_as::<_, JobRecord>("SELECT * FROM async_jobs WHERE id = $1")
-                .bind(job_id)
-                .fetch_optional(pool)
-                .await?
+            sqlx::query_as::<_, JobRecord>(
+                "SELECT id, step_type, trigger_type, triggered_by, status, total_steps, completed_steps, failed_steps, error_message, max_retries, started_at::text as started_at, completed_at::text as completed_at, created_at::text as created_at, updated_at::text as updated_at FROM async_jobs WHERE id = $1",
+            )
+            .bind(job_id)
+            .fetch_optional(pool)
+            .await?
         }
     };
 
@@ -1384,7 +1388,7 @@ pub async fn get_job_detail(
                 }
                 Database::Postgres(pool) => {
                     sqlx::query_as::<_, StepRecord>(
-                        "SELECT * FROM async_job_steps WHERE job_id = $1 ORDER BY step_key",
+                        "SELECT id, job_id, step_key, step_type, status, payload, result, error_message, retry_count, started_at::text as started_at, completed_at::text as completed_at, next_retry_at::text as next_retry_at FROM async_job_steps WHERE job_id = $1 ORDER BY step_key",
                     )
                     .bind(job_id)
                     .fetch_all(pool)
@@ -1458,7 +1462,7 @@ pub async fn get_job_logs(
             }
             let where_clause = conditions.join(" AND ");
             let pg_sql = format!(
-                "SELECT id, job_id, step_key, level, message, created_at FROM async_job_logs WHERE {} ORDER BY created_at DESC LIMIT ${} OFFSET ${}",
+                "SELECT id, job_id, step_key, level, message, created_at::text as created_at FROM async_job_logs WHERE {} ORDER BY created_at DESC LIMIT ${} OFFSET ${}",
                 where_clause,
                 idx,
                 idx + 1

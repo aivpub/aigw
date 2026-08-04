@@ -303,7 +303,7 @@ pub async fn job_detail_handler(
                         step_key: s.step_key.clone(),
                         status: s.status.clone(),
                         payload: s.payload.clone(),
-                        result: s.result.clone(),
+                        result: s.result.clone().unwrap_or(Value::Object(Default::default())),
                         error_message: s.error_message.clone(),
                         retry_count: s.retry_count,
                         started_at: s.started_at.clone(),
