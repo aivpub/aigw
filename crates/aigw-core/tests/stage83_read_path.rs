@@ -661,9 +661,10 @@ async fn test_sharded_hour_writes_per_shard_path_and_reads_back() {
     };
     for (i, p) in shard_paths.iter().enumerate() {
         let bytes = std::fs::read(p).expect("read shard");
-        // Each shard holds `chunk` (row_group_size=10) rows, so shard i holds
-        // rows [i*10, i*10+10). Decode a row that must be in it.
-        let target = format!("shard-{:04}", i * 10);
+        // Each shard holds `chunk` (row_group_size) rows, so shard i holds
+        // rows [i*chunk, i*chunk+chunk). Decode the first row of that range.
+        let chunk = aigw_core::body_archive::config::ArchivePolicy::default().row_group_size;
+        let target = format!("shard-{:04}", i * chunk);
         let body = decode_body_from_parquet(&bytes, &target).expect("decode shard");
         assert!(body.is_some(), "shard {} should decode {}", i, target);
     }

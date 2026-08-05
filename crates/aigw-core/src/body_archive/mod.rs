@@ -255,10 +255,13 @@ impl AsyncTask for BodyArchiver {
         //    sharded hour find the correct object.
         let mut archived = 0usize;
         for shard in &shards {
+            // IMPORTANT: skip() must come BEFORE take(). iter.take(N).skip(M)
+            // takes the first N rows then skips M → empty for any shard after
+            // the first. We need rows[archived .. archived+row_count].
             let shard_rows: Vec<BodyRow> = rows
                 .iter()
-                .take(shard.row_count)
                 .skip(archived)
+                .take(shard.row_count)
                 .cloned()
                 .collect();
             let call_ids: Vec<String> = shard_rows.iter().map(|r| r.call_id.clone()).collect();

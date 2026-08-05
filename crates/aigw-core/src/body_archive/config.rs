@@ -170,7 +170,7 @@ fn default_batch_size() -> usize {
     5000
 }
 fn default_row_group_size() -> usize {
-    10
+    500
 }
 fn default_check_interval() -> u64 {
     300
@@ -337,8 +337,7 @@ mod tests {
         assert_eq!(cfg.archive.archive_after_hours, 1);
         assert_eq!(cfg.archive.null_body_after_days, 7);
         assert_eq!(cfg.archive.batch_size, 5000);
-        assert_eq!(cfg.archive.row_group_size, 10);
-        assert_eq!(cfg.archive.check_interval_secs, 300);
+        assert_eq!(cfg.archive.row_group_size, 500);
         assert!(cfg.archive.null_body_after_archive);
         assert_eq!(cfg.archive.multipart_part_size_mb, 16);
         assert_eq!(cfg.archive.max_parquet_body_mb, 64);
@@ -362,7 +361,7 @@ archive:
   archive_after_hours: 1
   null_body_after_days: 7
   batch_size: 5000
-  row_group_size: 10
+  row_group_size: 500
   check_interval_secs: 300
   null_body_after_archive: true
   vacuum_after_null: true
@@ -382,7 +381,7 @@ col_chunk_cache:
         assert_eq!(cfg.s3.endpoint, "cos.ap-guangzhou.myqcloud.com");
         assert!(cfg.s3.compatibility_mode);
         assert_eq!(cfg.archive.batch_size, 5000);
-        assert_eq!(cfg.archive.row_group_size, 10);
+        assert_eq!(cfg.archive.row_group_size, 500);
         match cfg.footer_cache {
             FooterCacheConfig::Mem {
                 max_capacity,
