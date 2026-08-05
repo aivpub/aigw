@@ -88,7 +88,7 @@
 | API 规范 | OpenAPI 3.1 |
 | 网络协议 | HTTP/1.1 + SSE streaming |
 | 鉴权方式 | Virtual Key（Bearer Token）+ Master Key |
-| 上游协议 | OpenAI Chat Completions API 兼容 |
+| 上游协议 | OpenAI Chat Completions API 兼容 + Anthropic Messages API + OpenAI Responses API (Passthrough) |
 | 前端技术 | 待定（Stage 4 技术选型，候选：Next.js / Vue 3 + Vite） |
 
 ---

@@ -1,15 +1,15 @@
 # aigw — AI Gateway Stagemap
 
 **项目**: aigw (litellm Rust 最小兼容替代)
-**最后更新**: 2026-08-02
+**最后更新**: 2026-08-05
 
 ---
 
 ## 当前状态
 
-- **当前 Phase**: Phase 39 — Budget Reset 周期任务 + 配置 ✅ 已完成
-- **状态**: 96/96 Stages 已完成（Stage 94-97 ✅ 2026-08-02）
-- **下一里程碑**: Phase 30 backfill 标记；TD-006/TD-007 技术债清理；长期路线 P2 项目
+- **当前 Phase**: Phase 40 — BDD Coverage Enhancement ✅ 100%（Stage 98-100 ✅）；Phase 41 ⏳ 待开始（Stage 101-102 OpenAI Responses API）
+- **状态**: **99/102 Stages** 已完成（Stage 98-100 ✅ + Stage 101-102 ⏳）
+- **下一里程碑**: Phase 41 Stage 101 — OpenAI Responses API Passthrough（8h）
 
 ### 整体进度
 
@@ -46,7 +46,9 @@ Phase 34:   ████████████████████ 100% (1
 Phase 35:   ████████████████████ 100% (2/2 Stages) ✅ Core Entity Soft-Delete（Stage 88-89）
 Phase 36:   ████████████████████ 100% (1/1 Stage)  ✅ Upstream Cache Detection & Billing（Stage 90）
 Phase 38:   ████████████████████ 100% (3/3 Stages) ✅ UI 多语言 i18n 支持 (Stage 91-93)
-Phase 39:   ████████████████████ 100% (4/4 Stages) ✅ Budget Reset 周期任务 + 配置 (Stage 94-97)
+Phase 39:   ████████████████████ 100% (4/4 Stages) ✅ Budget Reset 周期任务 + 配置
+Phase 40:   ████████████████████ 100% (3/3 Stages) ✅ BDD Coverage Enhancement (Stage 98-100)
+Phase 41:   ░░░░░░░░░░░░░░░░░░░░   0% (0/2 Stages) ⏳ OpenAI Responses API 接入 (Stage 101-102)
 ```
 
 ---
@@ -100,9 +102,30 @@ Phase 39:   ████████████████████ 100% (4
 
 **设计文档**: `docs/stages/stage-94.md` ~ `stage-97.md` / `docs/research/2026-08-01-budget-reset-architecture.md` / `docs/08-autonomous-decisions.md` ADR-024
 
-### Phase 36：Upstream Prompt Cache Detection & Differentiated Billing ✅ 已完成
+### Phase 41：OpenAI Responses API 透明桥接 ⏳（2026-08-05）
 
-（详情见下，Stage 90 已于 2026-07-29 完成）
+**背景**: OpenAI 于 2025 年推出 Responses API（`POST /v1/responses`）。`/v1/responses` 上游生态极窄（仅 OpenAI + litellm），绝大多数 provider 只支持 `/v1/chat/completions`。分两个 Stage：Stage 101 先做 Passthrough 让端点可用，Stage 102 加 Responses→Chat 协议转换覆盖所有上游。
+
+**拆分**: 2 Stage（Passthrough 8h + Bridge 14h），共 22h，无前端变更。
+
+| Stage | 状态 | 目标 | 类型 | 预估 |
+|-------|------|------|------|------|
+| Stage 101 | ⏳ 待开始 | **POST /v1/responses Passthrough** — 新建 `responses.rs` handler（认证→校验 `input` 字段→上游 `{api_base}/responses`→SpendLog）；新增 `ClientProtocol::Responses` 枚举变体 + `select_adapter` arm 复用 `OpenAIPassthrough`；Usage 字段双 fallback（`input_tokens`/`prompt_tokens`）；流式 SSE 透传 + 两阶段 SpendLog。TDD: 6 UT + 4 BDD | 后端+测试 | 8h |
+| Stage 102 | ⏳ 待开始 | **Responses→Chat 协议桥接** — 新增 `ResponsesToChatCompletions` 适配器（`MessageAdapter` + `StreamAdapter`）；请求转换（`input→messages`、`instructions→system`、`max_output_tokens→max_tokens`）；响应转换（`choices→output`、`prompt_tokens→input_tokens`）；流式 SSE 事件映射（`delta.content→output_text.delta`、`delta.tool_calls→function_call_arguments.delta`、`finish+usage→response.completed`）；handler 集成。TDD: 11 适配器 UT + 6 BDD | 后端+测试 | 14h |
+
+**依赖关系**: Stage 101 → 102（101 落地端点骨架 + `ClientProtocol::Responses`，102 在此基础上加适配器转换，渐进式交付，独立测试验收）。
+
+**Phase 41 合计**: 22h，2 Stages。
+
+**关键决策**:
+- **先 Passthrough 后 Bridge，分开验收**：两个 Stage 独立可测，101 验证端点→认证→SpendLog 链路正确，102 验证协议转换正确。
+- **Passthrough 也需新建 `ClientProtocol::Responses`**：`OpenAIPassthrough` 的 `client_protocol()` 返回 `ClientProtocol::OpenAI`，但 Responses API 的校验逻辑（`input` vs `messages`）、上游 URL 路径（`responses` vs `chat/completions`）、Usage 字段解析都不同。新增变体让 handler 层可以区分处理，同时复用 `adapt_request`/`adapt_response`/`stream_adapter` 的透传行为。
+- **适配器复用策略**：Stage 101 的 `select_adapter(ClientProtocol::Responses, ProviderType::OpenAICompatible)` → `OpenAIPassthrough`（只改 model + stream_options，不转换格式）。Stage 102 替换为 `ResponsesToChatCompletions`。
+- **显式丢弃字段**: `reasoning`（ChatCompletions 无对应）、`previous_response_id`/`conversation`（需服务端会话）、`web_search_preview`/`code_interpreter`/`mcp` 工具（Stage 102 400 拒绝）。
+
+**设计文档**:
+- `docs/stages/stage-101.md`（Passthrough + Bridge 两个 Stage）
+- `docs/research/2026-08-04-openai-responses-api-support.md`（调研报告）
 
 
 ---
@@ -720,3 +743,4 @@ Phase 39:   ████████████████████ 100% (4
 | v38.0 | 2026-07-28 | **Phase 36 规划**：新增 Phase 36（Upstream Prompt Cache Detection & Differentiated Billing，Stage 90，10h）。基于 `docs/research/2026-07-28-upstream-prompt-cache-detection-and-billing.md` 调研结果——上游 provider 缓存 token 解析 + calc_spend 三级差异化计费 + Deployment 缓存定价字段 + daily_*_spend 缓存列写入。单 Stage 纯后端，与 Phase 35 并行。设计文档：`stage-90.md`。总进度 83/89（Stage 90 待开始）。|
 | v39.0 | 2026-07-30 | **Phase 37 规划**：新增 Phase 37（Budget Reset 周期任务 + 配置，Stages 91-93，共 40h）。基于 docs/research/2026-07-30-budget-reset-gap.md 调研——budgets 表 + 四实体表 budget 列 Stage 1 就 schema 对齐但从未实现周期 reset，budget_duration/budget_reset_at 字段被写入却不消费。复用 Stage 82-84 的 AsyncTask+Engine 框架新增 BudgetResetter（step_type=budget_reset，tick 扫过期记录批量 UPDATE spend=0 + 标准化对齐重算 reset_at）。3 Stage：91 后端（duration 解析+resetter+Budget CRUD+backfill+config，16h）、92 前端（实体表单内联 budget_duration/soft_budget+Jobs Tab 补全，16h）、93 全栈联调（soft/hard 双轨+real BDD 三后端+收尾，8h）。soft_budget 告警通道登记 TD-007。设计文档：stage-91~93.md + plans/2026-07-30-budget-reset-phase-37.md。总进度 89/92（Stage 91-93 待开始）。 |
 | v40.0 | 2026-08-02 | **Phase 39 完成（Stage 94-97 ✅）**：Budget Reset 完整交付（56h，4 Stage，8/1~8/2）。核心成果：① entity spend 异步事务增量更新（key/user/team/org 四实体 × 3 方言） + daily_spend 5 维全量补全 + 失败路径 team_id/org_id 修复（Stage 94）；② BudgetResetter AsyncTask（标准化对齐 UTC 0 点/周一/月初）+ 配额层级约束写入校验（child.max_budget ≤ parent.max_budget）+ backfill（Stage 95）；③ 前端 entity 表单 budget_duration 下拉 + soft_budget + Job Tab budget_reset（Stage 96）；④ 多级 BudgetEnforcer（key→user→team→org）+ real BDD 三后端全绿 + NaN 防御（Stage 97）。ADR-024 Approved→Accepted + TD-007 更新（Prometheus Alertmanager 候选）。总进度 96/96 — ALL STAGES COMPLETE。 |
+| v41.0 | 2026-08-05 | **Phase 40 完成回写 + Phase 41 两阶段规划**：git log 确认 Phase 40（Stage 98-100 BDD Coverage Enhancement）全部实际完成（`f191758`/`8ccbba6`/`3069dfd`/`0888185`/`46e4c32`），roadmap/nnext-steps 积欠同步。Phase 41 拆为两 Stage 渐进交付：Stage 101 Passthrough（8h）— 客户端 `/v1/responses` → 上游 `/v1/responses`，新建 handler + `ClientProtocol::Responses` + 复用 `OpenAIPassthrough`，TDD 6 UT + 6 BDD；Stage 102 Bridge（14h，依赖 101）— 新增 `ResponsesToChatCompletions` 适配器（`MessageAdapter` + `StreamAdapter`）+ 流式 SSE 事件映射（output_text.delta/function_call_arguments.delta/response.completed）+ handler 集成，TDD 19 UT + 6 BDD。Phase 41 合计 22h。总进度 99/102。设计文档：`stage-101.md` + `docs/research/2026-08-04-openai-responses-api-support.md`。 |
