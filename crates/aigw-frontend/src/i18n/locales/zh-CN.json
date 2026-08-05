@@ -102,6 +102,7 @@
     "title": "用量",
     "description": "用量与消费概览",
     "datePresets": {
+      "today": "今天",
       "3d": "3 天",
       "7d": "7 天",
       "30d": "30 天",

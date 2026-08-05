@@ -2214,17 +2214,20 @@ pub trait SpendLogStore {
         api_key: Option<&str>,
         start_date: Option<&str>,
         end_date: Option<&str>,
+        offset_minutes: i32,
     ) -> Result<Vec<SpendModelAgg>>;
     async fn aggregate_spend_by_model_group(
         &self,
         api_key: Option<&str>,
         start_date: Option<&str>,
         end_date: Option<&str>,
+        offset_minutes: i32,
     ) -> Result<Vec<SpendModelGroupAgg>>;
     async fn aggregate_spend_by_provider(
         &self,
         start_date: Option<&str>,
         end_date: Option<&str>,
+        offset_minutes: i32,
     ) -> Result<Vec<SpendProviderAgg>>;
     async fn query_spend_logs_filtered(
         &self,
@@ -2471,11 +2474,17 @@ impl SpendLogStore for SqlitePool {
         api_key: Option<&str>,
         start_date: Option<&str>,
         end_date: Option<&str>,
+        offset_minutes: i32,
     ) -> Result<Vec<SpendModelAgg>> {
+        // start_date/end_date are LOCAL dates; compare date(shifted) so single-day
+        // ranges include the end date (old raw `start_time <= 'YYYY-MM-DD'` dropped it).
         let date_filter = if start_date.is_some() && end_date.is_some() {
-            " AND start_time >= ? AND start_time <= ?"
+            format!(
+                " AND date(start_time, '{} minutes') >= date(?) AND date(start_time, '{} minutes') <= date(?)",
+                offset_minutes, offset_minutes
+            )
         } else {
-            ""
+            String::new()
         };
         let sql = match api_key {
             Some(_) => format!("SELECT model, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE api_key = ?{date_filter} GROUP BY model ORDER BY total_tokens DESC"),
@@ -2499,11 +2508,15 @@ impl SpendLogStore for SqlitePool {
         api_key: Option<&str>,
         start_date: Option<&str>,
         end_date: Option<&str>,
+        offset_minutes: i32,
     ) -> Result<Vec<SpendModelGroupAgg>> {
         let date_filter = if start_date.is_some() && end_date.is_some() {
-            " AND start_time >= ? AND start_time <= ?"
+            format!(
+                " AND date(start_time, '{} minutes') >= date(?) AND date(start_time, '{} minutes') <= date(?)",
+                offset_minutes, offset_minutes
+            )
         } else {
-            ""
+            String::new()
         };
         let sql = match api_key {
             Some(_) => format!("SELECT COALESCE(model_group, 'unknown') as model_group, SUM(total_tokens) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE api_key = ?{date_filter} GROUP BY COALESCE(model_group, 'unknown') ORDER BY total_tokens DESC"),
@@ -2526,11 +2539,15 @@ impl SpendLogStore for SqlitePool {
         &self,
         start_date: Option<&str>,
         end_date: Option<&str>,
+        offset_minutes: i32,
     ) -> Result<Vec<SpendProviderAgg>> {
         let date_filter = if start_date.is_some() && end_date.is_some() {
-            " AND sl.start_time >= ? AND sl.start_time <= ?"
+            format!(
+                " AND date(sl.start_time, '{} minutes') >= date(?) AND date(sl.start_time, '{} minutes') <= date(?)",
+                offset_minutes, offset_minutes
+            )
         } else {
-            ""
+            String::new()
         };
         let sql = format!(
             r#"SELECT COALESCE(NULLIF(sl.custom_llm_provider, ''), 'unknown') as provider,
@@ -2910,11 +2927,15 @@ impl SpendLogStore for MySqlPool {
         api_key: Option<&str>,
         start_date: Option<&str>,
         end_date: Option<&str>,
+        offset_minutes: i32,
     ) -> Result<Vec<SpendModelAgg>> {
         let date_filter = if start_date.is_some() && end_date.is_some() {
-            " AND start_time >= ? AND start_time <= ?"
+            format!(
+                " AND date(CONVERT_TZ(start_time, '+00:00', '{tz}')) >= date(?) AND date(CONVERT_TZ(start_time, '+00:00', '{tz}')) <= date(?)",
+                tz = Database::mysql_tz_offset(offset_minutes)
+            )
         } else {
-            ""
+            String::new()
         };
         // MySQL CAST: SUM(total_tokens) returns DECIMAL, must CAST AS SIGNED
         let sql = match api_key {
@@ -2939,11 +2960,15 @@ impl SpendLogStore for MySqlPool {
         api_key: Option<&str>,
         start_date: Option<&str>,
         end_date: Option<&str>,
+        offset_minutes: i32,
     ) -> Result<Vec<SpendModelGroupAgg>> {
         let date_filter = if start_date.is_some() && end_date.is_some() {
-            " AND start_time >= ? AND start_time <= ?"
+            format!(
+                " AND date(CONVERT_TZ(start_time, '+00:00', '{tz}')) >= date(?) AND date(CONVERT_TZ(start_time, '+00:00', '{tz}')) <= date(?)",
+                tz = Database::mysql_tz_offset(offset_minutes)
+            )
         } else {
-            ""
+            String::new()
         };
         let sql = match api_key {
             Some(_) => format!("SELECT COALESCE(model_group, 'unknown') as model_group, CAST(SUM(total_tokens) AS SIGNED) as total_tokens, SUM(spend) as total_spend, COUNT(*) as requests FROM spend_logs WHERE api_key = ?{date_filter} GROUP BY COALESCE(model_group, 'unknown') ORDER BY total_tokens DESC"),
@@ -2966,11 +2991,15 @@ impl SpendLogStore for MySqlPool {
         &self,
         start_date: Option<&str>,
         end_date: Option<&str>,
+        offset_minutes: i32,
     ) -> Result<Vec<SpendProviderAgg>> {
         let date_filter = if start_date.is_some() && end_date.is_some() {
-            " AND sl.start_time >= ? AND sl.start_time <= ?"
+            format!(
+                " AND date(CONVERT_TZ(sl.start_time, '+00:00', '{tz}')) >= date(?) AND date(CONVERT_TZ(sl.start_time, '+00:00', '{tz}')) <= date(?)",
+                tz = Database::mysql_tz_offset(offset_minutes)
+            )
         } else {
-            ""
+            String::new()
         };
         let sql = format!(
             r#"SELECT COALESCE(NULLIF(sl.custom_llm_provider, ''), 'unknown') as provider,
@@ -3318,11 +3347,14 @@ impl SpendLogStore for PgPool {
         api_key: Option<&str>,
         start_date: Option<&str>,
         end_date: Option<&str>,
+        offset_minutes: i32,
     ) -> Result<Vec<SpendModelAgg>> {
         let date_filter = if start_date.is_some() && end_date.is_some() {
             format!(
-                " AND start_time >= '{}'::TIMESTAMPTZ AND start_time <= '{}'::TIMESTAMPTZ",
+                " AND date(start_time + make_interval(mins => {})) >= date('{}') AND date(start_time + make_interval(mins => {})) <= date('{}')",
+                offset_minutes,
                 start_date.unwrap().replace('\'', "''"),
+                offset_minutes,
                 end_date.unwrap().replace('\'', "''")
             )
         } else {
@@ -3336,7 +3368,7 @@ impl SpendLogStore for PgPool {
         if let Some(k) = api_key {
             q = q.bind(k);
         }
-        // start_date / end_date already inlined with ::TIMESTAMPTZ cast above — no bind needed
+        // start_date / end_date already inlined with date(shifted) — no bind needed
         q.fetch_all(self).await.map_err(DbError::from)
     }
 
@@ -3345,11 +3377,14 @@ impl SpendLogStore for PgPool {
         api_key: Option<&str>,
         start_date: Option<&str>,
         end_date: Option<&str>,
+        offset_minutes: i32,
     ) -> Result<Vec<SpendModelGroupAgg>> {
         let date_filter = if start_date.is_some() && end_date.is_some() {
             format!(
-                " AND start_time >= '{}'::TIMESTAMPTZ AND start_time <= '{}'::TIMESTAMPTZ",
+                " AND date(start_time + make_interval(mins => {})) >= date('{}') AND date(start_time + make_interval(mins => {})) <= date('{}')",
+                offset_minutes,
                 start_date.unwrap().replace('\'', "''"),
+                offset_minutes,
                 end_date.unwrap().replace('\'', "''")
             )
         } else {
@@ -3363,7 +3398,7 @@ impl SpendLogStore for PgPool {
         if let Some(k) = api_key {
             q = q.bind(k);
         }
-        // start_date / end_date already inlined with ::TIMESTAMPTZ cast above — no bind needed
+        // start_date / end_date already inlined with date(shifted) — no bind needed
         q.fetch_all(self).await.map_err(DbError::from)
     }
 
@@ -3371,11 +3406,14 @@ impl SpendLogStore for PgPool {
         &self,
         start_date: Option<&str>,
         end_date: Option<&str>,
+        offset_minutes: i32,
     ) -> Result<Vec<SpendProviderAgg>> {
         let date_filter = if start_date.is_some() && end_date.is_some() {
             format!(
-                " AND sl.start_time >= '{}'::TIMESTAMPTZ AND sl.start_time <= '{}'::TIMESTAMPTZ",
+                " AND date(sl.start_time + make_interval(mins => {})) >= date('{}') AND date(sl.start_time + make_interval(mins => {})) <= date('{}')",
+                offset_minutes,
                 start_date.unwrap().replace('\'', "''"),
+                offset_minutes,
                 end_date.unwrap().replace('\'', "''")
             )
         } else {
@@ -3391,7 +3429,7 @@ impl SpendLogStore for PgPool {
                GROUP BY provider
                ORDER BY total_tokens DESC"#
         );
-        // start_date / end_date already inlined with ::TIMESTAMPTZ cast above — no bind needed
+        // start_date / end_date already inlined with date(shifted) — no bind needed
         sqlx::query_as(&sql)
             .fetch_all(self)
             .await
@@ -3530,7 +3568,7 @@ impl SpendLogStore for PgPool {
         if let Some(m) = model {
             query = query.bind(m);
         }
-        // start_date / end_date already inlined with ::TIMESTAMPTZ cast above — no bind needed
+        // start_date / end_date already inlined — no bind needed
         if let Some(rid) = call_id {
             query = query.bind(rid);
             query = query.bind(rid);
@@ -3710,18 +3748,19 @@ impl Database {
         api_key: Option<&str>,
         start_date: Option<&str>,
         end_date: Option<&str>,
+        offset_minutes: i32,
     ) -> Result<Vec<SpendModelAgg>> {
         match self {
             Database::Sqlite(pool) => {
-                pool.aggregate_spend_by_model(api_key, start_date, end_date)
+                pool.aggregate_spend_by_model(api_key, start_date, end_date, offset_minutes)
                     .await
             }
             Database::Mysql(pool) => {
-                pool.aggregate_spend_by_model(api_key, start_date, end_date)
+                pool.aggregate_spend_by_model(api_key, start_date, end_date, offset_minutes)
                     .await
             }
             Database::Postgres(pool) => {
-                pool.aggregate_spend_by_model(api_key, start_date, end_date)
+                pool.aggregate_spend_by_model(api_key, start_date, end_date, offset_minutes)
                     .await
             }
         }
@@ -3732,18 +3771,19 @@ impl Database {
         api_key: Option<&str>,
         start_date: Option<&str>,
         end_date: Option<&str>,
+        offset_minutes: i32,
     ) -> Result<Vec<SpendModelGroupAgg>> {
         match self {
             Database::Sqlite(pool) => {
-                pool.aggregate_spend_by_model_group(api_key, start_date, end_date)
+                pool.aggregate_spend_by_model_group(api_key, start_date, end_date, offset_minutes)
                     .await
             }
             Database::Mysql(pool) => {
-                pool.aggregate_spend_by_model_group(api_key, start_date, end_date)
+                pool.aggregate_spend_by_model_group(api_key, start_date, end_date, offset_minutes)
                     .await
             }
             Database::Postgres(pool) => {
-                pool.aggregate_spend_by_model_group(api_key, start_date, end_date)
+                pool.aggregate_spend_by_model_group(api_key, start_date, end_date, offset_minutes)
                     .await
             }
         }
@@ -3753,12 +3793,20 @@ impl Database {
         &self,
         start_date: Option<&str>,
         end_date: Option<&str>,
+        offset_minutes: i32,
     ) -> Result<Vec<SpendProviderAgg>> {
         match self {
-            Database::Sqlite(pool) => pool.aggregate_spend_by_provider(start_date, end_date).await,
-            Database::Mysql(pool) => pool.aggregate_spend_by_provider(start_date, end_date).await,
+            Database::Sqlite(pool) => {
+                pool.aggregate_spend_by_provider(start_date, end_date, offset_minutes)
+                    .await
+            }
+            Database::Mysql(pool) => {
+                pool.aggregate_spend_by_provider(start_date, end_date, offset_minutes)
+                    .await
+            }
             Database::Postgres(pool) => {
-                pool.aggregate_spend_by_provider(start_date, end_date).await
+                pool.aggregate_spend_by_provider(start_date, end_date, offset_minutes)
+                    .await
             }
         }
     }
@@ -3852,6 +3900,24 @@ impl Database {
         format!("{}Z", date_str)
     }
 
+    /// Build a SQLite timezone-shift modifier for `date()`/`strftime()`.
+    ///
+    /// `offset_minutes` is minutes east of UTC (JS `-getTimezoneOffset()`).
+    /// Returns e.g. `", '480 minutes'"` or `", '-300 minutes'"`; a 0 offset
+    /// yields `", '0 minutes'"` (no-op). Appended as a date-function modifier.
+    pub fn sqlite_tz_mod(offset_minutes: i32) -> String {
+        format!(", '{} minutes'", offset_minutes)
+    }
+
+    /// Build a MySQL timezone offset string for `CONVERT_TZ(ts, '+00:00', <this>)`.
+    ///
+    /// `offset_minutes` east of UTC → `+08:00` / `-05:30`. No tz-table dependency.
+    pub fn mysql_tz_offset(offset_minutes: i32) -> String {
+        let sign = if offset_minutes < 0 { '-' } else { '+' };
+        let abs = offset_minutes.abs();
+        format!("{}{:02}:{:02}", sign, abs / 60, abs % 60)
+    }
+
     /// Query activity metadata: aggregate spend/tokens/requests for a time range
     /// with optional user/team/org filters.
     pub async fn query_activity_metadata(
@@ -3861,6 +3927,7 @@ impl Database {
         user_id: Option<&str>,
         team_id: Option<&str>,
         organization_id: Option<&str>,
+        offset_minutes: i32,
     ) -> Result<(f64, i64, i64, i64, i64, i64, i64, i64, i64, i64, f64, f64)> {
         // Column order (must be identical across all three backends):
         //   spend, total_tokens, requests, successful_requests, failed_requests,
@@ -3887,7 +3954,8 @@ impl Database {
                 COALESCE(SUM(COALESCE(json_extract(metadata, '$.cache_read_spend'), 0.0)), 0),
                 COALESCE(SUM(COALESCE(json_extract(metadata, '$.cache_create_spend'), 0.0)), 0)
             FROM spend_logs
-            WHERE date(start_time) >= date({p1}) AND date(start_time) <= date({p2}) {filter}"#;
+            WHERE date(start_time, 'OFFS_MINUTES minutes') >= date({p1}) AND date(start_time, 'OFFS_MINUTES minutes') <= date({p2}) {filter}"#;
+        let sql_base = sql_base.replace("OFFS_MINUTES", &offset_minutes.to_string());
         match self {
             Database::Sqlite(pool) => {
                 let (filter_clause, params) =
@@ -3921,7 +3989,8 @@ impl Database {
                     COALESCE(SUM(COALESCE(JSON_EXTRACT(metadata, '$.cache_read_spend'), 0.0)), 0),
                     COALESCE(SUM(COALESCE(JSON_EXTRACT(metadata, '$.cache_create_spend'), 0.0)), 0)
                 FROM spend_logs
-                WHERE date(start_time) >= date(?) AND date(start_time) <= date(?) {filter}"#;
+                WHERE date(CONVERT_TZ(start_time, '+00:00', 'OFFS_TZ')) >= date(?) AND date(CONVERT_TZ(start_time, '+00:00', 'OFFS_TZ')) <= date(?) {filter}"#;
+                let sql_mysql = sql_mysql.replace("OFFS_TZ", &Database::mysql_tz_offset(offset_minutes));
                 let (filter_clause, params) =
                     build_activity_filter(user_id, team_id, organization_id, 0, false, true);
                 let sql = sql_mysql.replace("{filter}", &filter_clause);
@@ -3952,7 +4021,8 @@ impl Database {
                     COALESCE(SUM(COALESCE((metadata->'cache_read_spend')::double precision, 0.0)), 0),
                     COALESCE(SUM(COALESCE((metadata->'cache_create_spend')::double precision, 0.0)), 0)
                 FROM spend_logs
-                WHERE date(start_time) >= date($1) AND date(start_time) <= date($2) {filter}"#;
+                WHERE date(start_time + make_interval(mins => OFFS_MINUTES)) >= date($1) AND date(start_time + make_interval(mins => OFFS_MINUTES)) <= date($2) {filter}"#;
+                let sql_pg = sql_pg.replace("OFFS_MINUTES", &offset_minutes.to_string());
                 let (filter_clause, params) =
                     build_activity_filter(user_id, team_id, organization_id, 3, true, false);
                 let sql = sql_pg.replace("{filter}", &filter_clause);
@@ -3973,6 +4043,7 @@ impl Database {
         user_id: Option<&str>,
         team_id: Option<&str>,
         organization_id: Option<&str>,
+        offset_minutes: i32,
     ) -> Result<
         Vec<(
             String,
@@ -3993,7 +4064,8 @@ impl Database {
         match self {
             Database::Sqlite(pool) => {
                 // SQLite: DATE() already returns TEXT — no cast needed.
-                let sql = "SELECT DATE(start_time), COALESCE(SUM(spend), 0), COALESCE(SUM(total_tokens), 0), COUNT(call_id), \
+                // tz_mod: ", '480 minutes'" shifts stored UTC into local wall-clock day.
+                let sql = format!("SELECT DATE(start_time{tz}), COALESCE(SUM(spend), 0), COALESCE(SUM(total_tokens), 0), COUNT(call_id), \
                     COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), \
                     COUNT(CASE WHEN status = 'success' THEN 1 END), \
                     COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END), \
@@ -4004,8 +4076,8 @@ impl Database {
                                       ELSE MAX(0, prompt_tokens - COALESCE(json_extract(metadata, '$.cache_read_tokens'), 0) - COALESCE(json_extract(metadata, '$.cache_creation_tokens'), 0)) END), 0), \
                     COALESCE(SUM(COALESCE(json_extract(metadata, '$.cache_read_spend'), 0.0)), 0), \
                     COALESCE(SUM(COALESCE(json_extract(metadata, '$.cache_create_spend'), 0.0)), 0) \
-                    FROM spend_logs WHERE date(start_time) >= date(?) AND date(start_time) <= date(?) {filter} \
-                    GROUP BY 1 ORDER BY 1 ASC";
+                    FROM spend_logs WHERE date(start_time{tz}) >= date(?) AND date(start_time{tz}) <= date(?) {{filter}} \
+                    GROUP BY 1 ORDER BY 1 ASC", tz = Database::sqlite_tz_mod(offset_minutes));
                 let (filter_clause, params) =
                     build_activity_filter(user_id, team_id, organization_id, 0, false, false);
                 let sql = sql.replace("{filter}", &filter_clause);
@@ -4017,7 +4089,7 @@ impl Database {
             }
             Database::Mysql(pool) => {
                 // MySQL: CAST DATE and SUM/COUNT AS SIGNED for i64 compatibility.
-                let sql = "SELECT CAST(DATE(start_time) AS CHAR), COALESCE(SUM(spend), 0), CAST(COALESCE(SUM(total_tokens), 0) AS SIGNED), CAST(COUNT(call_id) AS SIGNED), \
+                let sql = format!("SELECT CAST(DATE(CONVERT_TZ(start_time, '+00:00', '{tz}')) AS CHAR), COALESCE(SUM(spend), 0), CAST(COALESCE(SUM(total_tokens), 0) AS SIGNED), CAST(COUNT(call_id) AS SIGNED), \
                     CAST(COALESCE(SUM(prompt_tokens), 0) AS SIGNED), CAST(COALESCE(SUM(completion_tokens), 0) AS SIGNED), \
                     CAST(COUNT(CASE WHEN status = 'success' THEN 1 END) AS SIGNED), \
                     CAST(COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END) AS SIGNED), \
@@ -4028,8 +4100,8 @@ impl Database {
                                           ELSE GREATEST(0, prompt_tokens - COALESCE(JSON_EXTRACT(metadata, '$.cache_read_tokens'), 0) - COALESCE(JSON_EXTRACT(metadata, '$.cache_creation_tokens'), 0)) END), 0) AS SIGNED), \
                     COALESCE(SUM(COALESCE(JSON_EXTRACT(metadata, '$.cache_read_spend'), 0.0)), 0), \
                     COALESCE(SUM(COALESCE(JSON_EXTRACT(metadata, '$.cache_create_spend'), 0.0)), 0) \
-                    FROM spend_logs WHERE date(start_time) >= date(?) AND date(start_time) <= date(?) {filter} \
-                    GROUP BY 1 ORDER BY 1 ASC";
+                    FROM spend_logs WHERE date(CONVERT_TZ(start_time, '+00:00', '{tz}')) >= date(?) AND date(CONVERT_TZ(start_time, '+00:00', '{tz}')) <= date(?) {{filter}} \
+                    GROUP BY 1 ORDER BY 1 ASC", tz = Database::mysql_tz_offset(offset_minutes));
                 let (filter_clause, params) =
                     build_activity_filter(user_id, team_id, organization_id, 0, false, true);
                 let sql = sql.replace("{filter}", &filter_clause);
@@ -4042,7 +4114,7 @@ impl Database {
             Database::Postgres(pool) => {
                 // PostgreSQL: DATE(…)::TEXT converts DATE → TEXT.
                 // SUM(bigint) → NUMERIC in Postgres, outer ::bigint cast needed for i64 decoding.
-                let sql = "SELECT DATE(start_time)::TEXT, COALESCE(SUM(spend), 0), COALESCE(SUM(total_tokens)::bigint, 0), COUNT(call_id)::bigint, \
+                let sql = format!("SELECT DATE(start_time + make_interval(mins => {off}))::TEXT, COALESCE(SUM(spend), 0), COALESCE(SUM(total_tokens)::bigint, 0), COUNT(call_id)::bigint, \
                     COALESCE(SUM(prompt_tokens)::bigint, 0), COALESCE(SUM(completion_tokens)::bigint, 0), \
                     COUNT(CASE WHEN status = 'success' THEN 1 END)::bigint, \
                     COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END)::bigint, \
@@ -4053,8 +4125,8 @@ impl Database {
                                       ELSE GREATEST(0, prompt_tokens - COALESCE((metadata->'cache_read_tokens')::bigint, 0) - COALESCE((metadata->'cache_creation_tokens')::bigint, 0)) END)::bigint, 0), \
                     COALESCE(SUM(COALESCE((metadata->'cache_read_spend')::double precision, 0.0)), 0), \
                     COALESCE(SUM(COALESCE((metadata->'cache_create_spend')::double precision, 0.0)), 0) \
-                    FROM spend_logs WHERE date(start_time) >= date($1) AND date(start_time) <= date($2) {filter} \
-                    GROUP BY 1 ORDER BY 1 ASC";
+                    FROM spend_logs WHERE date(start_time + make_interval(mins => {off})) >= date($1) AND date(start_time + make_interval(mins => {off})) <= date($2) {{filter}} \
+                    GROUP BY 1 ORDER BY 1 ASC", off = offset_minutes);
                 let (filter_clause, params) =
                     build_activity_filter(user_id, team_id, organization_id, 3, true, false);
                 let sql = sql.replace("{filter}", &filter_clause);
@@ -4076,6 +4148,7 @@ impl Database {
         user_id: Option<&str>,
         team_id: Option<&str>,
         organization_id: Option<&str>,
+        offset_minutes: i32,
     ) -> Result<
         Vec<(
             String,
@@ -4093,12 +4166,12 @@ impl Database {
             f64,
         )>,
     > {
-        // Use full datetime bounds for hourly queries (start of start_date, end of end_date)
-        let start_ts = format!("{}T00:00:00", start_date);
-        let end_ts = format!("{}T23:59:59", end_date);
+        // start_date/end_date are LOCAL dates; the WHERE filters on date(shifted(ts))
+        // so single-day (start==end) ranges include the full local day.
         match self {
             Database::Sqlite(pool) => {
-                let sql = "SELECT strftime('%Y-%m-%dT%H:00:00', start_time), COALESCE(SUM(spend), 0), COALESCE(SUM(total_tokens), 0), COUNT(call_id), \
+                // Bucket by LOCAL hour; filter by LOCAL date (covers start==end single-day ranges).
+                let sql = format!("SELECT strftime('%Y-%m-%dT%H:00:00', start_time{tz}), COALESCE(SUM(spend), 0), COALESCE(SUM(total_tokens), 0), COUNT(call_id), \
                     COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), \
                     COUNT(CASE WHEN status = 'success' THEN 1 END), \
                     COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END), \
@@ -4109,19 +4182,19 @@ impl Database {
                                       ELSE MAX(0, prompt_tokens - COALESCE(json_extract(metadata, '$.cache_read_tokens'), 0) - COALESCE(json_extract(metadata, '$.cache_creation_tokens'), 0)) END), 0), \
                     COALESCE(SUM(COALESCE(json_extract(metadata, '$.cache_read_spend'), 0.0)), 0), \
                     COALESCE(SUM(COALESCE(json_extract(metadata, '$.cache_create_spend'), 0.0)), 0) \
-                    FROM spend_logs WHERE start_time >= ? AND start_time <= ? {filter} \
-                    GROUP BY 1 ORDER BY 1 ASC";
+                    FROM spend_logs WHERE date(start_time{tz}) >= date(?) AND date(start_time{tz}) <= date(?) {{filter}} \
+                    GROUP BY 1 ORDER BY 1 ASC", tz = Database::sqlite_tz_mod(offset_minutes));
                 let (filter_clause, params) =
                     build_activity_filter(user_id, team_id, organization_id, 0, false, false);
                 let sql = sql.replace("{filter}", &filter_clause);
-                let mut q = sqlx::query_as(&sql).bind(&start_ts).bind(&end_ts);
+                let mut q = sqlx::query_as(&sql).bind(start_date).bind(end_date);
                 for p in &params {
                     q = q.bind(p);
                 }
                 q.fetch_all(pool).await.map_err(DbError::from)
             }
             Database::Mysql(pool) => {
-                let sql = "SELECT DATE_FORMAT(start_time, '%Y-%m-%dT%H:00:00'), COALESCE(SUM(spend), 0), CAST(COALESCE(SUM(total_tokens), 0) AS SIGNED), CAST(COUNT(call_id) AS SIGNED), \
+                let sql = format!("SELECT DATE_FORMAT(CONVERT_TZ(start_time, '+00:00', '{tz}'), '%Y-%m-%dT%H:00:00'), COALESCE(SUM(spend), 0), CAST(COALESCE(SUM(total_tokens), 0) AS SIGNED), CAST(COUNT(call_id) AS SIGNED), \
                     CAST(COALESCE(SUM(prompt_tokens), 0) AS SIGNED), CAST(COALESCE(SUM(completion_tokens), 0) AS SIGNED), \
                     CAST(COUNT(CASE WHEN status = 'success' THEN 1 END) AS SIGNED), \
                     CAST(COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END) AS SIGNED), \
@@ -4132,19 +4205,19 @@ impl Database {
                                           ELSE GREATEST(0, prompt_tokens - COALESCE(JSON_EXTRACT(metadata, '$.cache_read_tokens'), 0) - COALESCE(JSON_EXTRACT(metadata, '$.cache_creation_tokens'), 0)) END), 0) AS SIGNED), \
                     COALESCE(SUM(COALESCE(JSON_EXTRACT(metadata, '$.cache_read_spend'), 0.0)), 0), \
                     COALESCE(SUM(COALESCE(JSON_EXTRACT(metadata, '$.cache_create_spend'), 0.0)), 0) \
-                    FROM spend_logs WHERE start_time >= ? AND start_time <= ? {filter} \
-                    GROUP BY 1 ORDER BY 1 ASC";
+                    FROM spend_logs WHERE date(CONVERT_TZ(start_time, '+00:00', '{tz}')) >= date(?) AND date(CONVERT_TZ(start_time, '+00:00', '{tz}')) <= date(?) {{filter}} \
+                    GROUP BY 1 ORDER BY 1 ASC", tz = Database::mysql_tz_offset(offset_minutes));
                 let (filter_clause, params) =
                     build_activity_filter(user_id, team_id, organization_id, 0, false, true);
                 let sql = sql.replace("{filter}", &filter_clause);
-                let mut q = sqlx::query_as(&sql).bind(&start_ts).bind(&end_ts);
+                let mut q = sqlx::query_as(&sql).bind(start_date).bind(end_date);
                 for p in &params {
                     q = q.bind(p);
                 }
                 q.fetch_all(pool).await.map_err(DbError::from)
             }
             Database::Postgres(pool) => {
-                let sql = "SELECT to_char(start_time, 'YYYY-MM-DD\"T\"HH24:00:00'), COALESCE(SUM(spend), 0), COALESCE(SUM(total_tokens)::bigint, 0), COUNT(call_id)::bigint, \
+                let sql = format!("SELECT to_char(start_time + make_interval(mins => {off}), 'YYYY-MM-DD\"T\"HH24:00:00'), COALESCE(SUM(spend), 0), COALESCE(SUM(total_tokens)::bigint, 0), COUNT(call_id)::bigint, \
                     COALESCE(SUM(prompt_tokens)::bigint, 0), COALESCE(SUM(completion_tokens)::bigint, 0), \
                     COUNT(CASE WHEN status = 'success' THEN 1 END)::bigint, \
                     COUNT(CASE WHEN status LIKE 'failure%' THEN 1 END)::bigint, \
@@ -4155,12 +4228,12 @@ impl Database {
                                       ELSE GREATEST(0, prompt_tokens - COALESCE((metadata->'cache_read_tokens')::bigint, 0) - COALESCE((metadata->'cache_creation_tokens')::bigint, 0)) END)::bigint, 0), \
                     COALESCE(SUM(COALESCE((metadata->'cache_read_spend')::double precision, 0.0)), 0), \
                     COALESCE(SUM(COALESCE((metadata->'cache_create_spend')::double precision, 0.0)), 0) \
-                    FROM spend_logs WHERE start_time >= $1::TIMESTAMPTZ AND start_time <= $2::TIMESTAMPTZ {filter} \
-                    GROUP BY 1 ORDER BY 1 ASC";
+                    FROM spend_logs WHERE date(start_time + make_interval(mins => {off})) >= date($1) AND date(start_time + make_interval(mins => {off})) <= date($2) {{filter}} \
+                    GROUP BY 1 ORDER BY 1 ASC", off = offset_minutes);
                 let (filter_clause, params) =
                     build_activity_filter(user_id, team_id, organization_id, 3, true, false);
                 let sql = sql.replace("{filter}", &filter_clause);
-                let mut q = sqlx::query_as(&sql).bind(&start_ts).bind(&end_ts);
+                let mut q = sqlx::query_as(&sql).bind(start_date).bind(end_date);
                 for p in &params {
                     q = q.bind(p);
                 }
@@ -4175,23 +4248,43 @@ impl Database {
         start_date: &str,
         end_date: &str,
         limit: u32,
+        offset_minutes: i32,
     ) -> Result<Vec<crate::models::SpendKeyRanking>> {
         // GROUP BY must list every non-aggregated SELECT column (PostgreSQL enforces this;
         // SQLite/MySQL are lenient). vk.key_alias is functionally dependent on sl.api_key
         // via the LEFT JOIN on vk.token (PK), so grouping by it does not change cardinality.
+        // date(shifted) >= date(?) — start_date/end_date are LOCAL dates.
         let sql = "SELECT sl.api_key, vk.key_alias, \
             COALESCE(SUM(sl.spend), 0) AS total_spend, COUNT(sl.call_id) AS total_requests, COALESCE(SUM(sl.total_tokens), 0) AS total_tokens \
             FROM spend_logs sl LEFT JOIN virtual_keys vk ON sl.api_key = vk.token \
-            WHERE date(sl.start_time) >= date({p1}) AND date(sl.start_time) <= date({p2}) \
+            WHERE date(sl.start_time{TZ}) >= date({p1}) AND date(sl.start_time{TZ}) <= date({p2}) \
             GROUP BY sl.api_key, vk.key_alias ORDER BY 3 DESC LIMIT {limit}";
-        let sql = sql.replace("{limit}", &limit.to_string());
+        let sql = sql
+            .replace("{TZ}", &Database::sqlite_tz_mod(offset_minutes))
+            .replace("{limit}", &limit.to_string());
         // MySQL needs CAST on aggregates because SUM returns DECIMAL type.
         let sql_mysql = "SELECT sl.api_key, vk.key_alias, \
             COALESCE(SUM(sl.spend), 0) AS total_spend, CAST(COUNT(sl.call_id) AS SIGNED) AS total_requests, CAST(COALESCE(SUM(sl.total_tokens), 0) AS SIGNED) AS total_tokens \
             FROM spend_logs sl LEFT JOIN virtual_keys vk ON sl.api_key = vk.token \
-            WHERE date(sl.start_time) >= date({p1}) AND date(sl.start_time) <= date({p2}) \
+            WHERE date(CONVERT_TZ(sl.start_time, '+00:00', '{TZ}')) >= date({p1}) AND date(CONVERT_TZ(sl.start_time, '+00:00', '{TZ}')) <= date({p2}) \
             GROUP BY sl.api_key, vk.key_alias ORDER BY 3 DESC LIMIT {limit}";
-        let sql_mysql = sql_mysql.replace("{limit}", &limit.to_string());
+        let sql_mysql = sql_mysql
+            .replace("{TZ}", &Database::mysql_tz_offset(offset_minutes))
+            .replace("{limit}", &limit.to_string());
+        // PG uses make_interval shift (sqlite `, 'N minutes'` modifier is invalid there).
+        // Build the PG variant from the raw template so {TZ} is substituted with the
+        // make_interval expression — NOT from the sqlite-modified sql (which would embed
+        // the `, '0 minutes'` modifier into date(timestamp) and fail on PG).
+        let sql_pg = {
+            let tz_pg = format!(" + make_interval(mins => {})", offset_minutes);
+            "SELECT sl.api_key, vk.key_alias, \
+                COALESCE(SUM(sl.spend), 0) AS total_spend, COUNT(sl.call_id) AS total_requests, COALESCE(SUM(sl.total_tokens), 0) AS total_tokens \
+                FROM spend_logs sl LEFT JOIN virtual_keys vk ON sl.api_key = vk.token \
+                WHERE date(sl.start_time{TZ}) >= date($1) AND date(sl.start_time{TZ}) <= date($2) \
+                GROUP BY sl.api_key, vk.key_alias ORDER BY 3 DESC LIMIT {limit}"
+                .replace("{TZ}", &tz_pg)
+                .replace("{limit}", &limit.to_string())
+        };
         match self {
             Database::Sqlite(pool) => {
                 let sql = sql.replace("{p1}", "?").replace("{p2}", "?");
@@ -4212,8 +4305,7 @@ impl Database {
                     .map_err(DbError::from)
             }
             Database::Postgres(pool) => {
-                let sql = sql.replace("{p1}", "$1").replace("{p2}", "$2");
-                sqlx::query_as(&sql)
+                sqlx::query_as(&sql_pg)
                     .bind(start_date)
                     .bind(end_date)
                     .fetch_all(pool)
@@ -8539,7 +8631,7 @@ mod tests {
         db.insert_spend_log(&log).await.expect("insert");
 
         let rows = db
-            .query_activity_daily("2020-01-01", "2030-12-31", None, None, None)
+            .query_activity_daily("2020-01-01", "2030-12-31", None, None, None, 0)
             .await
             .expect("query activity daily");
         assert!(!rows.is_empty());
@@ -8591,7 +8683,7 @@ mod tests {
         db.insert_spend_log(&log).await.expect("insert");
 
         let rows = db
-            .query_activity_daily("2020-01-01", "2030-12-31", None, None, None)
+            .query_activity_daily("2020-01-01", "2030-12-31", None, None, None, 0)
             .await
             .expect("query activity daily");
         assert!(!rows.is_empty());
@@ -8640,7 +8732,7 @@ mod tests {
         db.insert_spend_log(&log).await.expect("insert");
 
         let rows = db
-            .query_activity_daily("2020-01-01", "2030-12-31", None, None, None)
+            .query_activity_daily("2020-01-01", "2030-12-31", None, None, None, 0)
             .await
             .expect("query activity daily");
         assert!(!rows.is_empty());
@@ -8690,7 +8782,7 @@ mod tests {
         db.insert_spend_log(&log).await.expect("insert");
 
         let rows = db
-            .query_activity_daily("2020-01-01", "2030-12-31", None, None, None)
+            .query_activity_daily("2020-01-01", "2030-12-31", None, None, None, 0)
             .await
             .expect("query activity daily");
         assert!(!rows.is_empty());
@@ -8732,7 +8824,7 @@ mod tests {
         db.insert_spend_log(&log2).await.expect("insert log2");
 
         let rows = db
-            .query_activity_daily("2020-01-01", "2030-12-31", None, None, None)
+            .query_activity_daily("2020-01-01", "2030-12-31", None, None, None, 0)
             .await
             .expect("query activity daily");
 
@@ -8778,7 +8870,7 @@ mod tests {
         db.insert_spend_log(&log2).await.expect("insert log2");
 
         let rows = db
-            .query_activity_hourly("2020-01-01", "2030-12-31", None, None, None)
+            .query_activity_hourly("2020-01-01", "2030-12-31", None, None, None, 0)
             .await
             .expect("query activity hourly");
 
@@ -8830,7 +8922,7 @@ mod tests {
 
         // Query for a range that should NOT include our log
         let rows = db
-            .query_activity_hourly("2030-01-01", "2030-01-02", None, None, None)
+            .query_activity_hourly("2030-01-01", "2030-01-02", None, None, None, 0)
             .await
             .expect("query activity hourly");
 
@@ -8866,7 +8958,7 @@ mod tests {
         db.insert_spend_log(&log_a2).await.expect("insert a2");
 
         let rankings = db
-            .aggregate_spend_by_keys("2020-01-01", "2030-12-31", 10)
+            .aggregate_spend_by_keys("2020-01-01", "2030-12-31", 10, 0)
             .await
             .expect("aggregate");
 
@@ -8875,6 +8967,240 @@ mod tests {
         assert_eq!(rankings[0].api_key, key_a);
         assert_eq!(rankings[0].total_spend, 13.0);
         assert_eq!(rankings[0].key_alias.as_deref(), Some("alias-a"));
+    }
+
+    #[tokio::test]
+    async fn test_activity_daily_offset_shift() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let key_hash = hash_token("sk-offset-daily");
+
+        // UTC 2026-08-04T20:00 = local (+08) 2026-08-05 04:00 — next local day.
+        // UTC 2026-08-05T10:00 = local (+08) 2026-08-05 18:00 — same local day.
+        let mut l1 = make_test_spend_log_full(&key_hash, "u1", 1.0, 100, 50, 50, "success", None);
+        l1.start_time =
+            chrono::DateTime::parse_from_rfc3339("2026-08-04T20:00:00+00:00")
+                .unwrap()
+                .with_timezone(&chrono::Utc);
+        let mut l2 = make_test_spend_log_full(&key_hash, "u1", 2.0, 100, 50, 50, "success", None);
+        l2.start_time =
+            chrono::DateTime::parse_from_rfc3339("2026-08-05T10:00:00+00:00")
+                .unwrap()
+                .with_timezone(&chrono::Utc);
+        db.insert_spend_log(&l1).await.expect("insert l1");
+        db.insert_spend_log(&l2).await.expect("insert l2");
+
+        // offset=+480 (UTC+8): both rows bucket to local day 2026-08-05.
+        let rows = db
+            .query_activity_daily("2026-08-05", "2026-08-05", None, None, None, 480)
+            .await
+            .expect("query daily offset");
+        assert_eq!(rows.len(), 1, "both rows should land on local 2026-08-05");
+        assert_eq!(rows[0].0, "2026-08-05");
+        assert_eq!(rows[0].3, 2, "2 requests on local 2026-08-05");
+
+        // offset=0 (UTC): the two rows split across 08-04 and 08-05.
+        let rows_utc = db
+            .query_activity_daily("2026-08-05", "2026-08-05", None, None, None, 0)
+            .await
+            .expect("query daily utc");
+        assert_eq!(rows_utc.len(), 1, "UTC day 08-05 only has the 10:00Z row");
+        assert_eq!(rows_utc[0].0, "2026-08-05");
+        assert_eq!(rows_utc[0].3, 1, "1 request on UTC 2026-08-05");
+    }
+
+    #[tokio::test]
+    async fn test_activity_hourly_offset_shift() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let key_hash = hash_token("sk-offset-hourly");
+
+        // UTC 23:00 → local (+08) 07:00 next day.
+        let mut l = make_test_spend_log_full(&key_hash, "u1", 1.0, 100, 50, 50, "success", None);
+        l.start_time =
+            chrono::DateTime::parse_from_rfc3339("2026-08-04T23:00:00+00:00")
+                .unwrap()
+                .with_timezone(&chrono::Utc);
+        db.insert_spend_log(&l).await.expect("insert");
+
+        let rows = db
+            .query_activity_hourly("2026-08-05", "2026-08-05", None, None, None, 480)
+            .await
+            .expect("query hourly offset");
+        assert_eq!(rows.len(), 1, "one local hour bucket");
+        assert_eq!(
+            rows[0].0, "2026-08-05T07:00:00",
+            "UTC 23:00 + 8h buckets to local 07:00"
+        );
+        assert_eq!(rows[0].3, 1, "1 request in that bucket");
+    }
+
+    #[tokio::test]
+    async fn test_aggregate_spend_by_model_end_date_included() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let key_hash = hash_token("sk-end-date-model");
+
+        // UTC 2026-08-05T10:00 = local 18:00 — on the query end date.
+        let mut l = make_test_spend_log_full(&key_hash, "u1", 3.0, 100, 50, 50, "success", None);
+        l.start_time =
+            chrono::DateTime::parse_from_rfc3339("2026-08-05T10:00:00+00:00")
+                .unwrap()
+                .with_timezone(&chrono::Utc);
+        db.insert_spend_log(&l).await.expect("insert");
+
+        // Single-day range start==end must include the end-day row (old raw-string
+        // comparison dropped it).
+        let aggs = db
+            .aggregate_spend_by_model(None, Some("2026-08-05"), Some("2026-08-05"), 480)
+            .await
+            .expect("aggregate");
+        assert_eq!(aggs.len(), 1, "end-date row included with local offset");
+        assert_eq!(aggs[0].model, "gpt-4");
+        assert_eq!(aggs[0].total_spend, 3.0);
+    }
+
+    #[tokio::test]
+    async fn test_aggregate_spend_by_keys_offset() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let key_hash = hash_token("sk-offset-keys");
+        let vk = make_test_key(&key_hash, "offset-key");
+        db.insert_key(&vk).await.expect("insert key");
+
+        // UTC 2026-08-04T20:00 = local (+08) 2026-08-05 04:00.
+        let mut l = make_test_spend_log_full(&key_hash, "u1", 7.0, 100, 50, 50, "success", None);
+        l.start_time =
+            chrono::DateTime::parse_from_rfc3339("2026-08-04T20:00:00+00:00")
+                .unwrap()
+                .with_timezone(&chrono::Utc);
+        db.insert_spend_log(&l).await.expect("insert");
+
+        // UTC day 08-04 has the row; local (+08) day 08-05 has it.
+        let utc = db
+            .aggregate_spend_by_keys("2026-08-04", "2026-08-04", 10, 0)
+            .await
+            .expect("utc");
+        assert_eq!(utc[0].total_spend, 7.0, "row on UTC day 08-04");
+
+        let local = db
+            .aggregate_spend_by_keys("2026-08-05", "2026-08-05", 10, 480)
+            .await
+            .expect("local");
+        assert_eq!(local[0].total_spend, 7.0, "row shifted to local day 08-05");
+
+        let empty = db
+            .aggregate_spend_by_keys("2026-08-04", "2026-08-04", 10, 480)
+            .await
+            .expect("local-empty");
+        assert!(
+            empty.is_empty(),
+            "row shifted OUT of local day 08-04 with +480 offset"
+        );
+    }
+
+    /// Negative offset (west of UTC, e.g. UTC-8 / offset_minutes=-480):
+    /// a stored UTC timestamp can fall on a LATER UTC day but an EARLIER local day.
+    #[tokio::test]
+    async fn test_negative_offset_daily_shift() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let key_hash = hash_token("sk-neg-offset");
+
+        // UTC 2026-08-06T05:00 = local (UTC-8) 2026-08-05 21:00 — previous local day.
+        // UTC 2026-08-06T08:00 = local (UTC-8) 2026-08-06 00:00 — exactly local midnight.
+        let mut l1 = make_test_spend_log_full(&key_hash, "u1", 1.0, 100, 50, 50, "success", None);
+        l1.start_time =
+            chrono::DateTime::parse_from_rfc3339("2026-08-06T05:00:00+00:00")
+                .unwrap()
+                .with_timezone(&chrono::Utc);
+        let mut l2 = make_test_spend_log_full(&key_hash, "u1", 2.0, 100, 50, 50, "success", None);
+        l2.start_time =
+            chrono::DateTime::parse_from_rfc3339("2026-08-06T08:00:00+00:00")
+                .unwrap()
+                .with_timezone(&chrono::Utc);
+        db.insert_spend_log(&l1).await.expect("insert l1");
+        db.insert_spend_log(&l2).await.expect("insert l2");
+
+        // Local (UTC-8) day 08-05: only the 05:00Z row (21:00 local).
+        let d5 = db
+            .query_activity_daily("2026-08-05", "2026-08-05", None, None, None, -480)
+            .await
+            .expect("query daily -480 d5");
+        assert_eq!(d5.len(), 1, "one row on local 08-05 (UTC-8)");
+        assert_eq!(d5[0].0, "2026-08-05");
+        assert_eq!(d5[0].3, 1);
+
+        // Local (UTC-8) day 08-06 only the 08:00Z row (local midnight08-06).
+        let d6 = db
+            .query_activity_daily("2026-08-06", "2026-08-06", None, None, None, -480)
+            .await
+            .expect("query daily -480 d6");
+        assert_eq!(d6.len(), 1, "one row on local 08-06 (UTC-8)");
+        assert_eq!(d6[0].0, "2026-08-06");
+        assert_eq!(d6[0].3, 1);
+
+        // Contrast: UTC day 08-06 has BOTH rows (offset 0).
+        let d6utc = db
+            .query_activity_daily("2026-08-06", "2026-08-06", None, None, None, 0)
+            .await
+            .expect("query daily 0 d6");
+        assert_eq!(d6utc.len(), 1, "UTC day 08-06 has both rows");
+        assert_eq!(d6utc[0].3, 2);
+    }
+
+    /// Negative offset hour buckets: UTC 08-06T05:00 → local (UTC-8) 08-05T21:00.
+    #[tokio::test]
+    async fn test_negative_offset_hourly_shift() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let key_hash = hash_token("sk-neg-offset-h");
+
+        let mut l = make_test_spend_log_full(&key_hash, "u1", 1.0, 100, 50, 50, "success", None);
+        l.start_time =
+            chrono::DateTime::parse_from_rfc3339("2026-08-06T05:00:00+00:00")
+                .unwrap()
+                .with_timezone(&chrono::Utc);
+        db.insert_spend_log(&l).await.expect("insert");
+
+        let rows = db
+            .query_activity_hourly("2026-08-05", "2026-08-05", None, None, None, -480)
+            .await
+            .expect("query hourly -480");
+        assert_eq!(rows.len(), 1, "one local hour bucket");
+        assert_eq!(
+            rows[0].0, "2026-08-05T21:00:00",
+            "UTC 05:00 − 8h buckets to local 21:00 on the previous local day"
+        );
+        assert_eq!(rows[0].3, 1);
+    }
+
+    /// Negative offset aggregates: date(shifted) still includes the end date row
+    /// (and the end-date inclusion fix holds for negative offsets too).
+    #[tokio::test]
+    async fn test_negative_offset_aggregate_end_date_included() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let key_hash = hash_token("sk-neg-offset-aggregate");
+
+        let mut l = make_test_spend_log_full(&key_hash, "u1", 3.0, 100, 50, 50, "success", None);
+        l.start_time =
+            chrono::DateTime::parse_from_rfc3339("2026-08-05T10:00:00+00:00")
+                .unwrap()
+                .with_timezone(&chrono::Utc);
+        db.insert_spend_log(&l).await.expect("insert");
+
+        // UTC 08-05T10:00 = local (UTC-8) 08-05 02:00 — same local day as the range end.
+        let aggs = db
+            .aggregate_spend_by_model(None, Some("2026-08-05"), Some("2026-08-05"), -480)
+            .await
+            .expect("aggregate");
+        assert_eq!(aggs.len(), 1, "end-date row included with negative offset");
+        assert_eq!(aggs[0].total_spend, 3.0);
+    }
+
+    #[tokio::test]
+    async fn test_mysql_tz_offset_formats() {
+        // Both sign directions render HH:MM for CONVERT_TZ.
+        assert_eq!(Database::mysql_tz_offset(480), "+08:00");
+        assert_eq!(Database::mysql_tz_offset(-480), "-08:00");
+        assert_eq!(Database::mysql_tz_offset(-330), "-05:30");
+        assert_eq!(Database::mysql_tz_offset(0), "+00:00");
+        // Fractional (India +05:30) and non-hour offsets.
+        assert_eq!(Database::mysql_tz_offset(330), "+05:30");
     }
 
     #[tokio::test]
@@ -8893,7 +9219,7 @@ mod tests {
 
         // Limit to 2
         let rankings = db
-            .aggregate_spend_by_keys("2020-01-01", "2030-12-31", 2)
+            .aggregate_spend_by_keys("2020-01-01", "2030-12-31", 2, 0)
             .await
             .expect("aggregate with limit");
 

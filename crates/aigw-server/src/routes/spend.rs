@@ -61,12 +61,20 @@ pub struct SpendModelQuery {
     pub api_key: Option<String>,
     pub start_date: Option<String>,
     pub end_date: Option<String>,
+    pub offset_minutes: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct SpendProviderQuery {
     pub start_date: Option<String>,
     pub end_date: Option<String>,
+    pub offset_minutes: Option<i32>,
+}
+
+/// Clamp a browser-supplied UTC offset (minutes east of UTC) to a sane range.
+/// Invalid/absent → 0 (UTC). World real-world offsets range −720..=+840.
+pub fn clamp_offset(o: Option<i32>) -> i32 {
+    o.unwrap_or(0).clamp(-720, 840)
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -803,6 +811,7 @@ pub async fn spend_models(
             Some(&api_key),
             query.start_date.as_deref(),
             query.end_date.as_deref(),
+            clamp_offset(query.offset_minutes),
         )
         .await
         .map_err(|e| {
@@ -837,6 +846,7 @@ pub async fn spend_providers(
         &state,
         query.start_date.as_deref(),
         query.end_date.as_deref(),
+        clamp_offset(query.offset_minutes),
     )
     .await
 }
@@ -852,6 +862,7 @@ pub async fn global_spend_providers(
         &state,
         query.start_date.as_deref(),
         query.end_date.as_deref(),
+        clamp_offset(query.offset_minutes),
     )
     .await
 }
@@ -862,10 +873,11 @@ async fn spend_providers_inner(
     state: &SharedState,
     start_date: Option<&str>,
     end_date: Option<&str>,
+    offset_minutes: i32,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let aggs = state
         .db
-        .aggregate_spend_by_provider(start_date, end_date)
+        .aggregate_spend_by_provider(start_date, end_date, offset_minutes)
         .await
         .map_err(|e| {
             (
@@ -954,7 +966,12 @@ pub async fn global_spend_models(
 
     let aggs = state
         .db
-        .aggregate_spend_by_model(None, query.start_date.as_deref(), query.end_date.as_deref())
+        .aggregate_spend_by_model(
+            None,
+            query.start_date.as_deref(),
+            query.end_date.as_deref(),
+            clamp_offset(query.offset_minutes),
+        )
         .await
         .map_err(|e| {
             (
@@ -986,6 +1003,7 @@ pub async fn global_spend_models(
 pub struct SpendModelGroupQuery {
     pub start_date: Option<String>,
     pub end_date: Option<String>,
+    pub offset_minutes: Option<i32>,
 }
 
 /// GET /spend/model-groups — Spend by model_group (scoped to authenticated key)
@@ -1002,6 +1020,7 @@ pub async fn spend_model_groups(
             Some(api_key),
             query.start_date.as_deref(),
             query.end_date.as_deref(),
+            clamp_offset(query.offset_minutes),
         )
         .await
         .map_err(|e| {
@@ -1040,6 +1059,7 @@ pub async fn global_spend_model_groups(
             None,
             query.start_date.as_deref(),
             query.end_date.as_deref(),
+            clamp_offset(query.offset_minutes),
         )
         .await
         .map_err(|e| {
@@ -1075,6 +1095,10 @@ pub struct ActivityQuery {
     pub user_id: Option<String>,
     pub team_id: Option<String>,
     pub organization_id: Option<String>,
+    pub offset_minutes: Option<i32>,
+    /// Optional IANA timezone name for the wall-clock buckets (e.g. "Asia/Shanghai").
+    /// Echoed back in the response so clients can interpret `daily[].date` unambiguously.
+    pub tz_name: Option<String>,
 }
 
 /// GET /global/spend/activity?start_date=X&end_date=Y[&user_id=...]
@@ -1141,6 +1165,12 @@ struct ActivityResult {
     daily: Vec<DailyRow>,
     /// "hourly" when query range ≤ 3 days, "daily" otherwise
     granularity: String,
+    /// Wall-clock timezone (minutes east of UTC) that `daily[].date` buckets are
+    /// expressed in. 0 = UTC. Matches the clamped `offset_minutes` from the request.
+    timezone_offset_minutes: i32,
+    /// Optional IANA timezone name for the buckets, echoed from the request.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tz_name: Option<String>,
 }
 
 /// Check whether start_date → end_date is 3 days or less (≤72h).
@@ -1167,6 +1197,7 @@ fn is_hourly_range(start_date: &str, end_date: &str) -> bool {
 
 async fn query_activity(db: &Database, query: &ActivityQuery) -> Result<Value, DbError> {
     let use_hourly = is_hourly_range(&query.start_date, &query.end_date);
+    let offset_minutes = clamp_offset(query.offset_minutes);
 
     let (metadata, rows): (
         (f64, i64, i64, i64, i64, i64, i64, i64, i64, i64, f64, f64),
@@ -1193,6 +1224,7 @@ async fn query_activity(db: &Database, query: &ActivityQuery) -> Result<Value, D
                 query.user_id.as_deref(),
                 query.team_id.as_deref(),
                 query.organization_id.as_deref(),
+                offset_minutes,
             ),
             db.query_activity_hourly(
                 &query.start_date,
@@ -1200,6 +1232,7 @@ async fn query_activity(db: &Database, query: &ActivityQuery) -> Result<Value, D
                 query.user_id.as_deref(),
                 query.team_id.as_deref(),
                 query.organization_id.as_deref(),
+                offset_minutes,
             ),
         )?
     } else {
@@ -1210,6 +1243,7 @@ async fn query_activity(db: &Database, query: &ActivityQuery) -> Result<Value, D
                 query.user_id.as_deref(),
                 query.team_id.as_deref(),
                 query.organization_id.as_deref(),
+                offset_minutes,
             ),
             db.query_activity_daily(
                 &query.start_date,
@@ -1217,6 +1251,7 @@ async fn query_activity(db: &Database, query: &ActivityQuery) -> Result<Value, D
                 query.user_id.as_deref(),
                 query.team_id.as_deref(),
                 query.organization_id.as_deref(),
+                offset_minutes,
             ),
         )?
     };
@@ -1284,6 +1319,8 @@ async fn query_activity(db: &Database, query: &ActivityQuery) -> Result<Value, D
         } else {
             "daily".to_string()
         },
+        timezone_offset_minutes: offset_minutes,
+        tz_name: query.tz_name.clone(),
     })
     .unwrap_or(json!({})))
 }
@@ -1297,6 +1334,7 @@ pub struct KeyRankingsQuery {
     pub end_date: String,
     #[serde(default = "default_limit")]
     pub limit: u32,
+    pub offset_minutes: Option<i32>,
 }
 
 fn default_limit() -> u32 {
@@ -1312,7 +1350,12 @@ pub async fn global_spend_keys_rankings(
 
     let rankings = state
         .db
-        .aggregate_spend_by_keys(&query.start_date, &query.end_date, query.limit)
+        .aggregate_spend_by_keys(
+            &query.start_date,
+            &query.end_date,
+            query.limit,
+            clamp_offset(query.offset_minutes),
+        )
         .await
         .map_err(|e| {
             (
@@ -1378,6 +1421,12 @@ mod tests {
             )
             .route("/global/spend/logs", axum::routing::get(global_spend_logs))
             .route("/global/spend/keys", axum::routing::get(global_spend_keys))
+            .route("/spend/models", axum::routing::get(spend_models))
+            .route("/spend/providers", axum::routing::get(spend_providers))
+            .route("/global/spend/models", axum::routing::get(global_spend_models))
+            .route("/global/spend/providers", axum::routing::get(global_spend_providers))
+            .route("/global/spend/model-groups", axum::routing::get(global_spend_model_groups))
+            .route("/global/spend/keys/rankings", axum::routing::get(global_spend_keys_rankings))
             .route(
                 "/global/spend/activity",
                 axum::routing::get(global_spend_activity),
@@ -1652,5 +1701,472 @@ mod tests {
             first.get("response").is_none(),
             "List endpoint must not include response field"
         );
+    }
+
+    #[tokio::test]
+    async fn test_activity_with_offset_minutes() {
+        let db = Database::init("sqlite::memory:")
+            .await
+            .expect("init sqlite");
+        // UTC 2026-08-04T20:00 = local (+08) 2026-08-05 04:00 — the local "today"
+        // if we run the test from a +08 client.
+        let log = SpendLog {
+            call_id: "test-req-offset".to_string(),
+            request_id: None,
+            call_type: "completion".to_string(),
+            api_key: "hashed-key".to_string(),
+            spend: 0.05,
+            total_tokens: 100,
+            prompt_tokens: 60,
+            completion_tokens: 40,
+            start_time: chrono::DateTime::parse_from_rfc3339("2026-08-04T20:00:00+00:00")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+            end_time: chrono::Utc::now(),
+            request_duration_ms: Some(500),
+            completion_start_time: None,
+            model: "gpt-4".to_string(),
+            model_id: None,
+            model_group: Some("gpt-4-group".to_string()),
+            custom_llm_provider: Some("openai".to_string()),
+            api_base: None,
+            user: Some("test-user".to_string()),
+            metadata: None,
+            cache_hit: None,
+            cache_key: None,
+            request_tags: None,
+            team_id: None,
+            organization_id: None,
+            end_user: None,
+            requester_ip_address: None,
+            messages: None,
+            response: None,
+            session_id: None,
+            status: Some("success".to_string()),
+            mcp_namespaced_tool_name: None,
+            agent_id: None,
+            proxy_server_request: None,
+            body_archived: false,
+            parquet_path: None,
+        };
+        db.insert_spend_log(&log).await.expect("insert log");
+
+        let state = Arc::new(AppState {
+            resolver: ModelResolver::new(db.clone(), None, "onprem"),
+            router: AigwRouter::default(),
+            db: db.clone(),
+            master_key: Some("sk-master-test-123".to_string()),
+            aigw_master_key: None,
+            provider_registry: ProviderRegistry::new(),
+            router_state: RouterState::default(),
+            rate_limiter: Arc::new(RateLimiter::new()),
+            deployment_mode: "onprem".to_string(),
+            started_at: std::time::Instant::now(),
+            daily_spend_queue: None,
+            otel_active: false,
+            body_archiver: None,
+            metrics: None,
+        });
+        let app = Router::new()
+            .route(
+                "/global/spend/activity",
+                axum::routing::get(global_spend_activity),
+            )
+            .with_state(state);
+
+        // Local-day range with offset_minutes=480 → the UTC-20:00 row lands on local 08-05.
+        let uri = "/global/spend/activity?start_date=2026-08-05&end_date=2026-08-05&offset_minutes=480";
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri(uri)
+            .header(header::AUTHORIZATION, "Bearer sk-master-test-123")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let val: Value = serde_json::from_slice(&body_bytes).unwrap();
+        let daily = val.get("daily").and_then(|v| v.as_array()).unwrap();
+        // Single-day range → hourly granularity; the bucket string is "YYYY-MM-DDTHH:00:00".
+        assert_eq!(daily.len(), 1, "one local-hour bucket");
+        let bucket_date = daily[0].get("date").and_then(|v| v.as_str()).unwrap_or("");
+        assert!(
+            bucket_date.starts_with("2026-08-05T"),
+            "expected local 2026-08-05 hour bucket, got {bucket_date}"
+        );
+        assert_eq!(
+            daily[0].get("requests").and_then(|v| v.as_i64()),
+            Some(1)
+        );
+
+        // Insert a second row on UTC day 08-05 (local 08-05 18:00 +08) so the
+        // offset=0 range also has data (avoids SQLite empty-INTEGER SUM decode).
+        let log2 = SpendLog {
+            call_id: "test-req-offset-b".to_string(),
+            request_id: None,
+            call_type: "completion".to_string(),
+            api_key: "hashed-key".to_string(),
+            spend: 0.02,
+            total_tokens: 50,
+            prompt_tokens: 25,
+            completion_tokens: 25,
+            start_time: chrono::DateTime::parse_from_rfc3339("2026-08-05T10:00:00+00:00")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+            end_time: chrono::Utc::now(),
+            request_duration_ms: Some(500),
+            completion_start_time: None,
+            model: "gpt-4".to_string(),
+            model_id: None,
+            model_group: Some("gpt-4-group".to_string()),
+            custom_llm_provider: Some("openai".to_string()),
+            api_base: None,
+            user: Some("test-user".to_string()),
+            metadata: None,
+            cache_hit: None,
+            cache_key: None,
+            request_tags: None,
+            team_id: None,
+            organization_id: None,
+            end_user: None,
+            requester_ip_address: None,
+            messages: None,
+            response: None,
+            session_id: None,
+            status: Some("success".to_string()),
+            mcp_namespaced_tool_name: None,
+            agent_id: None,
+            proxy_server_request: None,
+            body_archived: false,
+            parquet_path: None,
+        };
+        db.insert_spend_log(&log2).await.expect("insert log2");
+
+        // offset=0 (UTC): the 20:00Z row is NOT on UTC day 08-05 → only 1 daily row.
+        let uri0 =
+            "/global/spend/activity?start_date=2026-08-05&end_date=2026-08-05&offset_minutes=0";
+        let request0 = Request::builder()
+            .method(Method::GET)
+            .uri(uri0)
+            .header(header::AUTHORIZATION, "Bearer sk-master-test-123")
+            .body(Body::empty())
+            .unwrap();
+        let response0 = app.oneshot(request0).await.unwrap();
+        assert_eq!(response0.status(), StatusCode::OK);
+        let body0 = axum::body::to_bytes(response0.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let val0: Value = serde_json::from_slice(&body0).unwrap();
+        let daily0 = val0.get("daily").and_then(|v| v.as_array()).unwrap();
+        assert_eq!(daily0.len(), 1, "UTC day 08-05 has only the 10:00Z row");
+        assert_eq!(
+            daily0[0].get("requests").and_then(|v| v.as_i64()),
+            Some(1)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_activity_reports_timezone_metadata() {
+        let db = Database::init("sqlite::memory:")
+            .await
+            .expect("init sqlite");
+        // Insert one row so the metadata SUM returns a REAL (avoid SQLite empty-INTEGER decode).
+        let log = SpendLog {
+            call_id: "test-req-tz".to_string(),
+            request_id: None,
+            call_type: "completion".to_string(),
+            api_key: "hashed-key".to_string(),
+            spend: 0.01,
+            total_tokens: 10,
+            prompt_tokens: 5,
+            completion_tokens: 5,
+            start_time: chrono::Utc::now(),
+            end_time: chrono::Utc::now(),
+            request_duration_ms: Some(100),
+            completion_start_time: None,
+            model: "gpt-4".to_string(),
+            model_id: None,
+            model_group: Some("gpt-4-group".to_string()),
+            custom_llm_provider: Some("openai".to_string()),
+            api_base: None,
+            user: None,
+            metadata: None,
+            cache_hit: None,
+            cache_key: None,
+            request_tags: None,
+            team_id: None,
+            organization_id: None,
+            end_user: None,
+            requester_ip_address: None,
+            messages: None,
+            response: None,
+            session_id: None,
+            status: Some("success".to_string()),
+            mcp_namespaced_tool_name: None,
+            agent_id: None,
+            proxy_server_request: None,
+            body_archived: false,
+            parquet_path: None,
+        };
+        db.insert_spend_log(&log).await.expect("insert log");
+
+        let state = Arc::new(AppState {
+            resolver: ModelResolver::new(db.clone(), None, "onprem"),
+            router: AigwRouter::default(),
+            db,
+            master_key: Some("sk-master-test-123".to_string()),
+            aigw_master_key: None,
+            provider_registry: ProviderRegistry::new(),
+            router_state: RouterState::default(),
+            rate_limiter: Arc::new(RateLimiter::new()),
+            deployment_mode: "onprem".to_string(),
+            started_at: std::time::Instant::now(),
+            daily_spend_queue: None,
+            otel_active: false,
+            body_archiver: None,
+            metrics: None,
+        });
+        let app = Router::new()
+            .route(
+                "/global/spend/activity",
+                axum::routing::get(global_spend_activity),
+            )
+            .with_state(state);
+
+        // Explicit offset + tz_name → echoed back in the response.
+        let uri = "/global/spend/activity?start_date=2026-08-05&end_date=2026-08-06&offset_minutes=480&tz_name=Asia%2FShanghai";
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri(uri)
+            .header(header::AUTHORIZATION, "Bearer sk-master-test-123")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let val: Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(
+            val.get("timezone_offset_minutes").and_then(|v| v.as_i64()),
+            Some(480),
+            "response must declare the bucket wall-clock offset"
+        );
+        assert_eq!(
+            val.get("tz_name").and_then(|v| v.as_str()),
+            Some("Asia/Shanghai"),
+            "tz_name should be echoed from the request"
+        );
+
+        // Omitted offset/tz_name → default 0 (UTC), tz_name absent.
+        let uri0 =
+            "/global/spend/activity?start_date=2026-08-05&end_date=2026-08-06";
+        let request0 = Request::builder()
+            .method(Method::GET)
+            .uri(uri0)
+            .header(header::AUTHORIZATION, "Bearer sk-master-test-123")
+            .body(Body::empty())
+            .unwrap();
+        let response0 = app.oneshot(request0).await.unwrap();
+        let body0 = axum::body::to_bytes(response0.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let val0: Value = serde_json::from_slice(&body0).unwrap();
+        assert_eq!(
+            val0.get("timezone_offset_minutes").and_then(|v| v.as_i64()),
+            Some(0),
+            "default offset is 0 (UTC)"
+        );
+        assert!(
+            val0.get("tz_name").is_none(),
+            "tz_name omitted when not requested"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_spend_models_offset_end_date() {
+        let db = Database::init("sqlite::memory:")
+            .await
+            .expect("init sqlite");
+        let log = SpendLog {
+            call_id: "test-req-model-offset".to_string(),
+            request_id: None,
+            call_type: "completion".to_string(),
+            api_key: "master_key".to_string(),
+            spend: 0.03,
+            total_tokens: 30,
+            prompt_tokens: 15,
+            completion_tokens: 15,
+            start_time: chrono::DateTime::parse_from_rfc3339("2026-08-05T10:00:00+00:00")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
+            end_time: chrono::Utc::now(),
+            request_duration_ms: Some(100),
+            completion_start_time: None,
+            model: "gpt-4".to_string(),
+            model_id: None,
+            model_group: Some("gpt-4-group".to_string()),
+            custom_llm_provider: Some("openai".to_string()),
+            api_base: None,
+            user: None,
+            metadata: None,
+            cache_hit: None,
+            cache_key: None,
+            request_tags: None,
+            team_id: None,
+            organization_id: None,
+            end_user: None,
+            requester_ip_address: None,
+            messages: None,
+            response: None,
+            session_id: None,
+            status: Some("success".to_string()),
+            mcp_namespaced_tool_name: None,
+            agent_id: None,
+            proxy_server_request: None,
+            body_archived: false,
+            parquet_path: None,
+        };
+        db.insert_spend_log(&log).await.expect("insert log");
+
+        let state = Arc::new(AppState {
+            resolver: ModelResolver::new(db.clone(), None, "onprem"),
+            router: AigwRouter::default(),
+            db,
+            master_key: Some("sk-master-test-123".to_string()),
+            aigw_master_key: None,
+            provider_registry: ProviderRegistry::new(),
+            router_state: RouterState::default(),
+            rate_limiter: Arc::new(RateLimiter::new()),
+            deployment_mode: "onprem".to_string(),
+            started_at: std::time::Instant::now(),
+            daily_spend_queue: None,
+            otel_active: false,
+            body_archiver: None,
+            metrics: None,
+        });
+        let app = Router::new()
+            .route(
+                "/global/spend/models",
+                axum::routing::get(global_spend_models),
+            )
+            .with_state(state);
+
+        // Single-day range — the end-date row must be included (old raw-string
+        // comparison dropped it; with offset_minutes=480 the 10:00Z row is local 18:00).
+        let uri = "/global/spend/models?start_date=2026-08-05&end_date=2026-08-05&offset_minutes=480";
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri(uri)
+            .header(header::AUTHORIZATION, "Bearer sk-master-test-123")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let val: Value = serde_json::from_slice(&body_bytes).unwrap();
+        let data = val.get("data").and_then(|v| v.as_array()).unwrap();
+        assert_eq!(data.len(), 1, "end-date row included");
+        assert_eq!(
+            data[0].get("model").and_then(|v| v.as_str()),
+            Some("gpt-4")
+        );
+        assert_eq!(data[0].get("requests").and_then(|v| v.as_i64()), Some(1));
+    }
+
+    #[tokio::test]
+    async fn test_offset_clamped() {
+        let db = Database::init("sqlite::memory:")
+            .await
+            .expect("init sqlite");
+        // Insert a row at "now" so the metadata SUM returns a REAL (empty-table SUM is
+        // INTEGER on SQLite, which already fails the f64 decode on the BASELINE code —
+        // out of scope). Use a range that CONTAINS the inserted row regardless of clock:
+        // offset_minutes=99999 clamps to 840 (UTC+14), so a row at now may shift into
+        // the next UTC day — pick the range dynamically around the inserted row.
+        let log = SpendLog {
+            call_id: "test-req-clamp".to_string(),
+            request_id: None,
+            call_type: "completion".to_string(),
+            api_key: "master_key".to_string(),
+            spend: 0.01,
+            total_tokens: 10,
+            prompt_tokens: 5,
+            completion_tokens: 5,
+            start_time: chrono::Utc::now(),
+            end_time: chrono::Utc::now(),
+            request_duration_ms: Some(100),
+            completion_start_time: None,
+            model: "gpt-4".to_string(),
+            model_id: None,
+            model_group: Some("gpt-4-group".to_string()),
+            custom_llm_provider: Some("openai".to_string()),
+            api_base: None,
+            user: None,
+            metadata: None,
+            cache_hit: None,
+            cache_key: None,
+            request_tags: None,
+            team_id: None,
+            organization_id: None,
+            end_user: None,
+            requester_ip_address: None,
+            messages: None,
+            response: None,
+            session_id: None,
+            status: Some("success".to_string()),
+            mcp_namespaced_tool_name: None,
+            agent_id: None,
+            proxy_server_request: None,
+            body_archived: false,
+            parquet_path: None,
+        };
+        db.insert_spend_log(&log).await.expect("insert log");
+
+        let state = Arc::new(AppState {
+            resolver: ModelResolver::new(db.clone(), None, "onprem"),
+            router: AigwRouter::default(),
+            db,
+            master_key: Some("sk-master-test-123".to_string()),
+            aigw_master_key: None,
+            provider_registry: ProviderRegistry::new(),
+            router_state: RouterState::default(),
+            rate_limiter: Arc::new(RateLimiter::new()),
+            deployment_mode: "onprem".to_string(),
+            started_at: std::time::Instant::now(),
+            daily_spend_queue: None,
+            otel_active: false,
+            body_archiver: None,
+            metrics: None,
+        });
+        let app = Router::new()
+            .route(
+                "/global/spend/activity",
+                axum::routing::get(global_spend_activity),
+            )
+            .with_state(state);
+
+        // Out-of-range offset clamps to 0 — request still succeeds. Use a wide range
+        // (start = today-2d, end = today+2d) that contains the inserted row under any
+        // clamped offset (±14h shift at most).
+        let today = chrono::Utc::now().date_naive();
+        let start = (today - chrono::Days::new(2)).format("%Y-%m-%d");
+        let end = (today + chrono::Days::new(2)).format("%Y-%m-%d");
+        let uri = format!(
+            "/global/spend/activity?start_date={}&end_date={}&offset_minutes=99999",
+            start, end
+        );
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri(uri)
+            .header(header::AUTHORIZATION, "Bearer sk-master-test-123")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
     }
 }

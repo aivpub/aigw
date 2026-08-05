@@ -135,3 +135,34 @@ Then("the activity query should include a 7-day date range", async ({ page }) =>
   await page.waitForTimeout(500);
   await expect(page.getByText(/\$|spend/i).first()).toBeVisible({ timeout: 5000 });
 });
+
+When("I capture activity requests and click the {string} preset button", async ({ page }, presetLabel: string) => {
+  // Register the route BEFORE clicking so we intercept the refetch triggered by the click.
+  const requests: string[] = [];
+  await page.route("**/global/spend/activity**", async (route) => {
+    requests.push(route.request().url());
+    await route.continue();
+  });
+
+  await page.getByRole("button", { name: presetLabel }).click();
+  await page.waitForTimeout(600);
+
+  // Persist the captured URLs so the Then step can assert on them.
+  (page as unknown as Record<string, unknown>).__activityRequests = requests;
+});
+
+Then("the captured activity query should use today's local date with offset_minutes", async ({ page }) => {
+  const requests = ((page as unknown as Record<string, unknown>).__activityRequests ?? []) as string[];
+  expect(requests.length).toBeGreaterThan(0);
+  const q = new URL(requests[requests.length - 1]).searchParams;
+  const localToday = (() => {
+    const d = new Date();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${d.getFullYear()}-${mm}-${dd}`;
+  })();
+
+  expect(q.get("start_date")).toBe(localToday);
+  expect(q.get("end_date")).toBe(localToday);
+  expect(Number(q.get("offset_minutes"))).not.toBeNaN();
+});

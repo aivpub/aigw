@@ -102,6 +102,7 @@
     "title": "Usage",
     "description": "Usage and spend overview",
     "datePresets": {
+      "today": "Today",
       "3d": "3 days",
       "7d": "7 days",
       "30d": "30 days",

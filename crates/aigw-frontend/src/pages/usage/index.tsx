@@ -71,6 +71,10 @@ interface ActivityResponse {
   metadata: ActivityMetadata;
   daily: DailyRow[];
   granularity: "hourly" | "daily";
+  /** Wall-clock timezone (minutes east of UTC) the daily[] buckets are in. 0 = UTC. */
+  timezone_offset_minutes?: number;
+  /** Optional IANA timezone name for the buckets (echoed from the request). */
+  tz_name?: string;
 }
 
 interface ModelAgg {
@@ -130,27 +134,34 @@ function fmtTokens(v: number): string {
   return v.toString();
 }
 
-type DatePreset = "3d" | "7d" | "30d" | "custom";
+type DatePreset = "today" | "3d" | "7d" | "30d" | "custom";
+
+function toLocalDateStr(d: Date): string {
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${mm}-${dd}`;
+}
 
 function presetRange(p: DatePreset): { start: string; end: string } {
-  const now = Date.now();
-  const end = new Date(now).toISOString().split("T")[0];
+  const now = new Date();
   switch (p) {
+    case "today":
+      return { start: toLocalDateStr(now), end: toLocalDateStr(now) };
     case "3d":
       return {
-        start: new Date(now - 3 * 86400000).toISOString().split("T")[0],
-        end,
+        start: toLocalDateStr(new Date(now.getTime() - 3 * 86400000)),
+        end: toLocalDateStr(now),
       };
     case "7d":
       return {
-        start: new Date(now - 7 * 86400000).toISOString().split("T")[0],
-        end,
+        start: toLocalDateStr(new Date(now.getTime() - 7 * 86400000)),
+        end: toLocalDateStr(now),
       };
     case "30d":
     default:
       return {
-        start: new Date(now - 30 * 86400000).toISOString().split("T")[0],
-        end,
+        start: toLocalDateStr(new Date(now.getTime() - 30 * 86400000)),
+        end: toLocalDateStr(now),
       };
   }
 }
@@ -168,8 +179,9 @@ const COLORS = [
   "#6366f1",
 ];
 
-const PRESET_KEYS: DatePreset[] = ["3d", "7d", "30d", "custom"];
+const PRESET_KEYS: DatePreset[] = ["today", "3d", "7d", "30d", "custom"];
 const PRESET_LABELS: Record<DatePreset, string> = {
+  today: "usage.datePresets.today",
   "3d": "usage.datePresets.3d",
   "7d": "usage.datePresets.7d",
   "30d": "usage.datePresets.30d",
@@ -245,6 +257,12 @@ export function UsagePage() {
     useState<ModelViewMode>("chart");
   const [groupViewMode, setGroupViewMode] = useState<ModelViewMode>("chart");
 
+  // Minutes east of UTC for the browser's timezone (UTC+8 → 480). The backend
+  // buckets daily/hourly spend by LOCAL wall-clock day when this is provided.
+  const offsetMinutes = -new Date().getTimezoneOffset();
+  // IANA name of the browser's timezone, echoed back in the activity response.
+  const tzName = Intl.DateTimeFormat().resolvedOptions().timeZone ?? "";
+
   const handlePreset = (p: DatePreset) => {
     setPreset(p);
     if (p !== "custom") {
@@ -257,10 +275,10 @@ export function UsagePage() {
   // Activity overview (metadata + daily)
   const { data: activity, isLoading: activityLoading } =
     useQuery<ActivityResponse>({
-      queryKey: ["global-spend-activity", startDate, endDate],
+      queryKey: ["global-spend-activity", startDate, endDate, offsetMinutes, tzName],
       queryFn: () =>
         apiGet(
-          `/global/spend/activity?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`,
+          `/global/spend/activity?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}&offset_minutes=${offsetMinutes}&tz_name=${encodeURIComponent(tzName)}`,
         ),
       refetchInterval: 30_000,
     });
@@ -269,10 +287,10 @@ export function UsagePage() {
 
   // Model aggregation
   const { data: modelData, isLoading: modelLoading } = useQuery<AggResponse>({
-    queryKey: ["spend-models", startDate, endDate],
+    queryKey: ["spend-models", startDate, endDate, offsetMinutes],
     queryFn: () =>
       apiGet(
-        `/global/spend/models?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`,
+        `/global/spend/models?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}&offset_minutes=${offsetMinutes}`,
       ),
     refetchInterval: 30_000,
   });
@@ -280,20 +298,20 @@ export function UsagePage() {
   // Provider aggregation
   const { data: providerData, isLoading: providerLoading } =
     useQuery<AggResponse>({
-      queryKey: ["spend-providers", startDate, endDate],
+      queryKey: ["spend-providers", startDate, endDate, offsetMinutes],
       queryFn: () =>
         apiGet(
-          `/spend/providers?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`,
+          `/spend/providers?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}&offset_minutes=${offsetMinutes}`,
         ),
       refetchInterval: 30_000,
     });
 
   // Model Group aggregation
   const { data: groupData, isLoading: groupLoading } = useQuery<AggResponse>({
-    queryKey: ["spend-model-groups", startDate, endDate],
+    queryKey: ["spend-model-groups", startDate, endDate, offsetMinutes],
     queryFn: () =>
       apiGet(
-        `/global/spend/model-groups?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`,
+        `/global/spend/model-groups?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}&offset_minutes=${offsetMinutes}`,
       ),
     refetchInterval: 30_000,
   });
@@ -301,10 +319,10 @@ export function UsagePage() {
   // Key rankings
   const { data: keyRankings, isLoading: keyRankingsLoading } =
     useQuery<KeyRankingResponse>({
-      queryKey: ["key-rankings", startDate, endDate],
+      queryKey: ["key-rankings", startDate, endDate, offsetMinutes],
       queryFn: () =>
         apiGet(
-          `/global/spend/keys/rankings?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}&limit=5`,
+          `/global/spend/keys/rankings?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}&offset_minutes=${offsetMinutes}&limit=5`,
         ),
       refetchInterval: 30_000,
     });
@@ -606,11 +624,10 @@ export function UsagePage() {
                     stroke="hsl(var(--muted-foreground))"
                     tickFormatter={(val) => {
                       if (activity?.granularity === "hourly") {
-                        const d = new Date(val + "Z"); // parse as UTC
-                        const mm = String(d.getMonth() + 1).padStart(2, "0");
-                        const dd = String(d.getDate()).padStart(2, "0");
-                        const hh = String(d.getHours()).padStart(2, "0");
-                        return `${mm}/${dd} ${hh}:00`;
+                        // Backend now returns LOCAL hour strings ("YYYY-MM-DDTHH:00:00");
+                        // render directly — re-parsing as UTC would double-shift the label.
+                        const s = String(val);
+                        return `${s.slice(5, 7)}/${s.slice(8, 10)} ${s.slice(11, 16)}`;
                       }
                       return val;
                     }}

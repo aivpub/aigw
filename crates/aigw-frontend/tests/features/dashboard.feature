@@ -47,3 +47,7 @@ Feature: Usage Overview
   Scenario: Date presets update chart data
     When I click the "7 days" preset button
     Then the activity query should include a 7-day date range
+
+  Scenario: Today preset local-day range with offset
+    When I capture activity requests and click the "Today" preset button
+    Then the captured activity query should use today's local date with offset_minutes
