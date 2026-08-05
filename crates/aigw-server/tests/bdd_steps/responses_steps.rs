@@ -255,3 +255,117 @@ async fn then_spendlog_spend_positive(world: &mut TestWorld) {
         log.spend
     );
 }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Stage 102: Bridge step definitions
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[when(expr = "使用 key {string} 发送带 instructions 的 \\/v1\\/responses 请求")]
+async fn when_post_responses_with_instructions(world: &mut TestWorld, alias: String) {
+    send_responses_request(
+        world,
+        &alias,
+        serde_json::json!({
+            "model": "gpt-4o",
+            "instructions": "You are a helpful assistant",
+            "input": [{"role":"user","content":"hi"}]
+        }),
+    )
+    .await;
+}
+
+#[when(expr = "使用 key {string} 发送带 function tools 的 \\/v1\\/responses 请求")]
+async fn when_post_responses_with_function_tools(world: &mut TestWorld, alias: String) {
+    send_responses_request(
+        world,
+        &alias,
+        serde_json::json!({
+            "model": "gpt-4o",
+            "input": [{"role":"user","content":"what is the weather?"}],
+            "tools": [{"type":"function","name":"get_weather","parameters":{"type":"object","properties":{"city":{"type":"string"}}}}]
+        }),
+    )
+    .await;
+}
+
+#[when(expr = "使用 key {string} 发送带 web_search_preview tool 的 \\/v1\\/responses 请求")]
+async fn when_post_responses_with_web_search(world: &mut TestWorld, alias: String) {
+    send_responses_request(
+        world,
+        &alias,
+        serde_json::json!({
+            "model": "gpt-4o",
+            "input": [{"role":"user","content":"latest news"}],
+            "tools": [{"type":"web_search_preview"}]
+        }),
+    )
+    .await;
+}
+
+#[when(expr = "使用 key {string} 发送带 code_interpreter tool 的 \\/v1\\/responses 请求")]
+async fn when_post_responses_with_code_interpreter(world: &mut TestWorld, alias: String) {
+    send_responses_request(
+        world,
+        &alias,
+        serde_json::json!({
+            "model": "gpt-4o",
+            "input": [{"role":"user","content":"analyze data"}],
+            "tools": [{"type":"code_interpreter"}]
+        }),
+    )
+    .await;
+}
+
+#[when(expr = "使用 key {string} 发送带 function tools 的 \\/v1\\/responses 请求含工具调用响应")]
+async fn when_post_responses_with_tool_call_response(world: &mut TestWorld, alias: String) {
+    send_responses_request(
+        world,
+        &alias,
+        serde_json::json!({
+            "model": "gpt-4o",
+            "input": [{"role":"user","content":"weather in Paris?"}],
+            "tools": [{"type":"function","name":"get_weather","parameters":{"type":"object","properties":{"city":{"type":"string"}}}}]
+        }),
+    )
+    .await;
+}
+
+#[then(regex = r#"^响应 JSON 中 \"(.+)\" 包含 type 为 \"(.+)\" 的项$"#)]
+async fn then_json_output_contains_type(world: &mut TestWorld, field: String, expected_type: String) {
+    let body = world.last_body.as_ref().expect("no response body");
+    let arr = body
+        .get(&field)
+        .and_then(|v| v.as_array())
+        .unwrap_or_else(|| {
+            panic!("Expected '{}' to be array, got:\n{}",
+                field,
+                serde_json::to_string_pretty(body).unwrap_or_default())
+        });
+    let found = arr.iter().any(|item| {
+        item.get("type").and_then(|v| v.as_str()) == Some(&expected_type)
+    });
+    assert!(
+        found,
+        "Expected '{}' to contain item with type '{}', got:\n{}",
+        field,
+        expected_type,
+        serde_json::to_string_pretty(&arr).unwrap_or_default()
+    );
+}
+
+#[then(regex = r#"^该 function_call 的 \"(.+)\" 存在$"#)]
+async fn then_function_call_field_exists(world: &mut TestWorld, field: String) {
+    let body = world.last_body.as_ref().expect("no response body");
+    let output = body.get("output").and_then(|v| v.as_array())
+        .unwrap_or_else(|| panic!("no output array"));
+    let fc = output.iter().find(|item| {
+        item.get("type").and_then(|v| v.as_str()) == Some("function_call")
+    }).expect("no function_call in output");
+    let val = fc.get(&field);
+    assert!(
+        val.is_some() && !val.unwrap().is_null(),
+        "Expected function_call to have non-null field '{}', got: {:?}",
+        field,
+        fc
+    );
+}

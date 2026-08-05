@@ -258,16 +258,24 @@ pub async fn responses_handler(
     let adapt_span = tracing::info_span!("adapt_request");
     let _adapt_enter = adapt_span.enter();
     let upstream_body_val = adapter.adapt_request(body.clone(), &deployment).map_err(|e| {
+        let (status, err_type) = match &e {
+            aigw_core::adapter::AdapterError::Unsupported(_) => {
+                (StatusCode::BAD_REQUEST, "invalid_request_error")
+            }
+            aigw_core::adapter::AdapterError::Parse(_) => {
+                (StatusCode::INTERNAL_SERVER_ERROR, "adapter_error")
+            }
+        };
         (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": {"message": format!("Adapter error: {}", e), "type": "adapter_error"}})),
+            status,
+            Json(json!({"error": {"message": format!("{}", e), "type": err_type}})),
         )
     })?;
 
-    // Upstream URL — "responses" for OpenAI Compatible, "messages" for Anthropic Native
+    // Upstream URL — Stage 102: bridge converts to Chat Completions, so use chat/completions path
     let upstream_path = match deployment.provider_type {
         aigw_core::deployment::ProviderType::AnthropicNative => "messages",
-        _ => "responses",
+        _ => "chat/completions",
     };
     let upstream_url = format!(
         "{}/{}",

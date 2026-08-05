@@ -75,7 +75,9 @@ pub fn select_adapter(
         (ClientProtocol::Anthropic, ProviderType::OpenAICompatible) => Some(&AnthropicToOpenAI),
         (ClientProtocol::Anthropic, ProviderType::AnthropicNative) => Some(&AnthropicPassthrough),
         (ClientProtocol::OpenAI, ProviderType::AnthropicNative) => Some(&OpenAIToAnthropic),
-        (ClientProtocol::Responses, ProviderType::OpenAICompatible) => Some(&OpenAIPassthrough),
+        (ClientProtocol::Responses, ProviderType::OpenAICompatible) => {
+            Some(&ResponsesToChatCompletions)
+        }
         (ClientProtocol::Responses, ProviderType::AnthropicNative) => None,
     }
 }
@@ -1864,6 +1866,501 @@ impl StreamAdapter for OpenAIToAnthropicStream {
 
     fn finish(&mut self) -> Option<Vec<u8>> {
         self.build_finish_events()
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ResponsesToChatCompletions (Stage 102)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//
+// Client (Responses API) → ResponsesToChatCompletions → Upstream (Chat Completions)
+// Transparent bridge: converts Responses API format to/from Chat Completions.
+
+pub struct ResponsesToChatCompletions;
+
+impl ResponsesToChatCompletions {
+    /// Convert Responses API `input` field to Chat Completions `messages`.
+    fn input_to_messages(input: &Value) -> Result<Vec<Value>, AdapterError> {
+        match input {
+            Value::String(text) => Ok(vec![json!({"role": "user", "content": text})]),
+            Value::Array(items) => {
+                if items.is_empty() {
+                    return Err(AdapterError::Unsupported(
+                        "input array must not be empty".to_string(),
+                    ));
+                }
+                // Map {role, content} directly
+                let messages: Vec<Value> = items
+                    .iter()
+                    .map(|item| {
+                        let role = item.get("role").and_then(|v| v.as_str()).unwrap_or("user");
+                        json!({"role": role, "content": item.get("content").cloned().unwrap_or(Value::Null)})
+                    })
+                    .collect();
+                Ok(messages)
+            }
+            _ => Err(AdapterError::Unsupported(
+                "input must be a string or array".to_string(),
+            )),
+        }
+    }
+}
+
+impl MessageAdapter for ResponsesToChatCompletions {
+    fn client_protocol(&self) -> ClientProtocol {
+        ClientProtocol::Responses
+    }
+
+    fn adapt_request(&self, body: Value, deployment: &Deployment) -> Result<Value, AdapterError> {
+        let mut obj = match body {
+            Value::Object(o) => o,
+            _ => {
+                return Err(AdapterError::Parse(
+                    "request body must be a JSON object".to_string(),
+                ));
+            }
+        };
+
+        // 1. Validate tools — only function type is supported
+        if let Some(tools) = obj.get("tools").and_then(|v| v.as_array()) {
+            for tool in tools {
+                let tool_type = tool.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                match tool_type {
+                    "function" => {} // allowed
+                    other => {
+                        return Err(AdapterError::Unsupported(format!(
+                            "tool type '{}' is not supported in Responses→Chat bridge. Only 'function' tools are supported.",
+                            other
+                        )));
+                    }
+                }
+            }
+        }
+
+        // 2. Extract input → messages
+        let input = obj
+            .remove("input")
+            .ok_or_else(|| AdapterError::Unsupported("missing 'input' field".to_string()))?;
+        let mut messages = Self::input_to_messages(&input)?;
+
+        // 3. Extract instructions → prepend system message
+        if let Some(instructions) = obj.remove("instructions").and_then(|v| {
+            v.as_str().map(|s| s.to_string())
+        }) {
+            if !instructions.is_empty() {
+                messages.insert(
+                    0,
+                    json!({"role": "system", "content": instructions}),
+                );
+            }
+        }
+
+        // 4. Field rename: max_output_tokens → max_tokens
+        if let Some(mot) = obj.remove("max_output_tokens") {
+            obj.insert("max_tokens".to_string(), mot);
+        }
+
+        // 5. Drop unsupported fields (log warnings)
+        for field in &[
+            "reasoning",
+            "previous_response_id",
+            "conversation",
+            "include",
+            "truncation",
+            "text",
+        ] {
+            if obj.remove(*field).is_some() {
+                tracing::debug!("dropped unsupported Responses API field: {}", field);
+            }
+        }
+
+        // 6. Inject messages + model
+        obj.insert("messages".to_string(), Value::Array(messages));
+        obj.insert("model".to_string(), json!(deployment.upstream_model));
+
+        // 7. Inject stream_options for streaming
+        if obj
+            .get("stream")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            obj.insert(
+                "stream_options".to_string(),
+                json!({"include_usage": true}),
+            );
+        }
+
+        Ok(Value::Object(obj))
+    }
+
+    fn adapt_response(&self, body: Value) -> Result<Value, AdapterError> {
+        let obj = match body {
+            Value::Object(o) => o,
+            _ => {
+                return Err(AdapterError::Parse(
+                    "response body must be a JSON object".to_string(),
+                ));
+            }
+        };
+
+        let id = obj
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(|s| format!("resp_{}", s))
+            .unwrap_or_else(|| "resp_unknown".to_string());
+        let model = obj
+            .get("model")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        // Extract choices[0].message
+        let message = obj
+            .get("choices")
+            .and_then(|v| v.as_array())
+            .and_then(|choices| choices.first());
+
+        // Build output array
+        let mut output: Vec<Value> = Vec::new();
+
+        if let Some(msg) = message {
+            let role = msg
+                .get("message")
+                .and_then(|m| m.get("role"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("assistant")
+                .to_string();
+
+            let content_text = msg
+                .get("message")
+                .and_then(|m| m.get("content"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
+            let tool_calls = msg
+                .get("message")
+                .and_then(|m| m.get("tool_calls"))
+                .and_then(|v| v.as_array());
+
+            // Build content array for the output message
+            let mut content_parts: Vec<Value> = Vec::new();
+
+            if let Some(ref text) = content_text {
+                if !text.is_empty() {
+                    content_parts.push(json!({"type": "output_text", "text": text}));
+                }
+            }
+
+            if let Some(tcs) = tool_calls {
+                for tc in tcs {
+                    output.push(json!({
+                        "type": "function_call",
+                        "call_id": tc.get("id").and_then(|v| v.as_str()).unwrap_or(""),
+                        "name": tc.get("function").and_then(|f| f.get("name")).and_then(|v| v.as_str()).unwrap_or(""),
+                        "arguments": tc.get("function").and_then(|f| f.get("arguments")).and_then(|v| v.as_str()).unwrap_or(""),
+                    }));
+                }
+            }
+
+            if !content_parts.is_empty() {
+                output.push(json!({
+                    "type": "message",
+                    "role": role,
+                    "content": content_parts,
+                }));
+            } else if tool_calls.is_none() || tool_calls.unwrap().is_empty() {
+                // No content and no tool_calls → empty assistant output
+                output.push(json!({
+                    "type": "message",
+                    "role": role,
+                    "content": [{"type": "output_text", "text": ""}],
+                }));
+            }
+        }
+
+        // Extract usage and rename fields
+        let usage = obj.get("usage");
+        let usage_out = usage.map(|u| {
+            json!({
+                "input_tokens": u.get("prompt_tokens").cloned().unwrap_or(json!(0)),
+                "output_tokens": u.get("completion_tokens").cloned().unwrap_or(json!(0)),
+                "total_tokens": u.get("total_tokens").cloned().unwrap_or(json!(0)),
+            })
+        });
+
+        let finish_reason = message
+            .and_then(|m| m.get("finish_reason"))
+            .and_then(|v| v.as_str());
+        let status = match finish_reason {
+            Some("stop") | Some("tool_calls") => "completed",
+            Some("length") => "completed", // max_tokens → completed (no error)
+            Some(_) => "completed",
+            None => {
+                if output.is_empty() {
+                    "failed"
+                } else {
+                    "completed"
+                }
+            }
+        };
+
+        let mut result = serde_json::Map::new();
+        result.insert("id".to_string(), json!(id));
+        result.insert("object".to_string(), json!("response"));
+        result.insert("status".to_string(), json!(status));
+        result.insert("model".to_string(), json!(model));
+        result.insert("output".to_string(), Value::Array(output));
+        if let Some(u) = usage_out {
+            result.insert("usage".to_string(), u);
+        }
+
+        Ok(Value::Object(result))
+    }
+
+    fn stream_adapter(&self) -> Option<Box<dyn StreamAdapter>> {
+        Some(Box::new(ResponsesToChatCompletionsStream::new()))
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ResponsesToChatCompletionsStream
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//
+// Converts Chat Completions SSE delta chunks → Responses API SSE events.
+//
+// State machine:
+//   First chunk (role)         → response.created
+//   delta.content              → response.output_text.delta
+//   delta.tool_calls           → response.function_call_arguments.delta
+//   finish_reason + usage      → response.completed
+//   [DONE]                     → data: [DONE]
+
+struct ResponsesToChatCompletionsStream {
+    response_id: String,
+    model: String,
+    created_sent: bool,
+    done: bool,
+    content_index: usize,
+    pending_usage: Option<Value>,
+    tool_call_buf: Vec<ToolCallState>,
+}
+
+struct ToolCallState {
+    call_id: String,
+    name: String,
+    arguments: String,
+    done: bool,
+}
+
+impl ResponsesToChatCompletionsStream {
+    fn new() -> Self {
+        Self {
+            response_id: format!("resp_{}", uuid::Uuid::new_v4().to_string().replace('-', "")),
+            model: String::new(),
+            created_sent: false,
+            done: false,
+            content_index: 0,
+            pending_usage: None,
+            tool_call_buf: Vec::new(),
+        }
+    }
+
+    fn emit_sse(&self, event: &str, data: &str) -> Vec<u8> {
+        format!("event: {}\ndata: {}\n\n", event, data).into_bytes()
+    }
+}
+
+impl StreamAdapter for ResponsesToChatCompletionsStream {
+    fn next(&mut self, chunk: &[u8]) -> Option<Vec<u8>> {
+        if self.done {
+            return None;
+        }
+
+        let text = String::from_utf8_lossy(chunk);
+        let mut out = Vec::new();
+
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with(':') {
+                continue;
+            }
+            let data = line
+                .strip_prefix("data: ")
+                .or_else(|| line.strip_prefix("data:"))
+                .unwrap_or(line);
+            if data == "[DONE]" {
+                self.done = true;
+                out.extend_from_slice(b"data: [DONE]\n\n");
+                return if out.is_empty() { None } else { Some(out) };
+            }
+
+            let chunk_val: Value = match serde_json::from_str(data) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            // Capture model from the first chunk
+            if self.model.is_empty() {
+                if let Some(m) = chunk_val.get("model").and_then(|v| v.as_str()) {
+                    self.model = m.to_string();
+                }
+            }
+
+            // Emit response.created on first non-empty chunk
+            if !self.created_sent {
+                self.created_sent = true;
+                let created_event = json!({
+                    "response": {
+                        "id": self.response_id,
+                        "object": "response",
+                        "status": "in_progress",
+                        "model": self.model,
+                        "output": []
+                    }
+                });
+                out.extend_from_slice(&self.emit_sse(
+                    "response.created",
+                    &serde_json::to_string(&created_event).unwrap(),
+                ));
+            }
+
+            let choices = chunk_val.get("choices").and_then(|v| v.as_array());
+            let usage = chunk_val.get("usage");
+
+            if let Some(choices) = choices {
+                for choice in choices {
+                    let delta = choice.get("delta");
+
+                    // Text content
+                    if let Some(content) = delta.and_then(|d| d.get("content")).and_then(|v| v.as_str())
+                    {
+                        if !content.is_empty() {
+                            let idx = self.content_index;
+                            self.content_index += 1;
+                            let text_delta = json!({
+                                "delta": content,
+                                "content_index": idx,
+                                "output_index": 0
+                            });
+                            out.extend_from_slice(&self.emit_sse(
+                                "response.output_text.delta",
+                                &serde_json::to_string(&text_delta).unwrap(),
+                            ));
+                        }
+                    }
+
+                    // Tool calls
+                    if let Some(tool_calls) = delta.and_then(|d| d.get("tool_calls")).and_then(|v| v.as_array())
+                    {
+                        for tc in tool_calls {
+                            let idx = tc.get("index").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
+                            let tc_id = tc.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                            let tc_name = tc.get("function")
+                                .and_then(|f| f.get("name"))
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string());
+                            let tc_args = tc.get("function")
+                                .and_then(|f| f.get("arguments"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+
+                            // New tool call
+                            if let (Some(id), Some(name)) = (tc_id, tc_name) {
+                                while self.tool_call_buf.len() <= idx {
+                                    self.tool_call_buf.push(ToolCallState {
+                                        call_id: String::new(),
+                                        name: String::new(),
+                                        arguments: String::new(),
+                                        done: false,
+                                    });
+                                }
+                                let buf = &mut self.tool_call_buf[idx];
+                                if !buf.done && buf.call_id.is_empty() {
+                                    buf.call_id = id;
+                                    buf.name = name;
+                                }
+                                if !tc_args.is_empty() {
+                                    buf.arguments.push_str(tc_args);
+                                    let arg_delta = json!({
+                                        "delta": tc_args,
+                                        "call_id": buf.call_id,
+                                        "output_index": idx
+                                    });
+                                    out.extend_from_slice(&self.emit_sse(
+                                        "response.function_call_arguments.delta",
+                                        &serde_json::to_string(&arg_delta).unwrap(),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+
+                    // Capture finish_reason + usage → emit in finish()
+                    if choice.get("finish_reason").is_some() || usage.is_some() {
+                        self.pending_usage = usage.cloned();
+                    }
+                }
+            }
+        }
+
+        if out.is_empty() {
+            None
+        } else {
+            Some(out)
+        }
+    }
+
+    fn finish(&mut self) -> Option<Vec<u8>> {
+        let mut out = Vec::new();
+
+        // Send function_call_arguments.done for each tool call
+        for (idx, tc) in self.tool_call_buf.iter().enumerate() {
+            if !tc.done && !tc.call_id.is_empty() {
+                let done_event = json!({
+                    "call_id": tc.call_id,
+                    "name": tc.name,
+                    "arguments": tc.arguments,
+                    "output_index": idx
+                });
+                out.extend_from_slice(&self.emit_sse(
+                    "response.function_call_arguments.done",
+                    &serde_json::to_string(&done_event).unwrap(),
+                ));
+            }
+        }
+
+        // Emit response.completed with usage
+        let usage = self.pending_usage.take().unwrap_or(json!({
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0
+        }));
+        let completed = json!({
+            "response": {
+                "id": self.response_id,
+                "object": "response",
+                "status": "completed",
+                "model": self.model,
+                "usage": {
+                    "input_tokens": usage.get("prompt_tokens").and_then(|v| v.as_i64()).unwrap_or(0),
+                    "output_tokens": usage.get("completion_tokens").and_then(|v| v.as_i64()).unwrap_or(0),
+                    "total_tokens": usage.get("total_tokens").and_then(|v| v.as_i64()).unwrap_or(0),
+                }
+            }
+        });
+        out.extend_from_slice(&self.emit_sse(
+            "response.completed",
+            &serde_json::to_string(&completed).unwrap(),
+        ));
+
+        // [DONE]
+        out.extend_from_slice(b"data: [DONE]\n\n");
+
+        if out.is_empty() {
+            None
+        } else {
+            Some(out)
+        }
     }
 }
 
