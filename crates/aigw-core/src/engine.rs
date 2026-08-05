@@ -1703,16 +1703,15 @@ mod tests {
         // Wait for the job to reach a terminal state.
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         loop {
-            let row: Option<(String,)> = sqlx::query_as(
-                "SELECT status FROM async_jobs WHERE id = ?",
-            )
-            .bind(&job_id)
-            .fetch_optional(match &db {
-                Database::Sqlite(p) => p,
-                _ => unreachable!(),
-            })
-            .await
-            .expect("fetch job status");
+            let row: Option<(String,)> =
+                sqlx::query_as("SELECT status FROM async_jobs WHERE id = ?")
+                    .bind(&job_id)
+                    .fetch_optional(match &db {
+                        Database::Sqlite(p) => p,
+                        _ => unreachable!(),
+                    })
+                    .await
+                    .expect("fetch job status");
             let status = row.map(|r| r.0).unwrap_or_default();
             if status == "completed" {
                 break;

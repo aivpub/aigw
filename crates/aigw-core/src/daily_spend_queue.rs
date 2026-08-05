@@ -402,8 +402,28 @@ mod tests {
     #[test]
     fn test_aggregate_multiple_kinds() {
         let items = vec![
-            mk_log(DailySpendKind::User, "u1", "2026-01-01", "sk", "m", 1.0, 10, 20, 1),
-            mk_log(DailySpendKind::Team, "t1", "2026-01-01", "sk", "m", 2.0, 30, 40, 1),
+            mk_log(
+                DailySpendKind::User,
+                "u1",
+                "2026-01-01",
+                "sk",
+                "m",
+                1.0,
+                10,
+                20,
+                1,
+            ),
+            mk_log(
+                DailySpendKind::Team,
+                "t1",
+                "2026-01-01",
+                "sk",
+                "m",
+                2.0,
+                30,
+                40,
+                1,
+            ),
             mk_log(
                 DailySpendKind::Organization,
                 "o1",
@@ -433,9 +453,39 @@ mod tests {
     fn test_aggregate_sum_correct() {
         // Same key → aggregated into one entry with summed tokens/spend
         let items = vec![
-            mk_log(DailySpendKind::User, "u1", "2026-01-01", "sk", "gpt-4", 0.05, 100, 50, 1),
-            mk_log(DailySpendKind::User, "u1", "2026-01-01", "sk", "gpt-4", 0.03, 200, 100, 1),
-            mk_log(DailySpendKind::User, "u1", "2026-01-01", "sk", "gpt-4", 0.02, 300, 150, 1),
+            mk_log(
+                DailySpendKind::User,
+                "u1",
+                "2026-01-01",
+                "sk",
+                "gpt-4",
+                0.05,
+                100,
+                50,
+                1,
+            ),
+            mk_log(
+                DailySpendKind::User,
+                "u1",
+                "2026-01-01",
+                "sk",
+                "gpt-4",
+                0.03,
+                200,
+                100,
+                1,
+            ),
+            mk_log(
+                DailySpendKind::User,
+                "u1",
+                "2026-01-01",
+                "sk",
+                "gpt-4",
+                0.02,
+                300,
+                150,
+                1,
+            ),
         ];
         let result = aggregate_daily_spend(items);
         let entries = result.get("daily_user_spend").expect("user table");
@@ -454,8 +504,28 @@ mod tests {
     #[test]
     fn test_aggregate_different_entities_not_merged() {
         let items = vec![
-            mk_log(DailySpendKind::User, "u1", "2026-01-01", "sk", "m", 1.0, 10, 20, 1),
-            mk_log(DailySpendKind::User, "u2", "2026-01-01", "sk", "m", 2.0, 30, 40, 1),
+            mk_log(
+                DailySpendKind::User,
+                "u1",
+                "2026-01-01",
+                "sk",
+                "m",
+                1.0,
+                10,
+                20,
+                1,
+            ),
+            mk_log(
+                DailySpendKind::User,
+                "u2",
+                "2026-01-01",
+                "sk",
+                "m",
+                2.0,
+                30,
+                40,
+                1,
+            ),
         ];
         let result = aggregate_daily_spend(items);
         let entries = result.get("daily_user_spend").expect("user table");
@@ -465,8 +535,28 @@ mod tests {
     #[test]
     fn test_aggregate_different_dates_not_merged() {
         let items = vec![
-            mk_log(DailySpendKind::User, "u1", "2026-01-01", "sk", "m", 1.0, 10, 20, 1),
-            mk_log(DailySpendKind::User, "u1", "2026-01-02", "sk", "m", 2.0, 30, 40, 1),
+            mk_log(
+                DailySpendKind::User,
+                "u1",
+                "2026-01-01",
+                "sk",
+                "m",
+                1.0,
+                10,
+                20,
+                1,
+            ),
+            mk_log(
+                DailySpendKind::User,
+                "u1",
+                "2026-01-02",
+                "sk",
+                "m",
+                2.0,
+                30,
+                40,
+                1,
+            ),
         ];
         let result = aggregate_daily_spend(items);
         let entries = result.get("daily_user_spend").expect("user table");
@@ -476,8 +566,28 @@ mod tests {
     #[test]
     fn test_aggregate_different_models_not_merged() {
         let items = vec![
-            mk_log(DailySpendKind::User, "u1", "2026-01-01", "sk", "gpt-4", 1.0, 10, 20, 1),
-            mk_log(DailySpendKind::User, "u1", "2026-01-01", "sk", "claude-3", 2.0, 30, 40, 1),
+            mk_log(
+                DailySpendKind::User,
+                "u1",
+                "2026-01-01",
+                "sk",
+                "gpt-4",
+                1.0,
+                10,
+                20,
+                1,
+            ),
+            mk_log(
+                DailySpendKind::User,
+                "u1",
+                "2026-01-01",
+                "sk",
+                "claude-3",
+                2.0,
+                30,
+                40,
+                1,
+            ),
         ];
         let result = aggregate_daily_spend(items);
         let entries = result.get("daily_user_spend").expect("user table");

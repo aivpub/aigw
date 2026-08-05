@@ -271,22 +271,22 @@ async fn execute_reset(
                     r#"SELECT DATE_FORMAT(b.budget_reset_at, '%Y-%m-%d %H:%i:%s')
                         FROM organizations o
                         JOIN budgets b ON o.budget_id = b.budget_id
-                        WHERE o.organization_id = ?"#
+                        WHERE o.organization_id = ?"#,
                 )
-                    .bind(entity_id)
-                    .fetch_optional(pool)
-                    .await?
-                    .flatten(),
+                .bind(entity_id)
+                .fetch_optional(pool)
+                .await?
+                .flatten(),
                 Database::Postgres(pool) => sqlx::query_scalar(
                     r#"SELECT b.budget_reset_at::text
                         FROM organizations o
                         JOIN budgets b ON o.budget_id = b.budget_id
-                        WHERE o.organization_id = $1"#
+                        WHERE o.organization_id = $1"#,
                 )
-                    .bind(entity_id)
-                    .fetch_optional(pool)
-                    .await?
-                    .flatten(),
+                .bind(entity_id)
+                .fetch_optional(pool)
+                .await?
+                .flatten(),
             }
         }
         _ => {
@@ -376,7 +376,9 @@ async fn execute_reset(
                         .execute(pool)
                         .await?;
                     sqlx::query("UPDATE organizations SET spend = 0 WHERE organization_id = $1")
-                        .bind(entity_id).execute(pool).await?;
+                        .bind(entity_id)
+                        .execute(pool)
+                        .await?;
                 }
             }
         }
@@ -832,11 +834,21 @@ mod tests {
         .execute(pool).await.unwrap();
 
         let candidates = scan_entity_table(&db, EntityType::Key).await.unwrap();
-        assert_eq!(candidates.len(), 2, "should find only expired and null-reset-at keys");
+        assert_eq!(
+            candidates.len(),
+            2,
+            "should find only expired and null-reset-at keys"
+        );
 
         let ids: Vec<&str> = candidates.iter().map(|c| c.entity_id.as_str()).collect();
-        assert!(ids.contains(&expired.as_str()), "should contain expired key");
-        assert!(ids.contains(&null_rst.as_str()), "should contain null-reset-at key");
+        assert!(
+            ids.contains(&expired.as_str()),
+            "should contain expired key"
+        );
+        assert!(
+            ids.contains(&null_rst.as_str()),
+            "should contain null-reset-at key"
+        );
     }
 
     #[tokio::test]
@@ -860,7 +872,10 @@ mod tests {
         .unwrap();
 
         let candidates = scan_entity_table(&db, EntityType::Key).await.unwrap();
-        assert!(candidates.is_empty(), "key without budget_duration should not be scanned");
+        assert!(
+            candidates.is_empty(),
+            "key without budget_duration should not be scanned"
+        );
     }
 
     #[tokio::test]
@@ -904,7 +919,11 @@ mod tests {
         .execute(pool).await.unwrap();
 
         let candidates = scan_all(&db).await.unwrap();
-        assert_eq!(candidates.len(), 4, "should find 4 expired entities (key, team, user, org)");
+        assert_eq!(
+            candidates.len(),
+            4,
+            "should find 4 expired entities (key, team, user, org)"
+        );
 
         let types: Vec<&str> = candidates.iter().map(|c| c.entity_type.as_str()).collect();
         assert!(types.contains(&"key"));

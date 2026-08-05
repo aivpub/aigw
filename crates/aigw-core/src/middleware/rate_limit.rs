@@ -55,7 +55,11 @@ pub enum LimitError {
 impl axum::response::IntoResponse for LimitError {
     fn into_response(self) -> axum::response::Response {
         let (status, error_body) = match self {
-            LimitError::BudgetExceeded { entity_type, spent, limit } => (
+            LimitError::BudgetExceeded {
+                entity_type,
+                spent,
+                limit,
+            } => (
                 StatusCode::TOO_MANY_REQUESTS,
                 json!({
                     "error": {
@@ -134,9 +138,15 @@ pub async fn enforce_limits(
     BudgetEnforcer::check_budget_multi(db, key)
         .await
         .map_err(|e| match e {
-            BudgetError::Exceeded { entity_type, spent, limit } => {
-                LimitError::BudgetExceeded { entity_type, spent, limit }
-            }
+            BudgetError::Exceeded {
+                entity_type,
+                spent,
+                limit,
+            } => LimitError::BudgetExceeded {
+                entity_type,
+                spent,
+                limit,
+            },
             BudgetError::DbError(err) => {
                 LimitError::Internal(format!("Budget check failed: {}", err))
             }

@@ -143,10 +143,7 @@ impl BudgetEnforcer {
     /// cost is already reflected. Concurrent requests on the same key share
     /// a ~ms race window (both pass check, cumulative spend > max_budget),
     /// which is an accepted distributed-systems trade-off (litellm same).
-    pub async fn check_budget_multi(
-        db: &Database,
-        key: &KeyIdentity,
-    ) -> Result<(), BudgetError> {
+    pub async fn check_budget_multi(db: &Database, key: &KeyIdentity) -> Result<(), BudgetError> {
         // 1. Key level (always check)
         let k = db
             .get_key_by_token(&key.token_hash)
@@ -198,7 +195,12 @@ impl BudgetEnforcer {
                 Ok(Some(org)) => {
                     if let Ok(Some(budget)) = db.get_budget_by_id(&org.budget_id).await {
                         check_entity("organization", org.spend, budget.max_budget_f64())?;
-                        check_soft_budget("organization", Some(oid), org.spend, budget.soft_budget_f64());
+                        check_soft_budget(
+                            "organization",
+                            Some(oid),
+                            org.spend,
+                            budget.soft_budget_f64(),
+                        );
                     }
                     // budget lookup failure: silently skip (org has no
                     // effective quota if budget row is missing)
@@ -226,7 +228,7 @@ mod tests {
     use super::*;
     use crate::crypto::hash_token;
     use crate::db::Database;
-    use crate::models::{VirtualKey, User, Team, Organization, Budget};
+    use crate::models::{Budget, Organization, Team, User, VirtualKey};
     use chrono::Utc;
     use serde_json::json;
 
@@ -292,7 +294,11 @@ mod tests {
     fn test_check_entity_exceeded() {
         let err = check_entity("key", 150.0, Some(100.0)).unwrap_err();
         match err {
-            BudgetError::Exceeded { entity_type, spent, limit } => {
+            BudgetError::Exceeded {
+                entity_type,
+                spent,
+                limit,
+            } => {
                 assert_eq!(entity_type, "key");
                 assert_eq!(spent, 150.0);
                 assert_eq!(limit, 100.0);
@@ -349,7 +355,11 @@ mod tests {
         assert!(result.is_err(), "budget should be exceeded");
 
         match result.unwrap_err() {
-            BudgetError::Exceeded { entity_type: _, spent, limit } => {
+            BudgetError::Exceeded {
+                entity_type: _,
+                spent,
+                limit,
+            } => {
                 assert_eq!(spent, 150.0);
                 assert_eq!(limit, 100.0);
             }
@@ -463,9 +473,15 @@ mod tests {
             user_role: None,
         };
 
-        let err = BudgetEnforcer::check_budget_multi(&db, &identity).await.unwrap_err();
+        let err = BudgetEnforcer::check_budget_multi(&db, &identity)
+            .await
+            .unwrap_err();
         match err {
-            BudgetError::Exceeded { entity_type, spent, limit } => {
+            BudgetError::Exceeded {
+                entity_type,
+                spent,
+                limit,
+            } => {
                 assert_eq!(entity_type, "key");
                 assert_eq!(spent, 150.0);
                 assert_eq!(limit, 100.0);
@@ -615,7 +631,9 @@ mod tests {
             user_role: None,
         };
 
-        let err = BudgetEnforcer::check_budget_multi(&db, &identity).await.unwrap_err();
+        let err = BudgetEnforcer::check_budget_multi(&db, &identity)
+            .await
+            .unwrap_err();
         match err {
             BudgetError::Exceeded { entity_type, .. } => {
                 assert_eq!(entity_type, "user");
@@ -713,7 +731,11 @@ mod tests {
             .await
             .unwrap_err();
         match err {
-            BudgetError::Exceeded { entity_type, spent, limit } => {
+            BudgetError::Exceeded {
+                entity_type,
+                spent,
+                limit,
+            } => {
                 assert_eq!(entity_type, "team");
                 assert_eq!(spent, 150.0);
                 assert_eq!(limit, 10.0);
