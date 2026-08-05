@@ -637,7 +637,7 @@ const SENTINEL_ALL_PROXY_MODELS: &str = "all-proxy-models";
 /// - `Ok(None)` — allow all models (null/empty list or `all-proxy-models` sentinel)
 /// - `Ok(Some(list))` — restrict to these model names
 /// - `Err(...)` — sentinel expansion failed (missing team, etc.)
-async fn resolve_key_model_list(
+pub(crate) async fn resolve_key_model_list(
     state: &SharedState,
     key: &VirtualKey,
 ) -> Result<Option<Vec<String>>, (StatusCode, Json<Value>)> {

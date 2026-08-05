@@ -54,8 +54,8 @@ use axum::{middleware, routing::get, Router};
 use clap::Parser;
 use routes::keys::{self, AppState, SharedState};
 use routes::{
-    budget, chat, cors_layer, credentials, docs, health, jobs, login, models, org, router_settings,
-    spend, team, user, v1_messages,
+    budget, chat, cors_layer, credentials, docs, health, jobs, login, models, org, responses,
+    router_settings, spend, team, user, v1_messages,
 };
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -510,6 +510,11 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/v1/messages",
             axum::routing::post(v1_messages::messages_handler),
+        )
+        // OpenAI Responses API endpoint
+        .route(
+            "/v1/responses",
+            axum::routing::post(responses::responses_handler),
         )
         .with_state(state)
         // HTTP request tracing — JSON logs with request_id, method, path, latency.

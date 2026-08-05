@@ -26,6 +26,8 @@ pub enum ClientProtocol {
     OpenAI,
     /// /v1/messages
     Anthropic,
+    /// /v1/responses (OpenAI Responses API)
+    Responses,
 }
 
 /// Message format converter — bidirectional between client protocol and upstream format.
@@ -73,6 +75,8 @@ pub fn select_adapter(
         (ClientProtocol::Anthropic, ProviderType::OpenAICompatible) => Some(&AnthropicToOpenAI),
         (ClientProtocol::Anthropic, ProviderType::AnthropicNative) => Some(&AnthropicPassthrough),
         (ClientProtocol::OpenAI, ProviderType::AnthropicNative) => Some(&OpenAIToAnthropic),
+        (ClientProtocol::Responses, ProviderType::OpenAICompatible) => Some(&OpenAIPassthrough),
+        (ClientProtocol::Responses, ProviderType::AnthropicNative) => None,
     }
 }
 

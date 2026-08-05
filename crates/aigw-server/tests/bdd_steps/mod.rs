@@ -23,6 +23,7 @@ pub mod model_steps;
 pub mod real_api_steps;
 pub mod real_db_seed;
 pub mod rate_limit_steps;
+pub mod responses_steps;
 pub mod router_settings_steps;
 pub mod spend_activity_steps;
 pub mod spend_end_user_steps;

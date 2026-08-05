@@ -162,6 +162,7 @@ impl MockUpstream {
         let app = Router::new()
             .route("/v1/chat/completions", post(openai_handler))
             .route("/v1/messages", post(claude_handler))
+            .route("/v1/responses", post(responses_handler))
             .with_state(route_state);
 
         let listener = TcpListener::bind("127.0.0.1:0")
@@ -321,6 +322,68 @@ async fn claude_handler(
         }),
         headers: HashMap::new(),
     });
+
+    Ok((
+        StatusCode::from_u16(mock.status).unwrap_or(StatusCode::OK),
+        Json(mock.body),
+    ))
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Handler: /v1/responses (OpenAI Responses API)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+async fn responses_handler(
+    State(state): State<Arc<MockState>>,
+    headers: axum::http::HeaderMap,
+    body: String,
+) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
+    let body_val: Value = serde_json::from_str(&body).unwrap_or_default();
+
+    // Record the request
+    {
+        let mut requests = state.requests.lock().unwrap();
+        let mut hdrs = HashMap::new();
+        for (k, v) in headers.iter() {
+            if let Ok(val) = v.to_str() {
+                hdrs.insert(k.to_string(), val.to_string());
+            }
+        }
+        requests.push(RecordedRequest {
+            path: "/v1/responses".to_string(),
+            headers: hdrs,
+            body: body_val,
+        });
+    }
+
+    // Return default Responses API format response
+    let resp = state.responses.lock().unwrap();
+    let mock = resp
+        .get("/v1/responses")
+        .cloned()
+        .unwrap_or(MockResponse {
+            status: 200,
+            body: serde_json::json!({
+                "id": "resp_mock_001",
+                "object": "response",
+                "status": "completed",
+                "model": "gpt-4o",
+                "output": [{
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{
+                        "type": "output_text",
+                        "text": "Mock Responses API response from upstream"
+                    }]
+                }],
+                "usage": {
+                    "input_tokens": 12,
+                    "output_tokens": 7,
+                    "total_tokens": 19
+                }
+            }),
+            headers: HashMap::new(),
+        });
 
     Ok((
         StatusCode::from_u16(mock.status).unwrap_or(StatusCode::OK),
