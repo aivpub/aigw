@@ -22,6 +22,13 @@ body_archive:
     batch_size: 5000
     bloom_min_rows: 100
     compression_level: 6
+    # Parquet rows per row group. Larger groups cut per-group metadata overhead
+    # (column/offset index + stats + bloom) — row_group=10 inflated a 250-row
+    # hour to a 65MB object with ~52MB of index metadata; 500 keeps a file near
+    # its compressed data size. Trade-off: a cold read of one call_id downloads
+    # the whole matched row group's message chunk, so a larger group means a
+    # larger per-read download (each shard ≤ max_parquet_body_mb stays small).
+    row_group_size: 500
     # Stream large hours via S3 multipart upload (16 MiB parts, in-memory, no
     # intermediate disk). Each parquet object is capped at 64 MiB of COMPRESSED
     # output (measured by actual encoding, not input body bytes); hours that
