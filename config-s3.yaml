@@ -28,7 +28,7 @@ body_archive:
     # its compressed data size. Trade-off: a cold read of one call_id downloads
     # the whole matched row group's message chunk, so a larger group means a
     # larger per-read download (each shard ≤ max_parquet_body_mb stays small).
-    row_group_size: 500
+    row_group_size: 100
     # Stream large hours via S3 multipart upload (16 MiB parts, in-memory, no
     # intermediate disk). Each parquet object is capped at 64 MiB of COMPRESSED
     # output (measured by actual encoding, not input body bytes); hours that

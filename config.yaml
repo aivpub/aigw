@@ -13,6 +13,7 @@ body_archive:
     batch_size: 5000
     bloom_min_rows: 100
     compression_level: 6
+    row_group_size: 100
 
 budget_reset:
   enabled: true
