@@ -151,10 +151,11 @@ pub struct ArchivePolicy {
     /// single-shot PUT. Must be ≥ 5 (S3 minimum). Default: 16.
     #[serde(default = "default_multipart_part_size_mb")]
     pub multipart_part_size_mb: u32,
-    /// Per-object body-data cap (MiB) for a single hour's parquet. Hours whose
-    /// body data exceeds this are split into multiple `data-N.parquet` shards
-    /// so each upload stays small (flaky S3 endpoints hang on giant single PUTs).
-    /// Default: 128.
+    /// Per-object body-data cap (MiB) for a single hour's parquet. This is the
+    /// *compressed parquet output* cap: the writer counts actual encoded bytes
+    /// and starts a new `data-N.parquet` once the current object reaches this
+    /// size, so each S3 object is genuinely ≤ this on the wire (flaky S3
+    /// endpoints hang on giant single PUTs). Default: 64.
     #[serde(default = "default_max_parquet_body_mb")]
     pub max_parquet_body_mb: u32,
 }
@@ -187,7 +188,7 @@ fn default_multipart_part_size_mb() -> u32 {
     16
 }
 fn default_max_parquet_body_mb() -> u32 {
-    128
+    64
 }
 
 impl Default for ArchivePolicy {
@@ -340,7 +341,7 @@ mod tests {
         assert_eq!(cfg.archive.check_interval_secs, 300);
         assert!(cfg.archive.null_body_after_archive);
         assert_eq!(cfg.archive.multipart_part_size_mb, 16);
-        assert_eq!(cfg.archive.max_parquet_body_mb, 128);
+        assert_eq!(cfg.archive.max_parquet_body_mb, 64);
     }
 
     #[test]

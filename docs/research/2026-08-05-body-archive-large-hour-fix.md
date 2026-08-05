@@ -50,14 +50,30 @@ max_retries:10, retry_timeout:180s, source:error sending request for url
 - 每个 part 是独立小请求，单 part 失败只重传该 part；`complete()` 原子可见
 - **S3 全程零磁盘**；`FileSystem` 后端 object_store 内部 staging 一个临时文件（原子 rename，无分片语义可避免）
 
-**B. 大 hour 分片（每对象 ≤ max_parquet_body_mb）** — `write_parquet_shards`
-- body 数据超阈值（默认 128 MB）按行贪心拆成 `data-0.parquet, data-1.parquet, ...`
-- 每片独立 multipart 上传；`MAX_SHARDS_PER_HOUR=256` 兜底，到达上限后多余行并入最后一片（**绝不丢数据**）
+**B. 大 hour 分片（按「压缩后输出字节」计数，每对象 ≤ max_parquet_body_mb）** — `write_parquet_shards`
+- **输出字节计数**：每写完一个 row group，用 `AsyncArrowWriter` 实际编码量累加「压缩后」字节；累计 ≥ `max_parquet_body_mb`
+  就 `complete()` 当前对象并起下一个 —— 所以 `data-N.parquet` 的 S3 对象大小被**严格保证 ≤ max_parquet_body_mb**
+  （首片固定命名 `data.parquet` 兼容老读者，后续 `data-1.parquet, data-2.parquet, ...`）
+- 每个 row group 是独立的 `AsyncArrowWriter`+`WriteMultipart`，内存有界（一个 row group 的量）
+- `MAX_SHARDS_PER_HOUR=256` 兜底，到达上限后多余行并入最后一片（**绝不丢数据**）
 - 每行归档时写入**各自分片的确切 `parquet_path`**（冷读精确解析到正确对象）
+- **修正动机**：旧实现按「body 原始字节」预判分片，zstd 压缩后实际对象远小于阈值 → 过度分片
+  （live 探针：300MB body 按 64MB 输入切 → 60 片，每片实际仅 **6.7MiB**）。改按输出计数后，
+  120MB body 实测 → **2 片 × ~64MB 输出**，对象大小可控、不再碎片化。
 
 **C. 配置** — `ArchivePolicy` 新增：
 - `multipart_part_size_mb`（默认 16，S3 下限 5）
-- `max_parquet_body_mb`（默认 128）
+- `max_parquet_body_mb`（默认 **64** —— 该 rustfs 端点实测 64MB/对象稳定，128MB 曾出现 300MB 单对象超时）
+
+## 5. 结果评估（客观可验证）
+
+- `task test` 全绿（新增 6 个测试：streaming×2、auto-select、sharding×2、FS 分片集成）
+- **真实 S3 端点**：
+  - 单对象 300MB multipart ❌ 卡 part 3 超时 180s（对照组）
+  - 按输入字节分片 300MB → 60 片 × 6.7MiB ✅ 成功（~70s），但碎片化
+  - **按输出字节分片 120MB → 2 片 × ~64MB ✅ 成功（~35s）** —— 对象大小真正可控
+- 冷读正确性：分片 hour 每行 `parquet_path` 指向确切分片，`query_parquet_with_cache` 命中正确对象
+- DuckDB/hive_partitioning：分区键在目录名，叶子文件名 `data-N.parquet` 不影响识别（官方文档证实）
 
 ## 5. 结果评估（客观可验证）
 

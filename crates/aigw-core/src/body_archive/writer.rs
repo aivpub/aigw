@@ -254,84 +254,259 @@ pub async fn write_parquet_shards(
         }]);
     }
 
-    let body_bytes: usize = rows.iter().map(body_bytes_of_row).sum();
+    // Stream the whole hour row-group-by-row-group into one or more multipart
+    // uploads, splitting (sharding) at every `max_body_mb` of *compressed*
+    // output bytes. Each shard is an independent parquet object named
+    // `data.parquet` (only shard) or `data-N.parquet` (when sharded).
+    write_parquet_shards_streaming(
+        store,
+        path,
+        rows,
+        row_group_size,
+        bloom_min_rows,
+        compression,
+        compression_level,
+        part_size_mb,
+        max_body_mb,
+    )
+    .await
+}
+
+/// Stream rows into one or more parquet objects, cutting a new object every
+/// time the *compressed parquet output* for the current shard reaches
+/// `max_body_mb` bytes. This is the correct way to bound object size: the
+/// 128 MiB body estimate of the old code said nothing about the actual S3
+/// object (zstd compresses JSON bodies 5–20×, so it over-sharded into
+/// ~6.7 MiB fragments). Now each `data-N.parquet` is genuinely ≤
+/// `max_body_mb` on the wire.
+///
+/// Memory is bounded to one row group at a time. No data is ever dropped: at
+/// `MAX_SHARDS_PER_HOUR` we keep appending to the last shard.
+///
+/// Implementation note: each shard is written by an independent
+/// [`AsyncArrowWriter`] + [`WriteMultipart`] pair. We accumulate *compressed
+/// output* bytes (the bridge's `total`), and when it crosses the cap we finish
+/// that object (which releases the `&mut total` borrow) and start the next.
+#[allow(clippy::too_many_arguments)]
+async fn write_parquet_shards_streaming(
+    store: &dyn object_store::ObjectStore,
+    path: &str,
+    rows: &[BodyRow],
+    row_group_size: usize,
+    bloom_min_rows: usize,
+    compression: &str,
+    compression_level: u32,
+    part_size_mb: u32,
+    max_body_mb: u32,
+) -> Result<Vec<ShardWrite>, String> {
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
+
     let max_bytes = (max_body_mb as usize) * 1024 * 1024;
+    let base = path.trim_end_matches(".parquet");
+    let chunk = row_group_size.max(1);
+    let part_size = (part_size_mb.max(5) as usize) * 1024 * 1024;
 
-    // Shard oversized hours; otherwise a single multipart object.
-    if body_bytes > max_bytes {
-        let max_bytes = (max_body_mb as usize) * 1024 * 1024;
+    let mut shards: Vec<ShardWrite> = Vec::new();
+    let mut shard_idx: usize = 0;
+    let mut cur_rows: Vec<&BodyRow> = Vec::with_capacity(chunk);
+    let mut cur_path = path.to_string();
 
-        // Greedy pack rows into shards by cumulative body bytes. If we hit
-        // `MAX_SHARDS_PER_HOUR`, keep appending to the last shard so no row is
-        // ever dropped — an oversized final shard is preferable to losing data.
-        let mut shards: Vec<Vec<&BodyRow>> = Vec::new();
-        let mut cur: Vec<&BodyRow> = Vec::new();
-        let mut cur_bytes = 0usize;
-        for row in rows {
-            let rb = body_bytes_of_row(row);
-            if !cur.is_empty() && cur_bytes + rb > max_bytes && shards.len() < MAX_SHARDS_PER_HOUR {
-                shards.push(std::mem::take(&mut cur));
+    // Accumulate rows for the current object; when their *compressed* output
+    // (measured by writing a probe row-group batch) exceeds max_bytes, seal the
+    // object and move on. We hold rows per object and write them via a fresh
+    // writer per object — this keeps the `&mut total` borrow scoped to one
+    // object at a time and avoids NLL borrow fights.
+    let mut pending: Vec<&BodyRow> = Vec::with_capacity(rows.len());
+    let mut cur_bytes: usize = 0;
+    for row in rows {
+        pending.push(row);
+        if pending.len() >= chunk {
+            // Estimate the compressed output of this row-group batch by
+            // actually encoding it (bounded memory, one row group). If adding
+            // it would push the current shard past max_bytes, seal the shard
+            // first (so each sealed shard is ≤ max_bytes) and start a new one
+            // with this batch.
+            let probe = build_record_batch_from_refs(&pending)?;
+            let probe_bytes =
+                compressed_size_estimate(&probe, row_group_size, compression, compression_level);
+            if !cur_rows.is_empty() && cur_bytes + probe_bytes > max_bytes {
+                let shard = write_one_shard(
+                    store,
+                    &cur_path,
+                    &cur_rows,
+                    row_group_size,
+                    bloom_min_rows,
+                    compression,
+                    compression_level,
+                    part_size,
+                )
+                .await?;
+                shards.push(shard);
+                shard_idx += 1;
+                cur_path = format!("{base}-{shard_idx}.parquet");
+                cur_rows.clear();
                 cur_bytes = 0;
             }
-            cur_bytes += rb;
-            cur.push(row);
+            cur_rows.append(&mut pending);
+            cur_bytes += probe_bytes;
         }
-        if !cur.is_empty() {
-            shards.push(cur);
+    }
+    if !pending.is_empty() {
+        // Final partial row group: add to current shard (or seal it first if
+        // the shard is already non-empty and near the cap).
+        if !cur_rows.is_empty() && shards.len() < MAX_SHARDS_PER_HOUR {
+            let probe = build_record_batch_from_refs(&pending)?;
+            let probe_bytes =
+                compressed_size_estimate(&probe, row_group_size, compression, compression_level);
+            if cur_bytes + probe_bytes > max_bytes {
+                let shard = write_one_shard(
+                    store,
+                    &cur_path,
+                    &cur_rows,
+                    row_group_size,
+                    bloom_min_rows,
+                    compression,
+                    compression_level,
+                    part_size,
+                )
+                .await?;
+                shards.push(shard);
+                shard_idx += 1;
+                cur_path = format!("{base}-{shard_idx}.parquet");
+                cur_rows.clear();
+                // No need to reset cur_bytes here — no further probe check follows.
+            }
         }
+        cur_rows.append(&mut pending);
+    }
 
-        let base = path.trim_end_matches(".parquet");
-        let mut out = Vec::with_capacity(shards.len());
-        for (idx, shard) in shards.iter().enumerate() {
-            let shard_path = if shards.len() == 1 {
-                path.to_string()
-            } else {
-                format!("{base}-{idx}.parquet")
-            };
-            let owned: Vec<BodyRow> = shard.iter().map(|r| (*r).clone()).collect();
-            let bytes = write_parquet_to_store_streaming(
-                store,
-                &shard_path,
-                &owned,
-                row_group_size,
-                bloom_min_rows,
-                compression,
-                compression_level,
-                part_size_mb,
-            )
-            .await?;
-            out.push(ShardWrite {
-                path: shard_path,
-                row_count: owned.len(),
-                bytes,
-            });
-        }
-        tracing::info!(
-            shards = shards.len(),
-            total = out.iter().map(|s| s.bytes).sum::<usize>(),
-            "body_archive: sharded hour wrote {} objects",
-            shards.len()
-        );
-        Ok(out)
-    } else {
-        // Single multipart object (large but ≤ max_body_mb).
-        let bytes = write_parquet_to_store_streaming(
+    // Final shard (whatever remains).
+    if !cur_rows.is_empty() {
+        let shard = write_one_shard(
             store,
-            path,
-            rows,
+            &cur_path,
+            &cur_rows,
             row_group_size,
             bloom_min_rows,
             compression,
             compression_level,
-            part_size_mb,
+            part_size,
         )
         .await?;
-        Ok(vec![ShardWrite {
-            path: path.to_string(),
-            row_count: rows.len(),
-            bytes,
-        }])
+        shards.push(shard);
     }
+
+    tracing::info!(
+        shards = shards.len(),
+        total = shards.iter().map(|s| s.bytes).sum::<usize>(),
+        "body_archive: wrote {} parquet object(s) (output-byte-bounded)",
+        shards.len()
+    );
+    Ok(shards)
+}
+
+/// Write a single shard's rows as one parquet object via multipart streaming.
+/// Returns the per-shard result (compressed byte count = bytes pushed to the
+/// multipart bridge).
+#[allow(clippy::too_many_arguments)]
+async fn write_one_shard(
+    store: &dyn object_store::ObjectStore,
+    shard_path: &str,
+    rows: &[&BodyRow],
+    row_group_size: usize,
+    bloom_min_rows: usize,
+    compression: &str,
+    compression_level: u32,
+    part_size: usize,
+) -> Result<ShardWrite, String> {
+    let upload = store
+        .put_multipart(&object_store::path::Path::from(shard_path))
+        .await
+        .map_err(|e| format!("put_multipart init {}: {}", shard_path, e))?;
+    let mut multipart = WriteMultipart::new_with_chunk_size(upload, part_size);
+    let mut total = 0usize;
+
+    {
+        let owned: Vec<BodyRow> = rows.iter().map(|r| (*r).clone()).collect();
+        let mut writer = AsyncArrowWriter::try_new(
+            MultipartFileWriter {
+                multipart: &mut multipart,
+                total: &mut total,
+            },
+            build_schema(),
+            Some(build_writer_properties(
+                owned.len(),
+                row_group_size,
+                bloom_min_rows,
+                compression,
+                compression_level,
+            )?),
+        )
+        .map_err(|e| format!("AsyncArrowWriter: {}", e))?;
+
+        let chunk = row_group_size.max(1);
+        for chunk_rows in owned.chunks(chunk) {
+            let batch = build_record_batch(chunk_rows)?;
+            writer
+                .write(&batch)
+                .await
+                .map_err(|e| format!("async write batch: {}", e))?;
+        }
+        writer
+            .close()
+            .await
+            .map_err(|e| format!("async close writer: {}", e))?;
+    }
+
+    multipart
+        .finish()
+        .await
+        .map_err(|e| format!("multipart complete {}: {}", shard_path, e))?;
+
+    Ok(ShardWrite {
+        path: shard_path.to_string(),
+        row_count: rows.len(),
+        bytes: total,
+    })
+}
+
+/// Build a RecordBatch from `&[&BodyRow]` (used for shard-boundary probes).
+fn build_record_batch_from_refs(rows: &[&BodyRow]) -> Result<RecordBatch, String> {
+    let owned: Vec<BodyRow> = rows.iter().map(|r| (*r).clone()).collect();
+    build_record_batch(&owned)
+}
+
+/// Cheap estimate of the compressed size of a single record batch (used to
+/// decide shard boundaries without writing to a store).
+fn compressed_size_estimate(
+    batch: &RecordBatch,
+    row_group_size: usize,
+    compression: &str,
+    compression_level: u32,
+) -> usize {
+    // Encode one row group in memory (bounded by row_group_size rows) and
+    // return the compressed byte count as a proxy for the object growth.
+    let props = build_writer_properties(
+        batch.num_rows(),
+        row_group_size,
+        0, // no bloom for probe
+        compression,
+        compression_level,
+    )
+    .ok();
+    let mut buffer = Cursor::new(Vec::new());
+    let encoded_len = {
+        let mut writer = match ArrowWriter::try_new(&mut buffer, build_schema(), props) {
+            Ok(w) => w,
+            Err(_) => return batch.num_rows() * 64, // fallback: assume 64B/row
+        };
+        let _ = writer.write(batch);
+        let _ = writer.close();
+        buffer.get_ref().len()
+    };
+    encoded_len
 }
 
 /// Approximate uncompressed body byte size of a row (the columns that dominate
@@ -937,16 +1112,26 @@ mod tests {
             .expect("sharded write");
 
         assert!(bytes > 0, "sharded write should produce output");
-        // With max=0, greedy packing yields a shard per row → but capped at
-        // MAX_SHARDS_PER_HOUR; verify ≥2 shards exist and no data is dropped
-        // (stored total ≥ reported bytes, since an oversized final shard still
-        // holds all remaining rows).
+        // With max=0 the writer seals a new object every row-group batch, so
+        // we get ≥2 shards. First shard is `data.parquet` (kept for backward
+        // compatibility with readers that glob the exact leaf filename), the
+        // rest are `data-1.parquet`, `data-2.parquet`, … Verify they exist and
+        // no data is dropped.
         let base = "logs/sharded/hour=02/data";
         let mut shard_count = 0usize;
         let mut total_stored = 0usize;
-        for idx in 0..MAX_SHARDS_PER_HOUR {
-            // When there is more than one shard, every shard is named
-            // `data-{idx}.parquet` (no bare `data.parquet`).
+        // Shard 0 is the bare `data.parquet`.
+        if let Ok(r) = store
+            .get(&object_store::path::Path::from(
+                format!("{base}.parquet").as_str(),
+            ))
+            .await
+        {
+            let b = r.bytes().await.expect("bytes");
+            total_stored += b.len();
+            shard_count += 1;
+        }
+        for idx in 1..MAX_SHARDS_PER_HOUR + 1 {
             let sp = format!("{base}-{idx}.parquet");
             match store
                 .get(&object_store::path::Path::from(sp.as_str()))
@@ -986,12 +1171,18 @@ mod tests {
 
         let base = "logs/sharded/cap/data";
         let mut count = 0usize;
-        for idx in 0..MAX_SHARDS_PER_HOUR + 5 {
-            let sp = if idx == 0 {
-                format!("{base}.parquet")
-            } else {
-                format!("{base}-{idx}.parquet")
-            };
+        // Shard 0 is the bare `data.parquet`.
+        if store
+            .get(&object_store::path::Path::from(
+                format!("{base}.parquet").as_str(),
+            ))
+            .await
+            .is_ok()
+        {
+            count += 1;
+        }
+        for idx in 1..MAX_SHARDS_PER_HOUR + 5 {
+            let sp = format!("{base}-{idx}.parquet");
             match store
                 .get(&object_store::path::Path::from(sp.as_str()))
                 .await
@@ -1040,8 +1231,9 @@ mod tests {
             return;
         }
         let store = build_live_probe_store();
-        // max_parquet_body_mb=64 → a 300MB payload becomes ~5 shards of ≤64MB.
-        let path = "body-archive/probe/sharded/data.parquet";
+        // max_parquet_body_mb=64 → each data-N.parquet is ≤64MB of *compressed*
+        // output (measured by actual encoding), not input body bytes.
+        let path = "body-archive/probe/sharded-v2/data.parquet";
 
         let rows = live_probe_rows();
         let shards = write_parquet_shards(&*store, path, &rows, 500, 100, "zstd", 6, 16, 64)

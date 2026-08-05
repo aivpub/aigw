@@ -617,16 +617,19 @@ async fn test_sharded_hour_writes_per_shard_path_and_reads_back() {
         .await
         .expect("archive sharded rows");
 
-    // Expect a sharded layout: data-0.parquet, data-1.parquet, ...
+    // Expect a sharded layout: data.parquet (first) + data-1.parquet, ...
     assert!(
         !written_path.ends_with("-0.parquet"),
         "archive_rows_to_storage returns base path even when sharded"
     );
 
-    // Count the shard files on disk.
+    // Count the shard files on disk (first is data.parquet, rest are data-{idx}).
     let hour_dir = dir.join("year=2026/month=07/day=25/hour=14");
     let mut shard_count = 0usize;
-    for idx in 0..1024usize {
+    if hour_dir.join("data.parquet").exists() {
+        shard_count += 1;
+    }
+    for idx in 1..1024usize {
         let p = hour_dir.join(format!("data-{idx}.parquet"));
         if p.exists() {
             shard_count += 1;
@@ -641,16 +644,28 @@ async fn test_sharded_hour_writes_per_shard_path_and_reads_back() {
 
     // Every shard must be a valid parquet that decodes a row from it.
     use aigw_core::body_archive::query::decode_body_from_parquet;
-    for idx in 0..shard_count {
-        let bytes =
-            std::fs::read(hour_dir.join(format!("data-{idx}.parquet"))).expect("read shard");
-        let body = decode_body_from_parquet(&bytes, &format!("shard-{:04}", idx * 1))
-            .expect("decode shard");
-        // The first shard holds rows 0..? (with max=0 each row is its own shard,
-        // so shard idx holds row idx).
-        if idx < 1100 {
-            assert!(body.is_some(), "shard {idx} should decode its row");
+    let shard_paths: Vec<std::path::PathBuf> = {
+        let mut v = Vec::new();
+        if hour_dir.join("data.parquet").exists() {
+            v.push(hour_dir.join("data.parquet"));
         }
+        for idx in 1..1024usize {
+            let p = hour_dir.join(format!("data-{idx}.parquet"));
+            if p.exists() {
+                v.push(p);
+            } else {
+                break;
+            }
+        }
+        v
+    };
+    for (i, p) in shard_paths.iter().enumerate() {
+        let bytes = std::fs::read(p).expect("read shard");
+        // Each shard holds `chunk` (row_group_size=10) rows, so shard i holds
+        // rows [i*10, i*10+10). Decode a row that must be in it.
+        let target = format!("shard-{:04}", i * 10);
+        let body = decode_body_from_parquet(&bytes, &target).expect("decode shard");
+        assert!(body.is_some(), "shard {} should decode {}", i, target);
     }
 
     let _ = std::fs::remove_dir_all(&dir);
