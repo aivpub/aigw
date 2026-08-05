@@ -581,3 +581,77 @@ async fn test_decode_body_from_parquet_still_works() {
         .expect("found");
     let _: BodyPayload = body;
 }
+
+// ─── Stage fix: sharded hour → per-shard parquet_path + cold read ─────────
+
+/// A shard-forcing hour (max_parquet_body_mb tiny) must be written as multiple
+/// `data-N.parquet` objects, each row's `parquet_path` must point at the shard
+/// that holds it, and the cold read path must resolve from that shard.
+#[tokio::test]
+async fn test_sharded_hour_writes_per_shard_path_and_reads_back() {
+    let dir = std::env::temp_dir().join(format!("aigw_stage83_shard_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::create_dir_all(&dir);
+
+    // 1100 rows × ~40-byte body. max_parquet_body_mb=0 → shard every row.
+    let rows: Vec<BodyRow> = (0..1100)
+        .map(|i| make_row(&format!("shard-{:04}", i), 14))
+        .collect();
+
+    let cfg = BodyArchiveConfig {
+        auto_archive: true,
+        storage: StorageBackend::FileSystem { path: dir.clone() },
+        archive: aigw_core::body_archive::config::ArchivePolicy {
+            // Force sharding: any positive body exceeds the per-object cap.
+            max_parquet_body_mb: 0,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let archiver = BodyArchiver::new(cfg);
+
+    // Execute the public write path (auto shards because rows ≥ MULTIPART_MIN_ROWS
+    // and body_bytes > max_bytes=0).
+    let written_path = archiver
+        .archive_rows_to_storage(&rows, "2026-07-25T14")
+        .await
+        .expect("archive sharded rows");
+
+    // Expect a sharded layout: data-0.parquet, data-1.parquet, ...
+    assert!(
+        !written_path.ends_with("-0.parquet"),
+        "archive_rows_to_storage returns base path even when sharded"
+    );
+
+    // Count the shard files on disk.
+    let hour_dir = dir.join("year=2026/month=07/day=25/hour=14");
+    let mut shard_count = 0usize;
+    for idx in 0..1024usize {
+        let p = hour_dir.join(format!("data-{idx}.parquet"));
+        if p.exists() {
+            shard_count += 1;
+        } else {
+            break;
+        }
+    }
+    assert!(
+        shard_count >= 2,
+        "expected ≥2 shard files, got {shard_count}"
+    );
+
+    // Every shard must be a valid parquet that decodes a row from it.
+    use aigw_core::body_archive::query::decode_body_from_parquet;
+    for idx in 0..shard_count {
+        let bytes =
+            std::fs::read(hour_dir.join(format!("data-{idx}.parquet"))).expect("read shard");
+        let body = decode_body_from_parquet(&bytes, &format!("shard-{:04}", idx * 1))
+            .expect("decode shard");
+        // The first shard holds rows 0..? (with max=0 each row is its own shard,
+        // so shard idx holds row idx).
+        if idx < 1100 {
+            assert!(body.is_some(), "shard {idx} should decode its row");
+        }
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

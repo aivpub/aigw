@@ -1,0 +1,36 @@
+# aigw local development config — body archive to rustfs S3
+# Loaded via `task dev` with an alternate config:
+#   cargo run -p aigw-server -- --config config-s3.yaml
+
+body_archive:
+  auto_archive: false
+  storage:
+    type: s3
+    bucket: aigw
+    region: us-east-1
+    endpoint: "http://9.135.87.221:8001"
+    access_key_id: "RSFSXI1272KK6P7INMHN"
+    secret_access_key: "fX/XIOIeyzvoTzMPo/osHRRd7T7S4LfHR5KHuFyE"
+    prefix: body-archive
+    use_ssl: false
+    compatibility_mode: false
+    url_style: path
+  archive:
+    archive_after_hours: 1
+    null_body_after_days: 7
+    null_body_after_archive: false
+    batch_size: 5000
+    bloom_min_rows: 100
+    compression_level: 6
+    # Stream large hours via S3 multipart upload (16 MiB parts, in-memory, no
+    # intermediate disk). Hours whose body data exceeds 128 MiB are sharded
+    # into data-0.parquet, data-1.parquet, … so no single upload is too large
+    # for the store to absorb (fixes large-hour archive PUT timeouts on flaky
+    # S3-compatible endpoints).
+    multipart_part_size_mb: 16
+    max_parquet_body_mb: 128
+
+budget_reset:
+  enabled: true
+
+model_list: []

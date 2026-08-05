@@ -23,7 +23,7 @@ use crate::body_archive::cache::FooterCache;
 use crate::body_archive::config::BodyArchiveConfig;
 use crate::body_archive::query::{query_parquet_with_cache, BodyPayload};
 use crate::body_archive::storage::{build_object_store_for_backend, resolve_env_placeholders};
-use crate::body_archive::writer::write_parquet_to_store;
+use crate::body_archive::writer::write_parquet_shards;
 use crate::db::{Database, DbError, Result};
 
 /// BodyArchiver: archives spend_logs body fields to Parquet on object storage.
@@ -227,12 +227,15 @@ impl AsyncTask for BodyArchiver {
         };
         let storage_path = build_storage_path(prefix, hour);
 
-        // 3. Write Parquet + upload to storage (S3 or FileSystem).
+        // 3. Write Parquet + upload to storage (S3 or FileSystem). For hours
+        //    that exceed `max_parquet_body_mb`, this writes multiple
+        //    `data-N.parquet` shards; each shard's rows must be marked archived
+        //    with the EXACT shard path so cold reads resolve the right object.
         let resolved = resolve_env_placeholders(&self.config.storage);
         let object_store = build_object_store_for_backend(&resolved)
             .map_err(|e| DbError::Other(format!("storage init: {}", e)))?;
 
-        let bytes_written = write_parquet_to_store(
+        let shards = write_parquet_shards(
             &*object_store,
             &storage_path,
             &rows,
@@ -240,13 +243,34 @@ impl AsyncTask for BodyArchiver {
             self.config.archive.bloom_min_rows,
             &self.config.archive.compression,
             self.config.archive.compression_level,
+            self.config.archive.multipart_part_size_mb,
+            self.config.archive.max_parquet_body_mb,
         )
         .await
         .map_err(|e| DbError::Other(format!("parquet write: {}", e)))?;
 
-        // 4. Mark rows as archived in DB
-        let call_ids: Vec<String> = rows.iter().map(|r| r.call_id.clone()).collect();
-        mark_rows_archived(db, &call_ids, &storage_path).await?;
+        let bytes_written: usize = shards.iter().map(|s| s.bytes).sum();
+
+        // 4. Mark rows as archived in DB — per-shard path so cold reads of a
+        //    sharded hour find the correct object.
+        let mut archived = 0usize;
+        for shard in &shards {
+            let shard_rows: Vec<BodyRow> = rows
+                .iter()
+                .take(shard.row_count)
+                .skip(archived)
+                .cloned()
+                .collect();
+            let call_ids: Vec<String> = shard_rows.iter().map(|r| r.call_id.clone()).collect();
+            mark_rows_archived(db, &call_ids, &shard.path).await?;
+            archived += shard.row_count;
+        }
+        // Safety: every row must be covered by a shard.
+        if archived != row_count {
+            return Err(DbError::Other(format!(
+                "body archive: shard row accounting mismatch: archived {archived} of {row_count}"
+            )));
+        }
 
         info!(%hour, row_count, bytes_written, path = %storage_path, "body_archive: hour archived");
 
@@ -459,7 +483,7 @@ impl BodyArchiver {
         let store = build_object_store_for_backend(&resolved)
             .map_err(|e| DbError::Other(format!("storage init: {}", e)))?;
 
-        write_parquet_to_store(
+        write_parquet_shards(
             &*store,
             &storage_path,
             rows,
@@ -467,6 +491,8 @@ impl BodyArchiver {
             self.config.archive.bloom_min_rows,
             &self.config.archive.compression,
             self.config.archive.compression_level,
+            self.config.archive.multipart_part_size_mb,
+            self.config.archive.max_parquet_body_mb,
         )
         .await
         .map_err(|e| DbError::Other(format!("parquet write: {}", e)))?;

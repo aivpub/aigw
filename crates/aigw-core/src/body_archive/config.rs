@@ -145,6 +145,18 @@ pub struct ArchivePolicy {
     /// Compression level. zstd: 1-22, gzip: 1-9. Default: 6.
     #[serde(default = "default_compression_level")]
     pub compression_level: u32,
+    /// S3 multipart upload part size (MiB). Hours with ≥ [`crate::body_archive::writer::MULTIPART_MIN_ROWS`]
+    /// rows are streamed via a multipart upload with this part size so we
+    /// never hold the whole compressed file in memory or issue one giant
+    /// single-shot PUT. Must be ≥ 5 (S3 minimum). Default: 16.
+    #[serde(default = "default_multipart_part_size_mb")]
+    pub multipart_part_size_mb: u32,
+    /// Per-object body-data cap (MiB) for a single hour's parquet. Hours whose
+    /// body data exceeds this are split into multiple `data-N.parquet` shards
+    /// so each upload stays small (flaky S3 endpoints hang on giant single PUTs).
+    /// Default: 128.
+    #[serde(default = "default_max_parquet_body_mb")]
+    pub max_parquet_body_mb: u32,
 }
 
 fn default_archive_after_hours() -> u32 {
@@ -171,6 +183,12 @@ fn default_compression() -> String {
 fn default_compression_level() -> u32 {
     6
 }
+fn default_multipart_part_size_mb() -> u32 {
+    16
+}
+fn default_max_parquet_body_mb() -> u32 {
+    128
+}
 
 impl Default for ArchivePolicy {
     fn default() -> Self {
@@ -185,6 +203,8 @@ impl Default for ArchivePolicy {
             bloom_min_rows: default_bloom_min_rows(),
             compression: default_compression(),
             compression_level: default_compression_level(),
+            multipart_part_size_mb: default_multipart_part_size_mb(),
+            max_parquet_body_mb: default_max_parquet_body_mb(),
         }
     }
 }
@@ -319,6 +339,8 @@ mod tests {
         assert_eq!(cfg.archive.row_group_size, 10);
         assert_eq!(cfg.archive.check_interval_secs, 300);
         assert!(cfg.archive.null_body_after_archive);
+        assert_eq!(cfg.archive.multipart_part_size_mb, 16);
+        assert_eq!(cfg.archive.max_parquet_body_mb, 128);
     }
 
     #[test]
