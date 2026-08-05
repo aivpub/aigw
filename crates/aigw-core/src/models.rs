@@ -514,6 +514,21 @@ pub struct ChatCompletionRequest {
     pub tools: Option<Vec<ToolDef>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<serde_json::Value>,
+    /// JSON mode / Structured Output config
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub response_format: Option<ResponseFormat>,
+    /// DeepSeek/OpenAI o-series reasoning effort: "low", "medium", "high"
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub reasoning_effort: Option<String>,
+}
+
+/// Response format config (JSON mode / Structured Output)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResponseFormat {
+    #[serde(rename = "type")]
+    pub format_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub json_schema: Option<serde_json::Value>,
 }
 
 /// OpenAI tool definition (request)
@@ -547,6 +562,9 @@ pub struct ChatMessage {
     pub tool_calls: Option<Vec<ToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+    /// DeepSeek/OpenAI reasoning content — must be preserved across multi-turn
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub reasoning_content: Option<String>,
 }
 
 /// OpenAI tool call (function call)
@@ -599,6 +617,9 @@ pub struct ChatCompletionResponse {
     pub model: String,
     pub choices: Vec<Choice>,
     pub usage: Usage,
+    /// System fingerprint for monitoring/tracing
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub system_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -615,6 +636,12 @@ pub struct AssistantMessage {
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,
+    /// DeepSeek/OpenAI reasoning content from thinking mode
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub reasoning_content: Option<String>,
+    /// Safety refusal reason when model blocks a response
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub refusal: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -622,6 +649,27 @@ pub struct Usage {
     pub prompt_tokens: i32,
     pub completion_tokens: i32,
     pub total_tokens: i32,
+    /// Prompt token details (cached_tokens, audio_tokens)
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub prompt_tokens_details: Option<TokenDetails>,
+    /// Completion token details (reasoning_tokens, audio_tokens, etc.)
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub completion_tokens_details: Option<TokenDetails>,
+}
+
+/// Detailed token breakdown (OpenAI/DeepSeek usage details)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenDetails {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cached_tokens: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_tokens: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio_tokens: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub accepted_prediction_tokens: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rejected_prediction_tokens: Option<i32>,
 }
 
 /// SSE stream chunk (delta)
@@ -632,6 +680,12 @@ pub struct ChatCompletionChunk {
     pub created: i64,
     pub model: String,
     pub choices: Vec<ChunkChoice>,
+    /// Usage in final chunk (when stream_options.include_usage is set)
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub usage: Option<Usage>,
+    /// System fingerprint
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub system_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -650,6 +704,12 @@ pub struct Delta {
     pub content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ChunkToolCall>>,
+    /// DeepSeek/OpenAI reasoning delta (thinking mode streaming)
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub reasoning_content: Option<String>,
+    /// Safety refusal delta in streaming
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub refusal: Option<String>,
 }
 
 /// Tool call delta in streaming chunks.
@@ -963,6 +1023,9 @@ pub struct ClaudeMessageRequest {
     pub tools: Option<Vec<ClaudeToolDef>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<serde_json::Value>,
+    /// Extended thinking config: {type: "enabled", budget_tokens: N}
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub thinking: Option<serde_json::Value>,
 }
 
 /// Anthropic tool definition (request)
@@ -1018,6 +1081,14 @@ pub struct ClaudeContentBlock {
     pub tool_use_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<serde_json::Value>,
+    // thinking block fields (Anthropic extended thinking)
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub thinking: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub signature: Option<String>,
+    // citations on text blocks
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub citations: Option<serde_json::Value>,
 }
 
 /// Claude image source
@@ -1048,6 +1119,12 @@ pub struct ClaudeMessageResponse {
 pub struct ClaudeUsage {
     pub input_tokens: i32,
     pub output_tokens: i32,
+    /// Anthropic prompt caching: cache read tokens
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub cache_read_input_tokens: Option<i32>,
+    /// Anthropic prompt caching: cache creation tokens
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub cache_creation_input_tokens: Option<i32>,
 }
 
 /// Claude SSE stream event
@@ -1063,7 +1140,7 @@ pub struct ClaudeStreamEvent {
     pub content_block: Option<ClaudeContentBlock>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<ClaudeMessageResponse>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub usage: Option<ClaudeUsage>,
 }
 

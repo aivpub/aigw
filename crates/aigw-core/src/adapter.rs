@@ -205,6 +205,24 @@ impl MessageAdapter for AnthropicToOpenAI {
 fn oai_response_to_claude_messages(resp: &ChatCompletionResponse) -> ClaudeMessageResponse {
     let mut content: Vec<ClaudeContentBlock> = Vec::new();
     if let Some(choice) = resp.choices.first() {
+        // reasoning_content -> thinking block (must come before text/tool for Claude protocol)
+        if let Some(ref rc) = choice.message.reasoning_content {
+            if !rc.is_empty() {
+                content.push(ClaudeContentBlock {
+                    content_type: "thinking".to_string(),
+                    text: None,
+                    source: None,
+                    id: None,
+                    name: None,
+                    input: None,
+                    tool_use_id: None,
+                    content: None,
+                    thinking: Some(rc.clone()),
+                    signature: None,
+                    citations: None,
+                });
+            }
+        }
         if !choice.message.content.is_empty() {
             content.push(ClaudeContentBlock {
                 content_type: "text".to_string(),
@@ -215,6 +233,9 @@ fn oai_response_to_claude_messages(resp: &ChatCompletionResponse) -> ClaudeMessa
                 input: None,
                 tool_use_id: None,
                 content: None,
+                thinking: None,
+                signature: None,
+                citations: None,
             });
         }
         if let Some(ref tool_calls) = choice.message.tool_calls {
@@ -230,6 +251,9 @@ fn oai_response_to_claude_messages(resp: &ChatCompletionResponse) -> ClaudeMessa
                     input: Some(input),
                     tool_use_id: None,
                     content: None,
+                    thinking: None,
+                    signature: None,
+                    citations: None,
                 });
             }
         }
@@ -256,6 +280,8 @@ fn oai_response_to_claude_messages(resp: &ChatCompletionResponse) -> ClaudeMessa
         usage: ClaudeUsage {
             input_tokens: resp.usage.prompt_tokens,
             output_tokens: resp.usage.completion_tokens,
+            cache_read_input_tokens: None,
+            cache_creation_input_tokens: None,
         },
     }
 }
@@ -346,6 +372,7 @@ pub fn fold_extra_systems_into_adjacent_user(messages: Vec<ChatMessage>) -> Vec<
                 name: None,
                 tool_calls: None,
                 tool_call_id: None,
+                reasoning_content: None,
             });
         }
     }
@@ -394,6 +421,7 @@ fn prepend_text_to_chat_message(msg: &ChatMessage, reminders: &[String]) -> Chat
         name: msg.name.clone(),
         tool_calls: msg.tool_calls.clone(),
         tool_call_id: msg.tool_call_id.clone(),
+        reasoning_content: None,
     }
 }
 
@@ -417,6 +445,7 @@ fn append_text_to_chat_message(msg: &ChatMessage, text: &str) -> ChatMessage {
         name: msg.name.clone(),
         tool_calls: msg.tool_calls.clone(),
         tool_call_id: msg.tool_call_id.clone(),
+        reasoning_content: None,
     }
 }
 
@@ -536,6 +565,8 @@ impl StreamAdapter for AnthropicToOpenAIStream {
                             usage: ClaudeUsage {
                                 input_tokens: 0,
                                 output_tokens: 0,
+                                cache_read_input_tokens: None,
+                                cache_creation_input_tokens: None,
                             },
                         }),
                         usage: None,
@@ -574,6 +605,9 @@ impl StreamAdapter for AnthropicToOpenAIStream {
                                         input: None,
                                         tool_use_id: None,
                                         content: None,
+                                        thinking: None,
+                                        signature: None,
+                                        citations: None,
                                     }),
                                     message: None,
                                     usage: None,
@@ -622,6 +656,9 @@ impl StreamAdapter for AnthropicToOpenAIStream {
                                         input: Some(json!({})),
                                         tool_use_id: None,
                                         content: None,
+                                        thinking: None,
+                                        signature: None,
+                                        citations: None,
                                     }),
                                     message: None,
                                     usage: None,
@@ -706,6 +743,7 @@ impl ProviderAdapter for DefaultAdapter {
             metadata: None,
             tools: None,
             tool_choice: None,
+            thinking: None,
         }
     }
 
@@ -724,6 +762,8 @@ impl ProviderAdapter for DefaultAdapter {
                     role: "assistant".to_string(),
                     content: claude_content_to_text(&resp.content),
                     tool_calls: None,
+                    reasoning_content: None,
+                    refusal: None,
                 },
                 finish_reason: claude_stop_to_openai(&resp.stop_reason),
             }],
@@ -731,7 +771,10 @@ impl ProviderAdapter for DefaultAdapter {
                 prompt_tokens: resp.usage.input_tokens,
                 completion_tokens: resp.usage.output_tokens,
                 total_tokens: resp.usage.input_tokens + resp.usage.output_tokens,
+                prompt_tokens_details: None,
+                completion_tokens_details: None,
             },
+            system_fingerprint: None,
         }
     }
 
@@ -745,6 +788,7 @@ impl ProviderAdapter for DefaultAdapter {
                     name: None,
                     tool_calls: None,
                     tool_call_id: None,
+                    reasoning_content: None,
                 }),
                 ClaudeSystemMessage::Blocks(blocks) => {
                     let text = claude_blocks_to_text(blocks);
@@ -755,6 +799,7 @@ impl ProviderAdapter for DefaultAdapter {
                             name: None,
                             tool_calls: None,
                             tool_call_id: None,
+                            reasoning_content: None,
                         });
                     }
                 }
@@ -816,6 +861,8 @@ impl ProviderAdapter for DefaultAdapter {
             user: None,
             tools,
             tool_choice,
+            response_format: None,
+            reasoning_effort: None,
         }
     }
 
@@ -838,6 +885,9 @@ impl ProviderAdapter for DefaultAdapter {
                 input: None,
                 tool_use_id: None,
                 content: None,
+                thinking: None,
+                signature: None,
+                citations: None,
             }],
             model: resp.model.clone(),
             stop_reason: openai_stop_to_claude(
@@ -847,6 +897,8 @@ impl ProviderAdapter for DefaultAdapter {
             usage: ClaudeUsage {
                 input_tokens: resp.usage.prompt_tokens,
                 output_tokens: resp.usage.completion_tokens,
+                cache_read_input_tokens: None,
+                cache_creation_input_tokens: None,
             },
         }
     }
@@ -874,9 +926,13 @@ impl ProviderAdapter for DefaultAdapter {
                             role: None,
                             content: delta.text.clone(),
                             tool_calls: None,
+                            reasoning_content: None,
+                            refusal: None,
                         },
                         finish_reason: None,
                     }],
+                    usage: None,
+                    system_fingerprint: None,
                 })
             }
             "message_start" => Some(ChatCompletionChunk {
@@ -890,9 +946,13 @@ impl ProviderAdapter for DefaultAdapter {
                         role: Some("assistant".to_string()),
                         content: None,
                         tool_calls: None,
+                        reasoning_content: None,
+                        refusal: None,
                     },
                     finish_reason: None,
                 }],
+                usage: None,
+                system_fingerprint: None,
             }),
             "message_delta" => {
                 let stop_reason = event.delta.as_ref().and_then(|d| {
@@ -913,9 +973,13 @@ impl ProviderAdapter for DefaultAdapter {
                             role: None,
                             content: None,
                             tool_calls: None,
+                            reasoning_content: None,
+                            refusal: None,
                         },
                         finish_reason: Some(fr),
                     }],
+                    usage: None,
+                    system_fingerprint: None,
                 })
             }
             _ => None,
@@ -941,6 +1005,8 @@ impl ProviderAdapter for DefaultAdapter {
                         usage: ClaudeUsage {
                             input_tokens: 0,
                             output_tokens: 0,
+                            cache_read_input_tokens: None,
+                            cache_creation_input_tokens: None,
                         },
                     }),
                     usage: None,
@@ -1025,6 +1091,9 @@ fn openai_message_to_claude(msg: &ChatMessage) -> ClaudeMessage {
                     input: None,
                     tool_use_id: None,
                     content: None,
+                    thinking: None,
+                    signature: None,
+                    citations: None,
                 });
             }
         }
@@ -1044,6 +1113,9 @@ fn openai_message_to_claude(msg: &ChatMessage) -> ClaudeMessage {
                         input: None,
                         tool_use_id: None,
                         content: None,
+                        thinking: None,
+                        signature: None,
+                        citations: None,
                     }
                 } else {
                     ClaudeContentBlock {
@@ -1055,6 +1127,9 @@ fn openai_message_to_claude(msg: &ChatMessage) -> ClaudeMessage {
                         input: None,
                         tool_use_id: None,
                         content: None,
+                        thinking: None,
+                        signature: None,
+                        citations: None,
                     }
                 }
             }));
@@ -1074,6 +1149,9 @@ fn openai_message_to_claude(msg: &ChatMessage) -> ClaudeMessage {
                 input: Some(input),
                 tool_use_id: None,
                 content: None,
+                thinking: None,
+                signature: None,
+                citations: None,
             });
         }
     }
@@ -1117,8 +1195,16 @@ fn claude_message_to_openai(msg: &ClaudeMessage) -> Vec<ChatMessage> {
             name: None,
             tool_calls: None,
             tool_call_id: None,
+            reasoning_content: None,
         }],
         ClaudeContent::Blocks(blocks) => {
+            // Extract reasoning_content from thinking blocks (Anthropic -> OpenAI)
+            let reasoning: Option<String> = blocks
+                .iter()
+                .filter(|b| b.content_type == "thinking")
+                .filter_map(|b| b.thinking.clone())
+                .reduce(|a, b| a + &b);
+
             let tool_results: Vec<(String, String)> = blocks
                 .iter()
                 .filter(|b| b.content_type == "tool_result")
@@ -1147,6 +1233,7 @@ fn claude_message_to_openai(msg: &ClaudeMessage) -> Vec<ChatMessage> {
                         name: None,
                         tool_calls: None,
                         tool_call_id: Some(tool_use_id.clone()),
+                        reasoning_content: None,
                     });
                 }
 
@@ -1180,6 +1267,7 @@ fn claude_message_to_openai(msg: &ClaudeMessage) -> Vec<ChatMessage> {
                         name: None,
                         tool_calls: None,
                         tool_call_id: None,
+                        reasoning_content: None,
                     });
                 }
 
@@ -1239,6 +1327,7 @@ fn claude_message_to_openai(msg: &ClaudeMessage) -> Vec<ChatMessage> {
                     name: None,
                     tool_calls: tc,
                     tool_call_id: None,
+                    reasoning_content: reasoning.clone(),
                 }]
             }
         }
@@ -1327,6 +1416,9 @@ pub fn extract_and_merge_system_reminders(
                 input: None,
                 tool_use_id: None,
                 content: None,
+                thinking: None,
+                signature: None,
+                citations: None,
             }],
             ClaudeContent::Blocks(b) => b,
         };
@@ -1417,6 +1509,9 @@ impl MessageAdapter for AnthropicPassthrough {
                             input: None,
                             tool_use_id: None,
                             content: None,
+                            thinking: None,
+                            signature: None,
+                            citations: None,
                         }));
                         ClaudeSystemMessage::Blocks(blocks)
                     }
@@ -1632,6 +1727,8 @@ impl StreamAdapter for OpenAIToAnthropicStream {
                             usage: ClaudeUsage {
                                 input_tokens: 0,
                                 output_tokens: 0,
+                                cache_read_input_tokens: None,
+                                cache_creation_input_tokens: None,
                             },
                         }),
                         usage: None,
@@ -1664,6 +1761,9 @@ impl StreamAdapter for OpenAIToAnthropicStream {
                                         input: Some(json!({})),
                                         tool_use_id: None,
                                         content: None,
+                                        thinking: None,
+                                        signature: None,
+                                        citations: None,
                                     }),
                                     message: None,
                                     usage: None,
@@ -1709,6 +1809,9 @@ impl StreamAdapter for OpenAIToAnthropicStream {
                                     input: None,
                                     tool_use_id: None,
                                     content: None,
+                                    thinking: None,
+                                    signature: None,
+                                    citations: None,
                                 }),
                                 message: None,
                                 usage: None,
@@ -1767,7 +1870,7 @@ impl StreamAdapter for OpenAIToAnthropicStream {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{ChatContent, ChatMessage};
+    use crate::models::{ChatContent, ChatMessage, TokenDetails};
 
     fn make_openai_req(text: &str) -> ChatCompletionRequest {
         ChatCompletionRequest {
@@ -1778,6 +1881,7 @@ mod tests {
                 name: None,
                 tool_calls: None,
                 tool_call_id: None,
+                reasoning_content: None,
             }],
             stream: false,
             temperature: Some(0.7),
@@ -1789,6 +1893,8 @@ mod tests {
             user: None,
             tools: None,
             tool_choice: None,
+            response_format: None,
+            reasoning_effort: None,
         }
     }
 
@@ -1945,6 +2051,7 @@ mod tests {
                 name: None,
                 tool_calls: None,
                 tool_call_id: None,
+                reasoning_content: None,
             },
         );
         let c = DefaultAdapter::openai_to_claude_request(&req, 512);
@@ -1966,6 +2073,9 @@ mod tests {
                 input: None,
                 tool_use_id: None,
                 content: None,
+                thinking: None,
+                signature: None,
+                citations: None,
             }],
             model: "claude-sonnet".into(),
             stop_reason: Some("end_turn".into()),
@@ -1973,6 +2083,8 @@ mod tests {
             usage: ClaudeUsage {
                 input_tokens: 1,
                 output_tokens: 1,
+                cache_read_input_tokens: None,
+                cache_creation_input_tokens: None,
             },
         };
         let oai = DefaultAdapter::claude_to_openai_response(&cr, "claude");
@@ -2218,6 +2330,7 @@ mod tests {
             name: None,
             tool_calls: None,
             tool_call_id: None,
+            reasoning_content: None,
         }
     }
 
@@ -2228,6 +2341,7 @@ mod tests {
             name: None,
             tool_calls: None,
             tool_call_id: None,
+            reasoning_content: None,
         }
     }
 
@@ -2238,6 +2352,7 @@ mod tests {
             name: None,
             tool_calls: None,
             tool_call_id: None,
+            reasoning_content: None,
         }
     }
 
@@ -2248,6 +2363,7 @@ mod tests {
             name: None,
             tool_calls: None,
             tool_call_id: None,
+            reasoning_content: None,
         }
     }
 
@@ -2841,6 +2957,9 @@ mod tests {
                     input: None,
                     tool_use_id: None,
                     content: None,
+                    thinking: None,
+                    signature: None,
+                    citations: None,
                 },
                 ClaudeContentBlock {
                     content_type: "text".to_string(),
@@ -2851,6 +2970,9 @@ mod tests {
                     input: None,
                     tool_use_id: None,
                     content: None,
+                    thinking: None,
+                    signature: None,
+                    citations: None,
                 },
             ]),
         }];
@@ -2942,6 +3064,9 @@ mod tests {
                         input: None,
                         tool_use_id: None,
                         content: None,
+                        thinking: None,
+                        signature: None,
+                        citations: None,
                     },
                     ClaudeContentBlock {
                         content_type: "text".to_string(),
@@ -2952,6 +3077,9 @@ mod tests {
                         input: None,
                         tool_use_id: None,
                         content: None,
+                        thinking: None,
+                        signature: None,
+                        citations: None,
                     },
                 ]),
             },
@@ -3101,5 +3229,192 @@ mod tests {
         if let Some(t) = last_content.as_str() {
             assert!(!t.contains("system-reminder"));
         }
+    }
+
+    // ── reasoning_content round-trip tests ──
+
+    #[test]
+    fn test_reasoning_content_roundtrip_assistant_message() {
+        let oai_resp = ChatCompletionResponse {
+            id: "chatcmpl-001".to_string(),
+            object: "chat.completion".to_string(),
+            created: 1234567890,
+            model: "deepseek-v4-flash".to_string(),
+            choices: vec![Choice {
+                index: 0,
+                message: AssistantMessage {
+                    role: "assistant".to_string(),
+                    content: "Let me think...".to_string(),
+                    tool_calls: None,
+                    reasoning_content: Some("analyzing step by step".to_string()),
+                    refusal: None,
+                },
+                finish_reason: Some("stop".to_string()),
+            }],
+            usage: Usage {
+                prompt_tokens: 100,
+                completion_tokens: 50,
+                total_tokens: 150,
+                prompt_tokens_details: None,
+                completion_tokens_details: None,
+            },
+            system_fingerprint: None,
+        };
+
+        let claude_resp = oai_response_to_claude_messages(&oai_resp);
+
+        // Build a ClaudeMessageRequest from the response for round-trip testing
+        // ClaudeMessageResponse(role="assistant", content=[...]) -> ClaudeMessageRequest(messages=[ClaudeMessage{..}])
+        let claude_req = ClaudeMessageRequest {
+            model: claude_resp.model.clone(),
+            max_tokens: 1024,
+            messages: vec![ClaudeMessage {
+                role: claude_resp.role,
+                content: ClaudeContent::Blocks(claude_resp.content),
+            }],
+            stream: None,
+            system: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            stop_sequences: None,
+            metadata: None,
+            tools: None,
+            tool_choice: None,
+            thinking: None,
+        };
+        let oai_req = DefaultAdapter::claude_to_openai_request(&claude_req);
+
+        let assistant_msg = oai_req.messages.iter().find(|m| m.role == "assistant").unwrap();
+        assert_eq!(
+            assistant_msg.reasoning_content.as_deref(),
+            Some("analyzing step by step"),
+            "reasoning_content should survive round-trip"
+        );
+    }
+
+    #[test]
+    fn test_delta_reasoning_content_deserialization() {
+        let chunk_json = json!({
+            "id": "chatcmpl-001",
+            "object": "chat.completion.chunk",
+            "created": 1234567890,
+            "model": "deepseek-v4-flash",
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "role": "assistant",
+                    "content": "",
+                    "reasoning_content": "Let me analyze..."
+                },
+                "finish_reason": null
+            }]
+        });
+        let chunk: ChatCompletionChunk = serde_json::from_value(chunk_json).unwrap();
+        let delta = &chunk.choices[0].delta;
+        assert_eq!(delta.reasoning_content.as_deref(), Some("Let me analyze..."));
+    }
+
+    #[test]
+    fn test_chat_message_reasoning_content_serialization() {
+        let msg = ChatMessage {
+            role: "assistant".to_string(),
+            content: ChatContent::Text("Hello".to_string()),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+            reasoning_content: Some("Deep thinking...".to_string()),
+        };
+        let json_val = serde_json::to_value(&msg).unwrap();
+        assert_eq!(json_val["reasoning_content"].as_str(), Some("Deep thinking..."));
+    }
+
+    #[test]
+    fn test_usage_details_serialization() {
+        let usage = Usage {
+            prompt_tokens: 100,
+            completion_tokens: 50,
+            total_tokens: 150,
+            prompt_tokens_details: Some(TokenDetails {
+                cached_tokens: Some(80),
+                reasoning_tokens: None,
+                audio_tokens: None,
+                accepted_prediction_tokens: None,
+                rejected_prediction_tokens: None,
+            }),
+            completion_tokens_details: Some(TokenDetails {
+                cached_tokens: None,
+                reasoning_tokens: Some(20),
+                audio_tokens: None,
+                accepted_prediction_tokens: None,
+                rejected_prediction_tokens: None,
+            }),
+        };
+        let json_val = serde_json::to_value(&usage).unwrap();
+        let pt = json_val["prompt_tokens_details"].as_object().unwrap();
+        assert_eq!(pt["cached_tokens"].as_i64(), Some(80));
+        let ct = json_val["completion_tokens_details"].as_object().unwrap();
+        assert_eq!(ct["reasoning_tokens"].as_i64(), Some(20));
+    }
+
+    #[test]
+    fn test_chunk_usage_deserialization() {
+        let chunk_json = json!({
+            "id": "chatcmpl-001",
+            "object": "chat.completion.chunk",
+            "created": 1234567890,
+            "model": "deepseek-v4-flash",
+            "choices": [],
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 50,
+                "total_tokens": 150
+            }
+        });
+        let chunk: ChatCompletionChunk = serde_json::from_value(chunk_json).unwrap();
+        let usage = chunk.usage.unwrap();
+        assert_eq!(usage.prompt_tokens, 100);
+        assert_eq!(usage.completion_tokens, 50);
+        assert_eq!(usage.total_tokens, 150);
+    }
+
+    #[test]
+    fn test_claude_content_block_thinking_deserialization() {
+        let block_json = json!({
+            "type": "thinking",
+            "thinking": "Let me analyze this problem...",
+            "signature": "abc123"
+        });
+        let block: ClaudeContentBlock = serde_json::from_value(block_json).unwrap();
+        assert_eq!(block.content_type, "thinking");
+        assert_eq!(block.thinking.as_deref(), Some("Let me analyze this problem..."));
+        assert_eq!(block.signature.as_deref(), Some("abc123"));
+    }
+
+    #[test]
+    fn test_claude_usage_cache_tokens() {
+        let usage = ClaudeUsage {
+            input_tokens: 1000,
+            output_tokens: 500,
+            cache_read_input_tokens: Some(800),
+            cache_creation_input_tokens: Some(200),
+        };
+        let json_val = serde_json::to_value(&usage).unwrap();
+        assert_eq!(json_val["cache_read_input_tokens"].as_i64(), Some(800));
+        assert_eq!(json_val["cache_creation_input_tokens"].as_i64(), Some(200));
+    }
+
+    #[test]
+    fn test_thinking_param_in_claude_request() {
+        let req_json = json!({
+            "model": "claude-sonnet",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Hello"}],
+            "thinking": {"type": "enabled", "budget_tokens": 4000}
+        });
+        let req: ClaudeMessageRequest = serde_json::from_value(req_json).unwrap();
+        let thinking = req.thinking.unwrap();
+        assert_eq!(thinking["type"].as_str(), Some("enabled"));
+        assert_eq!(thinking["budget_tokens"].as_i64(), Some(4000));
     }
 }

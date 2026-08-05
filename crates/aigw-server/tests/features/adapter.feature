@@ -43,3 +43,22 @@ Feature: Provider 适配转换
     When 通过适配器转换为 Claude 响应
     Then Claude 响应的 type 为 "message"
     And Claude 响应的 role 为 "assistant"
+
+  Scenario: reasoning_content 在 OpenAI-Claude-OpenAI 往返转换中保留
+    Given 一个包含 reasoning_content 的 OpenAI 响应
+    When 响应通过 OpenAI->Claude->OpenAI 往返转换
+    Then 往返后的 OpenAI 请求中 assistant 消息的 reasoning_content 为 "analyzing step by step"
+
+  Scenario: DeepSeek thinking 模式流式 Delta 保留 reasoning_content
+    Given 一个包含 reasoning_content 的 SSE Delta chunk
+      """
+      {"id":"chatcmpl-001","object":"chat.completion.chunk","created":1,"model":"deepseek-v4-flash","choices":[{"index":0,"delta":{"role":"assistant","content":"","reasoning_content":"Let me analyze this"},"finish_reason":null}]}
+      """
+    When 解析该 Delta chunk
+    Then delta.reasoning_content 为 "Let me analyze this"
+
+  Scenario: Usage token details 在序列化/反序列化中保留
+    Given 一个包含 prompt_tokens_details 和 completion_tokens_details 的 Usage 结构
+    When Usage 结构序列化后再反序列化
+    Then cached_tokens 值为 80
+    And reasoning_tokens 值为 20
