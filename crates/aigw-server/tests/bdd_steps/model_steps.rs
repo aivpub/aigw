@@ -82,6 +82,167 @@ async fn existing_n_models(world: &mut TestWorld, count: usize) {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Stage 103: /v1/models model_info.mode exposure
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Insert a proxy_models row directly with a model_info carrying `mode: "image"`
+/// (multimodal). Used by the /v1/models scenarios.
+#[given(expr = "已存在多模态模型 {string} 其 model_info.mode 为 {string}")]
+async fn given_multimodal_model(world: &mut TestWorld, name: String, mode: String) {
+    let state = world.ensure_state().await;
+    let model = aigw_core::models::ProxyModel {
+        model_id: uuid::Uuid::new_v4().to_string(),
+        model_name: name.clone(),
+        litellm_params: serde_json::json!({"model": format!("qwen/{}", name)}),
+        model_info: serde_json::json!({"id": name, "mode": mode}),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        created_by: Some("test".to_string()),
+        updated_at: chrono::Utc::now().to_rfc3339(),
+        updated_by: Some("test".to_string()),
+    };
+    state.db.insert_model(&model).await.expect("insert model");
+}
+
+/// Create a non-master virtual key bound to a specific model allow-list.
+/// The key's `models` array carries model-name strings only — no model_info.
+#[given(expr = "一个普通 key {string} 已生成且绑定模型 {string}")]
+async fn given_regular_key_with_model(world: &mut TestWorld, alias: String, model: String) {
+    let state = world.ensure_state().await;
+    let raw_token = format!("sk-{}", uuid::Uuid::new_v4());
+    let now = chrono::Utc::now();
+    let key = aigw_core::models::VirtualKey {
+        token: aigw_core::crypto::hash_token(&raw_token),
+        key_name: Some(alias.clone()),
+        key_alias: Some(alias.clone()),
+        soft_budget_cooldown: "false".to_string(),
+        spend: 0.0,
+        expires: None,
+        models: serde_json::json!([model]),
+        aliases: serde_json::json!({}),
+        config: serde_json::json!({}),
+        router_settings: None,
+        user_id: None,
+        team_id: None,
+        agent_id: None,
+        project_id: None,
+        permissions: serde_json::json!({}),
+        max_parallel_requests: None,
+        metadata: serde_json::json!({}),
+        blocked: None,
+        tpm_limit: None,
+        rpm_limit: None,
+        max_budget: None,
+        soft_budget: None,
+        budget_duration: None,
+        budget_reset_at: None,
+        allowed_cache_controls: serde_json::json!([]),
+        allowed_routes: serde_json::json!([]),
+        policies: serde_json::json!([]),
+        access_group_ids: serde_json::json!([]),
+        model_spend: serde_json::json!({}),
+        model_max_budget: serde_json::json!({}),
+        budget_id: None,
+        organization_id: None,
+        object_permission_id: None,
+        created_at: Some(now),
+        created_by: Some("test".to_string()),
+        updated_at: Some(now),
+        updated_by: Some("test".to_string()),
+        last_active: None,
+        rotation_count: None,
+        auto_rotate: None,
+        rotation_interval: None,
+        last_rotation_at: None,
+        key_rotation_at: None,
+        budget_limits: None,
+        user_email: None,
+        user_alias: None,
+    };
+    state.db.insert_key(&key).await.expect("insert key");
+    world.created_keys.insert(alias, raw_token);
+}
+
+#[when(expr = "发送 GET \\/v1\\/models 请求")]
+async fn when_get_v1_models(world: &mut TestWorld) {
+    let state = world.ensure_state().await;
+    let router = Router::new()
+        .route(
+            "/v1/models",
+            axum::routing::get(aigw_server::routes::chat::models_list),
+        )
+        .with_state(state);
+    let (s, b) = make_request(
+        &router,
+        Method::GET,
+        "/v1/models",
+        Some(&world.master_key.clone()),
+        None,
+    )
+    .await;
+    world.last_status = Some(s);
+    world.last_body = b;
+}
+
+/// Send GET /v1/models using a non-master (regular) virtual key — the key's
+/// model list carries name strings only, so model_info must be absent.
+#[when(expr = "使用普通 key {string} 发送 GET \\/v1\\/models 请求")]
+async fn when_get_v1_models_with_key(world: &mut TestWorld, alias: String) {
+    let state = world.ensure_state().await;
+    let router = Router::new()
+        .route(
+            "/v1/models",
+            axum::routing::get(aigw_server::routes::chat::models_list),
+        )
+        .with_state(state);
+    let token = world
+        .created_keys
+        .get(&alias)
+        .expect("key not found")
+        .clone();
+    let (s, b) = make_request(&router, Method::GET, "/v1/models", Some(&token), None).await;
+    world.last_status = Some(s);
+    world.last_body = b;
+}
+
+#[then(regex = r#"^\/v1\/models 中模型 "(.+)" 的 model_info.mode 为 "(.+)"$"#)]
+async fn then_v1_models_mode(world: &mut TestWorld, model: String, expected_mode: String) {
+    let body = world.last_body.as_ref().expect("no response body");
+    let data = body
+        .get("data")
+        .and_then(|v| v.as_array())
+        .expect("no data array");
+    let entry = data
+        .iter()
+        .find(|m| m.get("id").and_then(|v| v.as_str()) == Some(model.as_str()))
+        .unwrap_or_else(|| panic!("model {model} not in /v1/models: {body}"));
+    let mode = entry
+        .get("model_info")
+        .and_then(|m| m.get("mode"))
+        .and_then(|v| v.as_str())
+        .expect("no model_info.mode");
+    assert_eq!(
+        mode, expected_mode,
+        "expected /v1/models {model}.model_info.mode={expected_mode}, got {mode}"
+    );
+}
+
+#[then(expr = "\\/v1\\/models 不返回 model_info 字段")]
+async fn then_v1_models_no_model_info(world: &mut TestWorld) {
+    let body = world.last_body.as_ref().expect("no response body");
+    let data = body
+        .get("data")
+        .and_then(|v| v.as_array())
+        .expect("no data array");
+    for entry in data {
+        assert!(
+            entry.get("model_info").is_none(),
+            "expected no model_info in /v1/models entry: {}",
+            entry
+        );
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // When
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

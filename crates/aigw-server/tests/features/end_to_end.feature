@@ -62,3 +62,11 @@ Feature: 端到端调用链路（mock）
     When 使用 key "e2e-upstream-model-user" 发送 POST /chat/completions 请求用 model "proxy-name"
     Then 响应状态码为 200
     And spend_logs 中 model 字段值为 "upstream-real-model"
+
+  Scenario: chat 图片透传（OpenAI image_url parts 原样到上游）
+    Given mock 上游已启动
+    And 已配置 model "gpt-4o-mock" 指向 mock 上游
+    And 一个普通 key "e2e-image-user" 已生成
+    When 使用 key "e2e-image-user" 发送带图片的 POST /chat/completions 请求用 model "gpt-4o-mock"
+    Then 响应状态码为 200
+    And mock 上游收到的请求 body 保留 image_url 图片 parts

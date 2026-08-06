@@ -51,8 +51,23 @@ Feature: 模型管理 CRUD
 
   Scenario: /model/list 解密 litellm_params 嵌套加密字段
     Given 管理员已认证
-    And 已存在一个模型其 litellm_params 包含加密的 api_base 和 api_key
+    And 已存在一个模型其 litellm_params 包含加密的 api_base  api_key
     When 通过解密路由发送 GET /model/list
     Then 响应状态码为 200
     And 响应中首个模型的 api_base 已解密为 "https://decrypted-api.example.com"
     And 响应中首个模型的 api_key 已解密为 "sk-decrypted-secret"
+
+  Scenario: /v1/models 暴露多模态模型的 model_info.mode
+    Given 管理员已认证
+    And 已存在多模态模型 "qwen3.5-vl" 其 model_info.mode 为 "image"
+    When 发送 GET /v1/models 请求
+    Then 响应状态码为 200
+    And /v1/models 中模型 "qwen3.5-vl" 的 model_info.mode 为 "image"
+
+  Scenario: /v1/models 非 master 权限省略 model_info
+    Given 管理员已认证
+    And 已存在多模态模型 "qwen3.5-vl" 其 model_info.mode 为 "image"
+    And 一个普通 key "models-key-user" 已生成且绑定模型 "qwen3.5-vl"
+    When 使用普通 key "models-key-user" 发送 GET /v1/models 请求
+    Then 响应状态码为 200
+    And /v1/models 不返回 model_info 字段

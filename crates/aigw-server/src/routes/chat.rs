@@ -622,6 +622,11 @@ pub struct ModelEntry {
     pub object: String,
     pub created: i64,
     pub owned_by: String,
+    /// Optional model metadata (mode, pricing, ...) — exposed so clients can
+    /// distinguish multimodal (mode: "image") from chat-only models. Omitted
+    /// (not `{}`) when the model has no registered proxy_models row.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_info: Option<serde_json::Value>,
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2036,6 +2041,9 @@ pub async fn models_list(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     // Look up the key to get its model permissions
     let mut model_ids: Vec<String> = Vec::new();
+    // model_info keyed by model_name — only the master path (proxy_models rows)
+    // has it; non-master keys carry model-name strings only.
+    let mut model_infos: Vec<Option<serde_json::Value>> = Vec::new();
 
     if auth.is_master_key {
         // Master key sees all models registered in proxy_models table
@@ -2045,7 +2053,10 @@ pub async fn models_list(
                 Json(json!({"error": {"message": "Failed to list models", "type": "db_error"}})),
             )
         })?;
-        model_ids = models.into_iter().map(|m| m.model_name).collect();
+        for m in models {
+            model_ids.push(m.model_name);
+            model_infos.push(Some(m.model_info));
+        }
     } else {
         let key_record = state
             .db
@@ -2065,6 +2076,7 @@ pub async fn models_list(
                 for model in models {
                     if let Some(s) = model.as_str() {
                         model_ids.push(s.to_string());
+                        model_infos.push(None);
                     }
                 }
             }
@@ -2074,11 +2086,13 @@ pub async fn models_list(
     let now_ts = chrono::Utc::now().timestamp();
     let data: Vec<ModelEntry> = model_ids
         .into_iter()
-        .map(|id| ModelEntry {
-            id: id.clone(),
+        .zip(model_infos)
+        .map(|(id, model_info)| ModelEntry {
+            id,
             object: "model".to_string(),
             created: now_ts,
             owned_by: "aigw".to_string(),
+            model_info,
         })
         .collect();
 
@@ -2478,6 +2492,174 @@ mod tests {
         assert!(model_ids.contains(&"gpt-3.5-turbo"));
     }
 
+    #[tokio::test]
+    async fn test_models_list_master_includes_model_info() {
+        // Stage 103: master key /v1/models exposes model_info (mode) so clients
+        // can identify multimodal models. list_models() returns full ProxyModel.
+        let db = Database::init("sqlite::memory:")
+            .await
+            .expect("init sqlite");
+        let model = ProxyModel {
+            model_id: uuid::Uuid::new_v4().to_string(),
+            model_name: "qwen3.5-vl".to_string(),
+            litellm_params: json!({"model": "qwen/qwen3.5-vl"}),
+            model_info: json!({"id": "qwen3.5-vl", "mode": "image"}),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            created_by: None,
+            updated_at: chrono::Utc::now().to_rfc3339(),
+            updated_by: None,
+        };
+        db.insert_model(&model).await.expect("insert model");
+
+        let state = Arc::new(AppState {
+            resolver: ModelResolver::new(db.clone(), None, "onprem"),
+            router: AigwRouter::default(),
+            db,
+            master_key: Some("sk-master-models".to_string()),
+            aigw_master_key: None,
+            provider_registry: ProviderRegistry::new(),
+            router_state: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            rate_limiter: Arc::new(RateLimiter::new()),
+            deployment_mode: "onprem".to_string(),
+            started_at: std::time::Instant::now(),
+            daily_spend_queue: None,
+            otel_active: false,
+            body_archiver: None,
+            metrics: None,
+        });
+
+        let app = Router::new()
+            .route("/v1/models", axum::routing::get(models_list))
+            .with_state(state);
+
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("/v1/models")
+            .header(header::AUTHORIZATION, "Bearer sk-master-models")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let val: Value = serde_json::from_slice(&body_bytes).unwrap();
+        let data = val["data"].as_array().expect("data array");
+        let entry = data
+            .iter()
+            .find(|m| m["id"] == "qwen3.5-vl")
+            .expect("qwen entry");
+        assert_eq!(
+            entry["model_info"]["mode"].as_str(),
+            Some("image"),
+            "master key /v1/models should expose model_info.mode"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_models_list_key_omits_model_info() {
+        // Stage 103: non-master key model list comes from key.models (name strings
+        // only) — model_info must be absent (skip_serializing_if), not empty object.
+        let db = Database::init("sqlite::memory:")
+            .await
+            .expect("init sqlite");
+        let raw_key = "sk-models-key-omit";
+        let token_hash = aigw_core::crypto::hash_token(raw_key);
+        let key = VirtualKey {
+            token: token_hash.clone(),
+            key_name: Some("omit-key".to_string()),
+            key_alias: Some("omit-key".to_string()),
+            soft_budget_cooldown: "false".to_string(),
+            spend: 0.0,
+            expires: None,
+            models: json!(["gpt-4"]),
+            aliases: json!({}),
+            config: json!({}),
+            router_settings: None,
+            user_id: Some("test-user".to_string()),
+            team_id: None,
+            agent_id: None,
+            project_id: None,
+            permissions: json!({}),
+            max_parallel_requests: None,
+            metadata: json!({}),
+            blocked: None,
+            tpm_limit: None,
+            rpm_limit: None,
+            max_budget: None,
+            soft_budget: None,
+            budget_duration: None,
+            budget_reset_at: None,
+            allowed_cache_controls: json!([]),
+            allowed_routes: json!([]),
+            policies: json!([]),
+            access_group_ids: json!([]),
+            model_spend: json!({}),
+            model_max_budget: json!({}),
+            budget_id: None,
+            organization_id: None,
+            object_permission_id: None,
+            created_at: Some(chrono::Utc::now()),
+            created_by: Some("test".to_string()),
+            updated_at: Some(chrono::Utc::now()),
+            updated_by: Some("test".to_string()),
+            last_active: None,
+            rotation_count: None,
+            auto_rotate: None,
+            rotation_interval: None,
+            last_rotation_at: None,
+            key_rotation_at: None,
+            budget_limits: None,
+            user_email: None,
+            user_alias: None,
+        };
+        db.insert_key(&key).await.expect("insert key");
+
+        let state = Arc::new(AppState {
+            resolver: ModelResolver::new(db.clone(), None, "onprem"),
+            router: AigwRouter::default(),
+            db,
+            master_key: None,
+            aigw_master_key: None,
+            provider_registry: ProviderRegistry::new(),
+            router_state: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            rate_limiter: Arc::new(RateLimiter::new()),
+            deployment_mode: "onprem".to_string(),
+            started_at: std::time::Instant::now(),
+            daily_spend_queue: None,
+            otel_active: false,
+            body_archiver: None,
+            metrics: None,
+        });
+
+        let app = Router::new()
+            .route("/v1/models", axum::routing::get(models_list))
+            .with_state(state);
+
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("/v1/models")
+            .header(header::AUTHORIZATION, format!("Bearer {}", raw_key))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let val: Value = serde_json::from_slice(&body_bytes).unwrap();
+        let data = val["data"].as_array().expect("data array");
+        for entry in data {
+            assert!(
+                entry.get("model_info").is_none(),
+                "non-master key /v1/models must not include model_info: {}",
+                entry
+            );
+        }
+    }
+
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // Sentinel resolution tests
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -2789,7 +2971,7 @@ mod tests {
         // The upstream mock will fail (no real server running), so we check
         // the failure path which already records upstream_model.
         // But for success path testing, we use a mock server.
-        let body = json!({
+        let _body = json!({
             "model": "my-gpt-proxy",
             "messages": [{"role": "user", "content": "Hello"}]
         });

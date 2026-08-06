@@ -12,7 +12,7 @@ use crate::TestWorld;
 static MOCK_UPSTREAM: std::sync::OnceLock<Arc<Mutex<Option<MockUpstream>>>> =
     std::sync::OnceLock::new();
 
-fn mock_upstream() -> &'static Arc<Mutex<Option<MockUpstream>>> {
+pub fn mock_upstream() -> &'static Arc<Mutex<Option<MockUpstream>>> {
     MOCK_UPSTREAM.get_or_init(|| Arc::new(Mutex::new(None)))
 }
 
@@ -155,6 +155,95 @@ async fn when_post_chat_completions_with_model(
     let json_body: Option<serde_json::Value> = serde_json::from_slice(&body_bytes).ok();
     world.last_status = Some(status);
     world.last_body = json_body;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// When — Stage 103 multimodal image request
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Send a /chat/completions request whose user message carries an OpenAI
+/// multimodal content array (`image_url` with a data URL). Verifies the gateway
+/// (OpenAIPassthrough) forwards the image parts unchanged to an OpenAI-compatible
+/// upstream.
+#[when(expr = "使用 key {string} 发送带图片的 POST \\/chat\\/completions 请求用 model {string}")]
+async fn when_post_chat_completions_with_image(
+    world: &mut TestWorld,
+    alias: String,
+    model: String,
+) {
+    let state = world.ensure_state().await;
+    use axum::Router;
+    use tower::util::ServiceExt;
+
+    let app = Router::new()
+        .route(
+            "/chat/completions",
+            axum::routing::post(aigw_server::routes::chat::chat_completions),
+        )
+        .with_state(state);
+
+    let token = world.created_keys.get(&alias).expect("key not found");
+    let body = serde_json::json!({
+        "model": model,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "what is in this image?"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="}}
+            ]
+        }]
+    })
+    .to_string();
+
+    let req = axum::http::Request::builder()
+        .method(Method::POST)
+        .uri("/chat/completions")
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", token))
+        .body(axum::body::Body::from(body))
+        .unwrap();
+
+    let response = app.oneshot(req).await.unwrap();
+    let status = response.status().as_u16();
+    let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap_or_default();
+    let json_body: Option<serde_json::Value> = serde_json::from_slice(&body_bytes).ok();
+    world.last_status = Some(status);
+    world.last_body = json_body;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Then — Stage 103 multimodal assertions
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// The mock upstream's recorded request body must preserve the OpenAI
+/// multimodal content array (image_url parts) — the gateway forwards verbatim.
+#[then(expr = "mock 上游收到的请求 body 保留 image_url 图片 parts")]
+async fn then_mock_received_image_parts(_world: &mut TestWorld) {
+    let mu = mock_upstream().lock().await;
+    let upstream = mu.as_ref().expect("mock upstream not started");
+    let requests = upstream.recorded_requests();
+    let req = requests.last().expect("no recorded request");
+    let messages = req
+        .body
+        .get("messages")
+        .and_then(|v| v.as_array())
+        .expect("no messages in upstream body");
+    let last = messages.last().expect("no user message");
+    let content = last
+        .get("content")
+        .and_then(|v| v.as_array())
+        .expect("content should be an array (multimodal)");
+    let image = content
+        .iter()
+        .find(|p| p.get("type") == Some(&serde_json::json!("image_url")))
+        .expect("no image_url part in forwarded content");
+    assert_eq!(
+        image["image_url"]["url"].as_str(),
+        Some("data:image/png;base64,iVBORw0KGgo="),
+        "gateway must forward the image_url data URL verbatim"
+    );
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

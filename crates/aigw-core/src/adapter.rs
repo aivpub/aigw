@@ -1081,6 +1081,31 @@ fn chat_content_to_string(content: &ChatContent) -> String {
     }
 }
 
+/// Parse a `data:<media_type>;base64,<payload>` URL into `(media_type, data)`.
+///
+/// Anthropic's Messages API requires `ClaudeImageSource.data` to be the **raw
+/// base64 payload** (no `data:` prefix) and `media_type` to match the actual
+/// image format. On malformed input (no comma / non-data prefix) the payload is
+/// passed through verbatim with an `image/png` fallback so the image is never
+/// silently dropped — the upstream decides whether to reject.
+fn parse_data_url(url: &str) -> (String, String) {
+    let Some(rest) = url.strip_prefix("data:") else {
+        return ("image/png".to_string(), url.to_string());
+    };
+    let Some(comma) = rest.find(',') else {
+        return ("image/png".to_string(), url.to_string());
+    };
+    let mime = &rest[..comma];
+    let payload = &rest[comma + 1..];
+    // MIME segment may carry parameters (e.g. "image/jpeg;base64", "image/png;charset=utf-8").
+    let media_type = mime.split(';').next().unwrap_or("image/png").to_string();
+    if media_type.is_empty() {
+        ("image/png".to_string(), payload.to_string())
+    } else {
+        (media_type, payload.to_string())
+    }
+}
+
 fn openai_message_to_claude(msg: &ChatMessage) -> ClaudeMessage {
     let mut blocks: Vec<ClaudeContentBlock> = Vec::new();
 
@@ -1106,13 +1131,14 @@ fn openai_message_to_claude(msg: &ChatMessage) -> ClaudeMessage {
         ChatContent::Parts(parts) => {
             blocks.extend(parts.iter().map(|p| {
                 if let Some(ref image_url) = p.image_url {
+                    let (media_type, data) = parse_data_url(&image_url.url);
                     ClaudeContentBlock {
                         content_type: "image".to_string(),
                         text: None,
                         source: Some(ClaudeImageSource {
                             source_type: "base64".to_string(),
-                            media_type: "image/jpeg".to_string(),
-                            data: image_url.url.clone(),
+                            media_type,
+                            data,
                         }),
                         id: None,
                         name: None,
@@ -1944,14 +1970,12 @@ impl MessageAdapter for ResponsesToChatCompletions {
         let mut messages = Self::input_to_messages(&input)?;
 
         // 3. Extract instructions → prepend system message
-        if let Some(instructions) = obj.remove("instructions").and_then(|v| {
-            v.as_str().map(|s| s.to_string())
-        }) {
+        if let Some(instructions) = obj
+            .remove("instructions")
+            .and_then(|v| v.as_str().map(|s| s.to_string()))
+        {
             if !instructions.is_empty() {
-                messages.insert(
-                    0,
-                    json!({"role": "system", "content": instructions}),
-                );
+                messages.insert(0, json!({"role": "system", "content": instructions}));
             }
         }
 
@@ -1979,15 +2003,8 @@ impl MessageAdapter for ResponsesToChatCompletions {
         obj.insert("model".to_string(), json!(deployment.upstream_model));
 
         // 7. Inject stream_options for streaming
-        if obj
-            .get("stream")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false)
-        {
-            obj.insert(
-                "stream_options".to_string(),
-                json!({"include_usage": true}),
-            );
+        if obj.get("stream").and_then(|v| v.as_bool()).unwrap_or(false) {
+            obj.insert("stream_options".to_string(), json!({"include_usage": true}));
         }
 
         Ok(Value::Object(obj))
@@ -2232,7 +2249,9 @@ impl StreamAdapter for ResponsesToChatCompletionsStream {
                     let delta = choice.get("delta");
 
                     // Text content
-                    if let Some(content) = delta.and_then(|d| d.get("content")).and_then(|v| v.as_str())
+                    if let Some(content) = delta
+                        .and_then(|d| d.get("content"))
+                        .and_then(|v| v.as_str())
                     {
                         if !content.is_empty() {
                             let idx = self.content_index;
@@ -2250,16 +2269,22 @@ impl StreamAdapter for ResponsesToChatCompletionsStream {
                     }
 
                     // Tool calls
-                    if let Some(tool_calls) = delta.and_then(|d| d.get("tool_calls")).and_then(|v| v.as_array())
+                    if let Some(tool_calls) = delta
+                        .and_then(|d| d.get("tool_calls"))
+                        .and_then(|v| v.as_array())
                     {
                         for tc in tool_calls {
-                            let idx = tc.get("index").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
-                            let tc_id = tc.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
-                            let tc_name = tc.get("function")
+                            let idx =
+                                tc.get("index").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
+                            let tc_id =
+                                tc.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                            let tc_name = tc
+                                .get("function")
                                 .and_then(|f| f.get("name"))
                                 .and_then(|v| v.as_str())
                                 .map(|s| s.to_string());
-                            let tc_args = tc.get("function")
+                            let tc_args = tc
+                                .get("function")
                                 .and_then(|f| f.get("arguments"))
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("");
@@ -3786,7 +3811,11 @@ mod tests {
         };
         let oai_req = DefaultAdapter::claude_to_openai_request(&claude_req);
 
-        let assistant_msg = oai_req.messages.iter().find(|m| m.role == "assistant").unwrap();
+        let assistant_msg = oai_req
+            .messages
+            .iter()
+            .find(|m| m.role == "assistant")
+            .unwrap();
         assert_eq!(
             assistant_msg.reasoning_content.as_deref(),
             Some("analyzing step by step"),
@@ -3813,7 +3842,10 @@ mod tests {
         });
         let chunk: ChatCompletionChunk = serde_json::from_value(chunk_json).unwrap();
         let delta = &chunk.choices[0].delta;
-        assert_eq!(delta.reasoning_content.as_deref(), Some("Let me analyze..."));
+        assert_eq!(
+            delta.reasoning_content.as_deref(),
+            Some("Let me analyze...")
+        );
     }
 
     #[test]
@@ -3827,7 +3859,10 @@ mod tests {
             reasoning_content: Some("Deep thinking...".to_string()),
         };
         let json_val = serde_json::to_value(&msg).unwrap();
-        assert_eq!(json_val["reasoning_content"].as_str(), Some("Deep thinking..."));
+        assert_eq!(
+            json_val["reasoning_content"].as_str(),
+            Some("Deep thinking...")
+        );
     }
 
     #[test]
@@ -3888,7 +3923,10 @@ mod tests {
         });
         let block: ClaudeContentBlock = serde_json::from_value(block_json).unwrap();
         assert_eq!(block.content_type, "thinking");
-        assert_eq!(block.thinking.as_deref(), Some("Let me analyze this problem..."));
+        assert_eq!(
+            block.thinking.as_deref(),
+            Some("Let me analyze this problem...")
+        );
         assert_eq!(block.signature.as_deref(), Some("abc123"));
     }
 
@@ -3917,5 +3955,128 @@ mod tests {
         let thinking = req.thinking.unwrap();
         assert_eq!(thinking["type"].as_str(), Some("enabled"));
         assert_eq!(thinking["budget_tokens"].as_i64(), Some(4000));
+    }
+
+    // ── Stage 103: multimodal image data-URL parsing ──
+
+    #[test]
+    fn test_parse_data_url_png() {
+        let (media_type, data) = parse_data_url("data:image/png;base64,iVBORw0KGgo=");
+        assert_eq!(media_type, "image/png");
+        assert_eq!(data, "iVBORw0KGgo=");
+    }
+
+    #[test]
+    fn test_parse_data_url_jpeg_with_params() {
+        // MIME segment may carry parameters after `;base64` — take the first segment
+        let (media_type, data) = parse_data_url("data:image/jpeg;charset=utf-8;base64,/9j/4AAQ==");
+        assert_eq!(media_type, "image/jpeg");
+        assert_eq!(data, "/9j/4AAQ==");
+    }
+
+    #[test]
+    fn test_parse_data_url_malformed_falls_back() {
+        // No comma / non-data prefix → media_type fallback image/png, data kept verbatim
+        let (media_type, data) = parse_data_url("not-a-data-url");
+        assert_eq!(media_type, "image/png");
+        assert_eq!(data, "not-a-data-url");
+        let (media_type2, data2) = parse_data_url("data:image/png");
+        assert_eq!(media_type2, "image/png");
+        assert_eq!(data2, "data:image/png");
+    }
+
+    #[test]
+    fn test_openai_to_claude_image_strips_data_prefix() {
+        // OpenAI image_url `data:image/webp;base64,UklGR...` → Claude image block
+        // with pure base64 data + correct media_type (NOT the full data URL, NOT
+        // a hardcoded image/jpeg).
+        let msg = make_user_parts(vec![ContentPart {
+            content_type: "image_url".to_string(),
+            text: None,
+            image_url: Some(ImageUrl {
+                url: "data:image/webp;base64,UklGRlNvbWVEYXRh".to_string(),
+            }),
+        }]);
+        let claude = openai_message_to_claude(&msg);
+        let blocks = match &claude.content {
+            ClaudeContent::Blocks(b) => b,
+            _ => panic!("expected content blocks"),
+        };
+        let block = &blocks[0];
+        assert_eq!(block.content_type, "image");
+        let source = block.source.as_ref().expect("image source");
+        assert_eq!(source.source_type, "base64");
+        assert_eq!(source.media_type, "image/webp");
+        assert_eq!(source.data, "UklGRlNvbWVEYXRh");
+    }
+
+    #[test]
+    fn test_claude_to_openai_image_reconstructs_data_url() {
+        // Claude image block {source: {type:base64, media_type, data}} →
+        // OpenAI image_url `data:{media_type};base64,{data}`.
+        let msg = ClaudeMessage {
+            role: "user".to_string(),
+            content: ClaudeContent::Blocks(vec![ClaudeContentBlock {
+                content_type: "image".to_string(),
+                text: None,
+                source: Some(ClaudeImageSource {
+                    source_type: "base64".to_string(),
+                    media_type: "image/png".to_string(),
+                    data: "iVBORw0KGgo=".to_string(),
+                }),
+                id: None,
+                name: None,
+                input: None,
+                tool_use_id: None,
+                content: None,
+                thinking: None,
+                signature: None,
+                citations: None,
+            }]),
+        };
+        let openai_msgs = claude_message_to_openai(&msg);
+        assert_eq!(openai_msgs.len(), 1);
+        let content = &openai_msgs[0].content;
+        let parts = match content {
+            ChatContent::Parts(parts) => parts,
+            _ => panic!("expected content parts"),
+        };
+        assert_eq!(parts.len(), 1);
+        let part = &parts[0];
+        assert_eq!(part.content_type, "image_url");
+        assert_eq!(
+            part.image_url.as_ref().unwrap().url,
+            "data:image/png;base64,iVBORw0KGgo="
+        );
+    }
+
+    #[test]
+    fn test_image_roundtrip_openai_claude_openai() {
+        // OpenAI image_url → Claude image block → OpenAI image_url — image preserved.
+        let orig = ContentPart {
+            content_type: "image_url".to_string(),
+            text: None,
+            image_url: Some(ImageUrl {
+                url: "data:image/jpeg;base64,/9j/4AAQ==".to_string(),
+            }),
+        };
+        let claude = openai_message_to_claude(&make_user_parts(vec![orig.clone()]));
+        let blocks = match &claude.content {
+            ClaudeContent::Blocks(b) => b,
+            _ => panic!("expected content blocks"),
+        };
+        let back = claude_message_to_openai(&ClaudeMessage {
+            role: "user".to_string(),
+            content: ClaudeContent::Blocks(blocks.clone()),
+        });
+        let parts = match &back[0].content {
+            ChatContent::Parts(p) => p,
+            _ => panic!("expected content parts"),
+        };
+        assert_eq!(parts.len(), 1);
+        assert_eq!(
+            parts[0].image_url.as_ref().unwrap().url,
+            "data:image/jpeg;base64,/9j/4AAQ=="
+        );
     }
 }

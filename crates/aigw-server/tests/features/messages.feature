@@ -70,3 +70,11 @@ Feature: Claude /v1/messages 端点
     When 发送 POST /v1/messages 请求带认证 model="nonexistent-model-xyz"
     Then 响应状态码为 400
     And 错误 type 为 "invalid_request_error"
+
+  Scenario: /v1/messages Claude image block 转 OpenAI content-parts 透传
+    Given mock 上游已启动
+    And 已配置 model "gpt-4o-img" 指向 mock 上游
+    And 一个普通 key "msg-image-user" 已生成
+    When 使用 key "msg-image-user" 发送带图片的 POST /v1/messages 请求用 model "gpt-4o-img"
+    Then 响应状态码为 200
+    And mock 上游收到的 /v1/messages 请求 body 含 image_url 图片 parts

@@ -1882,7 +1882,13 @@ mod tests {
             total_tokens: 10,
             prompt_tokens: 5,
             completion_tokens: 5,
-            start_time: chrono::Utc::now(),
+            // Fixed timestamp inside the queried window (2026-08-05..08-06) — using
+            // Utc::now() made this test date-sensitive: once the wall clock passes
+            // the range, zero rows match and the empty SQLite SUM decodes as
+            // INTEGER (not REAL) → f64 decode error → 500.
+            start_time: chrono::DateTime::parse_from_rfc3339("2026-08-05T10:00:00+00:00")
+                .unwrap()
+                .with_timezone(&chrono::Utc),
             end_time: chrono::Utc::now(),
             request_duration_ms: Some(100),
             completion_start_time: None,

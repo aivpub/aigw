@@ -251,3 +251,77 @@ async fn then_status_not_401(world: &mut TestWorld) {
     let status = world.last_status.expect("no status");
     assert_ne!(status, 401, "Expected status not 401, got {}", status);
 }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Stage 103: /v1/messages with Claude image block → OpenAI upstream
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Send a /v1/messages request whose user message carries a Claude `image`
+/// content block. The AnthropicToOpenAI adapter must convert it to OpenAI
+/// content-parts (`image_url` with `data:{media_type};base64,{data}`) when
+/// forwarding to an OpenAI-compatible upstream.
+#[when(expr = "使用 key {string} 发送带图片的 POST \\/v1\\/messages 请求用 model {string}")]
+async fn when_post_messages_with_image(world: &mut TestWorld, alias: String, model: String) {
+    let state = world.ensure_state().await;
+    let router = build_messages_router(state);
+    let token = world.created_keys.get(&alias).expect("key not found");
+    let body = serde_json::json!({
+        "model": model,
+        "max_tokens": 256,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "what is in this image?"},
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "iVBORw0KGgo="}}
+            ]
+        }]
+    })
+    .to_string();
+
+    let req = axum::http::Request::builder()
+        .method(Method::POST)
+        .uri("/v1/messages")
+        .header("Content-Type", "application/json")
+        .header("anthropic-version", "2023-06-01")
+        .header("x-api-key", token)
+        .body(axum::body::Body::from(body))
+        .unwrap();
+
+    let response = router.oneshot(req).await.unwrap();
+    let status = response.status().as_u16();
+    let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap_or_default();
+    let json_body: Option<serde_json::Value> = serde_json::from_slice(&body_bytes).ok();
+    world.last_status = Some(status);
+    world.last_body = json_body;
+}
+
+/// The mock upstream's recorded request body must carry the Claude image block
+/// converted to OpenAI `image_url` parts (data URL reconstructed).
+#[then(expr = "mock 上游收到的 \\/v1\\/messages 请求 body 含 image_url 图片 parts")]
+async fn then_mock_received_messages_image_parts(_world: &mut TestWorld) {
+    let mu = crate::bdd_steps::e2e_steps::mock_upstream().lock().await;
+    let upstream = mu.as_ref().expect("mock upstream not started");
+    let requests = upstream.recorded_requests();
+    let req = requests.last().expect("no recorded request");
+    let messages = req
+        .body
+        .get("messages")
+        .and_then(|v| v.as_array())
+        .expect("no messages in upstream body");
+    let last = messages.last().expect("no user message");
+    let content = last
+        .get("content")
+        .and_then(|v| v.as_array())
+        .expect("content should be an array (multimodal)");
+    let image = content
+        .iter()
+        .find(|p| p.get("type") == Some(&serde_json::json!("image_url")))
+        .expect("no image_url part in forwarded content");
+    assert_eq!(
+        image["image_url"]["url"].as_str(),
+        Some("data:image/png;base64,iVBORw0KGgo="),
+        "AnthropicToOpenAI must reconstruct the data URL (data:{{media_type}};base64,{{data}})"
+    );
+}

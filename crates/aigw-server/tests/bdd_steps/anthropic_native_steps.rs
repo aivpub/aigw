@@ -3,7 +3,9 @@
 //! Tests the Anthropic Native upstream adapters: AnthropicPassthrough and OpenAIToAnthropic.
 
 use crate::TestWorld;
-use aigw_core::adapter::{select_adapter, AnthropicPassthrough, ClientProtocol, MessageAdapter};
+use aigw_core::adapter::{
+    select_adapter, AnthropicPassthrough, AnthropicToOpenAI, ClientProtocol, MessageAdapter,
+};
 use aigw_core::deployment::{Deployment, ProviderType};
 use cucumber::gherkin::Step;
 use cucumber::{given, then, when};
@@ -175,5 +177,114 @@ async fn then_response_unchanged(_world: &mut TestWorld) {
         assert_eq!(adapted["id"].as_str(), Some("msg_001"));
         assert_eq!(adapted["type"].as_str(), Some("message"));
         assert_eq!(adapted["stop_reason"].as_str(), Some("end_turn"));
+    });
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Stage 103: OpenAIToAnthropic reverse conversion — image data URL
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[when(expr = "adapt_request 传入含 image_url 的 OpenAI Chat 请求")]
+async fn when_adapt_openai_image_request(_world: &mut TestWorld, step: &Step) {
+    let body_str = step.docstring.as_ref().expect("docstring").to_string();
+    let body: serde_json::Value = serde_json::from_str(&body_str).unwrap();
+    ADAPTER_STATE.with(|s| {
+        let state = s.borrow();
+        let adapter = state.adapter.expect("no adapter");
+        let deploy = state.deployment.as_ref().expect("no deployment");
+        let result = adapter.adapt_request(body, deploy);
+        drop(state);
+        s.borrow_mut().adapted = result.ok();
+    });
+}
+
+/// The OpenAIToAnthropic adapter must convert the OpenAI image_url data URL into
+/// a Claude image block with stripped base64 payload + derived media_type
+/// (NOT the hardcoded image/jpeg + full data URL — Stage 103 fix).
+#[then(expr = "Claude 请求的 image block 已剥离 data 前缀且 media_type 推导正确")]
+async fn then_claude_image_block_stripped(_world: &mut TestWorld) {
+    ADAPTER_STATE.with(|s| {
+        let state = s.borrow();
+        let adapted = state.adapted.as_ref().expect("adapt_request not called");
+        let messages = adapted["messages"].as_array().expect("no messages array");
+        let user_msg = messages
+            .iter()
+            .find(|m| m["role"] == "user")
+            .expect("no user message");
+        let content = user_msg["content"]
+            .as_array()
+            .expect("content should be an array");
+        let image_block = content
+            .iter()
+            .find(|b| b["type"] == "image")
+            .expect("no image block");
+        let source = &image_block["source"];
+        assert_eq!(source["type"].as_str(), Some("base64"));
+        assert_eq!(source["media_type"].as_str(), Some("image/webp"));
+        assert_eq!(
+            source["data"].as_str(),
+            Some("UklGRlNvbWVEYXRh"),
+            "data must be the raw base64 payload without the data: prefix"
+        );
+    });
+}
+
+/// Reverse roundtrip: OpenAI image_url → Claude image block → back to OpenAI
+/// content array — the data URL must survive.
+#[when(expr = "adapt_response 返回含 image_url 的 OpenAI Chat 响应后 roundtrip")]
+async fn when_roundtrip_image_via_adapter(_world: &mut TestWorld) {
+    ADAPTER_STATE.with(|s| {
+        let mut state = s.borrow_mut();
+        let adapted = state.adapted.take().expect("no adapted body");
+        // OpenAI Chat request → adapted Claude body already stored. Feed it back
+        // through AnthropicToOpenAI (client protocol Anthropic → OpenAI upstream)
+        // to complete the roundtrip.
+        let adapter = AnthropicToOpenAI;
+        let result = adapter.adapt_request(
+            adapted,
+            &Deployment {
+                api_base: "https://api.openai.com/v1".into(),
+                api_key: None,
+                upstream_model: "gpt-4o".into(),
+                provider_type: ProviderType::OpenAICompatible,
+                input_cost_per_token: None,
+                output_cost_per_token: None,
+                cache_read_input_token_cost: None,
+                cache_creation_input_token_cost: None,
+                raw_params: json!({"custom_llm_provider": "openai"}),
+                model_id: None,
+                model_group: None,
+                custom_llm_provider: Some("openai".into()),
+                chat_template_compat: None,
+                fail_count: 0,
+                cooldown_until: None,
+            },
+        );
+        state.adapted = result.ok();
+    });
+}
+
+#[then(regex = r#"^roundtrip 后 OpenAI 请求的 image_url 为 "(.+)"$"#)]
+async fn then_roundtrip_image_url(_world: &mut TestWorld, expected: String) {
+    ADAPTER_STATE.with(|s| {
+        let state = s.borrow();
+        let adapted = state.adapted.as_ref().expect("roundtrip not run");
+        let messages = adapted["messages"].as_array().expect("no messages array");
+        let user_msg = messages
+            .iter()
+            .find(|m| m["role"] == "user")
+            .expect("no user message");
+        let content = user_msg["content"]
+            .as_array()
+            .expect("content should be an array");
+        let image = content
+            .iter()
+            .find(|p| p["type"] == "image_url")
+            .expect("no image_url part");
+        assert_eq!(
+            image["image_url"]["url"].as_str(),
+            Some(expected.as_str()),
+            "roundtrip image_url should be preserved"
+        );
     });
 }
