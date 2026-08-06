@@ -76,6 +76,24 @@
 - **Resolution**: 按需在各子条目触发条件满足时实施。
 - **Target Phase**: 无固定排期。
 
+### TD-009: 多模态图片 base64 体积与渲染增强项
+
+- **Date**: 2026-08-07
+- **Priority**: P2
+- **Source**: Phase 42（Playground 多模态图片）规划
+- **Description**: Playground 图片以 base64 data URL 直传网关（前端读 FileReader，不走子图/压缩）。超大图（>32 MiB body limit）或大量图片会撑爆请求体；SpendLog 详情渲染的 base64 缩略图无体积上限控制；无点击放大/灯箱。
+
+| Sub-ID | 条目 | 优先级 | 描述 |
+|--------|------|--------|------|
+| TD-009a | 图片压缩/缩放 | P2 | 前端上传前用 canvas 压缩（如最长边 2048px + JPEG 0.8），降低 base64 体积与 token 成本；需评估与"原图保真"诉求的取舍。 |
+| TD-009b | 超大图/多图 body limit 防御 | P2 | 上传前估算 `∑ data URL 长度`，超限（如 >24 MiB）前端提示并拒绝；后端 `request_body_limit_mb` 已默认 32 MiB 但无 413 友好提示。 |
+| TD-009c | 图片点击放大/灯箱 | P3 | SpendLog 详情与 Playground 缩略图点击放大查看（Dialog/lightbox），当前仅缩略图。 |
+| TD-009d | `/v1/models` 模式标签 UI | P3 | Playground 模型下拉按 `model_info.mode` 显示多模态/纯文本标签，当前不做（阶段已定不强制过滤）。 |
+
+- **Impact**: 大图请求可能 413；详情页缩略图体积大影响加载。不阻塞 Phase 42 核心交付（图片识别已通）。
+- **Resolution**: 视生产图片使用量触发；-009a/b 建议随 Phase 42 后的小版本实施，c/d 按需。
+- **Target Phase**: 无固定排期（视使用量）。
+
 ## Resolved Items
 
 ### TD-002: @real_api step bindings implemented (Resolved 2026-07-05)

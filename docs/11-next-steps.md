@@ -1,21 +1,24 @@
 # aigw -- 下一步行动
 
-**上次更新**: 2026-08-05
-**当前阶段**: Phase 40 ✅ 100%（Stage 98-100 BDD Coverage Enhancement）；Phase 41 ⏳ 待开始（Stage 101-102 OpenAI Responses API 接入，22h）
+**上次更新**: 2026-08-07
+**当前阶段**: Phase 41 ⏳ 待开始（Stage 101-102 OpenAI Responses API，22h）；Phase 42 ⏳ 待开始（Stage 103-105 Playground 多模态图片，34.5h）
 
 ---
 
-## 当前状态：99/102 Stages（98-100 已完成 + 101-102 待开始）
+## 当前状态：99/105 Stages（98-100 已完成 + 101-105 待开始）
 
-**2026-08-05**: Phase 40 全部完成（Stage 98-100 ✅，git log 确认：`f191758`/`8ccbba6`/`3069dfd`/`0888185`/`46e4c32`）。文档积欠回写。Phase 41 规划落定——两 Stage 渐进交付（Passthrough 8h + Bridge 14h）。
+**2026-08-07**: Phase 40 全部完成（Stage 98-100 ✅）。Phase 41 规划落定——两 Stage 渐进交付（Passthrough 8h + Bridge 14h）。Phase 42 规划落定——Playground 多模态图片 3 Stage（Backend 6.5h + Frontend 16h + Render/Docs 12h），三路 subagent 并发实测代码改动量。
 
 **待办**:
 1. **Phase 41 Stage 101**（P1, 8h）：`POST /v1/responses` Passthrough — 新建 handler + 路由注册 + Usage 双 fallback + TDD: 6 UT + 6 BDD
 2. **Phase 41 Stage 102**（P1, 14h）：Responses→Chat 协议桥接 — `ResponsesToChatCompletions` 适配器 + 流式 SSE 事件映射 + TDD: 19 UT + 6 BDD
-3. Phase 30（Stage 78-81）代码已落地 + Phase 31 修复完成，待一并回写为 ✅
-4. TD-006 客户端 call_id 响应头回写
-5. TD-007 soft_budget 告警通道（tracing::warn → webhook/email/Prometheus alert）
-6. 长期路线 LT-BodyMetrics/LT-BodyCompact/LT-BodyLifecycle 视数据量触发
+3. **Phase 42 Stage 103**（P1, 6.5h）：多模态适配修复（`openai_message_to_claude` data URL 解析）+ `/v1/models` 暴露 model_info.mode + 6 BDD
+4. **Phase 42 Stage 104**（P1, 16h）：Playground 图片输入（上传/粘贴/预览 + 双端点序列化 + 8 E2E × 3 viewports）
+5. **Phase 42 Stage 105**（P1, 12h）：图片渲染 + log-viewer output_text/image block + SpendLog 详情 + 文档收尾
+6. Phase 30（Stage 78-81）代码已落地 + Phase 31 修复完成，待一并回写为 ✅
+7. TD-006 客户端 call_id 响应头回写
+8. TD-007 soft_budget 告警通道（tracing::warn → webhook/email/Prometheus alert）
+9. 长期路线 LT-BodyMetrics/LT-BodyCompact/LT-BodyLifecycle 视数据量触发
 
 ---
 
@@ -101,7 +104,25 @@ Phase 36:   ████████████████████ 100% (1
 Phase 38:   ████████████████████ 100% (3/3)  ✅ UI 多语言 i18n 支持 (Stage 91-93)
 Phase 39:   ████████████████████ 100% (4/4)  ✅ Budget Reset 周期任务 + 配置 (Stage 94-97)
 Phase 40:   ████████████████████ 100% (3/3)  ✅ BDD Coverage Enhancement (Stage 98-100)
+Phase 41:   ░░░░░░░░░░░░░░░░░░░░   0% (0/2)  ⏳ OpenAI Responses API 接入 (Stage 101-102)
+Phase 42:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3)  ⏳ Playground 多模态图片 (Stage 103-105)
 ```
+
+---
+
+## Phase 42: Playground 多模态图片 ⏳（2026-08-07，34.5h）
+
+**背景**: 用户要给 Playground 增加图片能力，让 qwen3.5-vl 等多模态模型在 playground 中识别图片。代码审计确认后端多模态转换部分就绪（`claude_message_to_openai` 正确生成 `data:{media_type};base64,{data}`），但 `openai_message_to_claude` 反向有 bug（硬编码 image/jpeg + 完整 data URL 塞入 data 字段），前端 Playground 仅纯文本。三路 subagent 并发实测收敛为 3 Stage。
+
+| Stage | 目标 | 类型 | 预估 | 状态 |
+|-------|------|------|------|------|
+| Stage 103 | 多模态适配修复（`openai_message_to_claude` data URL 解析 + `/v1/models` 暴露 model_info.mode）+ 6 BDD。TDD: 8 UT + 6 BDD | 后端+测试 | 6.5h | ⏳ 待开始 |
+| Stage 104 | Playground 图片输入（上传/粘贴/预览 + 双端点多模态序列化 + sessionStorage 持久化）+ 新增 /v1/messages mock。TDD: 8 E2E × 3 viewports | 前端 | 16h | ⏳ 待开始 |
+| Stage 105 | 图片渲染（Playground 气泡 + log-viewer output_text/image block + 共享 extractImages/ImageThumbnails）+ SpendLog 详情 3 UT + 文档收尾。TDD: 3 UT + 4 E2E × 3 viewports | 全栈+文档 | 12h | ⏳ 待开始 |
+
+**依赖**: Stage 103 → 104（发送图片依赖反向转换正确 + 模式字段）；Stage 104 → 105（渲染依赖图片数据模型就绪）。
+
+**设计文档**: `docs/stages/stage-103.md` / `stage-104.md` / `stage-105.md`
 
 ---
 
@@ -122,6 +143,9 @@ Phase 40:   ████████████████████ 100% (3
 | ✅ | Phase 40 BDD Coverage Enhancement | ✅ 完成（2026-08-03） |
 | P1 | Phase 41 Stage 101 POST /v1/responses Passthrough | ⏳ 待开始 |
 | P1 | Phase 41 Stage 102 Responses→Chat 协议桥接 | ⏳ 待开始 |
+| P1 | Phase 42 Stage 103 多模态适配修复 + 模型模式暴露 | ⏳ 待开始 |
+| P1 | Phase 42 Stage 104 Playground 图片输入 | ⏳ 待开始 |
+| P1 | Phase 42 Stage 105 图片渲染 + SpendLog 详情 + 文档 | ⏳ 待开始 |
 | P2 | Phase 30 backfill 标记 | 待处理 |
 | P2 | TD-006 客户端 call_id 响应头回写 | 待处理 |
 | P2 | TD-007 soft_budget 告警通道 | 待处理 |

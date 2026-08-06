@@ -438,3 +438,24 @@
 - **历史用量聚合**: `Database::get_spend_by_team()` / `get_spend_by_org()` 从 `spend_logs` SUM spend，三云方言实现（SQLite/PG/MySQL）。
 - **TOCTOU 策略**: spend 在请求完成后异步更新（Stage 94），budget 检查在下一请求读已更新的 spend。并发窗口 ~ms，分布式系统可接受 trade-off。
 - **测试覆盖**: 23 UT（budget.rs）+ mock BDD 177 pass（回归无退化）。Real BDD 场景 `multi_level_budget.feature` 已创建（@skip 等待 real BDD runner 环境就绪后解禁）。
+
+## ADR-025: Playground 多模态图片能力（Phase 42，Stage 103-105）
+
+- **Date**: 2026-08-07
+- **Status**: Approved（Phase 42，Stage 103-105）
+- **Decision**: Playground 支持图片输入与多模态模型（qwen3.5-vl 等）识别，3 Stage 交付共 34.5h。核心决策：
+  (1) 前端始终用 OpenAI content-parts（chat 端点）或 Claude content blocks（messages 端点）携带图片，由 `endpointType` 决定，图片在客户端已读为 base64 data URL，网关透传；
+  (2) 后端只修最小缺口——`openai_message_to_claude` 的 data URL 解析 bug + `/v1/models` 暴露 `model_info.mode`；
+  (3) log-viewer 共享 `extractImages` + `ImageThumbnails` 组件，Playground 与 SpendLog 详情复用，SpendLog drawer 不改结构；
+  (4) 不按 `model_info.mode` 强制过滤附件（用户可自由给任意模型发图，由上游裁决）。
+- **Background**: 用户诉求——Playground 给多模态模型发图片。代码审计确认后端多模态转换部分就绪（`claude_message_to_openai` L1256/L1295 已正确生成 `data:{media_type};base64,{data}`），但 `openai_message_to_claude` L1113-1115 硬编码 `media_type:"image/jpeg"` 且把完整 data URL 塞入 `ClaudeImageSource.data`（Anthropic 上游要求纯 base64 + 正确 media_type，发送 PNG 会 400）。前端 Playground 仅纯文本（`ChatMessage.content: string`），src/ 无 file input/FileReader 先例。SpendLog 详情 log-viewer 缺 `output_text`（Responses API 引入）与图片 block 渲染。
+- **Key decisions**:
+  - **前端 base64 直传而非后端子图**：图片在浏览器读为 data URL，随消息 JSON 直接发网关；无独立上传端点、无对象存储，对齐 litellm 多模态（`image_url.url` 即 data URL）。
+  - **修 `openai_message_to_claude` 为最小必要**：`parse_data_url` helper 剥离 `data:` 前缀推导 media_type（malformed fallback `image/png`），仅一处调用；`claude_message_to_openai` 已验证正确无需改。
+  - **`/v1/models` 暴露 `model_info` 而非新建字段**：`ModelEntry.model_info: Option<Value>`（`skip_serializing_if`），master 路径透传 `ProxyModel.model_info`（含 mode），非 master 路径缺省——litellm 兼容（litellm /v1/models 同样返回 model_info），零回归。
+  - **共享 log-viewer 组件**：`extractImages(content)` 递归提取 OpenAI `image_url` / Anthropic `image` block 的 data URL，`ImageThumbnails` 渲染；`extractText`/`parseOutput`/`extractTextContent` 补 `output_text`/`input_text`/`file` 分支——SpendLog 详情 drawer 经现有 hasPrompt/hasResponse 自然透传。
+  - **不强制模式过滤**：不按 `model_info.mode` 禁用上传按钮；litellm 亦无此 gate，Playground 保持自由发图、上游裁决。
+- **Consequences**:
+  - Phase 42 三 Stage：Stage 103 后端修复+BDD（6.5h）、Stage 104 Playground 图片输入（16h）、Stage 105 渲染+文档（12h）。
+  - 多模态请求进 SpendLog `messages`/`response` JSONB 原样（含 base64），body_archive 按既有 `messages` 体积分片，超大图 body limit（32 MiB）与压缩留 TD-009。
+  - qwen 系列聊天模板已在 Stage 60 嗅探（`chat_template_compat: strict`），图片 content-parts 不经 fold，无模板冲突。

@@ -1,14 +1,14 @@
 # aigw — AI Gateway Stagemap
 
 **项目**: aigw (litellm Rust 最小兼容替代)
-**最后更新**: 2026-08-05
+**最后更新**: 2026-08-07
 
 ---
 
 ## 当前状态
 
-- **当前 Phase**: Phase 40 — BDD Coverage Enhancement ✅ 100%（Stage 98-100 ✅）；Phase 41 ⏳ 待开始（Stage 101-102 OpenAI Responses API）
-- **状态**: **99/102 Stages** 已完成（Stage 98-100 ✅ + Stage 101-102 ⏳）
+- **当前 Phase**: Phase 41 ⏳ 待开始（Stage 101-102 OpenAI Responses API，22h）；Phase 42 ⏳ 待开始（Stage 103-105 Playground 多模态图片，34.5h）
+- **状态**: **99/105 Stages** 已完成（Stage 98-100 ✅ + Stage 101-105 ⏳）
 - **下一里程碑**: Phase 41 Stage 101 — OpenAI Responses API Passthrough（8h）
 
 ### 整体进度
@@ -49,6 +49,7 @@ Phase 38:   ████████████████████ 100% (3
 Phase 39:   ████████████████████ 100% (4/4 Stages) ✅ Budget Reset 周期任务 + 配置
 Phase 40:   ████████████████████ 100% (3/3 Stages) ✅ BDD Coverage Enhancement (Stage 98-100)
 Phase 41:   ░░░░░░░░░░░░░░░░░░░░   0% (0/2 Stages) ⏳ OpenAI Responses API 接入 (Stage 101-102)
+Phase 42:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3 Stages) ⏳ Playground 多模态图片 (Stage 103-105)
 ```
 
 ---
@@ -127,6 +128,30 @@ Phase 41:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 - `docs/stages/stage-101.md`（Passthrough + Bridge 两个 Stage）
 - `docs/research/2026-08-04-openai-responses-api-support.md`（调研报告）
 
+### Phase 42：Playground 多模态图片 ⏳（2026-08-07）
+
+**背景**: 用户要给 Playground 增加图片能力，让 qwen3.5-vl 等多模态模型在 playground 中识别图片。后端多模态转换已部分就绪（`claude_message_to_openai` 正确生成 `data:{media_type};base64,{data}`；`openai_message_to_claude` 反向有 bug），前端 Playground 仅支持纯文本。分 3 Stage 交付：103 后端适配修复 + 模型模式暴露，104 Playground 图片输入（上传/粘贴/预览），105 图片渲染 + SpendLog 详情增强 + 文档收尾。
+
+**拆分**: 3 Stage（Backend 6.5h + Frontend 16h + Render/Docs 12h），共 34.5h。
+
+| Stage | 状态 | 目标 | 类型 | 预估 |
+|-------|------|------|------|------|
+| Stage 103 | ⏳ 待开始 | **多模态适配修复 + 模型模式暴露** — 修 `openai_message_to_claude` image 转换 bug（剥离 `data:` 前缀 + 推导 media_type，malformed fallback image/png）；`ModelEntry` 增 `model_info` 可选字段（master 路径透传 `ProxyModel.model_info` 含 mode，向后兼容）；补多模态后端 BDD（chat/messages/anthropic_native 图片透传/转换 + /v1/models mode 字段 + 详情 body 保留 image）。TDD: 8 UT + 6 BDD | 后端+测试 | 6.5h |
+| Stage 104 | ⏳ 待开始 | **Playground 图片输入（上传+粘贴+预览）** — `ChatMessage.images: string[]` + 隐藏 file input（accept image）+ 剪贴板 paste → FileReader.readAsDataURL → 预览缩略图条 + 删除；多模态序列化（chat 端点 OpenAI content array `image_url` / messages 端点 Claude content blocks `image.source`）；sessionStorage 持久化；+6 i18n keys；新增 /v1/messages mock。TDD: 8 E2E 场景 × 3 viewports | 前端 | 16h |
+| Stage 105 | ⏳ 待开始 | **图片渲染 + SpendLog 详情增强 + 文档收尾** — Playground user 气泡图片缩略图；log-viewer `extractText`/`OutputCard`/`ResponseViewer`/`MessageBubble`/`InputCard` 补 `output_text`/`input_text`/`image_url`/`image`/`file` block + 共享 `extractImages` + `ImageThumbnails` 组件；SpendLog 详情 3 UT 透传断言；ADR-025 + roadmap v42.0 + next-steps + TD-009。TDD: 3 UT + 4 E2E × 3 viewports | 全栈+文档 | 12h |
+
+**依赖关系**: Stage 103 → 104（104 发送图片依赖反向转换正确 + `/v1/models` 模式字段）；Stage 104 → 105（105 渲染依赖 Playground 图片数据模型就绪）。
+
+**Phase 42 合计**: 34.5h，3 Stages。
+
+**关键决策**:
+- **前端始终用 OpenAI content-parts 或 Claude content blocks**：由 `endpointType` 决定，图片在客户端已读为 base64，不走后端转换。
+- **后端只修最小缺口**：`openai_message_to_claude` 的 data URL 解析 + `/v1/models` 暴露 model_info.mode；不新增网关图片校验（litellm 亦无，Playground 客户端负责）。
+- **log-viewer 共享组件**：`extractImages` + `ImageThumbnails` 供 Playground 与 SpendLog 详情复用，SpendLog drawer 无需改结构。
+- **不按 `model_info.mode` 强制过滤附件**：用户可自由给任意模型发图，由上游裁决（litellm 兼容）。
+
+**设计文档**:
+- `docs/stages/stage-103.md` / `stage-104.md` / `stage-105.md`
 
 ---
 
@@ -744,3 +769,4 @@ Phase 41:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 | v39.0 | 2026-07-30 | **Phase 37 规划**：新增 Phase 37（Budget Reset 周期任务 + 配置，Stages 91-93，共 40h）。基于 docs/research/2026-07-30-budget-reset-gap.md 调研——budgets 表 + 四实体表 budget 列 Stage 1 就 schema 对齐但从未实现周期 reset，budget_duration/budget_reset_at 字段被写入却不消费。复用 Stage 82-84 的 AsyncTask+Engine 框架新增 BudgetResetter（step_type=budget_reset，tick 扫过期记录批量 UPDATE spend=0 + 标准化对齐重算 reset_at）。3 Stage：91 后端（duration 解析+resetter+Budget CRUD+backfill+config，16h）、92 前端（实体表单内联 budget_duration/soft_budget+Jobs Tab 补全，16h）、93 全栈联调（soft/hard 双轨+real BDD 三后端+收尾，8h）。soft_budget 告警通道登记 TD-007。设计文档：stage-91~93.md + plans/2026-07-30-budget-reset-phase-37.md。总进度 89/92（Stage 91-93 待开始）。 |
 | v40.0 | 2026-08-02 | **Phase 39 完成（Stage 94-97 ✅）**：Budget Reset 完整交付（56h，4 Stage，8/1~8/2）。核心成果：① entity spend 异步事务增量更新（key/user/team/org 四实体 × 3 方言） + daily_spend 5 维全量补全 + 失败路径 team_id/org_id 修复（Stage 94）；② BudgetResetter AsyncTask（标准化对齐 UTC 0 点/周一/月初）+ 配额层级约束写入校验（child.max_budget ≤ parent.max_budget）+ backfill（Stage 95）；③ 前端 entity 表单 budget_duration 下拉 + soft_budget + Job Tab budget_reset（Stage 96）；④ 多级 BudgetEnforcer（key→user→team→org）+ real BDD 三后端全绿 + NaN 防御（Stage 97）。ADR-024 Approved→Accepted + TD-007 更新（Prometheus Alertmanager 候选）。总进度 96/96 — ALL STAGES COMPLETE。 |
 | v41.0 | 2026-08-05 | **Phase 40 完成回写 + Phase 41 两阶段规划**：git log 确认 Phase 40（Stage 98-100 BDD Coverage Enhancement）全部实际完成（`f191758`/`8ccbba6`/`3069dfd`/`0888185`/`46e4c32`），roadmap/nnext-steps 积欠同步。Phase 41 拆为两 Stage 渐进交付：Stage 101 Passthrough（8h）— 客户端 `/v1/responses` → 上游 `/v1/responses`，新建 handler + `ClientProtocol::Responses` + 复用 `OpenAIPassthrough`，TDD 6 UT + 6 BDD；Stage 102 Bridge（14h，依赖 101）— 新增 `ResponsesToChatCompletions` 适配器（`MessageAdapter` + `StreamAdapter`）+ 流式 SSE 事件映射（output_text.delta/function_call_arguments.delta/response.completed）+ handler 集成，TDD 19 UT + 6 BDD。Phase 41 合计 22h。总进度 99/102。设计文档：`stage-101.md` + `docs/research/2026-08-04-openai-responses-api-support.md`。 |
+| v42.0 | 2026-08-07 | **Phase 42 规划**：Playground 多模态图片能力，3 Stage 共 34.5h。基于代码审计确认后端多模态转换部分就绪（`claude_message_to_openai` 已正确生成 `data:{media_type};base64,{data}`；`openai_message_to_claude` 反向硬编码 `image/jpeg` + 完整 data URL 塞入 data 字段是 bug），前端 Playground 仅纯文本、src/ 无 file input 先例。三路 subagent 并发实测：Stage 103 后端适配修复 + `/v1/models` 暴露 model_info.mode + 6 BDD（6.5h）；Stage 104 Playground 图片输入（上传/粘贴/预览 + 双端点序列化 + 8 E2E × 3 viewports，16h）；Stage 105 图片渲染 + log-viewer output_text/image block + SpendLog 详情 + 文档收尾（12h）。总进度 99/105。设计文档：`stage-103~105.md`。 |
