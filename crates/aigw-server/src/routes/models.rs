@@ -287,10 +287,14 @@ pub async fn model_update(
         model.model_name = name.clone();
     }
     if let Some(ref params) = body.litellm_params {
-        model.litellm_params = params.clone();
+        // Deep-merge: only update fields explicitly provided, preserving
+        // existing fields (e.g. encrypted api_key that wasn't re-sent).
+        merge_json(&mut model.litellm_params, params);
     }
     if let Some(ref info) = body.model_info {
-        model.model_info = info.clone();
+        // Deep-merge model_info: only update fields explicitly provided so
+        // that "mode" (active/inactive) is preserved when editing pricing.
+        merge_json(&mut model.model_info, info);
     }
     model.updated_at = chrono::Utc::now().to_rfc3339();
 
@@ -362,14 +366,22 @@ pub async fn model_delete(
         )
     })?;
 
-    if existing.is_none() {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": {"message": "model not found"}})),
-        ));
-    }
+    let mut model = match existing {
+        Some(m) => m,
+        None => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": {"message": "model not found"}})),
+            ));
+        }
+    };
 
-    state.db.delete_model(&q.model_id).await.map_err(|e| {
+    // Decrypt litellm_params before archiving so the deleted_models table
+    // stores plaintext provider/api_base/api_key instead of ciphertext.
+    model.litellm_params =
+        ModelResponse::decrypt_params(&model.litellm_params, state.aigw_master_key.as_deref());
+
+    state.db.archive_and_delete_model(&model).await.map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"error": {"message": format!("{}", e)}})),
@@ -377,6 +389,31 @@ pub async fn model_delete(
     })?;
 
     Ok(Json(json!({"status": "deleted"})))
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Helpers
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Deep-merge `incoming` into `target`: overwrites keys present in `incoming`,
+/// but preserves keys that only exist in `target`.  This keeps `mode` (active/
+/// inactive) and other metadata when only pricing fields are being updated.
+fn merge_json(target: &mut serde_json::Value, incoming: &serde_json::Value) {
+    use serde_json::Value;
+    match (&*target, incoming) {
+        (Value::Object(_), Value::Object(src)) => {
+            for (k, v) in src {
+                // `target` is `&mut Value::Object` — get a mutable ref to it
+                if let Value::Object(ref mut map) = target {
+                    map.insert(k.clone(), v.clone());
+                }
+            }
+        }
+        _ => {
+            // Scalar / array / null — full replace
+            *target = incoming.clone();
+        }
+    }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

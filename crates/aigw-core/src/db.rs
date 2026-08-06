@@ -4382,6 +4382,7 @@ pub trait ProxyModelStore {
     async fn count_models(&self) -> Result<i64>;
     async fn update_model(&self, m: &ProxyModel) -> Result<()>;
     async fn delete_model(&self, model_id: &str) -> Result<()>;
+    async fn archive_and_delete_model(&self, m: &ProxyModel) -> Result<()>;
     async fn list_deleted_models(&self) -> Result<Vec<DeletedModel>>;
     async fn list_deleted_models_paged(&self, limit: i64, offset: i64)
         -> Result<Vec<DeletedModel>>;
@@ -4516,6 +4517,28 @@ impl ProxyModelStore for SqlitePool {
         Ok(())
     }
 
+    async fn archive_and_delete_model(&self, m: &ProxyModel) -> Result<()> {
+        // tombstone-then-delete with already-decrypted model data.
+        // Caller (handler) has already decrypted litellm_params, so
+        // the deleted_models table stores plaintext.
+        sqlx::query(INSERT_DELETED_MODEL_SQLITE)
+            .bind(&m.model_id)
+            .bind(&m.model_name)
+            .bind(&m.litellm_params)
+            .bind(&m.model_info)
+            .bind(&m.created_at)
+            .bind(&m.created_by)
+            .bind(&m.updated_at)
+            .bind(&m.updated_by)
+            .execute(self)
+            .await?;
+        sqlx::query("DELETE FROM proxy_models WHERE model_id = ?")
+            .bind(&m.model_id)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
     async fn list_deleted_models(&self) -> Result<Vec<DeletedModel>> {
         sqlx::query_as(LIST_DELETED_MODELS_SQLITE)
             .fetch_all(self)
@@ -4616,6 +4639,19 @@ impl ProxyModelStore for MySqlPool {
         Ok(())
     }
 
+    async fn archive_and_delete_model(&self, m: &ProxyModel) -> Result<()> {
+        // tombstone-then-delete with already-decrypted model data
+        sqlx::query("INSERT INTO deleted_models (model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+            .bind(&m.model_id).bind(&m.model_name).bind(&m.litellm_params).bind(&m.model_info)
+            .bind(&m.created_at).bind(&m.created_by).bind(&m.updated_at).bind(&m.updated_by)
+            .execute(self).await?;
+        sqlx::query("DELETE FROM proxy_models WHERE model_id = ?")
+            .bind(&m.model_id)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
     async fn list_deleted_models(&self) -> Result<Vec<DeletedModel>> {
         sqlx::query_as("SELECT id, model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, deleted_at FROM deleted_models ORDER BY deleted_at DESC")
             .fetch_all(self).await.map_err(DbError::from)
@@ -4709,6 +4745,19 @@ impl ProxyModelStore for PgPool {
         }
         sqlx::query("DELETE FROM proxy_models WHERE model_id = $1")
             .bind(model_id)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn archive_and_delete_model(&self, m: &ProxyModel) -> Result<()> {
+        // tombstone-then-delete with already-decrypted model data
+        sqlx::query("INSERT INTO deleted_models (model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)")
+            .bind(&m.model_id).bind(&m.model_name).bind(&m.litellm_params).bind(&m.model_info)
+            .bind(&m.created_at).bind(&m.created_by).bind(&m.updated_at).bind(&m.updated_by)
+            .execute(self).await?;
+        sqlx::query("DELETE FROM proxy_models WHERE model_id = $1")
+            .bind(&m.model_id)
             .execute(self)
             .await?;
         Ok(())
@@ -4822,6 +4871,14 @@ impl Database {
             Database::Sqlite(pool) => pool.delete_model(model_id).await,
             Database::Mysql(pool) => pool.delete_model(model_id).await,
             Database::Postgres(pool) => pool.delete_model(model_id).await,
+        }
+    }
+
+    pub async fn archive_and_delete_model(&self, m: &ProxyModel) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.archive_and_delete_model(m).await,
+            Database::Mysql(pool) => pool.archive_and_delete_model(m).await,
+            Database::Postgres(pool) => pool.archive_and_delete_model(m).await,
         }
     }
 
