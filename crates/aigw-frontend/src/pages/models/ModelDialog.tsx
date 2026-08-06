@@ -23,7 +23,13 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Plus } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import type { ModelItem } from "./types";
+
+function isActive(info: Record<string, unknown>): boolean {
+  const mode = info.mode;
+  return mode !== "inactive" && mode !== "disabled";
+}
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Types
@@ -46,6 +52,7 @@ interface ModelFormData {
   cache_read_price_per_million: string;
   cache_create_price_per_million: string;
   chat_template_compat: string;
+  status: string; // "active" | "inactive" — read-only display in edit
 }
 
 const PROVIDERS = [
@@ -76,6 +83,7 @@ const emptyForm = (): ModelFormData => ({
   cache_read_price_per_million: "",
   cache_create_price_per_million: "",
   chat_template_compat: "",
+  status: "active",
 });
 
 function populateForm(model: ModelItem): ModelFormData {
@@ -113,6 +121,7 @@ function populateForm(model: ModelItem): ModelFormData {
     cache_create_price_per_million:
       rawCacheCreate != null ? String(rawCacheCreate * 1_000_000) : "",
     chat_template_compat: (info.chat_template_compat as string) || "",
+    status: isActive(info) ? "active" : "inactive",
   };
 }
 
@@ -484,6 +493,27 @@ export function ModelDialog({
                   </Button>
                 </div>
               </FormField>
+            </div>
+          )}
+
+          {/* Status display (edit mode only, read-only) */}
+          {isEdit && (
+            <div className="flex items-center justify-between rounded-md border bg-muted/40 px-3 py-2.5">
+              <div className="flex flex-col gap-0.5">
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  {t("models.table.status")}
+                </span>
+                <span className="text-sm">
+                  {form.status === "active"
+                    ? t("keys.active")
+                    : t("common.inactive")}
+                </span>
+              </div>
+              <Badge variant={form.status === "active" ? "default" : "secondary"}>
+                {form.status === "active"
+                  ? t("keys.active")
+                  : t("common.inactive")}
+              </Badge>
             </div>
           )}
 
