@@ -124,6 +124,7 @@ pub async fn team_new(
         budget_duration: body
             .get("budget_duration")
             .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
             .map(String::from),
         budget_reset_at: None,
         blocked: body

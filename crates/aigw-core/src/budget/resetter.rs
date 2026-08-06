@@ -118,6 +118,7 @@ async fn scan_entity_table(
     let sql = format!(
         "SELECT {pk}, budget_duration FROM {table}
          WHERE budget_duration IS NOT NULL
+           AND budget_duration != ''
            AND (budget_reset_at IS NULL OR budget_reset_at < {now_f})"
     );
 
@@ -160,6 +161,7 @@ async fn scan_organizations(db: &Database) -> Result<Vec<ResetCandidate>, DbErro
         FROM organizations o
         JOIN budgets b ON o.budget_id = b.budget_id
         WHERE b.budget_duration IS NOT NULL
+          AND b.budget_duration != ''
           AND (b.budget_reset_at IS NULL OR b.budget_reset_at < {now_f})"#
     );
 
@@ -330,10 +332,19 @@ async fn execute_reset(
     };
 
     // Compute next reset time
+    // Defensive: treat empty string as if no duration were set (shouldn't reach here
+    // after the scan SQL fix, but protects against race conditions or stale jobs).
+    let trimmed = budget_duration.trim();
+    if trimmed.is_empty() {
+        return Err(DbError::Other(format!(
+            "skip reset: entity '{entity_id}' ({}) has empty budget_duration (set it or clear budget_reset_at)",
+            entity_type.as_str()
+        )));
+    }
     let next_reset_at =
-        compute_next_reset_at(budget_duration, now, None, None).ok_or_else(|| {
+        compute_next_reset_at(trimmed, now, None, None).ok_or_else(|| {
             DbError::Other(format!(
-                "unable to compute next_reset_at for '{budget_duration}'"
+                "unable to compute next_reset_at for '{trimmed}'"
             ))
         })?;
     let next_reset_at_str = next_reset_at.to_rfc3339();
