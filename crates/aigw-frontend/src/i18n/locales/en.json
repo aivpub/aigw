@@ -777,6 +777,8 @@
     "attachImage": "Attach image",
     "removeImage": "Remove image",
     "imagePreview": "Image attachment",
+    "expandSettings": "Expand settings",
+    "collapseSettings": "Collapse settings",
     "codeDialog": {
       "title": "Call Code",
       "curl": "curl",

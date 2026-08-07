@@ -777,6 +777,8 @@
     "attachImage": "添加图片",
     "removeImage": "移除图片",
     "imagePreview": "图片附件",
+    "expandSettings": "展开设置",
+    "collapseSettings": "收起设置",
     "codeDialog": {
       "title": "调用代码",
       "curl": "curl",

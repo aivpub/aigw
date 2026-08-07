@@ -87,7 +87,7 @@
 |--------|------|--------|------|
 | TD-009a | 图片压缩/缩放 | P2 | 前端上传前用 canvas 压缩（如最长边 2048px + JPEG 0.8），降低 base64 体积与 token 成本；需评估与"原图保真"诉求的取舍。 |
 | TD-009b | 超大图/多图 body limit 防御 | P2 | 上传前估算 `∑ data URL 长度`，超限（如 >24 MiB）前端提示并拒绝；后端 `request_body_limit_mb` 已默认 32 MiB 但无 413 友好提示。 |
-| TD-009c | 图片点击放大/灯箱 | P3 | SpendLog 详情与 Playground 缩略图点击放大查看（Dialog/lightbox），当前仅缩略图。 |
+| TD-009c | 图片点击放大/灯箱 | P3 | Playground 缩略图点击放大已在 2026-08-07 `1394a9c` 实现（Dialog lightbox）；SpendLog 详情缩略图放大仍待做。 |
 | TD-009d | `/v1/models` 模式标签 UI | P3 | Playground 模型下拉按 `model_info.mode` 显示多模态/纯文本标签，当前不做（阶段已定不强制过滤）。 |
 | TD-009e | 外链 image_url 渲染 | P3 | `extractImages` 只渲染 `data:image/` 前缀；SpendLog 里 `https://` image_url 不渲染（admin-only 详情仍收窄任意 URL fetch 面）。后续如需支持外链缩略图，需代理/白名单域名。 |
 
