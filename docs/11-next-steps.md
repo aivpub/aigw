@@ -1,18 +1,21 @@
 # aigw -- 下一步行动
 
 **上次更新**: 2026-08-07
-**当前阶段**: Phase 41 ⏳ 待开始（Stage 101-102 OpenAI Responses API，22h）；Phase 42 ✅ 完成（Stage 103-105 Playground 多模态图片，34.5h）
+**当前阶段**: Phase 41 ⏳ 待开始（Stage 101-102 OpenAI Responses API，22h）；Phase 42 ✅ 完成（Stage 103-105 Playground 多模态图片，34.5h）；Phase 43 ⏳ 待开始（Stage 106-108 Image Token Usage Tracking，28h）
 
 ---
 
-## 当前状态：103/105 Stages（98-100 + 103-105 已完成；101-102 待开始）
+## 当前状态：103/108 Stages（98-100 + 103-105 已完成；101-102 + 106-108 待开始）
 
-**2026-08-07**: Phase 40 全部完成（Stage 98-100 ✅）。Phase 41 规划落定——两 Stage 渐进交付（Passthrough 8h + Bridge 14h）。Phase 42 规划落定——Playground 多模态图片 3 Stage（Backend 6.5h + Frontend 16h + Render/Docs 12h），三路 subagent 并发实测代码改动量。**Phase 42 全部完成：Stage 103 ✅（`cd576dc`）+ Stage 104 ✅（`0f4868f`）+ Stage 105 ✅（图片渲染 + SpendLog 详情 + 文档，全量 frontend BDD 312 pass）。**
+**2026-08-07**: Phase 40 全部完成（Stage 98-100 ✅）。Phase 41 规划落定——两 Stage 渐进交付（Passthrough 8h + Bridge 14h）。Phase 42 规划落定——Playground 多模态图片 3 Stage（Backend 6.5h + Frontend 16h + Render/Docs 12h），三路 subagent 并发实测代码改动量。**Phase 42 全部完成：Stage 103 ✅（`cd576dc`）+ Stage 104 ✅（`0f4868f`）+ Stage 105 ✅（图片渲染 + SpendLog 详情 + 文档，全量 frontend BDD 312 pass）。** Phase 43 规划落定——Image Token Usage Tracking 3 Stage（上游优先解析 + fallback 客户端估算），基于阿里云 DashScope 文档 + litellm/OpenRouter/OneAPI 源码调研确认：Qwen 返回 image_tokens（最完整），OpenAI/Anthropic 不返回，主流网关均不做预计算——aigw 将是行业差异化功能。
 
 **待办**:
 1. **Phase 41 Stage 101**（P1, 8h）：`POST /v1/responses` Passthrough — 新建 handler + 路由注册 + Usage 双 fallback + TDD: 6 UT + 6 BDD
 2. **Phase 41 Stage 102**（P1, 14h）：Responses→Chat 协议桥接 — `ResponsesToChatCompletions` 适配器 + 流式 SSE 事件映射 + TDD: 19 UT + 6 BDD
-3. Phase 30（Stage 78-81）代码已落地 + Phase 31 修复完成，待一并回写为 ✅
+3. **Phase 43 Stage 106**（P1, 10h）：Image Token Engine — aigw-core 上游解析器 + fallback 估算 + header parser + 15 UT
+4. **Phase 43 Stage 107**（P1, 10h）：Handler 集成 + Migration 025 + 8 BDD
+5. **Phase 43 Stage 108**（P1, 8h）：前端展示 + Real API BDD + Docs
+6. Phase 30（Stage 78-81）代码已落地 + Phase 31 修复完成，待一并回写为 ✅
 4. TD-006 客户端 call_id 响应头回写
 5. TD-007 soft_budget 告警通道（tracing::warn → webhook/email/Prometheus alert）
 6. TD-009a/b/e 图片压缩 + 超大图 body 防御 + 外链渲染（视使用量触发）

@@ -7,8 +7,8 @@
 
 ## 当前状态
 
-- **当前 Phase**: Phase 41 ⏳ 待开始（Stage 101-102 OpenAI Responses API，22h）；Phase 42 ✅ 完成（Stage 103-105 Playground 多模态图片，34.5h）
-- **状态**: **103/105 Stages** 已完成（Stage 98-100 ✅ + Stage 101-102 ⏳ + Stage 103-105 ✅）
+- **当前 Phase**: Phase 41 ⏳ 待开始（Stage 101-102 OpenAI Responses API，22h）；Phase 42 ✅ 完成（Stage 103-105 Playground 多模态图片，34.5h）；Phase 43 ⏳ 待开始（Stage 106-108 Image Token Usage Tracking，28h）
+- **状态**: **103/108 Stages** 已完成（Stage 98-100 ✅ + Stage 101-102 ⏳ + Stage 103-105 ✅ + Stage 106-108 ⏳）
 - **下一里程碑**: Phase 41 Stage 101 — OpenAI Responses API Passthrough（8h）
 
 ### 整体进度
@@ -50,6 +50,7 @@ Phase 39:   ████████████████████ 100% (4
 Phase 40:   ████████████████████ 100% (3/3 Stages) ✅ BDD Coverage Enhancement (Stage 98-100)
 Phase 41:   ░░░░░░░░░░░░░░░░░░░░   0% (0/2 Stages) ⏳ OpenAI Responses API 接入 (Stage 101-102)
 Phase 42:   ████████████████████ 100% (3/3 Stages) ✅ Playground 多模态图片 (Stage 103-105)
+Phase 43:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3 Stages) ⏳ Image Token Usage Tracking (Stage 106-108)
 ```
 
 ---
@@ -152,6 +153,37 @@ Phase 42:   ████████████████████ 100% (3
 
 **设计文档**:
 - `docs/stages/stage-103.md` / `stage-104.md` / `stage-105.md`
+
+---
+
+### Phase 43：Image Token Usage Tracking ⏳（2026-08-07）
+
+**背景**: 多模态模型的 image token 用量数据分布不均：Qwen/DashScope 返回 `prompt_tokens_details.image_tokens`（最完整），OpenAI/Anthropic 不返回。业界网关（litellm/OpenRouter/OneAPI）均不做 image token 客户端预计算。aigw 填补此缺口：上游优先解析 + 对不返回的 provider 做客户端 fallback 估算。image_tokens 是 prompt_tokens 的子集，不改 calc_spend（仅用于分析与对账）。
+
+**核心预期**: 每条多模态请求的 SpendLog 包含 `image_tokens: Option<i32>`（source 标记 upstream/estimated）+ daily 聚合。
+
+**拆分**: 3 Stage（Core Engine 10h + Handler Integration 10h + Frontend/Docs 8h），共 28h。
+
+| Stage | 状态 | 目标 | 类型 | 预估 |
+|-------|------|------|------|------|
+| Stage 106 | ⏳ 待开始 | **Image Token Engine (aigw-core)** — `extract_image_tokens_from_usage()` 上游解析器（Qwen OpenAI-compat + DashScope native）；`estimate_image_tokens_from_body()` fallback 估算（OpenAI tiling / Qwen ViT 用于验证）；Minimal PNG/JPEG/WebP/GIF header parser（零新增 deps）。Auto-sniff 策略（model name 匹配），不依赖 Deployment 配置。TDD: 15 UT。 | 后端 | 10h |
+| Stage 107 | ⏳ 待开始 | **Handler Integration + SpendLog/DailySpendLog + Migration 025 + BDD** — chat.rs / v1_messages.rs 上游取值优先 + fallback 估算；`image_tokens` 字段写入 + metadata `image_tokens_source` 标记；Migration 025（spend_logs + 6 daily_*_spend 加列）；daily_spend_queue 聚合；8 mock BDD 场景。Qwen 路径永远不触发估算（上游返回值优先）。 | 后端+测试 | 10h |
+| Stage 108 | ⏳ 待开始 | **Frontend Display + Real API BDD + Documentation** — SpendLog 抽屉展示 image_tokens + source badge（upstream/estimated）；列表 🖼️ 标记；i18n 3 keys；Real API BDD 用 Qwen 验证解析；ADR-026 + TD-010 + Roadmap/Next-Steps 收尾。 | 全栈+文档 | 8h |
+
+**依赖关系**: Stage 106 → 107（串行，handler 依赖 engine）；Stage 107 → 108（前端依赖 API 字段就绪）。
+
+**Phase 43 合计**: 28h，3 Stages。
+
+**关键决策**:
+- **上游优先 + 客户端 fallback**：Qwen/Gemini 直接解析上游返回值（最精确），OpenAI/Anthropic 做客户端估算。
+- **不改 calc_spend**：image_tokens ⊆ prompt_tokens，已包含在现有计费中。字段仅用于分析与对账。
+- **`image_token_strategy` 不在 Deployment 上**：auto-sniff model name 已经覆盖 >99% 场景。Qwen 的 ViT 公式仅用于验证/对账，handler 中 Qwen 永远不触发估算。
+- **Metadata 存 source，不建独立列**：`image_tokens_source: "upstream" \| "estimated"` 存在已有 metadata JSON 中，只在对账时需要溯源，不需要索引。
+- **`image_tokens` 字段名（非 `estimated_image_tokens`）**：因为 Qwen 的值是精确上游返回值，不是估算。
+
+**设计文档**:
+- `docs/plans/2026-08-07-image-token-estimation.md`（总体规划 + 调研修正记录）
+- `docs/stages/stage-106.md` / `stage-107.md` / `stage-108.md`
 
 ---
 
@@ -771,3 +803,4 @@ Phase 42:   ████████████████████ 100% (3
 | v41.0 | 2026-08-05 | **Phase 40 完成回写 + Phase 41 两阶段规划**：git log 确认 Phase 40（Stage 98-100 BDD Coverage Enhancement）全部实际完成（`f191758`/`8ccbba6`/`3069dfd`/`0888185`/`46e4c32`），roadmap/nnext-steps 积欠同步。Phase 41 拆为两 Stage 渐进交付：Stage 101 Passthrough（8h）— 客户端 `/v1/responses` → 上游 `/v1/responses`，新建 handler + `ClientProtocol::Responses` + 复用 `OpenAIPassthrough`，TDD 6 UT + 6 BDD；Stage 102 Bridge（14h，依赖 101）— 新增 `ResponsesToChatCompletions` 适配器（`MessageAdapter` + `StreamAdapter`）+ 流式 SSE 事件映射（output_text.delta/function_call_arguments.delta/response.completed）+ handler 集成，TDD 19 UT + 6 BDD。Phase 41 合计 22h。总进度 99/102。设计文档：`stage-101.md` + `docs/research/2026-08-04-openai-responses-api-support.md`。 |
 | v42.0 | 2026-08-07 | **Phase 42 规划**：Playground 多模态图片能力，3 Stage 共 34.5h。基于代码审计确认后端多模态转换部分就绪（`claude_message_to_openai` 已正确生成 `data:{media_type};base64,{data}`；`openai_message_to_claude` 反向硬编码 `image/jpeg` + 完整 data URL 塞入 data 字段是 bug），前端 Playground 仅纯文本、src/ 无 file input 先例。三路 subagent 并发实测：Stage 103 后端适配修复 + `/v1/models` 暴露 model_info.mode + 6 BDD（6.5h）；Stage 104 Playground 图片输入（上传/粘贴/预览 + 双端点序列化 + 8 E2E × 3 viewports，16h）；Stage 105 图片渲染 + log-viewer output_text/image block + SpendLog 详情 + 文档收尾（12h）。总进度 99/105。设计文档：`stage-103~105.md`。 |
 | v42.1 | 2026-08-07 | **Phase 42 完成**（Stage 103-105 ✅，总进度 103/105）：Stage 103 `cd576dc` 后端适配修复（parse_data_url + model_info.mode + 8 UT + 6 BDD）；Stage 104 `0f4868f` Playground 图片输入（上传/粘贴/预览 + 双端点序列化 + 8 E2E × 3 viewports + 全量 300 pass）；Stage 105 图片渲染（log-viewer extractImages/ImageThumbnails + OutputCard Responses output[] 分支 + SpendLog 详情 3 UT + 5 E2E × 3 viewports + 全量 312 pass）。ADR-025 Approved→Accepted，TD-009 a/b/e 登记。 |
+| v43.0 | 2026-08-07 | **Phase 43 规划**：Image Token Usage Tracking — 上游优先解析 + 客户端 fallback 估算。3 Stage（106-108）共 28h。基于多轮调研（Qwen/VL config + 阿里云文档 + litellm/OpenRouter/OneAPI 源码）确认 Qwen/DashScope 返回 image_tokens（最完整），OpenAI/Anthropic 不返回；主流网关均不做预计算（aigw 将是行业差异化功能）。设计文档：`docs/stages/stage-106.md`~`stage-108.md` + `docs/plans/2026-08-07-image-token-estimation.md`。总进度 103/108。 |
