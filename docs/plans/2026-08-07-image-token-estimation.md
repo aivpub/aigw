@@ -10,16 +10,24 @@
 
 ### 1.1 问题描述
 
-aigw 当前对多模态模型（如 qwen3.5-vl、gpt-4o 等）的 token 计费仅依赖上游 provider 返回的 `usage.prompt_tokens` 总数。但不同 provider 返回 image token 分解的能力差异巨大：
+aigw 当前对多模态模型（如 qwen3.5-vl、gpt-4o 等）的 token 计费仅依赖上游 provider 返回的 `usage.prompt_tokens` 总数。但**通过 OpenAI-compatible 协议连接时，几乎所有 provider 都不返回 image token 分解**：
 
-- **阿里云 DashScope (Qwen)** — ✅ 返回 `usage.image_tokens` 和 `prompt_tokens_details.image_tokens`，最完整
-- **Google Gemini** — ✅ 返回 `promptTokensDetails[]` 按 modality 分解
-- **OpenAI (GPT-4V/4o)** — ❌ **不返回** image tokens 分解（`prompt_tokens_details` 仅含 `cached_tokens` + `audio_tokens`）
-- **Anthropic (Claude 3/4)** — ❌ **不返回** image tokens 分解（图片合并在 `input_tokens` 中）
+- **Qwen OpenAI-compat 模式** — ❌ 仅 `prompt_tokens` / `completion_tokens` / `total_tokens`，无 `image_tokens`
+- **Qwen DashScope 原生模式** — ✅ 返回 `usage.image_tokens`（但 aigw 通过 OpenAI-compat 连接，不走原生协议）
+- **OpenAI (GPT-4V/4o)** — ❌ `prompt_tokens_details` 不含 `image_tokens`
+- **Anthropic (Claude)** — ❌ 图片合并在 `input_tokens`
+- **DeepSeek-VL** — ❌ `usage` 仅 `prompt_tokens` / `completion_tokens` / `total_tokens`，无 `image_tokens`
+- **智谱 GLM-4V** — ❌ 未返回 image token 分解
+- **Google Gemini** — ✅ `promptTokensDetails[]` 按 modality 分解（唯一例外，但 aigw 当前无 Gemini provider）
+
+**结论**：在 aigw 的实际部署场景中（OpenAI-compatible 协议），**所有主流 provider 都不返回 image token 分解**。客户端估算是唯一可行的路径。
+
+**阿里云官方也推荐客户端估算**（[文档](https://help.aliyun.com/zh/model-studio/vision)）：
+> "可通过以下代码计算图像或视频的 Token 消耗。估算结果仅供参考，实际用量以 API 响应为准。"
 
 这导致两个问题：
-1. **部分 provider 的数据缺失**：OpenAI 和 Anthropic 不返回 image tokens 时，SpendLog 中无法区分文本与图片的 token 消耗。
-2. **成本归因缺失**：SpendLog 中没有 image_tokens 字段，运营无法评估多模态调用的图片 token 占比。
+1. **数据缺失**：SpendLog 中无法区分文本与图片的 token 消耗。
+2. **成本归因缺失**：运营无法评估多模态调用的图片 token 占比。
 
 ### 1.2 image tokens 计费策略
 
@@ -32,19 +40,20 @@ spend = prompt_tokens × input_cost_per_token + completion_tokens × output_cost
 
 image_tokens 的价值是**分析与对账**，不是独立计费：
 - 运营了解图片 token 占比
-- 和上游 `prompt_tokens_details.image_tokens` 对账验证
+- 估算值与上游 `prompt_tokens` 交叉验证
 - 按 Stage 90 cache_tokens 模式（cache_tokens 有独立定价字段是因为缓存读写单价不同；image_tokens 不从 prompt_tokens 中拆出单独计费）
 
 ### 1.3 业界标准对比
 
-| Provider | 返回 image tokens? | 来源 | 计算公式 |
-|----------|-------------------|------|---------|
-| **阿里云 DashScope (Qwen)** | ✅ `usage.image_tokens` **顶层字段** + `prompt_tokens_details.image_tokens` | [阿里云官方文档](https://help.aliyun.com/zh/model-studio/qwen-api-via-openai-chat-completions) | ViT: `(H/factor) × (W/factor)` |
-| **Google Gemini** | ✅ `promptTokensDetails[]` 按 modality 分解 | [Google AI API 文档](https://ai.google.dev/api/generate-content) | 按像素/patch |
-| **OpenAI (GPT-4V/4o)** | ❌ `prompt_tokens_details` 不含 `image_tokens` | [OpenAI OpenAPI Spec](https://raw.githubusercontent.com/openai/openai-openapi/master/openapi.yaml) | `85 + 170 × tiles`（不在 API 返回） |
-| **Anthropic (Claude)** | ❌ 图片合并在 `input_tokens` | [Anthropic API 文档](https://platform.claude.com/docs/en/api/messages) | tile-based（不在 API 返回） |
-| 智谱 GLM-4V | 未确认 | — | 未知 |
-| DeepSeek-VL | 未确认 | — | 未知 |
+| Provider | 协议 | 返回 image tokens? | 计算公式 |
+|----------|------|-------------------|---------|
+| **Qwen (OpenAI-compat)** | `/v1/chat/completions` | ❌ | ViT: `(H/factor) × (W/factor)` |
+| **Qwen (DashScope native)** | DashScope SDK | ✅ `usage.image_tokens` | — |
+| **OpenAI** | `/v1/chat/completions` | ❌ | `85 + 170 × tiles` |
+| **Anthropic** | `/v1/messages` | ❌（公式公开） | `⌈w/28⌉ × ⌈h/28⌉` visual tokens |
+| **DeepSeek** | `/v1/chat/completions` | ❌ | 未知 |
+| **智谱 GLM-4V** | `/v1/chat/completions` | ❌ | 未知 |
+| **Google Gemini** | Gemini API | ✅ `promptTokensDetails[]` | per-modality |
 
 **业界实践**：经过对 litellm、OpenRouter、OneAPI 源码和文档的实际调研：
 
@@ -89,66 +98,76 @@ image_tokens 的价值是**分析与对账**，不是独立计费：
 | `max_pixels` (default) | 16,777,216 (= 16,384 tokens) |
 | Token formula | `image_tokens = ceil(H/32) × ceil(W/32)` |
 
-### 2.3 Qwen/DashScope API Usage 返回格式
+### 2.3 Qwen/DashScope API Usage — 两种模式，结果不同
 
-**DashScope 原生接口**（[文档](https://help.aliyun.com/zh/model-studio/qwen-api-via-dashscope)）：
+**重要发现（2026-08-07 二轮调研）**：阿里云 Qwen 的两种 API 模式行为完全不同：
+
+**OpenAI-compatible 模式**（[文档](https://help.aliyun.com/zh/model-studio/vision)，`/v1/chat/completions`）— **不返回 image_tokens**：
 ```json
-{
-  "usage": {
-    "input_tokens": 1500,
-    "output_tokens": 200,
-    "image_tokens": 400,
-    "video_tokens": 0,
-    "audio_tokens": 0,
-    "input_tokens_details": {
-      "text_tokens": 1100,
-      "image_tokens": 400
-    }
-  }
+"usage": {
+    "prompt_tokens": 1270,
+    "completion_tokens": 54,
+    "total_tokens": 1324
 }
 ```
+仅 `prompt_tokens` / `completion_tokens` / `total_tokens`，无 `prompt_tokens_details`，无 `image_tokens`。图片 token 静默合并到 `prompt_tokens`。
 
-**OpenAI 兼容接口**（[文档](https://help.aliyun.com/zh/model-studio/qwen-api-via-openai-chat-completions)）：
+**DashScope 原生模式**（DashScope SDK，非 OpenAI 协议）— ✅ 返回：
 ```json
-{
-  "usage": {
-    "prompt_tokens": 3019,
-    "completion_tokens": 104,
-    "total_tokens": 3123,
-    "prompt_tokens_details": {
-      "cached_tokens": 2048,
-      "image_tokens": 400,
-      "text_tokens": 2619
-    }
-  }
+"usage": {
+    "output_tokens": 55,
+    "input_tokens": 1271,
+    "image_tokens": 1247
 }
 ```
+但 `input_tokens`/`output_tokens`（非 `prompt_tokens`/`completion_tokens`）且无 `prompt_tokens_details` 嵌套。这是一个完全不同的 response schema。
 
-**结论**：Qwen/DashScope 返回的 image token 分解是各 provider 中**最完整的**。aigw 应优先解析上游返回值。
+**aigw 通过 OpenAI-compatible 协议连接 Qwen**（`ProviderType::OpenAICompatible`），所以 qwen-vl 在 aigw 的实际路径中也不返回 image_tokens。
 
-### 2.4 OpenAI API Usage — 不含 image_tokens
+**阿里云官方推荐客户端估算**（[文档](https://help.aliyun.com/zh/model-studio/vision)）：
+> "可通过以下代码计算图像或视频的 Token 消耗。估算结果仅供参考，实际用量以 API 响应为准。"
 
-OpenAI 的 Chat Completions 响应中 `prompt_tokens_details` 仅含 `cached_tokens` + `audio_tokens`，**无 `image_tokens`**。
+### 2.4 DeepSeek API Usage — 不含 image_tokens
 
-其图片 token 计算公式仅用于定价文档，不在 API 返回中体现。具体公式：
-- **Low detail**: 固定 85 tokens
-- **High detail**: `85 + 170 × ceil(scaled_w/512) × ceil(scaled_h/512)`
+[DeepSeek API 文档](https://api-docs.deepseek.com/api/create-chat-completion)：
+```json
+"usage": {
+    "completion_tokens": 0,
+    "prompt_tokens": 0,
+    "prompt_cache_hit_tokens": 0,
+    "prompt_cache_miss_tokens": 0,
+    "total_tokens": 0,
+    "completion_tokens_details": { "reasoning_tokens": 0 }
+}
+```
+无 `image_tokens`，无 `prompt_tokens_details` 其他字段。
 
-OpenAI 最近（GPT-5.6）引入 patch-based tokenization（32px patches × multiplier），但依然不通过 API 返回 image tokens 分解。
+### 2.5 OpenAI API Usage — 不含 image_tokens
 
-### 2.5 Anthropic API Usage — 不含 image_tokens
+[OpenAI OpenAPI Spec](https://raw.githubusercontent.com/openai/openai-openapi/master/openapi.yaml)：
+`prompt_tokens_details` 仅含 `cached_tokens` + `audio_tokens`，**无 `image_tokens`**。
 
-Anthropic 的 `usage` 对象仅含 `input_tokens`、`output_tokens`、`cache_*` 等顶层字段。图片 token 合并在 `input_tokens` 中，无独立分解。
+### 2.6 Anthropic API Usage — 不含 image_tokens，但公式公开且精确
 
-### 2.6 主流 Gateway 的实际处理方式
+Anthropic **不**在 API 返回 image_tokens 分解。但[官方文档](https://docs.anthropic.com/en/docs/build-with-claude/vision)公开了精确的视觉 token 计算公式：
 
-**litellm**（[源码](https://github.com/BerriAI/litellm)）— 不做客户端估算。当 provider 不返回 `image_tokens` 时默认为 0，按文本 token 计费。
+> "Claude views images in patches. Each patch is a 28×28-pixel block — a visual token. An image costs ⌈width/28⌉ × ⌈height/28⌉ visual tokens."
 
-**OpenRouter** — `prompt_tokens_details` 不含 input image token 字段。
+包含 model-specific downsizing rules 和 max token limits（standard 1568, high-res 4784 for Claude 4.7+）。Anthropic 的公式可以**精确计算**（不是估算）——因为 Anthropic 自己就是按这个公式计数的。
 
-**OneAPI** — 计费公式不涉及 image tokens。
+### 2.7 总结：OpenAI-compatible 协议下无人返回 image_tokens
 
-**结论**：aigw 如实现，将是**行业领先的差异化功能**。
+| Provider | 协议 | 返回 image_tokens? | 需客户端计算? |
+|----------|------|-------------------|-------------|
+| Qwen | OpenAI-compat | ❌ | ✅ ViT factor=28/32 |
+| OpenAI | Chat Completions | ❌ | ✅ Tiling formula |
+| Anthropic | Messages | ❌（公式公开且精确） | ✅ 按公式精确计算 |
+| DeepSeek | Chat Completions | ❌ | ✅（需推断公式） |
+| GLM-4V | Chat Completions | ❌ | ✅（需推断公式） |
+| Qwen | DashScope native | ✅ | —（不用此协议） |
+| Gemini | Gemini API | ✅ | —（无 provider） |
+
+**在 aigw 实际面对的 OpenAI-compatible 路径上，所有 provider 都不返回 image token 分解。客户端计算不是 fallback——它就是唯一的路径。**
 
 ---
 

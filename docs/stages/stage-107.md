@@ -11,23 +11,25 @@
 
 ## 核心预期
 
-1. **chat.rs / v1_messages.rs handler 集成**：在上游 response 解析 + SpendLog 写入路径中接入 image_tokens 引擎。"上游优先 + fallback 估算" 模式。
+1. **chat.rs / v1_messages.rs handler 集成**：在 request body 中提取 base64 图片 → 客户端计算 image_tokens → 写入 SpendLog。上游 response 解析作为辅助（几乎总是返回 None）。"客户端计算为主 + 上游解析为辅"。
 2. **DB Migration 025**：`spend_logs` + 6 张 `daily_*_spend` 表新增 `image_tokens` 列。
 3. **DailySpendLog 聚合**：daily_spend_queue 写入 image_tokens。
-4. **BDD 覆盖**：8 个 mock BDD 场景验证上游解析、fallback 估算、多图片、daily 聚合、向后兼容。
+4. **BDD 覆盖**：8 个 mock BDD 场景验证客户端计算、多图片、Anthropic 精确公式、daily 聚合、向后兼容。
 5. **零回归**：`calc_spend` 不改动 — image_tokens 是 prompt_tokens 的子集。
 
 ---
 
 ## 背景
 
-Stage 106 提供了 `extract_image_tokens_from_usage()` 和 `estimate_image_tokens_from_body()` 两个函数。本 Stage 将它们接入实际的请求-响应-SpendLog 写入链路，使每条多模态请求的 SpendLog 都包含 `image_tokens` 字段。
+Stage 106 提供了 `calculate_image_tokens()` 函数（客户端计算为主 + 上游解析为辅）。本 Stage 将其接入实际的请求-响应-SpendLog 写入链路。
 
-核心逻辑：
+核心逻辑（修订后）：
 ```
-image_tokens = extract_from_usage(upstream_response)
-    .or_else(|| estimate_from_body(request_body, model_name))
+image_tokens = calculate_from_body(request_body, model_name)  // 主路径
+    .or_else(|| extract_from_usage(upstream_response))        // 辅助路径（几乎总是 None）
 ```
+
+**原因**：OpenAI-compatible 协议下所有主流 provider（Qwen OpenAI-compat、OpenAI、Anthropic、DeepSeek、GLM）都不返回 image_tokens。客户端计算是唯一路径。上游解析仅对 DashScope 原生等非主路径有用。
 
 计费策略明确：image_tokens 不改 `calc_spend`。image_tokens 是 prompt_tokens 的子集，上游已经按总 prompt_tokens 收费。新增字段仅用于分析与对账。
 
