@@ -12,8 +12,8 @@ export default defineConfig({
   timeout: 30000,
   expect: { timeout: 5000 },
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 1 : 0,
-  workers: process.env.CI ? 1 : undefined,
+  retries: process.env.CI ? 1 : 1,
+  workers: process.env.CI ? 1 : 2,
   reporter: [
     ["html", { outputFolder: "tests/output/html-report" }],
     ["list"],
