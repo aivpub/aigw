@@ -774,6 +774,9 @@
     "total": "总计：",
     "streamingStatus": "流式传输中…",
     "response": "响应",
+    "attachImage": "添加图片",
+    "removeImage": "移除图片",
+    "imagePreview": "图片附件",
     "codeDialog": {
       "title": "调用代码",
       "curl": "curl",

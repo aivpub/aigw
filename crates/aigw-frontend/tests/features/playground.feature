@@ -35,3 +35,48 @@ Feature: Playground Chat
     And I click the Send button
     And I click the New Chat button
     Then the chat messages should be cleared
+
+  # ── Stage 104: image attachments ──
+
+  Scenario: Upload a single image shows preview thumbnail
+    When I upload an image to the playground
+    Then I should see 1 image preview
+
+  Scenario: Upload multiple images shows preview thumbnails
+    When I upload 2 images to the playground
+    Then I should see 2 image previews
+
+  Scenario: Paste an image from clipboard shows preview thumbnail
+    When I paste an image into the playground
+    Then I should see 1 image preview
+
+  Scenario: Preview thumbnails render the data URL image
+    When I upload an image to the playground
+    Then the preview thumbnail should have a data:image src
+
+  Scenario: Remove an attachment clears its preview
+    When I upload 2 images to the playground
+    And I remove the first image attachment
+    Then I should see 1 image preview
+
+  Scenario: Send with image to chat endpoint carries image_url content parts
+    When I select model "gpt-4" from the settings panel
+    And I upload an image to the playground
+    And I type "describe this" into the chat input
+    And I click the Send button
+    Then the chat request body should include an image_url content part
+
+  Scenario: Send with image to messages endpoint carries Claude image block
+    When I select model "gpt-4" from the settings panel
+    And I switch the endpoint type to Claude Messages
+    And I upload an image to the playground
+    And I type "describe this" into the chat input
+    And I click the Send button
+    Then the messages request body should include a Claude image block
+
+  Scenario: Image attachment survives reload and is cleared by New Chat
+    When I upload an image to the playground
+    And I reload the playground page
+    Then I should see 1 image preview
+    When I click the New Chat button
+    Then the chat messages should be cleared

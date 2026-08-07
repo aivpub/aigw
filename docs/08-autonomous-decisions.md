@@ -442,7 +442,7 @@
 ## ADR-025: Playground 多模态图片能力（Phase 42，Stage 103-105）
 
 - **Date**: 2026-08-07
-- **Status**: Approved（Phase 42，Stage 103-105）
+- **Status**: Accepted（Phase 42，Stage 103 ✅ / 104 ✅ / 105 ⏳）
 - **Decision**: Playground 支持图片输入与多模态模型（qwen3.5-vl 等）识别，3 Stage 交付共 34.5h。核心决策：
   (1) 前端始终用 OpenAI content-parts（chat 端点）或 Claude content blocks（messages 端点）携带图片，由 `endpointType` 决定，图片在客户端已读为 base64 data URL，网关透传；
   (2) 后端只修最小缺口——`openai_message_to_claude` 的 data URL 解析 bug + `/v1/models` 暴露 `model_info.mode`；

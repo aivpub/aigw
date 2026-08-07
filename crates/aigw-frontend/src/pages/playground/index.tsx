@@ -47,6 +47,7 @@ import {
   Sparkles,
   Eraser,
   Code2,
+  ImagePlus,
 } from "lucide-react";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -61,6 +62,8 @@ interface ChatMessage {
   id: string;
   role: "system" | "user" | "assistant";
   content: string;
+  /** Base64 data-URL image attachments — present only on user messages. */
+  images?: string[];
   timestamp: number;
   tokens?: { prompt: number; completion: number };
   error?: string;
@@ -560,6 +563,19 @@ export function PlaygroundPage() {
   const [getCodeOpen, setGetCodeOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  // ── Stage 104: image attachments ──
+  const [pendingImages, setPendingImages] = useState<string[]>(() => {
+    // Pending images ride alongside the persisted session (same storage key, but
+    // stored under a separate attribute so the message list stays the source of
+    // truth). Reloading the page restores the pending strip.
+    try {
+      const raw = sessionStorage.getItem("aigw-playground-pending-images");
+      return raw ? (JSON.parse(raw) as string[]) : [];
+    } catch {
+      return [];
+    }
+  });
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: modelsData, isLoading: modelsLoading } = useQuery<{
     data: ModelItem[];
@@ -576,6 +592,63 @@ export function PlaygroundPage() {
   useEffect(() => {
     saveToStorage(STORAGE_KEY_MESSAGES, messages, sessionStorage);
   }, [messages]);
+
+  // Persist the pending image strip across reloads (separate attribute on the
+  // session storage; clearChat/clearSession remove it too).
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(
+        "aigw-playground-pending-images",
+        JSON.stringify(pendingImages),
+      );
+    } catch {
+      /* quota exceeded — silently ignore */
+    }
+  }, [pendingImages]);
+
+  // ── Stage 104: file upload + clipboard paste → base64 data URLs ──
+  // Raster-only guard: SVG passed to <img> does not run scripts, but keeping to
+  // common raster types is the cheapest way to avoid exotic vectors. Oversized
+  // files (>20MB) are skipped — body limit (32MiB) and token cost are the
+  // caller's concern (TD-009a/b).
+  const RASTER_MIME = /^image\/(png|jpe?g|gif|webp)$/i;
+  const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+  const addImageFiles = useCallback((files: File[] | FileList) => {
+    const list = Array.from(files);
+    for (const f of list) {
+      if (!RASTER_MIME.test(f.type)) continue;
+      if (f.size > MAX_IMAGE_BYTES) continue;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = String(reader.result ?? "");
+        if (result.startsWith("data:")) {
+          setPendingImages((prev) => [...prev, result]);
+        }
+      };
+      reader.readAsDataURL(f);
+    }
+  }, []);
+
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      const files: File[] = [];
+      for (const item of items) {
+        // Only intercept image pastes; plain text pastes fall through untouched.
+        if (item.type.startsWith("image/")) {
+          const f = item.getAsFile();
+          if (f) files.push(f);
+        }
+      }
+      if (files.length) {
+        e.preventDefault(); // avoid pasting image binary as text into Textarea
+        addImageFiles(files);
+      }
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, [addImageFiles]);
 
   const scrollToBottom = () => {
     setTimeout(
@@ -604,10 +677,12 @@ export function PlaygroundPage() {
   const clearChat = () => {
     setMessages([]);
     setInput("");
+    setPendingImages([]);
     setSettings(DEFAULT_SETTINGS);
     try {
       localStorage.removeItem(STORAGE_KEY_SETTINGS);
       sessionStorage.removeItem(STORAGE_KEY_MESSAGES);
+      sessionStorage.removeItem("aigw-playground-pending-images");
     } catch {
       /* */
     }
@@ -616,8 +691,10 @@ export function PlaygroundPage() {
   const clearSession = () => {
     setMessages([]);
     setInput("");
+    setPendingImages([]);
     try {
       sessionStorage.removeItem(STORAGE_KEY_MESSAGES);
+      sessionStorage.removeItem("aigw-playground-pending-images");
     } catch {
       /* */
     }
@@ -644,10 +721,16 @@ export function PlaygroundPage() {
     setSending(true);
     scrollToBottom();
 
+    // Stage 104: snapshot the pending attachments into the user message; clear
+    // the pending strip (message history keeps its own images for later turns).
+    const sentImages = pendingImages;
+    setPendingImages([]);
+
     const userMsg: ChatMessage = {
       id: crypto.randomUUID?.() || Math.random().toString(36).slice(2),
       role: "user",
       content,
+      images: sentImages.length ? sentImages : undefined,
       timestamp: Date.now(),
     };
 
@@ -673,15 +756,33 @@ export function PlaygroundPage() {
     const controller = new AbortController();
     abortRef.current = controller;
 
-    // Build apiMessages from conversation history (used by both endpoint types)
-    const apiMessages: { role: string; content: string }[] = [];
+    // Build apiMessages from conversation history (used by both endpoint types).
+    // content is a plain string (OpenAI) or an array of content parts (Anthropic
+    // multimodal). Stage 104: messages carrying `images` are serialized to
+    // OpenAI content array / Claude content blocks.
+    const apiMessages: {
+      role: string;
+      content: string | unknown[];
+    }[] = [];
     for (const msg of newMessages) {
       if (
         msg.role === "system" ||
         msg.role === "user" ||
         (msg.role === "assistant" && msg.id !== asstId)
       ) {
-        apiMessages.push({ role: msg.role, content: msg.content });
+        if (msg.images && msg.images.length > 0) {
+          const parts: unknown[] = [];
+          if (msg.content) parts.push({ type: "text", text: msg.content });
+          for (const src of msg.images) {
+            parts.push({
+              type: "image_url",
+              image_url: { url: src },
+            });
+          }
+          apiMessages.push({ role: msg.role, content: parts });
+        } else {
+          apiMessages.push({ role: msg.role, content: msg.content });
+        }
       }
     }
 
@@ -705,7 +806,33 @@ export function PlaygroundPage() {
         const convMsgs = apiMessages.filter((m) => m.role !== "system");
         body = {
           model: settings.model,
-          messages: convMsgs.map((m) => ({ role: m.role, content: m.content })),
+          messages: convMsgs.map((m) => ({
+            role: m.role,
+            // Stage 104: OpenAI content array → Claude content blocks (image parts
+            // carry `image_url`; convert to Anthropic `image` source blocks).
+            content:
+              Array.isArray(m.content)
+                ? m.content.map((p) => {
+                    const part = p as { type: string; text?: string; image_url?: { url: string } };
+                    if (part.type === "image_url" && part.image_url) {
+                      const src = part.image_url.url;
+                      const sep = src.indexOf(";base64,");
+                      if (sep === -1) {
+                        return {
+                          type: "image",
+                          source: { type: "base64", media_type: "image/png", data: src },
+                        };
+                      }
+                      const media_type = src.slice(5, sep).split(";")[0] || "image/png";
+                      return {
+                        type: "image",
+                        source: { type: "base64", media_type, data: src.slice(sep + 8) },
+                      };
+                    }
+                    return part;
+                  })
+                : m.content,
+          })),
           max_tokens: settings.maxTokens,
           stream: settings.streaming,
           ...(systemMsg ? { system: systemMsg.content } : {}),
@@ -970,7 +1097,58 @@ export function PlaygroundPage() {
 
           {/* Input area */}
           <div className="shrink-0 mt-4">
+            {/* Stage 104: pending image preview strip */}
+            {pendingImages.length > 0 && (
+              <div className="flex flex-wrap gap-2 mb-2">
+                {pendingImages.map((src, i) => (
+                  <div key={i} className="relative group">
+                    <img
+                      src={src}
+                      alt={t("playground.imagePreview")}
+                      data-testid="playground-pending-image"
+                      className="h-16 w-16 object-cover rounded-md border"
+                    />
+                    <button
+                      type="button"
+                      aria-label={t("playground.removeImage")}
+                      data-testid={`playground-remove-image-${i}`}
+                      onClick={() =>
+                        setPendingImages((prev) => prev.filter((_, idx) => idx !== i))
+                      }
+                      className="absolute -top-1.5 -right-1.5 h-5 w-5 rounded-full bg-destructive text-white text-[10px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="flex gap-2">
+              <div className="flex flex-col gap-1 shrink-0">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  aria-label={t("playground.attachImage")}
+                  data-testid="playground-attach-image"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="h-11 w-11"
+                >
+                  <ImagePlus className="h-5 w-5" />
+                </Button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  data-testid="playground-file-input"
+                  onChange={(e) => {
+                    if (e.target.files) addImageFiles(e.target.files);
+                    e.target.value = ""; // allow re-selecting the same file
+                  }}
+                />
+              </div>
               <Textarea
                 placeholder={t("playground.placeholder")}
                 value={input}

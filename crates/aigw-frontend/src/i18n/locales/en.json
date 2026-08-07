@@ -774,6 +774,9 @@
     "total": "Total:",
     "streamingStatus": "streaming…",
     "response": "Response",
+    "attachImage": "Attach image",
+    "removeImage": "Remove image",
+    "imagePreview": "Image attachment",
     "codeDialog": {
       "title": "Call Code",
       "curl": "curl",

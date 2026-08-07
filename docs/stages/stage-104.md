@@ -2,10 +2,31 @@
 
 **Phase**: 42 — Playground 多模态图片能力
 **优先级**: P1
-**状态**: ⏳ 待开始
+**状态**: ✅ Complete
 **预估**: 16h
-**前置**: Stage 103（后端转换修复 + `/v1/models` 模式字段）
+**前置**: Stage 103（后端转换修复 + `/v1/models` 模式字段）✅ 完成
 **后置**: Stage 105（图片渲染 + SpendLog 详情增强）
+
+---
+
+## Implementation Notes
+
+### Implementation Differences
+- **pendingImages 独立持久化**：原设计"随 STORAGE_KEY_MESSAGES 存 images"改为独立 `aigw-playground-pending-images` sessionStorage 属性——消息列表保持真实来源，待发送附件条在 reload 后独立恢复（E2E "Image attachment survives reload" 场景暴露了原方案不恢复 pending 条的问题）。
+- **图片守卫（Gate 4）**：`addImageFiles` 加 RASTER_MIME 白名单（png/jpeg/gif/webp）+ 20MB 单图跳过——收敛 SVG 等向量面，防 sessionStorage/body 超限。
+- **序列化语义对齐（Gate 2）**：`imageToClaudeBlock` 用 `indexOf(";base64,")` + `slice` 解析（与后端 Stage 103 `parse_data_url` 的 `mime.split(';').next()` 语义一致），非正则——正确处理 `data:image/png;charset-8;base64,xxx` 带参数 case。
+- **apiMessages 类型扩展**：`content: string | unknown[]`；messages 端点 map 时只转 `image_url` part 为 Claude `image` block，text part 原样透传（无重复无丢失）。
+
+### Technical Decisions Made
+- 图片在浏览器读为 base64 data URL 直传，无独立上传端点（对齐 litellm 多模态）。
+- 预览条 `data-testid` 化（playground-pending-image / playground-remove-image-N / playground-file-input / playground-attach-image）供 E2E 定位。
+- /v1/messages mock 流式用裸 `data: {"delta":{"text"}}` JSON（前端 parse 读 delta.text，跳过 event: 行）。
+
+### Testing Evidence
+- Playwright BDD：playground.feature **8 新场景 × 3 viewports = 24 执行全绿**。
+- 全量 frontend BDD 回归：**300 passed / 3 skipped**（含 Stage 104 新增）。
+- tsc -b 零错误；en/zh-CN i18n key 完全对齐（en-zh=∅, zh-en=∅）。
+- 门禁：Gate 2 设计评审 1 Critical + 1 High 已修；Gate 4 代码评审 1 Medium 已修。
 
 ---
 
@@ -103,15 +124,17 @@ function imageToParts(src: string): { type: "image_url"; image_url: { url: strin
   return { type: "image_url", image_url: { url: src } };
 }
 function imageToClaudeBlock(src: string): { type: "image"; source: { type: "base64"; media_type: string; data: string } } {
-  const match = /^data:(image\/[a-z+.-]+);base64,(.*)$/s.exec(src);
-  return {
-    type: "image",
-    source: {
-      type: "base64",
-      media_type: match?.[1] ?? "image/png",
-      data: match?.[2] ?? src,
-    },
-  };
+  // Parse `data:<media_type>[;params];base64,<payload>` — align with backend
+  // Stage 103 parse_data_url semantics (media type = first `;`-segment after
+  // `data:`; payload = text after `;base64,`). Fall back to image/png + verbatim
+  // src on malformed input (upstream decides whether to reject).
+  const sep = src.indexOf(";base64,");
+  if (sep === -1) {
+    return { type: "image", source: { type: "base64", media_type: "image/png", data: src } };
+  }
+  const media_type = src.slice(5, sep).split(";")[0] || "image/png";
+  const data = src.slice(sep + 8);
+  return { type: "image", source: { type: "base64", media_type, data } };
 }
 ```
 
@@ -127,10 +150,12 @@ function imageToClaudeBlock(src: string): { type: "image"; source: { type: "base
 
 ### ⑤ 测试 mock（api-mocks.ts）
 
-新增 `/v1/messages` handler（当前 route.continue 到真实后端）：
-- 流式：Anthropic SSE（`event: content_block_delta` + `delta.text`），匹配前端 parse（L781 `parsed.delta?.text`）。
-- 非流式：`{content: [{type:"text",text:"..."}], usage: {input_tokens, output_tokens}}`。
-- 可选：捕获 chat-completions 请求体供 content-array 断言。
+新增 `/v1/messages` handler（当前 route.continue 到真实后端），SSE 格式与前端解析对齐：
+- **流式**：`data: {"delta":{"text":"..."}}` 裸 JSON（前端 L781 读 `parsed.delta?.text`，L767 跳过 `event:` 行）→ 逐 chunk + `data: [DONE]`。
+- **非流式**：`{content: [{type:"text",text:"..."}], usage: {input_tokens, output_tokens}}`（匹配前端 L822-828 parse）。
+- **请求体捕获**：`/v1/chat/completions` mock（L327-349）已 parse reqBody；新增模块级 `let lastChatBody` 在 mock handler 内捕获 + 导出 getter，供带图发送场景断言 content array 含 `image_url`。
+
+> **Gate 2 评审修正**（stage-104-review-log.md）：① imageToClaudeBlock 改 indexOf+slice 解析（与后端 parse_data_url 的 `mime.split(';').next()` 语义一致），非正则；② /v1/messages mock SSE 明确为裸 `data: {"delta":{"text"}}`；③ mock 断言用模块级 lastChatBody 捕获。
 
 ---
 

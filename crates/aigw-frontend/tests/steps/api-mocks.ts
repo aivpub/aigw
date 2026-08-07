@@ -326,6 +326,7 @@ export async function defineMockRoutes(route: Route, request: Request) {
   }
   if (url.pathname === "/v1/chat/completions" && route.request().method() === "POST") {
     const reqBody = JSON.parse(request.postData() ?? "{}");
+    lastChatBody = reqBody;
     const isStream = reqBody.stream === true;
     if (isStream) {
       // Return multiple SSE chunks as a single body; the frontend ReadableStream reader
@@ -347,9 +348,66 @@ export async function defineMockRoutes(route: Route, request: Request) {
       json: { choices: [{ message: { content: "Mock response: I am doing well!" } }] },
     });
   }
+  if (url.pathname === "/v1/messages" && route.request().method() === "POST") {
+    const reqBody = JSON.parse(request.postData() ?? "{}");
+    lastMessagesBody = reqBody;
+    const isStream = reqBody.stream === true;
+    if (isStream) {
+      // Frontend parse (playground/index.tsx L781) reads `parsed.delta?.text` from
+      // bare `data:` JSON lines (it skips `event:` lines) — so emit plain JSON.
+      const sseBody = [
+        `data: ${JSON.stringify({ delta: { text: "Hello" } })}\n\n`,
+        `data: ${JSON.stringify({ delta: { text: " from" } })}\n\n`,
+        `data: ${JSON.stringify({ delta: { text: " mock!" } })}\n\n`,
+        "data: [DONE]\n\n",
+      ].join("");
+      return route.fulfill({
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+        body: sseBody,
+      });
+    }
+    return route.fulfill({
+      status: 200,
+      json: {
+        content: [{ type: "text", text: "Mock response: I am doing well!" }],
+        usage: { input_tokens: 8, output_tokens: 6 },
+      },
+    });
+  }
 
   // Fallback: pass through
   return route.continue();
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Stage 104: captured request bodies for assertions
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// Last /v1/chat/completions request body (captured by the mock handler). Used by
+// the "send-with-image" scenario to assert the OpenAI content array carries the
+// image_url data URL.
+let lastChatBody: Record<string, unknown> = {};
+
+export function getLastChatBody(): Record<string, unknown> {
+  return lastChatBody;
+}
+
+// Last /v1/messages request body (captured by the mock handler) — same purpose
+// for the Claude content-block assertion.
+let lastMessagesBody: Record<string, unknown> = {};
+
+export function getLastMessagesBody(): Record<string, unknown> {
+  return lastMessagesBody;
+}
+
+/** Expose captured bodies into the page context so BDD steps can assert on them
+ * via page.evaluate (they cannot import the module directly). */
+export function exposeCapturedBodies(page: Page) {
+  page.evaluate(({ chat, messages }) => {
+    (globalThis as unknown as { __aigwLastChat?: unknown }).__aigwLastChat = chat;
+    (globalThis as unknown as { __aigwLastMessages?: unknown }).__aigwLastMessages = messages;
+  }, { chat: lastChatBody, messages: lastMessagesBody }).catch(() => {});
 }
 
 // Idempotent guard: `mockAllApis` is called multiple times per test (Background's
@@ -364,6 +422,12 @@ export async function mockAllApis(page: Page, _opts?: MockOptions) {
   if (mockedPages.has(page)) return;
   mockedPages.add(page);
   await page.route("**/*", defineMockRoutes);
+  exposeCapturedBodies(page);
+}
+
+/** Re-sync captured bodies into the page (after a request the mock stored a new body). */
+export function syncCapturedBodies(page: Page) {
+  exposeCapturedBodies(page);
 }
 
 function unauthenticatedHandler(route: Route, request: Request) {
