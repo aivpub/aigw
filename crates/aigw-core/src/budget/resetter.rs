@@ -8,12 +8,17 @@
 
 use async_trait::async_trait;
 use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::time::Duration;
 
 use crate::async_task::{AsyncTask, NewStep, StepOutput, StepRecord};
 use crate::budget::duration::compute_next_reset_at;
 use crate::db::{Database, DbError};
+
+/// How often the BudgetResetter periodic scan ticks. Single source of truth —
+/// reused by `AsyncTask::tick_interval()` and the stats endpoint's `next_tick_at`.
+pub const BUDGET_RESET_TICK_INTERVAL: Duration = Duration::from_secs(60);
 
 /// BudgetResetter — resets spend counters for entities whose budget period has elapsed.
 pub struct BudgetResetter;
@@ -235,6 +240,194 @@ pub fn candidates_to_steps(candidates: Vec<ResetCandidate>) -> Vec<NewStep> {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Stats / preview (for the admin budget-reset UI)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// One entity that would be reset on the next tick / trigger — display-only.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreviewEntity {
+    pub entity_type: String,
+    pub entity_id: String,
+    /// Human-readable name/alias: COALESCE(key_alias, key_name), team_alias,
+    /// user_alias, organization_alias.
+    pub alias: String,
+    pub spend: f64,
+    /// Parsed from the TEXT-typed max_budget column (null when unset/unparseable).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_budget: Option<f64>,
+    pub budget_duration: String,
+    /// Previous budget_reset_at (null for first-time resets), RFC3339-normalized.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub budget_reset_at: Option<String>,
+}
+
+/// Per-entity-type ready/total counts plus a preview list.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BudgetResetStats {
+    pub counts: std::collections::BTreeMap<String, EntityCount>,
+    pub ready_total: i64,
+    pub preview: Vec<PreviewEntity>,
+}
+
+/// `ready` = expired and due for reset; `total` = all rows of that entity type.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntityCount {
+    pub ready: i64,
+    pub total: i64,
+}
+
+/// Column names for the display SELECT per entity type (alias column).
+fn alias_column(et: EntityType) -> &'static str {
+    match et {
+        EntityType::Key => "COALESCE(key_alias, key_name)",
+        EntityType::Team => "team_alias",
+        EntityType::User => "user_alias",
+        EntityType::Organization => "organization_alias",
+    }
+}
+
+/// Count entities of `et` whose budget period has expired (ready to reset).
+///
+/// Mirrors the `scan_entity_table` predicate — including the `!= ''` guard on
+/// `budget_duration` — but uses `COUNT(*)` so the 30s admin-poll is cheap.
+pub async fn count_expired_resets(db: &Database, et: EntityType) -> Result<i64, DbError> {
+    let now_f = now_func(db);
+    let sql = match et {
+        EntityType::Organization => format!(
+            r#"SELECT COUNT(*) FROM organizations o
+               JOIN budgets b ON o.budget_id = b.budget_id
+               WHERE b.budget_duration IS NOT NULL
+                 AND b.budget_duration != ''
+                 AND (b.budget_reset_at IS NULL OR b.budget_reset_at < {now_f})"#
+        ),
+        _ => format!(
+            "SELECT COUNT(*) FROM {} WHERE budget_duration IS NOT NULL AND budget_duration != '' \
+             AND (budget_reset_at IS NULL OR budget_reset_at < {now_f})",
+            et.table_name()
+        ),
+    };
+
+    let row: (i64,) = match db {
+        Database::Sqlite(pool) => sqlx::query_as(&sql).fetch_one(pool).await?,
+        Database::Mysql(pool) => sqlx::query_as(&sql).fetch_one(pool).await?,
+        Database::Postgres(pool) => sqlx::query_as(&sql).fetch_one(pool).await?,
+    };
+    Ok(row.0)
+}
+
+/// Select up to `limit` entities of `et` that are due for reset, with display columns.
+///
+/// `budget_reset_at` is selected as TEXT per dialect (mirroring `execute_reset`):
+/// sqlite plain, mysql `DATE_FORMAT`, pg `::text`. The server normalizes to RFC3339
+/// for display (mixed formats: backfill writes `%Y-%m-%d %H:%M:%S`, reset writes RFC3339).
+pub async fn preview_expired(
+    db: &Database,
+    et: EntityType,
+    limit: i64,
+) -> Result<Vec<PreviewEntity>, DbError> {
+    let now_f = now_func(db);
+    let alias = alias_column(et);
+    let sql = match et {
+        EntityType::Organization => format!(
+            r#"SELECT o.organization_id, {alias}, o.spend, b.max_budget,
+                      b.budget_duration, {reset_at}
+               FROM organizations o
+               JOIN budgets b ON o.budget_id = b.budget_id
+               WHERE b.budget_duration IS NOT NULL
+                 AND b.budget_duration != ''
+                 AND (b.budget_reset_at IS NULL OR b.budget_reset_at < {now_f})
+               ORDER BY {alias} LIMIT ?"#,
+            alias = alias,
+            reset_at = reset_at_expr(db, "b.budget_reset_at"),
+        ),
+        _ => format!(
+            "SELECT {pk}, {alias}, spend, max_budget, budget_duration, {reset_at} \
+             FROM {table} \
+             WHERE budget_duration IS NOT NULL AND budget_duration != '' \
+               AND (budget_reset_at IS NULL OR budget_reset_at < {now_f}) \
+             ORDER BY {alias} LIMIT ?",
+            pk = et.pk_column(),
+            alias = alias,
+            reset_at = reset_at_expr(db, "budget_reset_at"),
+            table = et.table_name(),
+        ),
+    };
+
+    // (entity_id, alias, spend, max_budget TEXT, budget_duration, budget_reset_at TEXT)
+    type PreviewRow = (String, Option<String>, f64, Option<String>, String, Option<String>);
+    let rows: Vec<PreviewRow> = match db {
+        Database::Sqlite(pool) => sqlx::query_as(&sql).bind(limit).fetch_all(pool).await?,
+        Database::Mysql(pool) => sqlx::query_as(&sql).bind(limit).fetch_all(pool).await?,
+        Database::Postgres(pool) => sqlx::query_as(&sql).bind(limit).fetch_all(pool).await?,
+    };
+
+    Ok(rows
+        .into_iter()
+        .map(|(entity_id, alias, spend, max_budget, budget_duration, budget_reset_at)| {
+            let alias = alias.unwrap_or_else(|| entity_id.clone());
+            PreviewEntity {
+                entity_type: et.as_str().to_string(),
+                entity_id,
+                alias,
+                spend,
+                max_budget: max_budget.and_then(|s| s.parse::<f64>().ok()),
+                budget_duration,
+                budget_reset_at,
+            }
+        })
+        .collect())
+}
+
+/// Build the dialect-specific expression selecting a timestamp column as text.
+fn reset_at_expr(db: &Database, col: &str) -> String {
+    match db {
+        Database::Sqlite(_) => col.to_string(),
+        Database::Mysql(_) => format!("DATE_FORMAT({col}, '%Y-%m-%d %H:%i:%s')"),
+        Database::Postgres(_) => format!("{col}::text"),
+    }
+}
+
+/// Orchestrate the per-entity ready/total counts and previews for the stats endpoint.
+///
+/// Reuses the existing `count_*` helpers on `Database` for the total columns, and
+/// `count_expired_resets`/`preview_expired` for the ready/preview data.
+pub async fn budget_reset_stats(db: &Database, preview_limit: i64) -> Result<BudgetResetStats, DbError> {
+    let keys_ready = count_expired_resets(db, EntityType::Key).await?;
+    let teams_ready = count_expired_resets(db, EntityType::Team).await?;
+    let users_ready = count_expired_resets(db, EntityType::User).await?;
+    let orgs_ready = count_expired_resets(db, EntityType::Organization).await?;
+
+    let keys_total = db.count_keys(None, None).await?;
+    let teams_total = db.count_teams_store(None).await?;
+    let users_total = db.count_users().await?;
+    let orgs_total = db.count_organizations_store().await?;
+
+    let mut preview = Vec::new();
+    for et in [
+        EntityType::Key,
+        EntityType::Team,
+        EntityType::User,
+        EntityType::Organization,
+    ] {
+        preview.extend(preview_expired(db, et, preview_limit).await?);
+    }
+
+    let mut counts = std::collections::BTreeMap::new();
+    counts.insert("key".to_string(), EntityCount { ready: keys_ready, total: keys_total });
+    counts.insert("team".to_string(), EntityCount { ready: teams_ready, total: teams_total });
+    counts.insert("user".to_string(), EntityCount { ready: users_ready, total: users_total });
+    counts.insert("org".to_string(), EntityCount { ready: orgs_ready, total: orgs_total });
+
+    let ready_total = keys_ready + teams_ready + users_ready + orgs_ready;
+
+    Ok(BudgetResetStats {
+        counts,
+        ready_total,
+        preview,
+    })
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Reset execution
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -453,7 +646,7 @@ impl AsyncTask for BudgetResetter {
     }
 
     fn tick_interval(&self) -> Duration {
-        Duration::from_secs(60)
+        BUDGET_RESET_TICK_INTERVAL
     }
 
     fn concurrency(&self) -> usize {
@@ -941,5 +1134,177 @@ mod tests {
         assert!(types.contains(&"team"));
         assert!(types.contains(&"user"));
         assert!(types.contains(&"org"));
+    }
+
+    // ── Budget-reset stats / preview tests ─────────────────────────
+
+    #[tokio::test]
+    async fn test_count_expired_resets_empty_db() {
+        let db = Database::init("sqlite::memory:").await.unwrap();
+        assert_eq!(count_expired_resets(&db, EntityType::Key).await.unwrap(), 0);
+        assert_eq!(count_expired_resets(&db, EntityType::Team).await.unwrap(), 0);
+        assert_eq!(count_expired_resets(&db, EntityType::User).await.unwrap(), 0);
+        assert_eq!(
+            count_expired_resets(&db, EntityType::Organization).await.unwrap(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn test_count_expired_resets_mixed_states() {
+        use crate::crypto::hash_token;
+
+        let db = Database::init("sqlite::memory:").await.unwrap();
+        let pool = sqlite_pool(&db);
+        let past = (Utc::now() - chrono::Duration::hours(2))
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        let future = (Utc::now() + chrono::Duration::hours(24))
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+
+        let expired = hash_token("sk-count-expired");
+        let fresh = hash_token("sk-count-fresh");
+        let no_dur = hash_token("sk-count-no-dur");
+        let empty_dur = hash_token("sk-count-empty-dur");
+
+        for (token, dur, rst) in [
+            (&expired, "1mo", &past),
+            (&fresh, "1mo", &future),
+            (&no_dur, "", &past),
+            (&empty_dur, "", &past),
+        ] {
+            let dur_opt: Option<&str> = if dur.is_empty() { None } else { Some(dur) };
+            let rst_opt: Option<&str> = if rst.is_empty() { None } else { Some(rst) };
+            sqlx::query(
+                r#"INSERT INTO virtual_keys (token, key_name, spend, budget_duration, budget_reset_at, models, aliases, config, permissions, metadata, allowed_cache_controls, allowed_routes, policies, access_group_ids, model_spend, model_max_budget, soft_budget_cooldown)
+                   VALUES (?, 't', 0, ?, ?, '[]', '{}', '{}', '{}', '{}', '[]', '[]', '[]', '[]', '{}', '{}', 'false')"#,
+            )
+            .bind(token)
+            .bind(dur_opt)
+            .bind(rst_opt)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+
+        // Only the expired row (past reset_at + valid duration) counts. The empty-string
+        // duration row must be excluded (the `!= ''` guard the db.rs find_expired_* lacks).
+        assert_eq!(count_expired_resets(&db, EntityType::Key).await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_preview_expired_returns_alias_not_hash() {
+        use crate::crypto::hash_token;
+
+        let db = Database::init("sqlite::memory:").await.unwrap();
+        let pool = sqlite_pool(&db);
+        let past = (Utc::now() - chrono::Duration::hours(1))
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        let kh = hash_token("sk-preview");
+        let expired = hash_token("sk-preview-2");
+
+        sqlx::query(
+            r#"INSERT INTO virtual_keys (token, key_name, key_alias, spend, budget_duration, budget_reset_at, max_budget, models, aliases, config, permissions, metadata, allowed_cache_controls, allowed_routes, policies, access_group_ids, model_spend, model_max_budget, soft_budget_cooldown)
+               VALUES (?, 'prod-key-name', 'prod-key-alias', 12.4, '1mo', ?, '50', '[]', '{}', '{}', '{}', '{}', '[]', '[]', '[]', '[]', '{}', '{}', 'false')"#,
+        )
+        .bind(&kh).bind(&past).execute(pool).await.unwrap();
+        sqlx::query(
+            r#"INSERT INTO virtual_keys (token, key_name, spend, budget_duration, budget_reset_at, models, aliases, config, permissions, metadata, allowed_cache_controls, allowed_routes, policies, access_group_ids, model_spend, model_max_budget, soft_budget_cooldown)
+               VALUES (?, NULL, 3.0, '7d', NULL, '[]', '{}', '{}', '{}', '{}', '[]', '[]', '[]', '[]', '{}', '{}', 'false')"#,
+        )
+        .bind(&expired).execute(pool).await.unwrap();
+
+        let preview = preview_expired(&db, EntityType::Key, 10).await.unwrap();
+        assert_eq!(preview.len(), 2);
+
+        let by_alias: std::collections::HashMap<_, _> = preview
+            .into_iter()
+            .map(|p| (p.alias.clone(), p))
+            .collect();
+        let first = by_alias.get("prod-key-alias").expect("alias-preferred key");
+        assert_eq!(first.entity_id, kh);
+        assert_eq!(first.max_budget, Some(50.0));
+        assert_eq!(first.budget_duration, "1mo");
+        assert!(first.budget_reset_at.is_some());
+        assert_eq!(first.spend, 12.4);
+
+        // A key with no alias falls back to its hashed token as the display name.
+        assert!(by_alias.get(&expired).is_some());
+    }
+
+    #[tokio::test]
+    async fn test_budget_reset_stats_combines_all_types() {
+        use crate::crypto::hash_token;
+
+        let db = Database::init("sqlite::memory:").await.unwrap();
+        let pool = sqlite_pool(&db);
+        let past = (Utc::now() - chrono::Duration::hours(1))
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+
+        // 2 expired keys (one alias), 1 fresh key (future reset_at)
+        let kh1 = hash_token("sk-stats-1");
+        let kh2 = hash_token("sk-stats-2");
+        let kh3 = hash_token("sk-stats-3");
+        let future = (Utc::now() + chrono::Duration::hours(24))
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string();
+        for (token, alias, rst_opt) in [
+            (&kh1, "key-one", Some(past.as_str())),
+            (&kh2, "key-two", Some(past.as_str())),
+            (&kh3, "key-fresh", Some(future.as_str())),
+        ] {
+            sqlx::query(
+                r#"INSERT INTO virtual_keys (token, key_name, spend, budget_duration, budget_reset_at, models, aliases, config, permissions, metadata, allowed_cache_controls, allowed_routes, policies, access_group_ids, model_spend, model_max_budget, soft_budget_cooldown)
+                   VALUES (?, ?, 0, 'daily', ?, '[]', '{}', '{}', '{}', '{}', '[]', '[]', '[]', '[]', '{}', '{}', 'false')"#,
+            )
+            .bind(token)
+            .bind(alias)
+            .bind(rst_opt)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+
+        // team + user expired
+        sqlx::query(
+            "INSERT INTO teams (team_id, team_alias, spend, budget_duration, budget_reset_at, models, admins, members, members_with_roles, metadata, access_group_ids, policies, team_member_permissions, model_spend, model_max_budget, default_team_member_models, created_at, updated_at) VALUES ('t1', 'team-a', 0, '7d', ?, '[]','{}','{}','{}','{}','[]','[]','{}','{}','{}','[]', datetime('now'), datetime('now'))",
+        )
+        .bind(&past).execute(pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO users (user_id, user_alias, spend, budget_duration, budget_reset_at, models, metadata, allowed_cache_controls, policies, model_spend, model_max_budget, teams, user_email, created_at, updated_at) VALUES ('u1', 'user-a', 0, 'daily', ?, '[]','{}','[]','[]','{}','{}','{}','u1@test.com', datetime('now'), datetime('now'))",
+        )
+        .bind(&past).execute(pool).await.unwrap();
+
+        // org + budget expired
+        sqlx::query(
+            "INSERT INTO budgets (budget_id, max_budget, budget_duration, budget_reset_at, model_max_budget, allowed_models, created_at, created_by, updated_at, updated_by) VALUES ('b1', '100', '1mo', ?, '{}', '[]', datetime('now'), 'test', datetime('now'), 'test')",
+        )
+        .bind(&past).execute(pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO organizations (organization_id, organization_alias, budget_id, spend, models, metadata, model_spend, created_at, created_by, updated_at, updated_by) VALUES ('o1', 'org-a', 'b1', 0, '[]','{}','{}', datetime('now'), 'test', datetime('now'), 'test')",
+        )
+        .execute(pool).await.unwrap();
+
+        let stats = budget_reset_stats(&db, 10).await.unwrap();
+        assert_eq!(stats.counts["key"].ready, 2);
+        assert_eq!(stats.counts["key"].total, 3);
+        assert_eq!(stats.counts["team"].ready, 1);
+        assert_eq!(stats.counts["user"].ready, 1);
+        assert_eq!(stats.counts["org"].ready, 1);
+        assert_eq!(stats.ready_total, 5);
+        assert_eq!(stats.preview.len(), 5);
+
+        let types: std::collections::HashSet<&str> = stats
+            .preview
+            .iter()
+            .map(|p| p.entity_type.as_str())
+            .collect();
+        assert!(types.contains("key"));
+        assert!(types.contains("team"));
+        assert!(types.contains("user"));
+        assert!(types.contains("org"));
     }
 }

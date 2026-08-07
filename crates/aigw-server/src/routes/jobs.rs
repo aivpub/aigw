@@ -400,3 +400,57 @@ pub async fn archive_stats_handler(
 
     Ok(Json(stats))
 }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// GET /admin/budget-reset/stats
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Get budget-reset specific statistics for the admin UI:
+/// per-entity-type ready/total counts, a capped upcoming-reset preview, the
+/// approximate next periodic tick, and the most recent terminal budget_reset job.
+pub async fn budget_reset_stats_handler(
+    State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    require_admin(&auth)?;
+
+    let stats = aigw_core::budget::resetter::budget_reset_stats(&state.db, 10)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+        })?;
+
+    // Most recent terminal budget_reset job (completed or partially_failed).
+    let last_reset = list_jobs(&state.db, Some("budget_reset"), None, 1, 0)
+        .await
+        .map(|(jobs, _)| {
+            jobs.into_iter().find(|j| {
+                j.status == "completed" || j.status == "partially_failed"
+            })
+        })
+        .unwrap_or(None)
+        .map(|j| {
+            serde_json::json!({
+                "job_id": j.id,
+                "trigger_type": j.trigger_type,
+                "status": j.status,
+                "started_at": j.started_at,
+                "completed_at": j.completed_at,
+                "total_steps": j.total_steps,
+                "completed_steps": j.completed_steps,
+                "failed_steps": j.failed_steps,
+            })
+        });
+
+    Ok(Json(serde_json::json!({
+        "tick_interval_sec": aigw_core::budget::resetter::BUDGET_RESET_TICK_INTERVAL.as_secs(),
+        "next_tick_at": (chrono::Utc::now() + aigw_core::budget::resetter::BUDGET_RESET_TICK_INTERVAL).to_rfc3339(),
+        "counts": stats.counts,
+        "ready_total": stats.ready_total,
+        "preview": stats.preview,
+        "last_reset": last_reset,
+    })))
+}

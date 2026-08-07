@@ -115,7 +115,35 @@ export async function defineMockRoutes(route: Route, request: Request) {
   const sampleJobs = [
     { id: "job-abc123-4567", step_type: "body_archive", trigger_type: "manual", triggered_by: "admin", status: "running", total_steps: 24, completed_steps: 8, failed_steps: 0, created_at: "2026-07-25T14:00:00Z", updated_at: "2026-07-25T14:05:00Z" },
     { id: "job-def456-7890", step_type: "body_archive", trigger_type: "cron", triggered_by: null, status: "completed", total_steps: 1, completed_steps: 1, failed_steps: 0, created_at: "2026-07-25T13:00:00Z", updated_at: "2026-07-25T13:02:00Z" },
+    { id: "job-budget-reset-1", step_type: "budget_reset", trigger_type: "cron", triggered_by: null, status: "completed", total_steps: 9, completed_steps: 9, failed_steps: 0, created_at: "2026-07-25T12:00:00Z", updated_at: "2026-07-25T12:01:00Z" },
   ];
+  // Budget-reset stats mock — hero, per-entity counts, upcoming preview, last reset.
+  const sampleBudgetResetStats = {
+    tick_interval_sec: 60,
+    next_tick_at: new Date(Date.now() + 42000).toISOString(),
+    counts: {
+      key: { ready: 12, total: 342 },
+      team: { ready: 3, total: 18 },
+      user: { ready: 0, total: 56 },
+      org: { ready: 2, total: 4 },
+    },
+    ready_total: 17,
+    preview: [
+      { entity_type: "key", entity_id: "key-hash-1", alias: "prod-key", spend: 12.4, max_budget: 50, budget_duration: "1mo", budget_reset_at: "2026-07-08T00:00:00Z" },
+      { entity_type: "team", entity_id: "team-1", alias: "AI Team", spend: 3.2, max_budget: 100, budget_duration: "7d", budget_reset_at: "2026-07-09T00:00:00Z" },
+      { entity_type: "org", entity_id: "org-1", alias: "Engineering", spend: 2.0, max_budget: 500, budget_duration: "30d", budget_reset_at: "2026-07-01T00:00:00Z" },
+    ],
+    last_reset: {
+      job_id: "job-budget-reset-1",
+      trigger_type: "cron",
+      status: "completed",
+      started_at: "2026-07-25T12:00:00Z",
+      completed_at: "2026-07-25T12:01:00Z",
+      total_steps: 9,
+      completed_steps: 9,
+      failed_steps: 0,
+    },
+  };
   const sampleJobDetail = {
     job: sampleJobs[0],
     steps: [
@@ -139,6 +167,9 @@ export async function defineMockRoutes(route: Route, request: Request) {
 
   if (url.pathname === "/admin/jobs/stats") {
     return route.fulfill({ status: 200, json: { body_archive: { queue: { pending: 3, running: 2, completed: 148, failed: 1 } }, budget_reset: { queue: { pending: 0, running: 0, completed: 0, failed: 0 } } } });
+  }
+  if (url.pathname === "/admin/budget-reset/stats") {
+    return route.fulfill({ status: 200, json: sampleBudgetResetStats });
   }
   if (url.pathname === "/admin/jobs") {
     const st = url.searchParams.get("step_type") || "";

@@ -105,11 +105,29 @@ Feature: Jobs 管理页面
 
   # ── 其他 step_type Sub-Tab ──
 
-  Scenario: Budget Reset Sub-Tab 显示占位和统计
+  Scenario: Budget Reset Sub-Tab 展示概览统计与即将重置的实体
     When I click the "Budget Reset" Sub-Tab
-    Then I should see a placeholder message "No jobs found"
-    And GET /admin/jobs?step_type=budget_reset is called
-    And the stats card shows loop and queue stats for budget_reset
+    Then I should see the budget reset overview card
+    And I should see the upcoming resets preview
+    And I should see the recent resets history table
+    And I should see the "Ready to Reset" count "17"
+    And I should see the "Last Reset" timestamp
+    And I should see a next-check countdown
+
+  Scenario: Budget Reset Sub-Tab 空数据时显示空态
+    Given the budget reset stats are empty
+    When I click the "Budget Reset" Sub-Tab
+    Then I should see the preview empty message
+    And I should see "Never" for the last reset
+
+  Scenario: Budget Reset 触发前预览并确认
+    When I click the "Budget Reset" Sub-Tab
+    And I click "Trigger Reset"
+    Then I should see the trigger estimate "17"
+    And I click "Confirm Reset"
+    Then POST /admin/jobs/trigger is called with step_type="budget_reset"
+    And a success notification appears with the job_id
+    And the Job Detail panel opens for the new job
 
   Scenario: 通用 JobDetail 可用于任何 step_type
     Given the Budget Reset Sub-Tab has 1 job with steps
@@ -210,7 +228,7 @@ Feature: Jobs 管理页面
   Scenario: 详情页不显示外层 Sub-Tab 栏
     Given I am viewing Job Detail for "job-test-007"
     Then I do NOT see the "Body Archive" and "Budget Reset" Sub-Tab bar
-    And the title shows "Body Archive · manual"
+    And the title shows "Body Archive · Manual"
     And Steps table shows Payload, Result, and Duration columns
     And Steps table is paginated with pageSize=20
 

@@ -869,12 +869,24 @@
       "entitiesReset": "{{count}} 个实体已重置",
       "nothingToReset": "当前没有需要重置预算的实体",
       "neverReset": "从未重置",
-      "noRecentResets": "暂无预算重置记录"
+      "noRecentResets": "暂无预算重置记录",
+      "nextTick": "下次检查 ~",
+      "previewTitle": "即将重置的实体",
+      "previewEmpty": "当前没有过期待重置的实体",
+      "willReset": "将重置 {{count}} 个实体",
+      "confirmReset": "确认重置",
+      "resetSchedule": "自动检查，约每 60 秒",
+      "totalCount": "共 {{count}} 个",
+      "readyOf": "{{ready}} / {{total}}"
     },
     "startDate": "开始日期",
     "endDate": "结束日期",
     "batchSize": "批量大小",
     "triggerJob": "触发任务",
+    "trigger": {
+      "cron": "定时",
+      "manual": "手动"
+    },
     "triggerToast": "任务 {{jobId}}... 已创建，包含 {{totalSteps}} 个步骤",
     "summary": "摘要",
     "steps": {

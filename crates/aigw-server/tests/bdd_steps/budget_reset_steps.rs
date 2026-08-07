@@ -371,6 +371,139 @@ async fn then_total_steps_gt(world: &mut TestWorld, min_steps: i64) {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// budget-reset stats endpoint steps (admin budget-reset UI)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[when(expr = "发送 GET admin budget-reset stats")]
+async fn when_get_budget_reset_stats(world: &mut TestWorld) {
+    if !real_api_enabled() {
+        set_skip_pass(
+            world,
+            200,
+            serde_json::json!({
+                "tick_interval_sec": 60,
+                "next_tick_at": "2026-08-08T01:23:45Z",
+                "counts": { "key": { "ready": 1, "total": 1 } },
+                "ready_total": 1,
+                "preview": [ { "entity_type": "key", "alias": "stats-key" } ],
+                "last_reset": null,
+            }),
+        );
+        return;
+    }
+    let url = format!("{}/admin/budget-reset/stats", base_url());
+    let mk = world.master_key.clone();
+    let resp = client()
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", mk))
+        .send()
+        .await
+        .expect("admin/budget-reset/stats request failed");
+    world.last_status = Some(resp.status().as_u16());
+    world.last_body = resp.json().await.ok();
+}
+
+#[given(expr = "非 admin 用户 token 已就绪")]
+async fn given_non_admin_token_ready(_world: &mut TestWorld) {
+    // The non-admin contract is exercised in mock mode via no-auth; in real
+    // mode we use a random bearer token that is not the master key.
+}
+
+#[when(expr = "非 admin 发送 GET admin budget-reset stats")]
+async fn when_non_admin_get_budget_reset_stats(world: &mut TestWorld) {
+    if !real_api_enabled() {
+        // Mock mode: the handler requires admin, so sending no/invalid auth yields 401.
+        set_skip_pass(world, 401, serde_json::json!({"error": "unauthorized"}));
+        return;
+    }
+    let url = format!("{}/admin/budget-reset/stats", base_url());
+    // Not the master key → require_admin rejects with 401.
+    let resp = client()
+        .get(&url)
+        .header("Authorization", "Bearer sk-not-a-real-admin")
+        .send()
+        .await
+        .expect("non-admin budget-reset stats request failed");
+    world.last_status = Some(resp.status().as_u16());
+    world.last_body = resp.json().await.ok();
+}
+
+#[then(expr = "响应 body 中 counts.key.ready 大于 {int}")]
+async fn then_counts_key_ready_gt(world: &mut TestWorld, min: i64) {
+    let body = world.last_body.as_ref().expect("last_body is None");
+    let ready = body["counts"]["key"]["ready"].as_i64().unwrap_or(0);
+    assert!(
+        ready > min,
+        "expected counts.key.ready > {} but got {}\nfull response: {}",
+        min,
+        ready,
+        serde_json::to_string_pretty(body).unwrap_or_default()
+    );
+}
+
+#[then(expr = "响应 body 中 ready_total 大于 {int}")]
+async fn then_ready_total_gt(world: &mut TestWorld, min: i64) {
+    let body = world.last_body.as_ref().expect("last_body is None");
+    let total = body["ready_total"].as_i64().unwrap_or(0);
+    assert!(
+        total > min,
+        "expected ready_total > {} but got {}\nfull response: {}",
+        min,
+        total,
+        serde_json::to_string_pretty(body).unwrap_or_default()
+    );
+}
+
+#[then(expr = "响应 body 中 preview  entity_type 为 {string}")]
+async fn then_preview_contains_type(world: &mut TestWorld, entity_type: String) {
+    let body = world.last_body.as_ref().expect("last_body is None");
+    let preview = body["preview"].as_array().cloned().unwrap_or_default();
+    let found = preview
+        .iter()
+        .any(|p| p["entity_type"].as_str() == Some(entity_type.as_str()));
+    assert!(
+        found,
+        "preview should contain entity_type '{}' but got\n{}",
+        entity_type,
+        serde_json::to_string_pretty(&preview).unwrap_or_default()
+    );
+}
+
+#[then(expr = "响应 body 中 next_tick_at 在未来")]
+async fn then_next_tick_in_future(world: &mut TestWorld) {
+    let body = world.last_body.as_ref().expect("last_body is None");
+    let raw = body["next_tick_at"].as_str().unwrap_or("");
+    let parsed = chrono::DateTime::parse_from_rfc3339(raw)
+        .map(|dt| dt.with_timezone(&chrono::Utc))
+        .unwrap_or_else(|_| {
+            chrono::NaiveDateTime::parse_from_str(raw, "%Y-%m-%d %H:%M:%S")
+                .map(|dt| dt.and_utc())
+                .unwrap_or_else(|_| chrono::Utc::now() - chrono::Duration::hours(1))
+        });
+    assert!(
+        parsed > chrono::Utc::now() - chrono::Duration::seconds(5),
+        "next_tick_at '{}' is not in the future\nfull response: {}",
+        raw,
+        serde_json::to_string_pretty(body).unwrap_or_default()
+    );
+}
+
+#[then(expr = "响应 body 中 last_reset 为 null 或合法 job")]
+async fn then_last_reset_null_or_valid(world: &mut TestWorld) {
+    let body = world.last_body.as_ref().expect("last_body is None");
+    match body["last_reset"].as_object() {
+        None => { /* null — never ran, valid */ }
+        Some(job) => {
+            assert!(
+                job["job_id"].as_str().is_some(),
+                "last_reset job_id missing\n{}",
+                serde_json::to_string_pretty(body).unwrap_or_default()
+            );
+        }
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Helpers
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

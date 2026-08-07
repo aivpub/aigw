@@ -3,6 +3,7 @@ import {
   fetchJobDetail,
   fetchJobLogs,
   stepTypeLabel,
+  triggerTypeLabel,
   formatCount,
   formatBytes,
   formatDuration,
@@ -115,6 +116,26 @@ function StepStatus({
 function formatStepResult(result: Record<string, unknown> | null): string {
   if (!result) return "-";
   const parts: string[] = [];
+  // Budget-reset step result — render entity + reset timestamps instead of
+  // falling through to the truncated-JSON fallback.
+  if (typeof result.entity_type === "string" && result.entity_id !== undefined) {
+    if (typeof result.entity_type === "string") {
+      parts.push(result.entity_type);
+    }
+    if (typeof result.entity_id === "string") {
+      parts.push(result.entity_id.slice(0, 16));
+    }
+    if (typeof result.new_reset_at === "string") {
+      parts.push(`next ${formatTs(result.new_reset_at)}`);
+    }
+    if (typeof result.reset_at_utc === "string") {
+      parts.push(`at ${formatTs(result.reset_at_utc)}`);
+    }
+    if (typeof result.message === "string") {
+      parts.push(result.message);
+    }
+    return parts.length > 0 ? parts.join(" · ") : JSON.stringify(result).slice(0, 60);
+  }
   if (typeof result.rows_archived === "number") {
     parts.push(formatCount(result.rows_archived) + " rows");
   }
@@ -140,6 +161,13 @@ function formatStepResult(result: Record<string, unknown> | null): string {
   return parts.length > 0
     ? parts.join(" · ")
     : JSON.stringify(result).slice(0, 60);
+}
+
+/** Format a server timestamp string (RFC3339 or "%Y-%m-%d %H:%M:%S"). */
+function formatTs(ts: string): string {
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return ts;
+  return d.toLocaleString();
 }
 
 // ── Steps Pagination (SpendLogs-style) ──
@@ -411,7 +439,7 @@ export function JobDetailPage() {
       {/* Title */}
       <div className="flex items-center gap-3">
         <h1 className="text-2xl font-bold">
-          {stepTypeLabel(job.step_type)} · {job.trigger_type}
+          {stepTypeLabel(job.step_type)} · {triggerTypeLabel(job.trigger_type)}
         </h1>
         <StatusBadge status={ds} />
         <span className="text-sm text-muted-foreground">

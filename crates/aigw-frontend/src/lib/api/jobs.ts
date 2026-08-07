@@ -128,6 +128,47 @@ export function fetchArchiveStats(): Promise<ArchiveStats> {
   return apiGet<ArchiveStats>("/admin/archive/stats");
 }
 
+// ── Budget reset stats ──
+
+export interface BudgetResetPreviewItem {
+  entity_type: string;
+  entity_id: string;
+  alias: string;
+  spend: number;
+  max_budget?: number | null;
+  budget_duration: string;
+  budget_reset_at?: string | null;
+}
+
+export interface BudgetResetEntityCount {
+  ready: number;
+  total: number;
+}
+
+export interface BudgetResetLastReset {
+  job_id: string;
+  trigger_type: string;
+  status: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  total_steps: number;
+  completed_steps: number;
+  failed_steps: number;
+}
+
+export interface BudgetResetStats {
+  tick_interval_sec: number;
+  next_tick_at: string;
+  counts: Record<string, BudgetResetEntityCount>;
+  ready_total: number;
+  preview: BudgetResetPreviewItem[];
+  last_reset: BudgetResetLastReset | null;
+}
+
+export function fetchBudgetResetStats(): Promise<BudgetResetStats> {
+  return apiGet<BudgetResetStats>("/admin/budget-reset/stats");
+}
+
 export function triggerJob(payload: {
   step_type: string;
   payload: Record<string, unknown>;
@@ -142,6 +183,13 @@ const STEP_LABELS: Record<string, string> = {
   body_archive: "jobs.subTabs.bodyArchive",
   budget_reset: "jobs.subTabs.budgetReset",
 };
+
+/** Localize the raw `trigger_type` value ("cron" / "manual"). */
+export function triggerTypeLabel(trigger: string): string {
+  if (trigger === "cron") return i18n.t("jobs.trigger.cron");
+  if (trigger === "manual") return i18n.t("jobs.trigger.manual");
+  return trigger;
+}
 
 /**
  * Step types the frontend always advertises as tabs, independent of job history.

@@ -8,7 +8,7 @@
 ## 当前状态
 
 - **当前 Phase**: Phase 41 ⏳ 待开始（Stage 101-102 OpenAI Responses API，22h）；Phase 42 ✅ 完成（Stage 103-105 Playground 多模态图片，34.5h）；Phase 43 ⏳ 待开始（Stage 106-108 Image Token Usage Tracking，28h）
-- **状态**: **103/108 Stages** 已完成（Stage 98-100 ✅ + Stage 101-102 ⏳ + Stage 103-105 ✅ + Stage 106-108 ⏳）
+- **状态**: **104/108 Stages** 已完成（Stage 98-100 ✅ + Stage 101-102 ⏳ + Stage 103-105 ✅ + Stage 106-108 ⏳ + Stage 109 ✅ 预算重置 UI）
 - **下一里程碑**: Phase 41 Stage 101 — OpenAI Responses API Passthrough（8h）
 
 ### 整体进度
@@ -102,7 +102,9 @@ Phase 43:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 **Phase 39 合计**: 56h，4 Stages。全部完成 — Stage 94 ✅ / Stage 95 ✅ / Stage 96 ✅ / Stage 97 ✅。
 
-**设计文档**: `docs/stages/stage-94.md` ~ `stage-97.md` / `docs/research/2026-08-01-budget-reset-architecture.md` / `docs/08-autonomous-decisions.md` ADR-024
+**补充 Stage 109（2026-08-08 ✅）**: 预算重置 cron 界面重构 — `GET /admin/budget-reset/stats` 端点（per-entity ready/total + preview + last_reset + next_tick_at）+ BudgetResetStatsCard（真实待重置数 / 上次重置 / 诚实倒计时）+ BudgetResetPreview（分实体明细 + 即将重置列表）+ BudgetResetTriggerDialog（范围→预览→确认→跳转）+ job 表 trigger 列本地化 + job-detail formatStepResult budget_reset 分支。TDD: 4 core UT + 2 后端 real BDD + 3 前端 BDD × 3 viewports，全绿。详见 `docs/stages/stage-109.md`。
+
+**设计文档**: `docs/stages/stage-94.md` ~ `stage-97.md` / `docs/stages/stage-109.md` / `docs/research/2026-08-01-budget-reset-architecture.md` / `docs/08-autonomous-decisions.md` ADR-024
 
 ### Phase 41：OpenAI Responses API 透明桥接 ⏳（2026-08-05）
 

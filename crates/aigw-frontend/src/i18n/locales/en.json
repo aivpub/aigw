@@ -869,12 +869,24 @@
       "entitiesReset": "{{count}} entities reset",
       "nothingToReset": "No entities need budget reset right now",
       "neverReset": "Never",
-      "noRecentResets": "No recent budget resets"
+      "noRecentResets": "No recent budget resets",
+      "nextTick": "Next check ~",
+      "previewTitle": "Upcoming Resets",
+      "previewEmpty": "No entities are overdue for a budget reset",
+      "willReset": "Will reset {{count}} entities",
+      "confirmReset": "Confirm Reset",
+      "resetSchedule": "Auto-checks roughly every 60 seconds",
+      "totalCount": "{{count}} total",
+      "readyOf": "{{ready}} / {{total}}"
     },
     "startDate": "Start Date",
     "endDate": "End Date",
     "batchSize": "Batch Size",
     "triggerJob": "Trigger Job",
+    "trigger": {
+      "cron": "Scheduled",
+      "manual": "Manual"
+    },
     "triggerToast": "Job {{jobId}}... created with {{totalSteps}} steps",
     "summary": "Summary",
     "steps": {

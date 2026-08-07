@@ -155,8 +155,9 @@ Then("I should see a Job History list", async ({ page }) => {
 });
 
 Then("each row shows Job ID \\(truncated), trigger_type, status, progress, and created_at", async ({ page }) => {
-  await expect(page.getByText("manual")).toBeVisible();
-  await expect(page.getByText("cron")).toBeVisible();
+  // trigger_type is localized now (Scheduled / Manual).
+  await expect(page.getByText("Manual").first()).toBeVisible();
+  await expect(page.getByText("Scheduled").first()).toBeVisible();
 });
 
 Then("status {string} is shown with a blue animated indicator", async ({ page }, _status: string) => {
@@ -277,14 +278,80 @@ Then("rows_exported is shown as {string}", async ({ page }, _text: string) => {
 
 Then("storage_path is shown with truncated path", async () => {});
 
-// ── Budget reset placeholder ──
+// ── Budget reset stats card + preview ──
+
+Given("the budget reset stats are empty", async ({ page }) => {
+  await page.route("**/admin/budget-reset/stats", async (route) => {
+    await route.fulfill({
+      status: 200,
+      json: {
+        tick_interval_sec: 60,
+        next_tick_at: new Date(Date.now() + 60000).toISOString(),
+        counts: { key: { ready: 0, total: 0 }, team: { ready: 0, total: 0 }, user: { ready: 0, total: 0 }, org: { ready: 0, total: 0 } },
+        ready_total: 0,
+        preview: [],
+        last_reset: null,
+      },
+    });
+  });
+  // The component already fetched on the Background navigation; reload so the
+  // override (which is registered after that fetch) drives the initial render.
+  await page.reload();
+  await page.waitForLoadState("domcontentloaded");
+});
 
 Then("I should see a placeholder message {string}", async ({ page }, message: string) => {
   await expect(page.getByText(message)).toBeVisible();
 });
 
-Then("GET \\/admin\\/jobs?step_type=budget_reset is called", async () => {});
-Then("the stats card shows loop and queue stats for budget_reset", async () => {});
+Then("I should see the budget reset overview card", async ({ page }) => {
+  // The hero card renders the overview title; the FE tests default to English.
+  await expect(page.getByText("Budget Reset Overview").first()).toBeVisible();
+});
+
+Then("I should see the upcoming resets preview", async ({ page }) => {
+  await expect(page.getByText("Upcoming Resets")).toBeVisible();
+});
+
+Then("I should see the recent resets history table", async ({ page }) => {
+  // The per-type job table card title: "{type} Jobs".
+  await expect(page.getByText("Budget Reset Jobs").first()).toBeVisible();
+});
+
+Then("I should see the {string} count {string}", async ({ page }, label: string, count: string) => {
+  // Hero "Ready to Reset" value comes from stats.ready_total (17 in mock).
+  // Scope to the hero card: the label and value are adjacent text.
+  const hero = page.locator("div", { hasText: label });
+  await expect(hero.first()).toBeVisible();
+  await expect(page.getByText(count).first()).toBeVisible();
+});
+
+Then("I should see the {string} timestamp", async ({ page }, label: string) => {
+  // "Last Reset" label appears in both the hero card and the preview table
+  // header — assert the value cell by scoping to the hero card text row.
+  await expect(page.getByText(label).first()).toBeVisible();
+});
+
+Then("I should see a next-check countdown", async ({ page }) => {
+  await expect(page.getByText(/Next check/i).first()).toBeVisible();
+});
+
+Then("I should see the preview empty message", async ({ page }) => {
+  await expect(
+    page.getByText("No entities are overdue for a budget reset"),
+  ).toBeVisible();
+});
+
+Then("I should see {string} for the last reset", async ({ page }, label: string) => {
+  await expect(page.getByText(label).first()).toBeVisible();
+});
+
+// ── Budget reset trigger dialog ──
+
+Then("I should see the trigger estimate {string}", async ({ page }, count: string) => {
+  // Dialog estimate block: "Will reset 17 entities".
+  await expect(page.getByText(new RegExp(`Will reset ${count} entities`))).toBeVisible();
+});
 
 // ── Generic detail ──
 

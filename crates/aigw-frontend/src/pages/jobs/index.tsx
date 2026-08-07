@@ -3,19 +3,20 @@ import {
   fetchJobStats,
   fetchJobs,
   fetchArchiveStats,
+  fetchBudgetResetStats,
   stepTypeLabel,
+  triggerTypeLabel,
   formatCount,
   displayJobStatus,
-  triggerJob,
   KNOWN_STEP_TYPES,
 } from "@/lib/api/jobs";
 import type {
   JobItem,
   JobStats,
   ArchiveStats,
-  TriggerJobResponse,
+  BudgetResetStats,
 } from "@/lib/api/jobs";
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -31,6 +32,9 @@ import {
 } from "@/components/ui/select";
 import { ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 import { TriggerDialog } from "./components/trigger-dialog";
+import { BudgetResetTriggerDialog } from "./components/budget-reset-trigger-dialog";
+import { BudgetResetStatsCard } from "./components/budget-reset-stats-card";
+import { BudgetResetPreview } from "./components/budget-reset-preview";
 import { toast } from "sonner";
 
 // ── Status Badge ──
@@ -219,7 +223,7 @@ function JobListTable({
                         : job.id}
                     </td>
                     <td className="p-2">{stepTypeLabel(job.step_type)}</td>
-                    <td className="p-2">{job.trigger_type}</td>
+                    <td className="p-2">{triggerTypeLabel(job.trigger_type)}</td>
                     <td className="p-2">
                       <StatusBadge status={ds} />
                     </td>
@@ -302,156 +306,6 @@ function ArchiveStatsCard({ archiveStats }: { archiveStats: ArchiveStats }) {
             <div className="text-muted-foreground">{t("jobs.pendingRows")}</div>
             <div className="font-medium">
               {formatCount(archiveStats.pending_rows)}
-            </div>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-// ── Budget Reset Panel ──
-
-const BUDGET_RESET_CHECK_INTERVAL_SEC = 60; // matches BudgetResetter::tick_interval()
-
-const ENTITY_TYPE_OPTIONS = [
-  { value: "all", labelKey: "jobs.budgetReset.entityTypes.all" },
-  { value: "key", labelKey: "jobs.budgetReset.entityTypes.keys" },
-  { value: "user", labelKey: "jobs.budgetReset.entityTypes.users" },
-  { value: "team", labelKey: "jobs.budgetReset.entityTypes.teams" },
-  { value: "org", labelKey: "jobs.budgetReset.entityTypes.orgs" },
-];
-
-// ── Budget Reset Trigger (tabs-row inline button) ──
-function BudgetResetTrigger({ onTriggered }: { onTriggered: () => void }) {
-  const { t } = useTranslation();
-  const [entityType, setEntityType] = useState("all");
-  const [loading, setLoading] = useState(false);
-
-  const handleTrigger = async () => {
-    setLoading(true);
-    try {
-      const result: TriggerJobResponse = await triggerJob({
-        step_type: "budget_reset",
-        payload: entityType === "all" ? {} : { entity_type: entityType },
-      });
-      if (result.total_steps === 0) {
-        toast.info(t("jobs.budgetReset.nothingToReset"));
-      } else {
-        toast.success(
-          t("jobs.triggerToast", {
-            jobId: result.job_id.slice(0, 12),
-            totalSteps: result.total_steps,
-          }),
-        );
-        onTriggered();
-      }
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      toast.error(`${t("jobs.toast.triggerFailed")}: ${msg}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="flex items-center gap-2">
-      <Select value={entityType} onValueChange={setEntityType}>
-        <SelectTrigger className="h-8 w-[140px] text-xs">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {ENTITY_TYPE_OPTIONS.map((opt) => (
-            <SelectItem key={opt.value} value={opt.value}>
-              {t(opt.labelKey)}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      <Button onClick={handleTrigger} disabled={loading} size="sm">
-        <RefreshCw
-          className={`h-3.5 w-3.5 mr-1 ${loading ? "animate-spin" : ""}`}
-        />
-        {t("jobs.budgetReset.triggerReset")}
-      </Button>
-    </div>
-  );
-}
-
-function BudgetResetPanel({ stats }: { stats: JobStats | null }) {
-  const { t } = useTranslation();
-
-  // Countdown timer for next periodic check.
-  const [countdown, setCountdown] = useState(BUDGET_RESET_CHECK_INTERVAL_SEC);
-  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  useEffect(() => {
-    countdownRef.current = setInterval(() => {
-      setCountdown((prev) => {
-        if (prev <= 1) {
-          return BUDGET_RESET_CHECK_INTERVAL_SEC;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-    return () => {
-      if (countdownRef.current) clearInterval(countdownRef.current);
-    };
-  }, []);
-
-  const budgetQueue = stats?.["budget_reset"]?.queue ?? {
-    pending: 0,
-    running: 0,
-    completed: 0,
-    failed: 0,
-  };
-  const formatCountdown = (s: number): string => {
-    const m = Math.floor(s / 60);
-    const sec = s % 60;
-    if (m > 0) return `${m}m ${sec.toString().padStart(2, "0")}s`;
-    return `${sec}s`;
-  };
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">
-          {t("jobs.budgetReset.overview")}
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-          <div>
-            <div className="text-muted-foreground">
-              {t("jobs.budgetReset.readyToReset")}
-            </div>
-            <div className="font-medium text-lg">
-              {budgetQueue.pending > 0 ? budgetQueue.pending : "—"}
-            </div>
-          </div>
-          <div>
-            <div className="text-muted-foreground">
-              {t("jobs.status.running")}
-            </div>
-            <div className="font-medium text-lg">
-              {budgetQueue.running > 0 ? budgetQueue.running : "—"}
-            </div>
-          </div>
-          <div>
-            <div className="text-muted-foreground">
-              {t("jobs.status.completed")}
-            </div>
-            <div className="font-medium text-lg">
-              {budgetQueue.completed > 0 ? budgetQueue.completed : "—"}
-            </div>
-          </div>
-          <div>
-            <div className="text-muted-foreground">
-              {t("jobs.budgetReset.nextCheck")}
-            </div>
-            <div className="font-medium flex items-center gap-1">
-              <RefreshCw className="h-3 w-3" />
-              <span>{formatCountdown(countdown)}</span>
             </div>
           </div>
         </div>
@@ -550,8 +404,11 @@ export function JobsPage() {
   const [jobs, setJobs] = useState<JobItem[]>([]);
   const [totalJobs, setTotalJobs] = useState(0);
   const [archiveStats, setArchiveStats] = useState<ArchiveStats | null>(null);
+  const [budgetResetStats, setBudgetResetStats] =
+    useState<BudgetResetStats | null>(null);
   const [loading, setLoading] = useState(false);
   const [triggerOpen, setTriggerOpen] = useState(false);
+  const [budgetResetOpen, setBudgetResetOpen] = useState(false);
 
   // Budget-reset-specific: always fetch last 10 regardless of status filter
   const [budgetResetJobs, setBudgetResetJobs] = useState<JobItem[]>([]);
@@ -639,20 +496,37 @@ export function JobsPage() {
     }
   }, []);
 
+  const loadBudgetResetStats = useCallback(async () => {
+    try {
+      const data = await fetchBudgetResetStats();
+      setBudgetResetStats(data);
+    } catch {
+      // silently ignore
+    }
+  }, []);
+
   // Auto-refresh
   useEffect(() => {
     loadStats();
     loadJobs();
     loadArchiveStats();
     loadBudgetResetJobs();
+    loadBudgetResetStats();
     const timer = setInterval(() => {
       loadStats();
       loadJobs();
       loadArchiveStats();
       loadBudgetResetJobs();
+      loadBudgetResetStats();
     }, 30000);
     return () => clearInterval(timer);
-  }, [loadStats, loadJobs, loadArchiveStats, loadBudgetResetJobs]);
+  }, [
+    loadStats,
+    loadJobs,
+    loadArchiveStats,
+    loadBudgetResetJobs,
+    loadBudgetResetStats,
+  ]);
 
   // Re-fetch when tab/status/page changes
   useEffect(() => {
@@ -697,13 +571,13 @@ export function JobsPage() {
             </Button>
           )}
           {tab === "budget_reset" && (
-            <BudgetResetTrigger
-              onTriggered={() => {
-                loadBudgetResetJobs();
-                loadJobs();
-                loadStats();
-              }}
-            />
+            <Button
+              onClick={() => setBudgetResetOpen(true)}
+              size="sm"
+            >
+              <RefreshCw className="h-3.5 w-3.5 mr-1" />
+              {t("jobs.budgetReset.triggerReset")}
+            </Button>
           )}
         </div>
 
@@ -774,8 +648,16 @@ export function JobsPage() {
               <ArchiveStatsCard archiveStats={archiveStats} />
             )}
 
-            {/* Budget Reset panel */}
-            {st === "budget_reset" && <BudgetResetPanel stats={stats} />}
+            {/* Budget Reset hero + upcoming preview */}
+            {st === "budget_reset" && (
+              <>
+                <BudgetResetStatsCard
+                  stats={budgetResetStats}
+                  jobs={budgetResetJobs}
+                />
+                <BudgetResetPreview stats={budgetResetStats} />
+              </>
+            )}
 
             {/* Filtered Jobs */}
             <Card>
@@ -833,6 +715,19 @@ export function JobsPage() {
         onSuccess={() => {
           loadJobs();
           loadStats();
+        }}
+      />
+
+      {/* Budget Reset Trigger Dialog */}
+      <BudgetResetTriggerDialog
+        open={budgetResetOpen}
+        onOpenChange={setBudgetResetOpen}
+        stats={budgetResetStats}
+        onSuccess={() => {
+          loadBudgetResetJobs();
+          loadJobs();
+          loadStats();
+          loadBudgetResetStats();
         }}
       />
     </div>

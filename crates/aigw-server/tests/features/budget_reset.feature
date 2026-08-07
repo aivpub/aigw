@@ -37,3 +37,21 @@ Feature: Budget Reset Flow
     # 验证 spend 已归零且 budget_reset_at 已更新为未来的时间
     Then key "reset-exec" 的 spend 应为 0
     And key "reset-exec" 的 budget_reset_at 不为空
+
+  # ──── budget-reset stats 端点（供前端预算重置面板）────
+
+  Scenario: budget-reset stats 返回 ready 计数与 preview 预览
+    Given 通过 API 创建 key "stats-key" budget_duration="daily"
+    And 将 key "stats-key" 的 spend 设为 1 且 budget_reset_at 设为已过期
+    When 发送 GET admin budget-reset stats
+    Then 响应状态码为 200
+    And 响应 body 中 counts.key.ready 大于 0
+    And 响应 body 中 ready_total 大于 0
+    And 响应 body 中 preview  entity_type 为 "key"
+    And 响应 body 中 next_tick_at 在未来
+    And 响应 body 中 last_reset 为 null 或合法 job
+
+  Scenario: 非 admin 访问 budget-reset stats 返回 401
+    Given 非 admin 用户 token 已就绪
+    When 非 admin 发送 GET admin budget-reset stats
+    Then 响应状态码为 401

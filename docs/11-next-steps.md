@@ -1,6 +1,6 @@
 # aigw -- 下一步行动
 
-**上次更新**: 2026-08-07
+**上次更新**: 2026-08-08
 **当前阶段**: Phase 41 ⏳ 待开始（Stage 101-102 OpenAI Responses API，22h）；Phase 42 ✅ 完成（Stage 103-105 Playground 多模态图片，34.5h）；Phase 43 ⏳ 待开始（Stage 106-108 Image Token Usage Tracking，28h）
 
 ---
@@ -8,6 +8,8 @@
 ## 当前状态：103/108 Stages（98-100 + 103-105 已完成；101-102 + 106-108 待开始）
 
 **2026-08-07**: Phase 40 全部完成（Stage 98-100 ✅）。Phase 41 规划落定——两 Stage 渐进交付（Passthrough 8h + Bridge 14h）。Phase 42 规划落定——Playground 多模态图片 3 Stage（Backend 6.5h + Frontend 16h + Render/Docs 12h），三路 subagent 并发实测代码改动量。**Phase 42 全部完成：Stage 103 ✅（`cd576dc`）+ Stage 104 ✅（`0f4868f`）+ Stage 105 ✅（图片渲染 + SpendLog 详情 + 文档，全量 frontend BDD 312 pass）。** Phase 43 规划落定——Image Token Usage Tracking 3 Stage（上游优先解析 + fallback 客户端估算），基于阿里云 DashScope 文档 + litellm/OpenRouter/OneAPI 源码调研确认：Qwen 返回 image_tokens（最完整），OpenAI/Anthropic 不返回，主流网关均不做预计算——aigw 将是行业差异化功能。
+
+**2026-08-08**: 预算重置 cron 界面重构（预算重置 UI）——`GET /admin/budget-reset/stats` 端点（counts/preview/last_reset/next_tick_at）+ BudgetResetStatsCard（真实待重置数 / 上次重置 / 诚实 next-tick 倒计时）+ BudgetResetPreview（分实体明细 + 即将重置列表）+ BudgetResetTriggerDialog（范围选择 → 预览确认 → POST 后跳转 job 详情）+ job 表 trigger 列本地化 + job-detail formatStepResult 渲染 budget_reset 结果。TDD: 4 新 core UT + 2 后端 real BDD 场景 + 3 前端 BDD 场景 × 3 viewports。全部绿色（core 371 + bdd 215 + fe 87 jobs + 42 dashboard/i18n）。
 
 **待办**:
 1. **Phase 41 Stage 101**（P1, 8h）：`POST /v1/responses` Passthrough — 新建 handler + 路由注册 + Usage 双 fallback + TDD: 6 UT + 6 BDD

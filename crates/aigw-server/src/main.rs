@@ -499,6 +499,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/admin/jobs/{job_id}", get(jobs::job_detail_handler))
         .route("/admin/jobs", get(jobs::list_jobs_handler))
         .route("/admin/archive/stats", get(jobs::archive_stats_handler))
+        .route(
+            "/admin/budget-reset/stats",
+            get(jobs::budget_reset_stats_handler),
+        )
         // Login/Logout endpoints (litellm-compatible /v2/login/*)
         .route("/v2/login", axum::routing::post(login::login))
         .route(

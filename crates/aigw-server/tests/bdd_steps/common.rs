@@ -167,6 +167,10 @@ pub fn build_admin_jobs_router(state: SharedState) -> Router {
             "/admin/archive/stats",
             axum::routing::get(aigw_server::routes::jobs::archive_stats_handler),
         )
+        .route(
+            "/admin/budget-reset/stats",
+            axum::routing::get(aigw_server::routes::jobs::budget_reset_stats_handler),
+        )
         .with_state(state)
 }
 
