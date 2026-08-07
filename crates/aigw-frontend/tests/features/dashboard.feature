@@ -48,6 +48,11 @@ Feature: Usage Overview
     When I click the "7 days" preset button
     Then the activity query should include a 7-day date range
 
+  # ━━━━ Token card compact formatting ━━━━
+
+  Scenario: Token card shows B-tier compact value with exact comma-separated tooltip
+    Then the Tokens card should show "1.5B" with exact value "1,500,000,000" on hover
+
   Scenario: Today preset local-day range with offset
     When I capture activity requests and click the "Today" preset button
     Then the captured activity query should use today's local date with offset_minutes

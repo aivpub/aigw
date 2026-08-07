@@ -166,3 +166,15 @@ Then("the captured activity query should use today's local date with offset_minu
   expect(q.get("end_date")).toBe(localToday);
   expect(Number(q.get("offset_minutes"))).not.toBeNaN();
 });
+
+// ━━━━ Token card compact formatting (1.5B + exact tooltip) ━━━━
+
+Then("the Tokens card should show {string} with exact value {string} on hover", async ({ page }, compact: string, exact: string) => {
+  // Scope to the Tokens metric card (the "Tokens" card title).
+  const tokensTitle = page.getByText("Tokens", { exact: true }).first();
+  const card = tokensTitle.locator("..").locator("..");
+  await expect(card.getByText(compact, { exact: true }).first()).toBeVisible({ timeout: 5000 });
+  // Hover the value to reveal the Radix tooltip with the comma-separated exact number.
+  await card.getByText(compact, { exact: true }).first().hover();
+  await expect(page.getByText(exact, { exact: true }).last()).toBeVisible({ timeout: 5000 });
+});

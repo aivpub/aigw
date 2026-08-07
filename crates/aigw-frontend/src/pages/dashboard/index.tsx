@@ -2,6 +2,7 @@ import { useState, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "@/lib/api";
+import { fmtTokens } from "@/lib/format";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -91,12 +92,6 @@ interface AggResponse {
 
 function fmtSpend(v: number): string {
   return `$${v.toFixed(4)}`;
-}
-
-function fmtTokens(v: number): string {
-  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
-  if (v >= 1_000) return `${(v / 1_000).toFixed(1)}K`;
-  return v.toString();
 }
 
 function todayStr(): string {

@@ -2,11 +2,18 @@ import { useState, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "@/lib/api";
+import { fmtTokens, fmtExact } from "@/lib/format";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Tooltip as UiTooltip,
+  TooltipTrigger,
+  TooltipContent,
+  TooltipProvider,
+} from "@/components/ui/tooltip";
 import {
   BarChart,
   Bar,
@@ -128,12 +135,6 @@ function fmtSpend(v: number): string {
   return `$${v.toFixed(4)}`;
 }
 
-function fmtTokens(v: number): string {
-  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
-  if (v >= 1_000) return `${(v / 1_000).toFixed(1)}K`;
-  return v.toString();
-}
-
 type DatePreset = "today" | "3d" | "7d" | "30d" | "custom";
 
 function toLocalDateStr(d: Date): string {
@@ -235,11 +236,7 @@ function truncateApiKey(apiKey: string): string {
 }
 
 function yAxisTick(v: number): string {
-  if (v >= 1_000_000_000) return `${(v / 1_000_000_000).toFixed(1)}B`;
-  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
-  if (v >= 1_000) return `${(v / 1_000).toFixed(1)}K`;
-  if (Number.isInteger(v)) return v.toString();
-  return v.toFixed(2);
+  return fmtTokens(v);
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -540,9 +537,18 @@ export function UsagePage() {
             {activityLoading ? (
               <Skeleton className="h-6 w-16" />
             ) : (
-              <div className="text-lg font-bold">
-                {fmtTokens(metadata?.total_tokens ?? 0)}
-              </div>
+              <TooltipProvider delayDuration={0}>
+                <UiTooltip>
+                  <TooltipTrigger asChild>
+                    <div className="text-lg font-bold w-fit cursor-default">
+                      {fmtTokens(metadata?.total_tokens ?? 0)}
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">
+                    {fmtExact(metadata?.total_tokens ?? 0)}
+                  </TooltipContent>
+                </UiTooltip>
+              </TooltipProvider>
             )}
             <p className="text-[10px] text-muted-foreground mt-0.5">
               p {fmtTokens(metadata?.prompt_tokens ?? 0)} / c{" "}

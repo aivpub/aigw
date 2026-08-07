@@ -2,6 +2,7 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiGet } from "@/lib/api";
+import { fmtTokens } from "@/lib/format";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -195,11 +196,6 @@ function safeStringify(v: unknown): string {
 
 function fmtSpend(v: number) {
   return `$${v.toFixed(4)}`;
-}
-function fmtTokens(v: number) {
-  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
-  if (v >= 1_000) return `${(v / 1_000).toFixed(1)}K`;
-  return v.toString();
 }
 function fmtTtft(ms: number | null) {
   if (ms === null || ms === undefined) return "—";
