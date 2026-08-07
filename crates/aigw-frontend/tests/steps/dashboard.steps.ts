@@ -141,7 +141,7 @@ When("I capture activity requests and click the {string} preset button", async (
   const requests: string[] = [];
   await page.route("**/global/spend/activity**", async (route) => {
     requests.push(route.request().url());
-    await route.continue();
+    await route.fallback();
   });
 
   await page.getByRole("button", { name: presetLabel }).click();
