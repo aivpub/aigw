@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import i18n from "@/i18n";
 import { apiGet } from "@/lib/api";
+import { marked } from "marked";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -48,6 +49,10 @@ import {
   Eraser,
   Code2,
   ImagePlus,
+  ChevronLeft,
+  ChevronRight,
+  PanelRightClose,
+  PanelRightOpen,
 } from "lucide-react";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -70,28 +75,16 @@ interface ChatMessage {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// Markdown renderer
+// Markdown renderer — powered by marked (GFM, safe by default)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-function renderMarkdown(text: string): string {
-  let html = text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+marked.setOptions({
+  gfm: true,
+  breaks: true,
+});
 
-  html = html.replace(
-    /```(\w*)\n([\s\S]*?)```/g,
-    (_m, _lang, code) =>
-      `<pre class="bg-muted rounded-md p-3 my-2 overflow-x-auto text-xs font-mono"><code>${code}</code></pre>`,
-  );
-  html = html.replace(
-    /`([^`]+)`/g,
-    '<code class="bg-muted px-1 rounded text-xs font-mono">$1</code>',
-  );
-  html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-  html = html.replace(/\n\n/g, '</p><p class="mb-2">');
-  html = html.replace(/\n/g, "<br>");
-  return `<p class="mb-2">${html}</p>`;
+function renderMarkdown(text: string): string {
+  return marked.parse(text, { async: false }) as string;
 }
 
 function quoteName(s: string, max = 8): string {
@@ -116,6 +109,7 @@ function MessageBubble({
   const { t } = useTranslation();
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState(msg.content);
+  const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
 
   const isUser = msg.role === "user";
   const isSystem = msg.role === "system";
@@ -228,11 +222,26 @@ function MessageBubble({
                         key={i}
                         src={src}
                         alt={t("playground.imagePreview")}
-                        className="max-h-40 max-w-56 rounded-md border object-contain"
+                        className="max-h-60 max-w-80 rounded-md border object-contain cursor-pointer hover:opacity-90 transition-opacity"
+                        onClick={() => setLightboxSrc(src)}
                       />
                     ))}
                   </div>
                 ) : null}
+
+                {/* Image lightbox */}
+                <Dialog open={!!lightboxSrc} onOpenChange={(open) => !open && setLightboxSrc(null)}>
+                  <DialogContent className="max-w-[90vw] max-h-[90vh] p-2 bg-black/95 border-none">
+                    <DialogTitle className="sr-only">{t("playground.imagePreview")}</DialogTitle>
+                    {lightboxSrc && (
+                      <img
+                        src={lightboxSrc}
+                        alt={t("playground.imagePreview")}
+                        className="max-w-full max-h-[85vh] object-contain mx-auto"
+                      />
+                    )}
+                  </DialogContent>
+                </Dialog>
               </>
             )}
           </div>
@@ -576,6 +585,7 @@ export function PlaygroundPage() {
   const [sending, setSending] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [getCodeOpen, setGetCodeOpen] = useState(false);
+  const [settingsCollapsed, setSettingsCollapsed] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   // ── Stage 104: image attachments ──
@@ -1001,7 +1011,7 @@ export function PlaygroundPage() {
       abortRef.current = null;
       scrollToBottom();
     }
-  }, [input, settings, messages, sending, addMessage, updateMessage]);
+  }, [input, settings, messages, sending, addMessage, updateMessage, pendingImages]);
 
   const handleCancel = () => {
     abortRef.current?.abort();
@@ -1025,7 +1035,7 @@ export function PlaygroundPage() {
   }
 
   return (
-    <div className="h-[calc(100vh-12rem)] flex flex-col">
+    <div className="h-[calc(100vh-5rem)] flex flex-col">
       {/* Header */}
       <div className="flex items-center justify-between mb-4 shrink-0">
         <div>
@@ -1111,7 +1121,7 @@ export function PlaygroundPage() {
           </div>
 
           {/* Input area */}
-          <div className="shrink-0 mt-4">
+          <div className="shrink-0">
             {/* Stage 104: pending image preview strip */}
             {pendingImages.length > 0 && (
               <div className="flex flex-wrap gap-2 mb-2">
@@ -1221,18 +1231,45 @@ export function PlaygroundPage() {
           </div>
         </div>
 
-        {/* Desktop settings sidebar */}
-        <div className="hidden lg:block w-60 shrink-0 overflow-y-auto">
-          <div className="border rounded-lg p-4">
-            <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
-              <Settings2 className="h-4 w-4" /> {t("common.settings")}
-            </h3>
-            <SettingsPanel
-              settings={settings}
-              onChange={setSettings}
-              models={models}
-            />
-          </div>
+        {/* Desktop settings sidebar — collapsible */}
+        <div
+          className={`hidden lg:block shrink-0 overflow-hidden transition-all duration-200 ${
+            settingsCollapsed ? "w-10" : "w-60"
+          }`}
+        >
+          {settingsCollapsed ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-10 w-10"
+              onClick={() => setSettingsCollapsed(false)}
+              title={t("playground.expandSettings")}
+            >
+              <PanelRightOpen className="h-4 w-4" />
+            </Button>
+          ) : (
+            <div className="border rounded-lg p-4 h-full overflow-y-auto">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-medium flex items-center gap-2">
+                  <Settings2 className="h-4 w-4" /> {t("common.settings")}
+                </h3>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6"
+                  onClick={() => setSettingsCollapsed(true)}
+                  title={t("playground.collapseSettings")}
+                >
+                  <PanelRightClose className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+              <SettingsPanel
+                settings={settings}
+                onChange={setSettings}
+                models={models}
+              />
+            </div>
+          )}
         </div>
 
         {/* Mobile settings sheet */}

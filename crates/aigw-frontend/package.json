@@ -32,6 +32,7 @@
     "i18next": "^25.10.10",
     "i18next-browser-languagedetector": "^8.2.1",
     "lucide-react": "^1.23.0",
+    "marked": "^18.0.9",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-hook-form": "^7.81.0",
@@ -45,6 +46,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.61.1",
+    "@tailwindcss/typography": "^0.5.20",
     "@tailwindcss/vite": "^4.3.2",
     "@types/node": "^24.13.2",
     "@types/react": "^19.2.17",
