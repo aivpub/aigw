@@ -5,9 +5,10 @@ export { ToolCallBlock } from "./ToolCallBlock";
 export { CopyButton } from "./CopyButton";
 export { InputCard } from "./InputCard";
 export { OutputCard } from "./OutputCard";
+export { ImageThumbnails } from "./ImageThumbnails";
 export {
   SectionHeader,
   CollapsibleMessage,
   HistoryTree,
 } from "./SectionHeader";
-export { safeStringify, extractText } from "./utils";
+export { safeStringify, extractText, extractImages } from "./utils";

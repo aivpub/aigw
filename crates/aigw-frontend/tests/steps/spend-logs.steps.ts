@@ -246,3 +246,49 @@ Then("I should see a retry button inside the detail drawer", async ({ page }) =>
   const retryButton = dialog.getByRole("button", { name: /Retry|重试|refresh/i });
   await expect(retryButton).toBeVisible();
 });
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Stage 105: multimodal body rendering
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+When("I click on the spend log row with call id {string}", async ({ page }, cid: string) => {
+  // call_id is truncated in the row (first5…last5); match on the truncated form.
+  const truncated = cid.length <= 10 ? cid : `${cid.slice(0, 5)}…${cid.slice(-5)}`;
+  const row = page
+    .locator("[data-testid='spend-log-row']")
+    .filter({ hasText: truncated })
+    .filter({ visible: true })
+    .first();
+  await row.scrollIntoViewIfNeeded();
+  await row.click();
+  await page.waitForTimeout(600);
+});
+
+Then("I should see an image thumbnail in the detail drawer", async ({ page }) => {
+  const dialog = page.locator("[role='dialog']");
+  await dialog.waitFor({ timeout: 5000 });
+  // The prompt InputCard renders the image_url part as a thumbnail <img data:image>.
+  await expect(dialog.locator("img[src^='data:image/']").first()).toBeVisible({
+    timeout: 5000,
+  });
+});
+
+Then("the detail drawer should show the output_text text", async ({ page }) => {
+  const dialog = page.locator("[role='dialog']");
+  await dialog.waitFor({ timeout: 5000 });
+  // OutputCard renders the Responses API output_text block text (not [output_text]).
+  await expect(dialog).toContainText(/small red square/i, { timeout: 5000 });
+});
+
+When("I switch to the raw tab in the detail drawer", async ({ page }) => {
+  const dialog = page.locator("[role='dialog']");
+  const rawTab = dialog.getByRole("tab", { name: /raw/i }).first();
+  await rawTab.click({ force: true });
+  await page.waitForTimeout(400);
+});
+
+Then("the raw tab should show the image_url JSON", async ({ page }) => {
+  const dialog = page.locator("[role='dialog']");
+  await dialog.waitFor({ timeout: 5000 });
+  await expect(dialog).toContainText(/image_url|data:image/i, { timeout: 5000 });
+});

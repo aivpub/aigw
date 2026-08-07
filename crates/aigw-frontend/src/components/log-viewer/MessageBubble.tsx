@@ -1,4 +1,5 @@
-import { extractText } from "./utils";
+import { ImageThumbnails } from "./ImageThumbnails";
+import { extractImages, extractText } from "./utils";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // MessageBubble — role-specific message rendering
@@ -16,6 +17,7 @@ const BUBBLE_COLORS: Record<string, string> = {
 
 export function MessageBubble({ role, content }: MessageBubbleProps) {
   const text = extractText(content);
+  const images = extractImages(content);
   const bubbleClass =
     BUBBLE_COLORS[role] ?? "bg-muted/30 ml-4 rounded-2xl rounded-br-md";
 
@@ -24,6 +26,9 @@ export function MessageBubble({ role, content }: MessageBubbleProps) {
       className={`p-2.5 text-xs whitespace-pre-wrap leading-relaxed ${bubbleClass}`}
     >
       {text || <span className="text-muted-foreground italic">(empty)</span>}
+      {images.length > 0 ? (
+        <ImageThumbnails images={images} maxH="h-24" maxW="max-w-36" />
+      ) : null}
     </div>
   );
 }

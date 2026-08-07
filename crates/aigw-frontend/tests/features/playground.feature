@@ -80,3 +80,12 @@ Feature: Playground Chat
     Then I should see 1 image preview
     When I click the New Chat button
     Then the chat messages should be cleared
+
+  # ── Stage 105: image bubble rendering ──
+
+  Scenario: User message renders the sent image attachment as a thumbnail
+    When I select model "gpt-4" from the settings panel
+    And I upload an image to the playground
+    And I type "describe this" into the chat input
+    And I click the Send button
+    Then the user message should render an image thumbnail

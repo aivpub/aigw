@@ -5,7 +5,8 @@ import {
   HistoryTree,
 } from "./SectionHeader";
 import { parseMessages, type ParsedRequest } from "./MessageViewer";
-import { extractText } from "./utils";
+import { ImageThumbnails } from "./ImageThumbnails";
+import { extractImages, extractText } from "./utils";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // InputCard
@@ -75,6 +76,12 @@ export function InputCard({ messages, promptTokens, spend }: InputCardProps) {
               {extractText(lastMsg.content) || (
                 <span className="text-muted-foreground italic">(empty)</span>
               )}
+              {(() => {
+                const images = extractImages(lastMsg.content);
+                return images.length > 0 ? (
+                  <ImageThumbnails images={images} maxH="h-24" maxW="max-w-36" />
+                ) : null;
+              })()}
             </div>
           )}
 

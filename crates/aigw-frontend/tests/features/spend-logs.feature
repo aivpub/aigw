@@ -83,3 +83,27 @@ Feature: Spend Logs
   Scenario: Fuzzy search by call_id prefix filters logs
     When I type "req-00" into the call ID search
     Then the spend logs list should update
+
+  # ── Stage 105: multimodal body rendering ──
+
+  Scenario: Detail drawer shows image thumbnail for image_url prompt
+    Given API endpoints are mocked
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    When I click on the spend log row with call id "req-img-001"
+    Then I should see an image thumbnail in the detail drawer
+
+  Scenario: Detail drawer renders output_text response content
+    Given API endpoints are mocked
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    When I click on the spend log row with call id "req-img-001"
+    Then the detail drawer should show the output_text text
+
+  Scenario: Detail drawer raw tab preserves original image_url JSON
+    Given API endpoints are mocked
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    When I click on the spend log row with call id "req-img-001"
+    And I switch to the raw tab in the detail drawer
+    Then the raw tab should show the image_url JSON

@@ -1610,6 +1610,166 @@ mod tests {
         assert!(val.get("response").is_some());
     }
 
+    // ── Stage 105: multimodal body passthrough on the detail endpoint ──
+
+    /// Shared detail-endpoint state helper for the Stage 105 passthrough UTs.
+    async fn make_detail_state() -> (SharedState, Router) {
+        let db = Database::init("sqlite::memory:")
+            .await
+            .expect("init sqlite");
+        let state = Arc::new(AppState {
+            resolver: ModelResolver::new(db.clone(), None, "onprem"),
+            router: AigwRouter::default(),
+            db,
+            master_key: Some("sk-master-test-123".to_string()),
+            aigw_master_key: None,
+            provider_registry: ProviderRegistry::new(),
+            router_state: RouterState::default(),
+            rate_limiter: Arc::new(RateLimiter::new()),
+            deployment_mode: "onprem".to_string(),
+            started_at: std::time::Instant::now(),
+            daily_spend_queue: None,
+            otel_active: false,
+            body_archiver: None,
+            metrics: None,
+        });
+        let app = Router::new()
+            .route(
+                "/global/spend/logs/{call_id}",
+                axum::routing::get(global_spend_log_detail),
+            )
+            .with_state(state.clone());
+        (state, app)
+    }
+
+    fn base_detail_log(call_id: &str) -> SpendLog {
+        SpendLog {
+            call_id: call_id.to_string(),
+            request_id: None,
+            call_type: "completion".to_string(),
+            api_key: "master_key".to_string(),
+            spend: 0.01,
+            total_tokens: 10,
+            prompt_tokens: 5,
+            completion_tokens: 5,
+            start_time: chrono::Utc::now(),
+            end_time: chrono::Utc::now(),
+            request_duration_ms: Some(100),
+            completion_start_time: None,
+            model: "gpt-4o".to_string(),
+            model_id: None,
+            model_group: Some("gpt-4o-group".to_string()),
+            custom_llm_provider: Some("openai".to_string()),
+            api_base: None,
+            user: None,
+            metadata: None,
+            cache_hit: None,
+            cache_key: None,
+            request_tags: None,
+            team_id: None,
+            organization_id: None,
+            end_user: None,
+            requester_ip_address: None,
+            messages: None,
+            response: None,
+            session_id: None,
+            status: Some("success".to_string()),
+            mcp_namespaced_tool_name: None,
+            agent_id: None,
+            proxy_server_request: None,
+            body_archived: false,
+            parquet_path: None,
+        }
+    }
+
+    async fn get_detail(app: &Router, call_id: &str) -> Value {
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri(format!("/global/spend/logs/{}", call_id))
+            .header(header::AUTHORIZATION, "Bearer sk-master-test-123")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        serde_json::from_slice(&body_bytes).unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_detail_preserves_openai_image_url() {
+        let (state, app) = make_detail_state().await;
+        let mut log = base_detail_log("img-req-001");
+        log.messages = Some(json!([{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "what is this?"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="}}
+            ]
+        }]));
+        state.db.insert_spend_log(&log).await.expect("insert");
+
+        let val = get_detail(&app, "img-req-001").await;
+        let content = val["messages"][0]["content"].as_array().expect("content array");
+        let image = content
+            .iter()
+            .find(|p| p["type"] == "image_url")
+            .expect("image_url part");
+        assert_eq!(
+            image["image_url"]["url"].as_str(),
+            Some("data:image/png;base64,iVBORw0KGgo=")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_detail_preserves_output_text() {
+        let (state, app) = make_detail_state().await;
+        let mut log = base_detail_log("out-req-001");
+        log.response = Some(json!({
+            "object": "response",
+            "output": [{
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "Here is the chart."}]
+            }]
+        }));
+        state.db.insert_spend_log(&log).await.expect("insert");
+
+        let val = get_detail(&app, "out-req-001").await;
+        let output = val["response"]["output"].as_array().expect("output array");
+        let msg = output.iter().find(|o| o["type"] == "message").expect("message");
+        let content = msg["content"].as_array().expect("content array");
+        let text = content
+            .iter()
+            .find(|p| p["type"] == "output_text")
+            .expect("output_text part");
+        assert_eq!(text["text"].as_str(), Some("Here is the chart."));
+    }
+
+    #[tokio::test]
+    async fn test_detail_preserves_anthropic_image_block() {
+        let (state, app) = make_detail_state().await;
+        let mut log = base_detail_log("anth-img-req");
+        log.messages = Some(json!([{
+            "role": "user",
+            "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "iVBORw0KGgo="}}
+            ]
+        }]));
+        state.db.insert_spend_log(&log).await.expect("insert");
+
+        let val = get_detail(&app, "anth-img-req").await;
+        let content = val["messages"][0]["content"].as_array().expect("content array");
+        let image = content
+            .iter()
+            .find(|p| p["type"] == "image")
+            .expect("image block");
+        assert_eq!(image["source"]["type"].as_str(), Some("base64"));
+        assert_eq!(image["source"]["media_type"].as_str(), Some("image/png"));
+        assert_eq!(image["source"]["data"].as_str(), Some("iVBORw0KGgo="));
+    }
+
     #[tokio::test]
     async fn test_spend_logs_list_excludes_body() {
         let db = Database::init("sqlite::memory:")

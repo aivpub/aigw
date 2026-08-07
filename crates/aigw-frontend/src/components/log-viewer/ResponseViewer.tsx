@@ -1,4 +1,6 @@
 import { ToolCallBlock } from "./ToolCallBlock";
+import { ImageThumbnails } from "./ImageThumbnails";
+import { extractImages } from "./utils";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ResponseViewer — parse and display LLM response
@@ -101,7 +103,15 @@ function extractTextContent(content: unknown): string {
   if (Array.isArray(content)) {
     return (content as Array<Record<string, unknown>>)
       .map((part) => {
-        if (part.type === "text") return String(part.text ?? "");
+        if (
+          part.type === "text" ||
+          part.type === "input_text" ||
+          part.type === "output_text" ||
+          part.type === "text_delta"
+        )
+          return String(part.text ?? "");
+        if (part.type === "image_url" || part.type === "image")
+          return "[Image]";
         return `[${part.type}]`;
       })
       .join("");
@@ -140,6 +150,13 @@ export function ResponseViewer({ response }: ResponseViewerProps) {
           </div>
         </div>
       )}
+
+      {(() => {
+        const images = extractImages(response);
+        return images.length > 0 ? (
+          <ImageThumbnails images={images} />
+        ) : null;
+      })()}
 
       {parsed.toolCalls && parsed.toolCalls.length > 0 && (
         <div>

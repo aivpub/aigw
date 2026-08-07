@@ -3,7 +3,8 @@ import { useTranslation } from "react-i18next";
 import i18n from "@/i18n";
 import { SectionHeader } from "./SectionHeader";
 import { ToolCallBlock } from "./ToolCallBlock";
-import { extractText } from "./utils";
+import { ImageThumbnails } from "./ImageThumbnails";
+import { extractImages, extractText } from "./utils";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // OutputCard — displays assistant response with tool calls
@@ -15,6 +16,7 @@ interface ParsedOutput {
   usage: Record<string, unknown> | null;
   finishReason: string | null;
   error: string | null;
+  images: string[];
 }
 
 function parseOutput(raw: unknown): ParsedOutput {
@@ -24,6 +26,7 @@ function parseOutput(raw: unknown): ParsedOutput {
     usage: null,
     finishReason: null,
     error: null,
+    images: [],
   };
   if (!raw) return empty;
 
@@ -65,6 +68,7 @@ function parseOutput(raw: unknown): ParsedOutput {
         }
         return {
           text: extractText(msg.content),
+          images: extractImages(msg.content),
           toolCalls: (msg.tool_calls as unknown[]) ?? null,
           usage:
             ((r as Record<string, unknown>).usage as Record<
@@ -87,6 +91,7 @@ function parseOutput(raw: unknown): ParsedOutput {
       >;
       const textParts: string[] = [];
       const toolCalls: unknown[] = [];
+      const images = extractImages(content);
       for (const block of content) {
         if (block.type === "text" || block.type === "text_delta") {
           textParts.push(String(block.text ?? ""));
@@ -100,6 +105,7 @@ function parseOutput(raw: unknown): ParsedOutput {
       }
       return {
         text: textParts.join(""),
+        images,
         toolCalls: toolCalls.length > 0 ? toolCalls : null,
         usage:
           ((r as Record<string, unknown>).usage as Record<
@@ -108,6 +114,49 @@ function parseOutput(raw: unknown): ParsedOutput {
           > | null) ?? null,
         finishReason:
           ((r as Record<string, unknown>).stop_reason as string) ?? null,
+        error: null,
+      };
+    }
+
+    // Responses API: output[].message.content[] (output_text / image_url blocks)
+    if (Array.isArray((r as Record<string, unknown>).output)) {
+      const output = (r as Record<string, unknown>).output as Array<
+        Record<string, unknown>
+      >;
+      const textParts: string[] = [];
+      const toolCalls: unknown[] = [];
+      const images: string[] = [];
+      for (const item of output) {
+        if (item.type === "function_call") {
+          toolCalls.push({
+            name: item.name,
+            arguments: item.arguments,
+            call_id: item.call_id,
+          });
+        }
+        if (item.type === "message") {
+          const content = (item.content as Array<Record<string, unknown>>) ?? [];
+          images.push(...extractImages(content));
+          for (const block of content) {
+            if (block.type === "output_text") {
+              textParts.push(String(block.text ?? ""));
+            } else if (block.type === "image_url") {
+              images.push(...extractImages(block));
+            }
+          }
+        }
+      }
+      return {
+        text: textParts.join(""),
+        images: [...new Set(images)],
+        toolCalls: toolCalls.length > 0 ? toolCalls : null,
+        usage:
+          ((r as Record<string, unknown>).usage as Record<
+            string,
+            unknown
+          > | null) ?? null,
+        finishReason:
+          ((r as Record<string, unknown>).status as string) ?? null,
         error: null,
       };
     }
@@ -168,6 +217,11 @@ export function OutputCard({
             <div className="bg-green-50/30 dark:bg-green-950/10 rounded-lg p-2.5 text-xs whitespace-pre-wrap leading-relaxed">
               {parsed.text}
             </div>
+          ) : null}
+
+          {/* Stage 105: image thumbnails */}
+          {parsed.images.length > 0 ? (
+            <ImageThumbnails images={parsed.images} />
           ) : null}
 
           {/* Tool calls */}

@@ -305,3 +305,15 @@ When("I reload the playground page", async ({ page }) => {
   await page.waitForLoadState("domcontentloaded");
   await page.waitForTimeout(500);
 });
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Stage 105: user message image bubble rendering
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Then("the user message should render an image thumbnail", async ({ page }) => {
+  await page.waitForTimeout(500);
+  // The sent user bubble renders msg.images as <img src^="data:image/">.
+  await expect(
+    page.locator("img[src^='data:image/']").first(),
+  ).toBeVisible({ timeout: 5000 });
+});

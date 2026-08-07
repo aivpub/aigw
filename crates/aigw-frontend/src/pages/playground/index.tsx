@@ -218,7 +218,22 @@ function MessageBubble({
                 }}
               />
             ) : (
-              <div className="whitespace-pre-wrap">{msg.content}</div>
+              <>
+                <div className="whitespace-pre-wrap">{msg.content}</div>
+                {/* Stage 105: render user image attachments in the bubble */}
+                {msg.images?.length ? (
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {msg.images.map((src, i) => (
+                      <img
+                        key={i}
+                        src={src}
+                        alt={t("playground.imagePreview")}
+                        className="max-h-40 max-w-56 rounded-md border object-contain"
+                      />
+                    ))}
+                  </div>
+                ) : null}
+              </>
             )}
           </div>
         )}

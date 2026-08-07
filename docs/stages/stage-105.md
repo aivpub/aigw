@@ -2,10 +2,31 @@
 
 **Phase**: 42 — Playground 多模态图片能力
 **优先级**: P1
-**状态**: ⏳ 待开始
+**状态**: ✅ Complete
 **预估**: 12h
-**前置**: Stage 104（Playground 图片数据模型就绪）
+**前置**: Stage 104（Playground 图片数据模型就绪）✅ 完成
 **后置**: 无（Phase 42 收尾）
+
+---
+
+## Implementation Notes
+
+### Implementation Differences
+- **主路径明确为 utils.ts + OutputCard**：`extractText`/`extractImages`（log-viewer/utils.ts）是 SpendLog drawer 的实际解析器；`OutputCard.parseOutput` 补 `images` 字段 + **Responses API `output[].message.content[]` 分支**（output_text / image_url / function_call）——这是 output_text 场景能渲染的关键（设计仅提 ResponseViewer，spend-logs 实际用 OutputCard）。
+- **Responses output 分支（Gate 3 发现）**：spend-logs 的 output_text E2E 失败暴露 OutputCard 无 Responses API 解析——新增 `output[].message.content[]` 分支，output_text 拼接文本 + image_url 收集图片 + function_call 收 toolCalls；finishReason 用 `status` 字段。
+- **extractImages 只返回 `data:image/`**（Gate 2）：https 外链不渲染（admin-only 详情仍收窄向量面），TD-009e 登记 raster 白名单 + 外链渲染为后续。
+- **缩略图共享组件**：`ImageThumbnails`（log-viewer）+ Playground user 气泡 `msg.images` 渲染。
+
+### Technical Decisions Made
+- `extractText` 增 `output_text`/`file`/`text_delta`/`function_call` 分支；`extractImages` 递归处理 OpenAI image_url / Anthropic image block / 嵌套 content（Responses output→message→content）。
+- Playground 气泡用 `msg.images`（data URL 数组）直接渲染，不依赖后端转换。
+- spend.rs 3 UT 用 `make_detail_state` + `base_detail_log` + `get_detail` helper 抽掉 AppState 样板（~90 行/用例）。
+
+### Testing Evidence
+- Rust UT：3 个 detail 透传测试（image_url / output_text / Anthropic image block）全绿；`task test` 全量 20 suite 无失败。
+- Playwright BDD：playground + spend-logs 新增 5 场景（user 气泡缩略图 / 详情图片缩略图 / output_text 渲染 / raw tab 保留）× 3 viewports = 15 执行全绿。
+- 全量 frontend BDD：**312 passed / 3 skipped**（含 Stage 105 新增）。
+- tsc -b 零错误；Gate 2 设计评审 2 High + 1 Medium、Gate 4 代码评审 1 Medium 已修。
 
 ---
 
@@ -66,6 +87,7 @@ if (part.type === "file") return `[File: ${String(part.filename ?? "unknown")}]`
 
 /** 递归提取 content 数组中的图片 data URL（OpenAI image_url / Anthropic image） */
 export function extractImages(content: unknown): string[] {
+  if (!content) return [];
   if (typeof content === "string") {
     return content.startsWith("data:image/") ? [content] : [];
   }
@@ -90,6 +112,8 @@ export function extractImages(content: unknown): string[] {
   return [];
 }
 ```
+
+> **Gate 2 修正**（stage-105-review-log.md）：主路径是 **utils.ts extractText/extractImages + OutputCard.parseOutput**（spend-logs drawer 实际解析器）；ResponseViewer 同步补 output_text 分支（一致性，非阻塞）。**extractImages 只返回 `data:image/` 前缀**——`https://` 外链 image_url 一律不渲染（admin-only 详情仍收窄向量面，TD-009e 登记）。`!content` 守卫防空。
 
 **`ImageThumbnails.tsx`**（新建共享组件）：
 

@@ -1,23 +1,22 @@
 # aigw -- 下一步行动
 
 **上次更新**: 2026-08-07
-**当前阶段**: Phase 41 ⏳ 待开始（Stage 101-102 OpenAI Responses API，22h）；Phase 42 ⏳ 进行中（Stage 103 ✅ + Stage 104 ✅，Stage 105 ⏳）
+**当前阶段**: Phase 41 ⏳ 待开始（Stage 101-102 OpenAI Responses API，22h）；Phase 42 ✅ 完成（Stage 103-105 Playground 多模态图片，34.5h）
 
 ---
 
-## 当前状态：101/105 Stages（98-100 已完成 + 101-102 待开始 + 103-104 已完成 + 105 待开始）
+## 当前状态：103/105 Stages（98-100 + 103-105 已完成；101-102 待开始）
 
-**2026-08-07**: Phase 40 全部完成（Stage 98-100 ✅）。Phase 41 规划落定——两 Stage 渐进交付（Passthrough 8h + Bridge 14h）。Phase 42 规划落定——Playground 多模态图片 3 Stage（Backend 6.5h + Frontend 16h + Render/Docs 12h），三路 subagent 并发实测代码改动量。**Stage 103 ✅（`cd576dc`）+ Stage 104 ✅（Playground 图片输入，24 E2E 全绿 + 全量 300 pass）。**
+**2026-08-07**: Phase 40 全部完成（Stage 98-100 ✅）。Phase 41 规划落定——两 Stage 渐进交付（Passthrough 8h + Bridge 14h）。Phase 42 规划落定——Playground 多模态图片 3 Stage（Backend 6.5h + Frontend 16h + Render/Docs 12h），三路 subagent 并发实测代码改动量。**Phase 42 全部完成：Stage 103 ✅（`cd576dc`）+ Stage 104 ✅（`0f4868f`）+ Stage 105 ✅（图片渲染 + SpendLog 详情 + 文档，全量 frontend BDD 312 pass）。**
 
 **待办**:
 1. **Phase 41 Stage 101**（P1, 8h）：`POST /v1/responses` Passthrough — 新建 handler + 路由注册 + Usage 双 fallback + TDD: 6 UT + 6 BDD
 2. **Phase 41 Stage 102**（P1, 14h）：Responses→Chat 协议桥接 — `ResponsesToChatCompletions` 适配器 + 流式 SSE 事件映射 + TDD: 19 UT + 6 BDD
-3. **Phase 42 Stage 105**（P1, 12h）：图片渲染 + log-viewer output_text/image block + SpendLog 详情 3 UT + 文档收尾
-4. Phase 30（Stage 78-81）代码已落地 + Phase 31 修复完成，待一并回写为 ✅
-5. TD-006 客户端 call_id 响应头回写
-6. TD-007 soft_budget 告警通道（tracing::warn → webhook/email/Prometheus alert）
-7. TD-009a/b 图片压缩 + 超大图 body limit 防御（Phase 42 后按使用量触发）
-8. 长期路线 LT-BodyMetrics/LT-BodyCompact/LT-BodyLifecycle 视数据量触发
+3. Phase 30（Stage 78-81）代码已落地 + Phase 31 修复完成，待一并回写为 ✅
+4. TD-006 客户端 call_id 响应头回写
+5. TD-007 soft_budget 告警通道（tracing::warn → webhook/email/Prometheus alert）
+6. TD-009a/b/e 图片压缩 + 超大图 body 防御 + 外链渲染（视使用量触发）
+7. 长期路线 LT-BodyMetrics/LT-BodyCompact/LT-BodyLifecycle 视数据量触发
 
 ---
 
@@ -104,7 +103,7 @@ Phase 38:   ████████████████████ 100% (3
 Phase 39:   ████████████████████ 100% (4/4)  ✅ Budget Reset 周期任务 + 配置 (Stage 94-97)
 Phase 40:   ████████████████████ 100% (3/3)  ✅ BDD Coverage Enhancement (Stage 98-100)
 Phase 41:   ░░░░░░░░░░░░░░░░░░░░   0% (0/2)  ⏳ OpenAI Responses API 接入 (Stage 101-102)
-Phase 42:   ██░░░░░░░░░░░░░░░░░░  66% (2/3)  ⏳ Playground 多模态图片 (Stage 103 ✅ / 104 ✅ / 105 ⏳)
+Phase 42:   ████████████████████ 100% (3/3)  ✅ Playground 多模态图片 (Stage 103-105)
 ```
 
 ---
@@ -117,7 +116,7 @@ Phase 42:   ██░░░░░░░░░░░░░░░░░░  66% (2
 |-------|------|------|------|------|
 | Stage 103 | 多模态适配修复（`openai_message_to_claude` data URL 解析 + `/v1/models` 暴露 model_info.mode）+ 6 BDD。TDD: 8 UT + 6 BDD | 后端+测试 | 6.5h | ✅ 完成（cd576dc） |
 | Stage 104 | Playground 图片输入（上传/粘贴/预览 + 双端点多模态序列化 + 独立 sessionStorage 持久化 + RASTER_MIME 守卫）+ 新增 /v1/messages mock + 请求体捕获。TDD: 8 E2E × 3 viewports = 24 执行 | 前端 | 16h | ✅ 完成 |
-| Stage 105 | 图片渲染（Playground 气泡 + log-viewer output_text/image block + 共享 extractImages/ImageThumbnails）+ SpendLog 详情 3 UT + 文档收尾。TDD: 3 UT + 4 E2E × 3 viewports | 全栈+文档 | 12h | ⏳ 待开始 |
+| Stage 105 | 图片渲染（Playground 气泡 + log-viewer extractImages/ImageThumbnails + OutputCard Responses output[] 分支）+ SpendLog 详情 3 UT + 文档收尾。TDD: 3 UT + 5 E2E × 3 viewports = 15 执行 | 全栈+文档 | 12h | ✅ 完成 |
 
 **依赖**: Stage 103 → 104（发送图片依赖反向转换正确 + 模式字段）；Stage 104 → 105（渲染依赖图片数据模型就绪）。
 
@@ -144,8 +143,8 @@ Phase 42:   ██░░░░░░░░░░░░░░░░░░  66% (2
 | P1 | Phase 41 Stage 102 Responses→Chat 协议桥接 | ⏳ 待开始 |
 | ✅ | Phase 42 Stage 103 多模态适配修复 + 模型模式暴露 | ✅ 完成（cd576dc） |
 | ✅ | Phase 42 Stage 104 Playground 图片输入 | ✅ 完成 |
-| P1 | Phase 42 Stage 105 图片渲染 + SpendLog 详情 + 文档 | ⏳ 待开始 |
+| ✅ | Phase 42 Stage 105 图片渲染 + SpendLog 详情 + 文档 | ✅ 完成 |
 | P2 | Phase 30 backfill 标记 | 待处理 |
 | P2 | TD-006 客户端 call_id 响应头回写 | 待处理 |
 | P2 | TD-007 soft_budget 告警通道 | 待处理 |
-| P2 | TD-009a/b 图片压缩 + 超大图 body 防御 | 待处理（视使用量） |
+| P2 | TD-009a/b/e 图片压缩 + 超大图 body 防御 + 外链渲染 | 待处理（视使用量） |

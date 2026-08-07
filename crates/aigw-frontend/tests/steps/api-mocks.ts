@@ -28,6 +28,29 @@ const sampleSpendLogs = [
   { call_id: "req-002", request_id: "msg_xyz789", call_type: "completion", model: "claude-sonnet-4-6", api_key: "sk-def***", key_name: "dev-claude-key", total_tokens: 567, prompt_tokens: 300, completion_tokens: 267, spend: 1.23, start_time: "2026-07-08T10:05:00Z", end_time: "2026-07-08T10:05:03Z", request_duration_ms: 2890, ttft_ms: 456.7, status: "success", custom_llm_provider: "anthropic", model_group: "claude-sonnet-4-6", user: "dev-user" },
 ];
 
+// Stage 105: the multimodal detail mock is also present in the list so the
+// detail-drawer scenarios can click its row.
+const IMG_SPEND_ROW = {
+  call_id: "req-img-001",
+  request_id: "resp-img-001",
+  call_type: "completion",
+  model: "gpt-4o",
+  api_key: "sk-img***",
+  key_name: "img-key",
+  total_tokens: 120,
+  prompt_tokens: 80,
+  completion_tokens: 40,
+  spend: 0.05,
+  start_time: "2026-07-08T11:00:00Z",
+  end_time: "2026-07-08T11:00:02Z",
+  request_duration_ms: 1800,
+  ttft_ms: 300,
+  status: "success",
+  custom_llm_provider: "openai",
+  model_group: "gpt-4o",
+  user: "img-user",
+};
+
 // Detail mocks for the new detail endpoint (GET /global/spend/logs/{call_id})
 const sampleDetailLog1 = {
   ...sampleSpendLogs[0],
@@ -38,6 +61,33 @@ const sampleDetailLog2 = {
   ...sampleSpendLogs[1],
   messages: [{ role: "user", content: "Explain quantum computing" }],
   response: { id: "msg-xxx", content: [{ type: "text", text: "Quantum computing uses qubits..." }], usage: { input_tokens: 300, output_tokens: 267 } },
+};
+
+// Stage 105: multimodal detail mocks — image_url prompt + output_text response
+const PNG_1PX_B64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+const sampleDetailImage = {
+  ...IMG_SPEND_ROW,
+  call_id: "req-img-001",
+  messages: [
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "what is in this image?" },
+        { type: "image_url", image_url: { url: `data:image/png;base64,${PNG_1PX_B64}` } },
+      ],
+    },
+  ],
+  response: {
+    id: "resp-img-001",
+    output: [
+      {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: "It is a small red square." }],
+      },
+    ],
+  },
 };
 
 const sampleSpendModels = [
@@ -153,12 +203,23 @@ export async function defineMockRoutes(route: Route, request: Request) {
 
   // Spend
   if (url.pathname === "/spend/logs") {
-    return route.fulfill({ status: 200, json: { data: sampleSpendLogs } });
+    // Include the multimodal row so the Stage 105 detail scenarios can click it.
+    return route.fulfill({
+      status: 200,
+      json: { data: [...sampleSpendLogs, IMG_SPEND_ROW] },
+    });
   }
   if (url.pathname.startsWith("/global/spend/logs/") && url.pathname !== "/global/spend/logs") {
     // Detail endpoint: extract call_id from path
     const cid = url.pathname.replace("/global/spend/logs/", "");
-    const detail = cid === "req-001" ? sampleDetailLog1 : cid === "req-002" ? sampleDetailLog2 : null;
+    const detail =
+      cid === "req-001"
+        ? sampleDetailLog1
+        : cid === "req-002"
+          ? sampleDetailLog2
+          : cid === "req-img-001"
+            ? sampleDetailImage
+            : null;
     if (detail) {
       return route.fulfill({ status: 200, json: detail });
     }
@@ -195,13 +256,14 @@ export async function defineMockRoutes(route: Route, request: Request) {
     return route.fulfill({ status: 200, json: { data: [{ provider: "openai", total_spend: 25.0, total_tokens: 50000, requests: 12 }, { provider: "anthropic", total_spend: 17.5, total_tokens: 30000, requests: 8 }], count: 2 } });
   }
   if (url.pathname === "/global/spend/logs") {
+    const allSpendLogs = [...sampleSpendLogs, IMG_SPEND_ROW];
     // Apply fuzzy search filter if ?request_id= query param present
     const q = url.searchParams.get("request_id");
     if (q) {
-      const filtered = sampleSpendLogs.filter(log => log.call_id.includes(q) || (log.request_id ?? "").includes(q));
+      const filtered = allSpendLogs.filter(log => log.call_id.includes(q) || (log.request_id ?? "").includes(q));
       return route.fulfill({ status: 200, json: { data: filtered, count: filtered.length, total_count: filtered.length, page: 1, page_size: 30, total_pages: 1 } });
     }
-    return route.fulfill({ status: 200, json: { data: sampleSpendLogs, count: sampleSpendLogs.length, total_count: sampleSpendLogs.length, page: 1, page_size: 30, total_pages: 1 } });
+    return route.fulfill({ status: 200, json: { data: allSpendLogs, count: allSpendLogs.length, total_count: allSpendLogs.length, page: 1, page_size: 30, total_pages: 1 } });
   }
   if (url.pathname === "/global/spend/activity") {
     return route.fulfill({

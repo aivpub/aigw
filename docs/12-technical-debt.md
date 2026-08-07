@@ -89,9 +89,10 @@
 | TD-009b | 超大图/多图 body limit 防御 | P2 | 上传前估算 `∑ data URL 长度`，超限（如 >24 MiB）前端提示并拒绝；后端 `request_body_limit_mb` 已默认 32 MiB 但无 413 友好提示。 |
 | TD-009c | 图片点击放大/灯箱 | P3 | SpendLog 详情与 Playground 缩略图点击放大查看（Dialog/lightbox），当前仅缩略图。 |
 | TD-009d | `/v1/models` 模式标签 UI | P3 | Playground 模型下拉按 `model_info.mode` 显示多模态/纯文本标签，当前不做（阶段已定不强制过滤）。 |
+| TD-009e | 外链 image_url 渲染 | P3 | `extractImages` 只渲染 `data:image/` 前缀；SpendLog 里 `https://` image_url 不渲染（admin-only 详情仍收窄任意 URL fetch 面）。后续如需支持外链缩略图，需代理/白名单域名。 |
 
 - **Impact**: 大图请求可能 413；详情页缩略图体积大影响加载。不阻塞 Phase 42 核心交付（图片识别已通）。
-- **Resolution**: 视生产图片使用量触发；-009a/b 建议随 Phase 42 后的小版本实施，c/d 按需。
+- **Resolution**: 视生产图片使用量触发；-009a/b 建议随 Phase 42 后的小版本实施，c/d/e 按需。
 - **Target Phase**: 无固定排期（视使用量）。
 
 ## Resolved Items
