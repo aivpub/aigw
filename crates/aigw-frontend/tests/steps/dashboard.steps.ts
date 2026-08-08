@@ -86,7 +86,7 @@ When("I click the {string} tab in the Top Virtual Keys card", async ({ page }, t
 
 Then("the ranking values should switch from spend to token values", async ({ page }) => {
   // After clicking the Tokens tab, values should show token counts
-  // e.g., "30.0K" for 30000 tokens
+  // e.g., "30.00K" for 30000 tokens
   await page.waitForTimeout(500);
   await expect(page.getByText(/\d+\.?\d*K/).first()).toBeVisible({ timeout: 5000 });
 });
@@ -167,7 +167,7 @@ Then("the captured activity query should use today's local date with offset_minu
   expect(Number(q.get("offset_minutes"))).not.toBeNaN();
 });
 
-// ━━━━ Token card compact formatting (1.5B + exact tooltip) ━━━━
+// ━━━━ Token card compact formatting (1.50B + exact tooltip) ━━━━
 
 Then("the Tokens card should show {string} with exact value {string} on hover", async ({ page }, compact: string, exact: string) => {
   // Scope to the Tokens metric card (the "Tokens" card title).

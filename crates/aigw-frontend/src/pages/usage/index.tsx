@@ -135,6 +135,11 @@ function fmtSpend(v: number): string {
   return `$${v.toFixed(4)}`;
 }
 
+/** Spend card headline value: always 2 decimals ($5.00 / $0.50 / $12.35). */
+function fmtSpend2(v: number): string {
+  return `$${v.toFixed(2)}`;
+}
+
 type DatePreset = "today" | "3d" | "7d" | "30d" | "custom";
 
 function toLocalDateStr(d: Date): string {
@@ -455,7 +460,7 @@ export function UsagePage() {
               <Skeleton className="h-6 w-16" />
             ) : (
               <div className="text-lg font-bold">
-                {fmtSpend(metadata?.total_spend ?? 0)}
+                {fmtSpend2(metadata?.total_spend ?? 0)}
               </div>
             )}
             {(metadata?.cache_read_spend ?? 0) +
