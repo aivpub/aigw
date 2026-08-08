@@ -7,7 +7,7 @@
 
 ## 当前状态
 
-- **当前 Phase**: Phase 41 ⏳ 待开始（Stage 101-102 OpenAI Responses API，22h）；Phase 42 ✅ 完成（Stage 103-105 Playground 多模态图片，34.5h）；Phase 43 ⏳ 待开始（Stage 106-108 Image Token Usage Tracking，28h）
+- **当前 Phase**: Phase 41 ⏳ 待开始（Stage 101-102 OpenAI Responses API，22h）；Phase 42 ✅ 完成（Stage 103-105 Playground 多模态图片，34.5h）；Phase 43 ⏳ 待开始（Stage 106-108 Image Token Usage Tracking，28h）；Phase 44 ⏳ 在途 P1 收尾；**Phase 45 ⏳ 待开始（Stage 110-112 OpenAI Embeddings API，24h）**
 - **状态**: **104/108 Stages** 已完成（Stage 98-100 ✅ + Stage 101-102 ⏳ + Stage 103-105 ✅ + Stage 106-108 ⏳ + Stage 109 ✅ 预算重置 UI）
 - **下一里程碑**: Phase 41 Stage 101 — OpenAI Responses API Passthrough（8h）
 
@@ -51,6 +51,7 @@ Phase 40:   ████████████████████ 100% (3
 Phase 41:   ░░░░░░░░░░░░░░░░░░░░   0% (0/2 Stages) ⏳ OpenAI Responses API 接入 (Stage 101-102)
 Phase 42:   ████████████████████ 100% (3/3 Stages) ✅ Playground 多模态图片 (Stage 103-105)
 Phase 43:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3 Stages) ⏳ Image Token Usage Tracking (Stage 106-108)
+Phase 45:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3 Stages) ⏳ OpenAI Embeddings API 代理 (Stage 110-112)
 ```
 
 ---
@@ -186,6 +187,38 @@ Phase 43:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 **设计文档**:
 - `docs/plans/2026-08-07-image-token-estimation.md`（总体规划 + 调研修正记录）
 - `docs/stages/stage-106.md` / `stage-107.md` / `stage-108.md`
+
+---
+
+### Phase 45：OpenAI Embeddings API 代理 ⏳（2026-08-08，3 Stage，24h）
+
+**背景**: 用户有部分 Embedding 应用流量并想尝试更多，本地 + 托管 embedding 模型都在用。调研确认（`docs/research/2026-08-08-embedding-proxy-support.md`）LiteLLM（aigw 参照实现）把 `/v1/embeddings` 当一等公民端点，走与 chat 完全相同的 auth→budget→rate-limit→spend-log 管道；Kong/Portkey/new-api 均支持，Cloudflare/Helicone/Azure APIM 缺失（leader parity 非普适 table-stakes）。工程成本低：responses.rs 的非流式克隆，`ChatAuth`/`resolve_key_model_list`/`calc_spend`（prompt-only）/`OpenAIPassthrough`/`ModelResolver` 原样复用，零 schema 变更。
+
+**用户决策**: ① 有流量 → 现在交付；② 本地+托管模型 → 薄 OpenAI-compatible Passthrough 覆盖（`openai/` 前缀 → vLLM/BGE/Qwen3）；③ **排在 Phase 44 之后** → 编号 Phase 45；④ **四种端点都需要** → `/v1/embeddings` + `/embeddings` + `/engines/{model}/embeddings`（Azure legacy）+ `/openai/deployments/{model}/embeddings`（Azure）；⑤ health.rs embedding-mode 探测 → 非阻塞（记 TD-011）。
+
+**拆分**: 3 Stage（Passthrough 后端 10h + 前端/OpenAPI/real BDD 8h + 模型接入/文档 6h），共 24h。
+
+| Stage | 状态 | 目标 | 类型 | 预估 |
+|-------|------|------|------|------|
+| Stage 110 | ⏳ 待开始 | **POST /v1/embeddings Passthrough（四端点）** — 新建 `routes/embeddings.rs`（responses.rs 非流式子集：ChatAuth 认证→校验 model+input（string/array，400）→resolver+router→**硬选 OpenAIPassthrough**（⚠️ 拒绝 AnthropicNative，防 OpenAIToAnthropic 破坏 embedding body）→上游 `{api_base}/embeddings`→非流式透传→SpendLog `call_type="embedding"` + calc_spend(prompt-only)）；注册 4 端点；`extract_prompt_tokens`/`extract_total_tokens` 提升 `pub(crate)`。TDD: 6 UT + 11 BDD | 后端+测试 | 10h |
+| Stage 111 | ⏳ 待开始 | **Frontend OutputCard `data[]` 分支 + OpenAPI spec + real BDD** — `parseOutput` 加 `data[]` 分支（渲染 embedding 向量维度 + usage，替代空态）；openapi.rs `embeddings_spec()` + expected_endpoints 18→19；real API BDD 验证真实 embedding 端点。TDD: 3 UT + 2 E2E × 3 viewports | 前端+测试 | 8h |
+| Stage 112 | ⏳ 待开始 | **Embedding 模型接入验证 + 文档收尾** — 验证 `/model/new` 注册 `mode="embed"` 模型 + `/v1/models` 展示 + `/v1/embeddings` 全链路（本地 vLLM + 托管 OpenAI 两种形态）；health.rs embedding 探测登记 TD-011（非阻塞）；charter L91/L204 + roadmap + next-steps + ADR-026 + TD-011。TDD: +2 BDD 场景 | 全栈+文档 | 6h |
+
+**依赖关系**: Stage 110 → 111（前端依赖端点契约）→ 112（文档依赖全部落地）。
+
+**Phase 45 合计**: 24h，3 Stages。
+
+**关键决策**:
+- **薄 OpenAI-compatible Passthrough，不做协议翻译**：`openai/`-前缀覆盖 OpenAI 托管 + vLLM/BGE/Qwen3 本地；不做 Gemini `:embedContent` / Cohere `/v2/embed` 翻译（Envoy 刚合并的差异化层，等真实 RAG 负载再上）。
+- **不加 `ClientProtocol::Embeddings` 变体**：Responses 加变体是因为 URL/校验/usage 全不同；embeddings 的 usage 解析复用现有 `extract_prompt_tokens`/`extract_total_tokens`，上游路径固定 `{api_base}/embeddings`，OpenAIPassthrough 透传足够。
+- **硬选 OpenAIPassthrough / 拒绝 AnthropicNative**：`select_adapter(OpenAI, AnthropicNative)` → `OpenAIToAnthropic`（adapter.rs L77）会把 embedding body 当 chat 转换产生垃圾。embedding 模型天然 OpenAI 兼容。
+- **`call_type="embedding"`**：对齐 litellm SDK 直调 call_type；aigw 全同步无 async 区分，用 `"embedding"` 语义最贴。
+- **计费 prompt-only**：usage `{prompt_tokens, total_tokens}`（completion=0），`calc_spend` 直接复用 → `prompt_tokens × input_cost_per_token`。
+- **四端点共用同一 handler**：差异仅路径匹配；Azure 别名的 model 取自 path param 并入 body。
+
+**设计文档**:
+- `docs/research/2026-08-08-embedding-proxy-support.md`（调研报告）
+- `docs/stages/stage-110.md` / `stage-111.md` / `stage-112.md`
 
 ---
 
@@ -806,3 +839,4 @@ Phase 43:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 | v42.0 | 2026-08-07 | **Phase 42 规划**：Playground 多模态图片能力，3 Stage 共 34.5h。基于代码审计确认后端多模态转换部分就绪（`claude_message_to_openai` 已正确生成 `data:{media_type};base64,{data}`；`openai_message_to_claude` 反向硬编码 `image/jpeg` + 完整 data URL 塞入 data 字段是 bug），前端 Playground 仅纯文本、src/ 无 file input 先例。三路 subagent 并发实测：Stage 103 后端适配修复 + `/v1/models` 暴露 model_info.mode + 6 BDD（6.5h）；Stage 104 Playground 图片输入（上传/粘贴/预览 + 双端点序列化 + 8 E2E × 3 viewports，16h）；Stage 105 图片渲染 + log-viewer output_text/image block + SpendLog 详情 + 文档收尾（12h）。总进度 99/105。设计文档：`stage-103~105.md`。 |
 | v42.1 | 2026-08-07 | **Phase 42 完成**（Stage 103-105 ✅，总进度 103/105）：Stage 103 `cd576dc` 后端适配修复（parse_data_url + model_info.mode + 8 UT + 6 BDD）；Stage 104 `0f4868f` Playground 图片输入（上传/粘贴/预览 + 双端点序列化 + 8 E2E × 3 viewports + 全量 300 pass）；Stage 105 图片渲染（log-viewer extractImages/ImageThumbnails + OutputCard Responses output[] 分支 + SpendLog 详情 3 UT + 5 E2E × 3 viewports + 全量 312 pass）。ADR-025 Approved→Accepted，TD-009 a/b/e 登记。 |
 | v43.0 | 2026-08-07 | **Phase 43 规划**：Image Token Usage Tracking — 上游优先解析 + 客户端 fallback 估算。3 Stage（106-108）共 28h。基于多轮调研（Qwen/VL config + 阿里云文档 + litellm/OpenRouter/OneAPI 源码）确认 Qwen/DashScope 返回 image_tokens（最完整），OpenAI/Anthropic 不返回；主流网关均不做预计算（aigw 将是行业差异化功能）。设计文档：`docs/stages/stage-106.md`~`stage-108.md` + `docs/plans/2026-08-07-image-token-estimation.md`。总进度 103/108。 |
+| v45.0 | 2026-08-08 | **Phase 45 规划**：OpenAI Embeddings API 代理（Stage 110-112，3 Stage 共 24h）。基于 6 路 subagent 调研（`docs/research/2026-08-08-embedding-proxy-support.md`）：LiteLLM 把 `/v1/embeddings` 当一等公民端点（四路径 + 与 chat 相同管道 + call_type=embedding + prompt-only 计费）；Kong/Portkey/new-api 均支持（leader parity）；用户确认 ① 有流量想多尝试 ② 本地+托管模型 ③ **Phase 44 之后** ④ **四端点都需要** ⑤ health 探测非阻塞。Stage 110 后端 Passthrough 四端点（10h，6 UT + 11 BDD）；Stage 111 前端 OutputCard `data[]` 分支 + OpenAPI spec + real BDD（8h，3 UT + 2 E2E）；Stage 112 模型接入验证 + 文档收尾（6h，+2 BDD）。硬选 OpenAIPassthrough 拒绝 AnthropicNative（防 OpenAIToAnthropic 破坏 body）；薄 OpenAI-compatible 透传不做协议翻译。ADR-026 + TD-011 登记。总进度 104/111。 |

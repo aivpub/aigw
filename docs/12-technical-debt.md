@@ -91,6 +91,19 @@
 | TD-009d | `/v1/models` 模式标签 UI | P3 | Playground 模型下拉按 `model_info.mode` 显示多模态/纯文本标签，当前不做（阶段已定不强制过滤）。 |
 | TD-009e | 外链 image_url 渲染 | P3 | `extractImages` 只渲染 `data:image/` 前缀；SpendLog 里 `https://` image_url 不渲染（admin-only 详情仍收窄任意 URL fetch 面）。后续如需支持外链缩略图，需代理/白名单域名。 |
 
+### TD-010: Embeddings 后续增强项
+
+- **Date**: 2026-08-08
+- **Priority**: P3
+- **Source**: Phase 45 规划（ADR-026）
+
+| Sub-ID | 条目 | 优先级 | 描述 |
+|--------|------|--------|------|
+| TD-010a | health.rs embedding-mode 探测 | P2 | `run_and_save_health_check`（health.rs L266）对所有 OpenAICompatible 模型 POST `{model, messages, max_tokens:1}` 到 `/chat/completions`；embedding-only 模型会 400。需按 `model_info.mode="embed"` 分支为 embeddings-friendly 最小探测（POST `{model, input:["health"]}` 到 `/embeddings`）。用户确认非阻塞，Phase 46 候选。 |
+| TD-010b | 多模态 embedding 按模态计费 | P3 | gemini-embedding-2 按模态计费（image $0.45 / audio $6.50 / video $12.00 per 1M，远超 text $0.20）；aigw 单 `input_cost_per_token` 标量无法表达按模态差异计费。等真实多模态 embedding 负载再评估。 |
+| TD-010c | Gemini `:embedContent` / Cohere `/v2/embed` 原生格式翻译 | P3 | 薄 OpenAI-compatible Passthrough 只覆盖 `openai/`-前缀；Gemini 原生 `:embedContent`、Cohere `/v2/embed` 是差异化层（Envoy 2026-06 刚合并），等真实 RAG 负载再上。 |
+| TD-010d | `/engines/{model}/embeddings` + `/openai/deployments/{model}/embeddings` Azure 别名深度测试 | P3 | 四端点共用同一 handler 已注册；Azure 专属语义（deployment name 映射）留后续。 |
+
 - **Impact**: 大图请求可能 413；详情页缩略图体积大影响加载。不阻塞 Phase 42 核心交付（图片识别已通）。
 - **Resolution**: 视生产图片使用量触发；-009a/b 建议随 Phase 42 后的小版本实施，c/d/e 按需。
 - **Target Phase**: 无固定排期（视使用量）。

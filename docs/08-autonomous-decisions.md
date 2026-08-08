@@ -459,3 +459,28 @@
   - Phase 42 三 Stage：Stage 103 后端修复+BDD（6.5h）、Stage 104 Playground 图片输入（16h）、Stage 105 渲染+文档（12h）。
   - 多模态请求进 SpendLog `messages`/`response` JSONB 原样（含 base64），body_archive 按既有 `messages` 体积分片，超大图 body limit（32 MiB）与压缩留 TD-009。
   - qwen 系列聊天模板已在 Stage 60 嗅探（`chat_template_compat: strict`），图片 content-parts 不经 fold，无模板冲突。
+
+## ADR-026: OpenAI Embeddings API 代理支持（Phase 45，Stage 110-112）
+
+- **Date**: 2026-08-08
+- **Status**: Approved → Accepted（Phase 45 规划落定，Stage 110-112 ⏳）
+- **Decision**: aigw 实现 OpenAI-compatible Embeddings 代理（`POST /v1/embeddings`），3 Stage 共 24h，排在 Phase 44 之后。核心决策：
+  (1) **薄 OpenAI-compatible Passthrough，不做协议翻译**——`openai/`-前缀覆盖 OpenAI 托管 + 本地 vLLM/BGE/Qwen3，不做 Gemini `:embedContent` / Cohere `/v2/embed` 翻译；
+  (2) **四端点全部注册**——`/v1/embeddings` + `/embeddings` + `/engines/{model}/embeddings`（Azure legacy）+ `/openai/deployments/{model}/embeddings`（Azure），共用同一 handler；
+  (3) **硬选 `OpenAIPassthrough` / 拒绝 AnthropicNative**——`select_adapter(OpenAI, AnthropicNative)` → `OpenAIToAnthropic` 会把 embedding body 当 chat 转换产生垃圾，embedding 模型天然 OpenAI 兼容；
+  (4) **不加 `ClientProtocol::Embeddings` 变体**——usage 解析复用 `extract_prompt_tokens`/`extract_total_tokens`，上游路径固定 `{api_base}/embeddings`，OpenAIPassthrough 透传足够；
+  (5) **`call_type="embedding"`**——对齐 litellm SDK 直调 call_type，自由文本列零 schema 变更；
+  (6) **计费 prompt-only**——usage `{prompt_tokens, total_tokens}`（completion=0），复用 `calc_spend` → `prompt_tokens × input_cost_per_token`；
+  (7) **health.rs embedding-mode 探测非阻塞**——记 TD-011，Phase 46 候选。
+- **Background**: 用户有部分 Embedding 应用流量并想尝试更多，本地 + 托管 embedding 模型都在用。调研确认（`docs/research/2026-08-08-embedding-proxy-support.md`）LiteLLM（aigw 参照实现）把 `/v1/embeddings` 当一等公民端点，走与 chat 完全相同的 auth→budget→rate-limit→spend-log 管道；Kong/Portkey/new-api 均支持（leader parity），Cloudflare/Helicone/Azure APIM 缺失。工程成本低：responses.rs 非流式克隆，`ChatAuth`/`resolve_key_model_list`/`calc_spend`/`ModelResolver` 原样复用，零 schema 变更。
+- **Key decisions**:
+  - **薄 Passthrough 而非协议翻译**：对标 litellm `openai/<model>` 前缀模式——任意 OpenAI-compatible 服务器（vLLM/本地）POST 到 `{api_base}/embeddings`。Gemini/Cohere 原生格式翻译是差异化层（Envoy 2026-06 刚合并），等真实 RAG 负载再上。
+  - **硬选 OpenAIPassthrough**：handler 不走 `select_adapter` 的 OpenAI+AnthropicNative arm（adapter.rs L77 → `OpenAIToAnthropic`），直接复用 `OpenAIPassthrough` 或拒绝 AnthropicNative 部署返回 400 unsupported_provider。
+  - **四端点共用同一 handler**：差异仅路径匹配；Azure 别名的 model 从 path param 提取并入 body。
+  - **复用 `calc_spend` prompt-only**：embedding usage 无 completion_tokens，`calc_spend` 传 completion=0 → 零输出成本，`prompt_tokens × input_cost_per_token` 正确，无需新计费逻辑。
+  - **前端 OutputCard 加 `data[]` 分支**：`parseOutput` 现无 embeddings `data[]` 分支会落空态；只渲染向量维度（不渲染完整数组），SpendLog 列表 badge/token pill 零改动。
+- **Consequences**:
+  - Phase 45 三 Stage：Stage 110 后端 Passthrough 四端点（10h，6 UT + 11 BDD）、Stage 111 前端 + OpenAPI + real BDD（8h，3 UT + 2 E2E）、Stage 112 模型接入验证 + 文档收尾（6h，+2 BDD）。
+  - `call_type="embedding"` 端到端流入 SpendLog / daily 聚合 / 前端 badge，零 schema/查询变更。
+  - 多模态 embedding（gemini-embedding-2 按模态计费 $0.45/$6.50/$12.00）超 aigw 单 `input_cost_per_token` 标量能力，登记 TD-011。
+  - Phase 44 在途 P1 收尾（Responses 稳定 + Image Token + TD-006/TD-007）优先于 Phase 45。设计文档：`docs/stages/stage-110.md`~`stage-112.md`。

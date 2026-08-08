@@ -88,7 +88,7 @@
 | API 规范 | OpenAPI 3.1 |
 | 网络协议 | HTTP/1.1 + SSE streaming |
 | 鉴权方式 | Virtual Key（Bearer Token）+ Master Key |
-| 上游协议 | OpenAI Chat Completions API 兼容 + Anthropic Messages API + OpenAI Responses API (Passthrough) |
+| 上游协议 | OpenAI Chat Completions API 兼容 + Anthropic Messages API + OpenAI Responses API (Passthrough) + OpenAI Embeddings API (Passthrough) |
 | 前端技术 | 待定（Stage 4 技术选型，候选：Next.js / Vue 3 + Vite） |
 
 ---
@@ -201,7 +201,7 @@ aigw-migrate export --from aigw --from-db aigw.db --to litellm --to-db litellm-r
 **Stage 4：OpenAPI 3.1 规范 + 前端控制台规划**
 
 - 生成 OpenAPI 3.1 规范文件（`docs/openapi.yaml`）
-  - 所有 `/v1/chat/completions`, `/v1/models` 端点
+  - 所有 `/v1/chat/completions`, `/v1/models`, `/v1/embeddings` 端点
   - 所有 `/key/*` 管理端点
   - 所有 `/spend/*`, `/global/spend/*` 端点
   - 所有 `/health/*` 端点
