@@ -102,6 +102,59 @@ async fn given_mock_returns_status(_world: &mut TestWorld, path: String, status:
     );
 }
 
+/// Set the mock upstream chat response body to a success with a custom usage.
+/// Used to simulate a Qwen upstream that returns prompt_tokens_details.image_tokens.
+#[given(expr = "mock 上游 chat 返回含 image_tokens 的 usage")]
+async fn given_mock_chat_returns_image_tokens(_world: &mut TestWorld) {
+    let mu = mock_upstream().lock().await;
+    let upstream = mu.as_ref().expect("mock upstream not started");
+    upstream.set_response(
+        "/v1/chat/completions",
+        200,
+        serde_json::json!({
+            "id": "chatcmpl-qwen-image",
+            "object": "chat.completion",
+            "created": 1700000000,
+            "model": "qwen2.5-vl-72b",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "Mock image response"},
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 1270,
+                "completion_tokens": 54,
+                "total_tokens": 1324,
+                "prompt_tokens_details": {"image_tokens": 400, "cached_tokens": 0}
+            }
+        }),
+    );
+}
+
+/// Set the mock upstream chat response to a success WITHOUT image_tokens
+/// (OpenAI-compatible default) so the gateway falls back to client estimation.
+#[given(expr = "mock 上游 chat 返回不含 image_tokens 的 usage")]
+async fn given_mock_chat_returns_without_image_tokens(_world: &mut TestWorld) {
+    let mu = mock_upstream().lock().await;
+    let upstream = mu.as_ref().expect("mock upstream not started");
+    upstream.set_response(
+        "/v1/chat/completions",
+        200,
+        serde_json::json!({
+            "id": "chatcmpl-no-image",
+            "object": "chat.completion",
+            "created": 1700000000,
+            "model": "gpt-4o",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "Mock text response"},
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120}
+        }),
+    );
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // When
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -213,6 +266,139 @@ async fn when_post_chat_completions_with_image(
     world.last_body = json_body;
 }
 
+/// Send a /chat/completions request whose user message carries N identical
+/// 512×512 PNG images (OpenAI image_url content parts). Enables multi-image
+/// sum tests (e.g. 3 × 85 = 255 for gpt-4o low-res tiles).
+#[when(
+    expr = "使用 key {string} 发送含 {int} 张 512x512 图片的 POST \\/chat\\/completions 请求用 model {string}"
+)]
+async fn when_post_chat_completions_with_n_images(
+    world: &mut TestWorld,
+    alias: String,
+    n: i32,
+    model: String,
+) {
+    when_post_chat_completions_with_images(world, alias, model, n).await;
+}
+
+async fn when_post_chat_completions_with_images(
+    world: &mut TestWorld,
+    alias: String,
+    model: String,
+    n: i32,
+) {
+    let state = world.ensure_state().await;
+    use axum::Router;
+    use tower::util::ServiceExt;
+
+    let app = Router::new()
+        .route(
+            "/chat/completions",
+            axum::routing::post(aigw_server::routes::chat::chat_completions),
+        )
+        .with_state(state);
+
+    let token = world.created_keys.get(&alias).expect("key not found");
+    // 512×512 PNG header → data URL (valid for the gateway's header parser).
+    let image_url = image_data_url(512, 512);
+    let mut parts: Vec<serde_json::Value> =
+        vec![serde_json::json!({"type": "text", "text": "what is in this image?"})];
+    for _ in 0..n {
+        parts.push(
+            serde_json::json!({"type": "image_url", "image_url": {"url": image_url.clone()}}),
+        );
+    }
+    let body = serde_json::json!({
+        "model": model,
+        "messages": [{"role": "user", "content": parts}]
+    })
+    .to_string();
+
+    let req = axum::http::Request::builder()
+        .method(Method::POST)
+        .uri("/chat/completions")
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", token))
+        .body(axum::body::Body::from(body))
+        .unwrap();
+
+    let response = app.oneshot(req).await.unwrap();
+    let status = response.status().as_u16();
+    let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap_or_default();
+    let json_body: Option<serde_json::Value> = serde_json::from_slice(&body_bytes).ok();
+    world.last_status = Some(status);
+    world.last_body = json_body;
+}
+
+/// Send a streaming /chat/completions request with a single image part.
+#[when(
+    expr = "使用 key {string} 发送带图片的流式 POST \\/chat\\/completions 请求用 model {string}"
+)]
+async fn when_post_chat_completions_streaming_image(
+    world: &mut TestWorld,
+    alias: String,
+    model: String,
+) {
+    let state = world.ensure_state().await;
+    use axum::Router;
+    use tower::util::ServiceExt;
+
+    let app = Router::new()
+        .route(
+            "/chat/completions",
+            axum::routing::post(aigw_server::routes::chat::chat_completions),
+        )
+        .with_state(state);
+
+    let token = world.created_keys.get(&alias).expect("key not found");
+    let body = serde_json::json!({
+        "model": model,
+        "stream": true,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "hi"},
+                {"type": "image_url", "image_url": {"url": image_data_url(1024, 1024)}}
+            ]
+        }]
+    })
+    .to_string();
+
+    let req = axum::http::Request::builder()
+        .method(Method::POST)
+        .uri("/chat/completions")
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", token))
+        .body(axum::body::Body::from(body))
+        .unwrap();
+
+    let response = app.oneshot(req).await.unwrap();
+    let status = response.status().as_u16();
+    let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap_or_default();
+    let json_body: Option<serde_json::Value> = serde_json::from_slice(&body_bytes).ok();
+    world.last_status = Some(status);
+    world.last_body = json_body;
+}
+
+/// Build a minimal PNG header (8-byte sig + IHDR) of given size as a data URL.
+/// Reuses aigw-core's base64 encoder so no dev-dependency is needed.
+fn image_data_url(w: u32, h: u32) -> String {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"\x89PNG\r\n\x1a\n");
+    bytes.extend_from_slice(&[0, 0, 0, 13]);
+    bytes.extend_from_slice(b"IHDR");
+    bytes.extend_from_slice(&w.to_be_bytes());
+    bytes.extend_from_slice(&h.to_be_bytes());
+    bytes.extend_from_slice(&[8, 6, 0, 0, 0]);
+    bytes.extend_from_slice(&[0, 0, 0, 0]);
+    let b64 = aigw_core::image_tokens::encode_png_header(&bytes);
+    format!("data:image/png;base64,{}", b64)
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Then — Stage 103 multimodal assertions
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -311,5 +497,89 @@ async fn then_spend_logs_model_is(world: &mut TestWorld, expected_model: String)
         log.model, expected_model,
         "Expected spend_logs.model='{}', got '{}'",
         expected_model, log.model
+    );
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Then — Stage 107 image token assertions
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Latest spend_log's image_tokens equals the expected value.
+#[then(expr = "spend_logs 中 image_tokens 为 {int}")]
+async fn then_spend_logs_image_tokens(world: &mut TestWorld, expected: i32) {
+    let state = world.ensure_state().await;
+    let logs = state
+        .db
+        .query_spend_logs(None, Some(1))
+        .await
+        .expect("query spend logs");
+    assert!(!logs.is_empty(), "Expected at least one spend_log record");
+    let log = &logs[0];
+    assert_eq!(
+        log.image_tokens,
+        Some(expected),
+        "Expected spend_logs.image_tokens={}, got {:?}",
+        expected,
+        log.image_tokens
+    );
+}
+
+/// Latest spend_log's image_tokens is greater than zero.
+#[then(expr = "spend_logs 中 image_tokens 大于 0")]
+async fn then_spend_logs_image_tokens_positive(world: &mut TestWorld) {
+    let state = world.ensure_state().await;
+    let logs = state
+        .db
+        .query_spend_logs(None, Some(1))
+        .await
+        .expect("query spend logs");
+    assert!(!logs.is_empty(), "Expected at least one spend_log record");
+    let log = &logs[0];
+    assert!(
+        log.image_tokens.unwrap_or(0) > 0,
+        "Expected spend_logs.image_tokens > 0, got {:?}",
+        log.image_tokens
+    );
+}
+
+/// Latest spend_log's image_tokens is NULL (text-only / no estimation).
+#[then(expr = "spend_logs 中 image_tokens 为 null")]
+async fn then_spend_logs_image_tokens_null(world: &mut TestWorld) {
+    let state = world.ensure_state().await;
+    let logs = state
+        .db
+        .query_spend_logs(None, Some(1))
+        .await
+        .expect("query spend logs");
+    assert!(!logs.is_empty(), "Expected at least one spend_log record");
+    let log = &logs[0];
+    assert!(
+        log.image_tokens.is_none(),
+        "Expected spend_logs.image_tokens=NULL, got {:?}",
+        log.image_tokens
+    );
+}
+
+/// Latest spend_log's metadata.image_tokens_source equals expected ("upstream"|"estimated").
+#[then(expr = "spend_logs 的 metadata image_tokens_source 为 {string}")]
+async fn then_spend_logs_image_tokens_source(world: &mut TestWorld, expected: String) {
+    let state = world.ensure_state().await;
+    let logs = state
+        .db
+        .query_spend_logs(None, Some(1))
+        .await
+        .expect("query spend logs");
+    assert!(!logs.is_empty(), "Expected at least one spend_log record");
+    let log = &logs[0];
+    let source = log
+        .metadata
+        .as_ref()
+        .and_then(|m| m.get("image_tokens_source"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    assert_eq!(
+        source, expected,
+        "Expected metadata.image_tokens_source='{}', got '{}'",
+        expected, source
     );
 }

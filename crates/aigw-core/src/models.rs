@@ -172,6 +172,11 @@ pub struct SpendLog {
     /// Populated at INSERT time for non-streaming success + 4xx/5xx failure
     /// paths, and at streaming Phase 2 UPDATE time for streaming paths.
     pub request_id: Option<String>,
+    /// Image tokens consumed in this request — a subset of prompt_tokens.
+    /// Value source: upstream (Qwen/Gemini) → client-side estimate
+    /// (OpenAI/Anthropic) → NULL (unknown / text-only).  Stored source tag
+    /// ("upstream" | "estimated") lives in metadata.image_tokens_source.
+    pub image_tokens: Option<i32>,
 }
 
 /// Daily spend pre-aggregation record — maps to one of 6 daily_*_spend tables.
@@ -191,6 +196,7 @@ pub struct DailySpendLog {
     pub completion_tokens: i64,
     pub cache_read_input_tokens: i64,
     pub cache_creation_input_tokens: i64,
+    pub image_tokens: i64,
     pub spend: f64,
     pub api_requests: i64,
     pub successful_requests: i64,

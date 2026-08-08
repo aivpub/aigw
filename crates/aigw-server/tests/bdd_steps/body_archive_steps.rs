@@ -97,6 +97,7 @@ async fn given_recent_data_all_archived(world: &mut TestWorld) {
         proxy_server_request: None,
         body_archived: true,
         parquet_path: Some("s3://test/path.parquet".to_string()),
+        image_tokens: None,
     };
     state
         .db
@@ -248,6 +249,7 @@ async fn given_n_records_for_hour(world: &mut TestWorld, count: usize) {
             proxy_server_request: None,
             body_archived: false,
             parquet_path: None,
+            image_tokens: None,
         };
         state.db.insert_spend_log(&log).await.expect("insert");
     }
@@ -292,6 +294,7 @@ async fn given_all_archived_for_hour(world: &mut TestWorld) {
         proxy_server_request: None,
         body_archived: true,
         parquet_path: Some("s3://test/exists.parquet".to_string()),
+        image_tokens: None,
     };
     state.db.insert_spend_log(&log).await.expect("insert");
 }
@@ -342,6 +345,7 @@ async fn given_storage_unreachable(world: &mut TestWorld) {
         proxy_server_request: None,
         body_archived: false,
         parquet_path: None,
+        image_tokens: None,
     };
     state
         .db
@@ -395,6 +399,7 @@ async fn given_50_pending_for_parquet(world: &mut TestWorld) {
             proxy_server_request: None,
             body_archived: false,
             parquet_path: None,
+            image_tokens: None,
         };
         state.db.insert_spend_log(&log).await.expect("insert");
     }
@@ -589,6 +594,7 @@ async fn given_8_day_old_archived_data(world: &mut TestWorld) {
         proxy_server_request: None,
         body_archived: true,
         parquet_path: Some("s3://test/old.parquet".to_string()),
+        image_tokens: None,
     };
     state.db.insert_spend_log(&log).await.expect("insert");
 }
@@ -632,6 +638,7 @@ async fn given_3_day_old_archived_data(world: &mut TestWorld) {
         proxy_server_request: None,
         body_archived: true,
         parquet_path: Some("s3://test/recent.parquet".to_string()),
+        image_tokens: None,
     };
     state.db.insert_spend_log(&log).await.expect("insert");
 }
@@ -675,6 +682,7 @@ async fn given_8_day_old_archived_record(world: &mut TestWorld) {
         proxy_server_request: None,
         body_archived: true,
         parquet_path: Some("s3://test/old.parquet".to_string()),
+        image_tokens: None,
     };
     state.db.insert_spend_log(&log).await.expect("insert");
 }
@@ -783,6 +791,7 @@ async fn given_already_archived(world: &mut TestWorld) {
             proxy_server_request: None,
             body_archived: true,
             parquet_path: Some("s3://test/existing.parquet".to_string()),
+            image_tokens: None,
         };
         state.db.insert_spend_log(&log).await.expect("insert");
     }
@@ -916,5 +925,6 @@ fn make_spend_log_for_hour(hour: chrono::DateTime<chrono::Utc>) -> aigw_core::mo
         proxy_server_request: None,
         body_archived: false,
         parquet_path: None,
+        image_tokens: None,
     }
 }

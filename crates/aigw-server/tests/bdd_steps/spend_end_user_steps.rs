@@ -75,6 +75,7 @@ async fn given_spend_log_with_end_user(world: &mut TestWorld, step: &Step) {
         proxy_server_request: None,
         body_archived: false,
         parquet_path: None,
+        image_tokens: None,
     };
     state
         .db
@@ -129,6 +130,7 @@ async fn given_spend_log_without_end_user(world: &mut TestWorld) {
         proxy_server_request: None,
         body_archived: false,
         parquet_path: None,
+        image_tokens: None,
     };
     state
         .db

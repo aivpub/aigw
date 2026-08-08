@@ -151,7 +151,9 @@ pub fn infer_strategy(upstream_model: &str) -> Option<CalculationStrategy> {
     } else if m.contains("qwen3") && (m.contains("vl") || m.contains("vision")) {
         Some(CalculationStrategy::Qwen3VL)
     } else if m.contains("gpt-4")
-        && (m.contains("vision") || m.contains("-o") || m.contains("turbo"))
+        && (m.contains("vision")
+            || m.contains("4o")
+            || m.contains("turbo"))
     {
         Some(CalculationStrategy::OpenAITiling)
     } else if m.contains("claude")
@@ -232,6 +234,13 @@ fn estimate_anthropic(w: u32, h: u32) -> u32 {
 pub fn decode_image_dimensions(data_url: &str) -> Option<(u32, u32, String)> {
     let (b64, media_type) = parse_data_url(data_url);
     decode_data_dimensions(b64, media_type)
+}
+
+/// Base64-encode raw image bytes (test/utility helper).  Exposed so server
+/// tests can build data URLs without re-adding a base64 dev-dependency.
+pub fn encode_png_header(bytes: &[u8]) -> String {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
 /// Parse `data:image/png;base64,AAAA...` into (base64_payload, media_type).

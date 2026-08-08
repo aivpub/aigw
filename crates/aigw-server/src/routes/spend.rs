@@ -1423,10 +1423,22 @@ mod tests {
             .route("/global/spend/keys", axum::routing::get(global_spend_keys))
             .route("/spend/models", axum::routing::get(spend_models))
             .route("/spend/providers", axum::routing::get(spend_providers))
-            .route("/global/spend/models", axum::routing::get(global_spend_models))
-            .route("/global/spend/providers", axum::routing::get(global_spend_providers))
-            .route("/global/spend/model-groups", axum::routing::get(global_spend_model_groups))
-            .route("/global/spend/keys/rankings", axum::routing::get(global_spend_keys_rankings))
+            .route(
+                "/global/spend/models",
+                axum::routing::get(global_spend_models),
+            )
+            .route(
+                "/global/spend/providers",
+                axum::routing::get(global_spend_providers),
+            )
+            .route(
+                "/global/spend/model-groups",
+                axum::routing::get(global_spend_model_groups),
+            )
+            .route(
+                "/global/spend/keys/rankings",
+                axum::routing::get(global_spend_keys_rankings),
+            )
             .route(
                 "/global/spend/activity",
                 axum::routing::get(global_spend_activity),
@@ -1559,6 +1571,7 @@ mod tests {
             proxy_server_request: None,
             body_archived: false,
             parquet_path: None,
+            image_tokens: None,
         };
         db.insert_spend_log(&log).await.expect("insert log");
 
@@ -1679,6 +1692,7 @@ mod tests {
             proxy_server_request: None,
             body_archived: false,
             parquet_path: None,
+            image_tokens: None,
         }
     }
 
@@ -1711,7 +1725,9 @@ mod tests {
         state.db.insert_spend_log(&log).await.expect("insert");
 
         let val = get_detail(&app, "img-req-001").await;
-        let content = val["messages"][0]["content"].as_array().expect("content array");
+        let content = val["messages"][0]["content"]
+            .as_array()
+            .expect("content array");
         let image = content
             .iter()
             .find(|p| p["type"] == "image_url")
@@ -1738,7 +1754,10 @@ mod tests {
 
         let val = get_detail(&app, "out-req-001").await;
         let output = val["response"]["output"].as_array().expect("output array");
-        let msg = output.iter().find(|o| o["type"] == "message").expect("message");
+        let msg = output
+            .iter()
+            .find(|o| o["type"] == "message")
+            .expect("message");
         let content = msg["content"].as_array().expect("content array");
         let text = content
             .iter()
@@ -1760,7 +1779,9 @@ mod tests {
         state.db.insert_spend_log(&log).await.expect("insert");
 
         let val = get_detail(&app, "anth-img-req").await;
-        let content = val["messages"][0]["content"].as_array().expect("content array");
+        let content = val["messages"][0]["content"]
+            .as_array()
+            .expect("content array");
         let image = content
             .iter()
             .find(|p| p["type"] == "image")
@@ -1812,6 +1833,7 @@ mod tests {
             proxy_server_request: None,
             body_archived: false,
             parquet_path: None,
+            image_tokens: None,
         };
         db.insert_spend_log(&log).await.expect("insert log");
 
@@ -1908,6 +1930,7 @@ mod tests {
             proxy_server_request: None,
             body_archived: false,
             parquet_path: None,
+            image_tokens: None,
         };
         db.insert_spend_log(&log).await.expect("insert log");
 
@@ -1935,7 +1958,8 @@ mod tests {
             .with_state(state);
 
         // Local-day range with offset_minutes=480 → the UTC-20:00 row lands on local 08-05.
-        let uri = "/global/spend/activity?start_date=2026-08-05&end_date=2026-08-05&offset_minutes=480";
+        let uri =
+            "/global/spend/activity?start_date=2026-08-05&end_date=2026-08-05&offset_minutes=480";
         let request = Request::builder()
             .method(Method::GET)
             .uri(uri)
@@ -1956,10 +1980,7 @@ mod tests {
             bucket_date.starts_with("2026-08-05T"),
             "expected local 2026-08-05 hour bucket, got {bucket_date}"
         );
-        assert_eq!(
-            daily[0].get("requests").and_then(|v| v.as_i64()),
-            Some(1)
-        );
+        assert_eq!(daily[0].get("requests").and_then(|v| v.as_i64()), Some(1));
 
         // Insert a second row on UTC day 08-05 (local 08-05 18:00 +08) so the
         // offset=0 range also has data (avoids SQLite empty-INTEGER SUM decode).
@@ -2001,6 +2022,7 @@ mod tests {
             proxy_server_request: None,
             body_archived: false,
             parquet_path: None,
+            image_tokens: None,
         };
         db.insert_spend_log(&log2).await.expect("insert log2");
 
@@ -2021,10 +2043,7 @@ mod tests {
         let val0: Value = serde_json::from_slice(&body0).unwrap();
         let daily0 = val0.get("daily").and_then(|v| v.as_array()).unwrap();
         assert_eq!(daily0.len(), 1, "UTC day 08-05 has only the 10:00Z row");
-        assert_eq!(
-            daily0[0].get("requests").and_then(|v| v.as_i64()),
-            Some(1)
-        );
+        assert_eq!(daily0[0].get("requests").and_then(|v| v.as_i64()), Some(1));
     }
 
     #[tokio::test]
@@ -2075,6 +2094,7 @@ mod tests {
             proxy_server_request: None,
             body_archived: false,
             parquet_path: None,
+            image_tokens: None,
         };
         db.insert_spend_log(&log).await.expect("insert log");
 
@@ -2127,8 +2147,7 @@ mod tests {
         );
 
         // Omitted offset/tz_name → default 0 (UTC), tz_name absent.
-        let uri0 =
-            "/global/spend/activity?start_date=2026-08-05&end_date=2026-08-06";
+        let uri0 = "/global/spend/activity?start_date=2026-08-05&end_date=2026-08-06";
         let request0 = Request::builder()
             .method(Method::GET)
             .uri(uri0)
@@ -2194,6 +2213,7 @@ mod tests {
             proxy_server_request: None,
             body_archived: false,
             parquet_path: None,
+            image_tokens: None,
         };
         db.insert_spend_log(&log).await.expect("insert log");
 
@@ -2222,7 +2242,8 @@ mod tests {
 
         // Single-day range — the end-date row must be included (old raw-string
         // comparison dropped it; with offset_minutes=480 the 10:00Z row is local 18:00).
-        let uri = "/global/spend/models?start_date=2026-08-05&end_date=2026-08-05&offset_minutes=480";
+        let uri =
+            "/global/spend/models?start_date=2026-08-05&end_date=2026-08-05&offset_minutes=480";
         let request = Request::builder()
             .method(Method::GET)
             .uri(uri)
@@ -2237,10 +2258,7 @@ mod tests {
         let val: Value = serde_json::from_slice(&body_bytes).unwrap();
         let data = val.get("data").and_then(|v| v.as_array()).unwrap();
         assert_eq!(data.len(), 1, "end-date row included");
-        assert_eq!(
-            data[0].get("model").and_then(|v| v.as_str()),
-            Some("gpt-4")
-        );
+        assert_eq!(data[0].get("model").and_then(|v| v.as_str()), Some("gpt-4"));
         assert_eq!(data[0].get("requests").and_then(|v| v.as_i64()), Some(1));
     }
 
@@ -2290,6 +2308,7 @@ mod tests {
             proxy_server_request: None,
             body_archived: false,
             parquet_path: None,
+            image_tokens: None,
         };
         db.insert_spend_log(&log).await.expect("insert log");
 

@@ -17,8 +17,8 @@
 //! | SpendLog call_type | `"completion"` | `"responses"` |
 //! | proxy_server_request.url | `"/v1/chat/completions"` | `"/v1/responses"` |
 
-pub use super::chat::ChatAuth;
 use super::chat::resolve_key_model_list;
+pub use super::chat::ChatAuth;
 
 use aigw_core::adapter::{select_adapter, ClientProtocol};
 use aigw_core::metrics::RequestSummary;
@@ -257,20 +257,22 @@ pub async fn responses_handler(
     // Adapt request
     let adapt_span = tracing::info_span!("adapt_request");
     let _adapt_enter = adapt_span.enter();
-    let upstream_body_val = adapter.adapt_request(body.clone(), &deployment).map_err(|e| {
-        let (status, err_type) = match &e {
-            aigw_core::adapter::AdapterError::Unsupported(_) => {
-                (StatusCode::BAD_REQUEST, "invalid_request_error")
-            }
-            aigw_core::adapter::AdapterError::Parse(_) => {
-                (StatusCode::INTERNAL_SERVER_ERROR, "adapter_error")
-            }
-        };
-        (
-            status,
-            Json(json!({"error": {"message": format!("{}", e), "type": err_type}})),
-        )
-    })?;
+    let upstream_body_val = adapter
+        .adapt_request(body.clone(), &deployment)
+        .map_err(|e| {
+            let (status, err_type) = match &e {
+                aigw_core::adapter::AdapterError::Unsupported(_) => {
+                    (StatusCode::BAD_REQUEST, "invalid_request_error")
+                }
+                aigw_core::adapter::AdapterError::Parse(_) => {
+                    (StatusCode::INTERNAL_SERVER_ERROR, "adapter_error")
+                }
+            };
+            (
+                status,
+                Json(json!({"error": {"message": format!("{}", e), "type": err_type}})),
+            )
+        })?;
 
     // Upstream URL — Stage 102: bridge converts to Chat Completions, so use chat/completions path
     let upstream_path = match deployment.provider_type {
@@ -385,7 +387,8 @@ pub async fn responses_handler(
         let err_type = if is_timeout {
             tracing::error!(
                 "upstream request TIMEOUT for model '{}', upstream_url={}",
-                _model, upstream_url
+                _model,
+                upstream_url
             );
             "timeout_error"
         } else {
@@ -457,6 +460,7 @@ pub async fn responses_handler(
                     proxy_server_request: fail_psr,
                     body_archived: false,
                     parquet_path: None,
+                    image_tokens: None,
                 };
                 let _ = state2.db.insert_spend_log(&sl).await;
             });
@@ -486,7 +490,9 @@ pub async fn responses_handler(
         if upstream_rid != &request_id {
             tracing::warn!(
                 "mismatch request_id: ours={} theirs={} upstream_url={}",
-                request_id, upstream_rid, upstream_url,
+                request_id,
+                upstream_rid,
+                upstream_url,
             );
         }
     }
@@ -561,6 +567,7 @@ pub async fn responses_handler(
                     proxy_server_request: proxy_server_request.clone(),
                     body_archived: false,
                     parquet_path: None,
+                    image_tokens: None,
                 };
                 let _ = state.db.insert_spend_log(&sl).await;
             });
@@ -624,6 +631,7 @@ pub async fn responses_handler(
                 proxy_server_request: None,
                 body_archived: false,
                 parquet_path: None,
+                image_tokens: None,
             };
             let _ = state.db.insert_spend_log(&sl).await;
         }
@@ -659,8 +667,7 @@ pub async fn responses_handler(
                                                 }
                                             }
                                             if let Some(usage) = val.get("usage") {
-                                                stream_prompt_tokens =
-                                                    extract_prompt_tokens(usage);
+                                                stream_prompt_tokens = extract_prompt_tokens(usage);
                                                 stream_completion_tokens =
                                                     extract_completion_tokens(usage);
                                                 stream_total_tokens = extract_total_tokens(usage);
@@ -746,6 +753,7 @@ pub async fn responses_handler(
                             json!({"error": err, "status_code": status_code}),
                             &format!("failure:{}", status_code),
                             None,
+                            None,
                         )
                         .await;
                     if let Some(ref m) = stream_metrics {
@@ -768,39 +776,35 @@ pub async fn responses_handler(
                     }
                 }
                 None => {
-                    let cache_metadata =
-                        if stream_cache_read > 0 || stream_cache_creation > 0 {
-                            let mut m = serde_json::Map::new();
+                    let cache_metadata = if stream_cache_read > 0 || stream_cache_creation > 0 {
+                        let mut m = serde_json::Map::new();
+                        m.insert("cache_read_tokens".to_string(), json!(stream_cache_read));
+                        m.insert(
+                            "cache_creation_tokens".to_string(),
+                            json!(stream_cache_creation),
+                        );
+                        let cache_read_spend = stream_cache_read as f64
+                            * deployment
+                                .cache_read_input_token_cost
+                                .unwrap_or(deployment.input_cost_per_token.unwrap_or(0.0));
+                        let cache_create_spend = stream_cache_creation as f64
+                            * deployment
+                                .cache_creation_input_token_cost
+                                .unwrap_or(deployment.input_cost_per_token.unwrap_or(0.0));
+                        if cache_read_spend > 0.0 || cache_create_spend > 0.0 {
                             m.insert(
-                                "cache_read_tokens".to_string(),
-                                json!(stream_cache_read),
+                                "cache_read_spend".to_string(),
+                                json!((cache_read_spend * 10000.0).round() / 10000.0),
                             );
                             m.insert(
-                                "cache_creation_tokens".to_string(),
-                                json!(stream_cache_creation),
+                                "cache_create_spend".to_string(),
+                                json!((cache_create_spend * 10000.0).round() / 10000.0),
                             );
-                            let cache_read_spend = stream_cache_read as f64
-                                * deployment
-                                    .cache_read_input_token_cost
-                                    .unwrap_or(deployment.input_cost_per_token.unwrap_or(0.0));
-                            let cache_create_spend = stream_cache_creation as f64
-                                * deployment
-                                    .cache_creation_input_token_cost
-                                    .unwrap_or(deployment.input_cost_per_token.unwrap_or(0.0));
-                            if cache_read_spend > 0.0 || cache_create_spend > 0.0 {
-                                m.insert(
-                                    "cache_read_spend".to_string(),
-                                    json!((cache_read_spend * 10000.0).round() / 10000.0),
-                                );
-                                m.insert(
-                                    "cache_create_spend".to_string(),
-                                    json!((cache_create_spend * 10000.0).round() / 10000.0),
-                                );
-                            }
-                            Some(Value::Object(m))
-                        } else {
-                            None
-                        };
+                        }
+                        Some(Value::Object(m))
+                    } else {
+                        None
+                    };
                     let _ = state_clone
                         .db
                         .update_spend_log(
@@ -816,6 +820,7 @@ pub async fn responses_handler(
                             assembled_response,
                             "success",
                             cache_metadata,
+                            None,
                         )
                         .await;
 
@@ -849,10 +854,7 @@ pub async fn responses_handler(
                             date,
                             api_key: auth.token_hash.clone(),
                             model: model.clone(),
-                            model_group: deployment
-                                .model_group
-                                .clone()
-                                .unwrap_or_default(),
+                            model_group: deployment.model_group.clone().unwrap_or_default(),
                             custom_llm_provider: deployment
                                 .custom_llm_provider
                                 .clone()
@@ -863,6 +865,7 @@ pub async fn responses_handler(
                             completion_tokens: stream_completion_tokens as i64,
                             cache_read_input_tokens: stream_cache_read as i64,
                             cache_creation_input_tokens: stream_cache_creation as i64,
+                            image_tokens: 0,
                             spend: streaming_spend,
                             api_requests: 1,
                             successful_requests: 1,
@@ -899,10 +902,10 @@ pub async fn responses_handler(
                             success: true,
                             latency_secs: duration_ms as f64 / 1000.0,
                             upstream_latency_secs: 0.0,
-                            ttft_secs: Some(cst
-                                .signed_duration_since(start_time)
-                                .num_milliseconds() as f64
-                                / 1000.0),
+                            ttft_secs: Some(
+                                cst.signed_duration_since(start_time).num_milliseconds() as f64
+                                    / 1000.0,
+                            ),
                             queue_time_secs: None,
                             spend: streaming_spend,
                             prompt_tokens: stream_prompt_tokens,
@@ -1006,6 +1009,7 @@ pub async fn responses_handler(
                     proxy_server_request: proxy_server_request.clone(),
                     body_archived: false,
                     parquet_path: None,
+                    image_tokens: None,
                 };
                 let _ = state.db.insert_spend_log(&sl).await;
             });
@@ -1104,6 +1108,7 @@ pub async fn responses_handler(
             proxy_server_request: proxy_server_request.clone(),
             body_archived: false,
             parquet_path: None,
+            image_tokens: None,
         };
         let _ = state.db.insert_spend_log(&spend_log).await;
 
@@ -1132,21 +1137,14 @@ pub async fn responses_handler(
         // Queue daily spend
         if let Some(ref queue) = state.daily_spend_queue {
             let date = now.format("%Y-%m-%d").to_string();
-            let is_success = spend_log
-                .status
-                .as_deref()
-                .unwrap_or("success")
-                == "success";
+            let is_success = spend_log.status.as_deref().unwrap_or("success") == "success";
             let ds_log = DailySpendLog {
                 entity_id: spend_log.user.clone().unwrap_or_default(),
                 date,
                 api_key: spend_log.api_key.clone(),
                 model: spend_log.model.clone(),
                 model_group: spend_log.model_group.clone().unwrap_or_default(),
-                custom_llm_provider: spend_log
-                    .custom_llm_provider
-                    .clone()
-                    .unwrap_or_default(),
+                custom_llm_provider: spend_log.custom_llm_provider.clone().unwrap_or_default(),
                 mcp_namespaced_tool_name: spend_log
                     .mcp_namespaced_tool_name
                     .clone()
@@ -1156,6 +1154,7 @@ pub async fn responses_handler(
                 completion_tokens: spend_log.completion_tokens as i64,
                 cache_read_input_tokens: cache_read as i64,
                 cache_creation_input_tokens: cache_create as i64,
+                image_tokens: spend_log.image_tokens.unwrap_or(0) as i64,
                 spend: spend_log.spend,
                 api_requests: 1,
                 successful_requests: if is_success { 1 } else { 0 },
@@ -1220,7 +1219,6 @@ pub async fn responses_handler(
             .unwrap())
     }
 }
-
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Unit tests
@@ -1335,10 +1333,7 @@ mod tests {
 
     fn build_app(state: SharedState) -> Router {
         Router::new()
-            .route(
-                "/v1/responses",
-                axum::routing::post(responses_handler),
-            )
+            .route("/v1/responses", axum::routing::post(responses_handler))
             .with_state(state)
     }
 
@@ -1363,7 +1358,10 @@ mod tests {
         assert_eq!(resp.status().as_u16(), 400);
         let body_bytes = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
-        assert_eq!(json["error"]["type"].as_str(), Some("invalid_request_error"));
+        assert_eq!(
+            json["error"]["type"].as_str(),
+            Some("invalid_request_error")
+        );
         assert!(json["error"]["message"].as_str().unwrap().contains("model"));
     }
 
@@ -1388,7 +1386,10 @@ mod tests {
         assert_eq!(resp.status().as_u16(), 400);
         let body_bytes = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
-        assert_eq!(json["error"]["type"].as_str(), Some("invalid_request_error"));
+        assert_eq!(
+            json["error"]["type"].as_str(),
+            Some("invalid_request_error")
+        );
         assert!(json["error"]["message"].as_str().unwrap().contains("input"));
     }
 
@@ -1488,7 +1489,8 @@ mod tests {
         assert_eq!(extract_total_tokens(&usage), 49);
 
         // Chat Completions format (fallback)
-        let usage2 = serde_json::json!({"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15});
+        let usage2 =
+            serde_json::json!({"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15});
         assert_eq!(extract_prompt_tokens(&usage2), 10);
         assert_eq!(extract_completion_tokens(&usage2), 5);
         assert_eq!(extract_total_tokens(&usage2), 15);

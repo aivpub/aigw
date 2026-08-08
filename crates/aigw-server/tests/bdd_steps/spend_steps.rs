@@ -342,6 +342,7 @@ async fn given_spend_log_basic(world: &mut TestWorld, request_id: String) {
         proxy_server_request: None,
         body_archived: false,
         parquet_path: None,
+        image_tokens: None,
     };
     state
         .db
@@ -389,6 +390,7 @@ async fn given_spend_log_with_body(world: &mut TestWorld, request_id: String) {
         proxy_server_request: None,
         body_archived: false,
         parquet_path: None,
+        image_tokens: None,
     };
     state
         .db
@@ -502,6 +504,7 @@ async fn given_spend_log_with_upstream_id(world: &mut TestWorld, call_id: String
         proxy_server_request: None,
         body_archived: false,
         parquet_path: None,
+        image_tokens: None,
     };
     state
         .db

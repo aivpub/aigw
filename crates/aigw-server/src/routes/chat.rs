@@ -1147,6 +1147,7 @@ pub async fn chat_completions(
                     proxy_server_request: fail_psr,
                     body_archived: false,
                     parquet_path: None,
+                    image_tokens: None,
                 };
                 let _ = state2.db.insert_spend_log(&sl).await;
             });
@@ -1258,6 +1259,7 @@ pub async fn chat_completions(
                     proxy_server_request: proxy_server_request.clone(),
                     body_archived: false,
                     parquet_path: None,
+                    image_tokens: None,
                 };
                 let _ = state.db.insert_spend_log(&sl).await;
             });
@@ -1331,6 +1333,7 @@ pub async fn chat_completions(
                 proxy_server_request: None,
                 body_archived: false,
                 parquet_path: None,
+                image_tokens: None,
             };
             let _ = state.db.insert_spend_log(&sl).await;
         }
@@ -1346,6 +1349,8 @@ pub async fn chat_completions(
             let mut stream_total_tokens: i32 = 0;
             let mut stream_cache_read: i32 = 0;
             let mut stream_cache_creation: i32 = 0;
+            let mut stream_image_tokens: i64 = 0;
+            let mut stream_image_tokens_source: Option<String> = None;
             let mut failure: Option<(u16, String)> = None;
             // v6.1 §4.3: extract upstream id from the first chunk carrying it
             // (OpenAI chunks put `id` at the top level). Borrow val before any push/move.
@@ -1391,6 +1396,26 @@ pub async fn chat_completions(
                                                     extract_cache_read_tokens(usage);
                                                 stream_cache_creation =
                                                     extract_cache_creation_tokens(usage);
+                                                // Streaming image tokens: upstream first,
+                                                // fallback estimate from the request body.
+                                                if let Some(t) = aigw_core::image_tokens::
+                                                    extract_image_tokens_from_usage(usage)
+                                                {
+                                                    stream_image_tokens = t as i64;
+                                                    stream_image_tokens_source =
+                                                        Some("upstream".to_string());
+                                                } else if stream_image_tokens_source.is_none() {
+                                                    if let Some(est) = aigw_core::image_tokens::
+                                                        calculate_image_tokens(
+                                                            &request_body,
+                                                            &model,
+                                                        )
+                                                    {
+                                                        stream_image_tokens = est as i64;
+                                                        stream_image_tokens_source =
+                                                            Some("estimated".to_string());
+                                                    }
+                                                }
                                             }
                                             if let Some(choices) = val.get("choices") {
                                                 if !choices
@@ -1539,6 +1564,7 @@ pub async fn chat_completions(
                             json!({"error": err, "status_code": status_code}),
                             &format!("failure:{}", status_code),
                             None,
+                            None,
                         )
                         .await;
                     if let Some(ref m) = stream_metrics {
@@ -1561,10 +1587,10 @@ pub async fn chat_completions(
                     }
                 }
                 None => {
-                    let cache_metadata = if stream_cache_read > 0 || stream_cache_creation > 0 {
-                        let mut m = serde_json::Map::new();
-                        m.insert("cache_read_tokens".to_string(), json!(stream_cache_read));
-                        m.insert(
+                    let mut meta_map = serde_json::Map::new();
+                    if stream_cache_read > 0 || stream_cache_creation > 0 {
+                        meta_map.insert("cache_read_tokens".to_string(), json!(stream_cache_read));
+                        meta_map.insert(
                             "cache_creation_tokens".to_string(),
                             json!(stream_cache_creation),
                         );
@@ -1577,18 +1603,23 @@ pub async fn chat_completions(
                                 .cache_creation_input_token_cost
                                 .unwrap_or(deployment.input_cost_per_token.unwrap_or(0.0));
                         if cache_read_spend > 0.0 || cache_create_spend > 0.0 {
-                            m.insert(
+                            meta_map.insert(
                                 "cache_read_spend".to_string(),
                                 json!((cache_read_spend * 10000.0).round() / 10000.0),
                             );
-                            m.insert(
+                            meta_map.insert(
                                 "cache_create_spend".to_string(),
                                 json!((cache_create_spend * 10000.0).round() / 10000.0),
                             );
                         }
-                        Some(serde_json::Value::Object(m))
-                    } else {
+                    }
+                    if let Some(src) = stream_image_tokens_source {
+                        meta_map.insert("image_tokens_source".to_string(), json!(src));
+                    }
+                    let cache_metadata = if meta_map.is_empty() {
                         None
+                    } else {
+                        Some(serde_json::Value::Object(meta_map))
                     };
                     let _ = state_clone
                         .db
@@ -1605,6 +1636,11 @@ pub async fn chat_completions(
                             assembled_response,
                             "success",
                             cache_metadata,
+                            if stream_image_tokens > 0 {
+                                Some(stream_image_tokens as i32)
+                            } else {
+                                None
+                            },
                         )
                         .await;
 
@@ -1669,6 +1705,7 @@ pub async fn chat_completions(
                     completion_tokens: stream_completion_tokens as i64,
                     cache_read_input_tokens: stream_cache_read as i64,
                     cache_creation_input_tokens: stream_cache_creation as i64,
+                    image_tokens: stream_image_tokens,
                     spend: streaming_spend,
                     api_requests: 1,
                     successful_requests: 1,
@@ -1795,6 +1832,7 @@ pub async fn chat_completions(
                     proxy_server_request: proxy_server_request.clone(),
                     body_archived: false,
                     parquet_path: None,
+                    image_tokens: None,
                 };
                 let _ = state.db.insert_spend_log(&sl).await;
             });
@@ -1817,6 +1855,22 @@ pub async fn chat_completions(
             .unwrap_or(0) as i32;
         let cache_read = usage.map(|u| extract_cache_read_tokens(u)).unwrap_or(0);
         let cache_create = usage.map(|u| extract_cache_creation_tokens(u)).unwrap_or(0);
+        // Image tokens: upstream first (Qwen OpenAI-compat / DashScope native),
+        // fallback to client-side estimation from the request body (OpenAI/
+        // Anthropic don't report this breakdown). image_tokens ⊆ prompt_tokens.
+        let (image_tokens, image_tokens_source) = usage
+            .and_then(|u| aigw_core::image_tokens::extract_image_tokens_from_usage(u))
+            .map(|t| (Some(t), Some("upstream")))
+            .unwrap_or_else(|| {
+                let est = aigw_core::image_tokens::calculate_image_tokens(
+                    &body,
+                    &deployment.upstream_model,
+                );
+                match est {
+                    Some(t) if t > 0 => (Some(t), Some("estimated")),
+                    _ => (None, None),
+                }
+            });
         // Anthropic normalization
         let effective_prompt = if deployment.provider_type.is_anthropic_style() {
             prompt_tokens + cache_read + cache_create
@@ -1869,8 +1923,8 @@ pub async fn chat_completions(
             api_base: Some(deployment.api_base.clone()),
             user: auth.user_id.clone(),
             metadata: {
+                let mut m = serde_json::Map::new();
                 if cache_read > 0 || cache_create > 0 {
-                    let mut m = serde_json::Map::new();
                     m.insert("cache_read_tokens".to_string(), json!(cache_read));
                     m.insert("cache_creation_tokens".to_string(), json!(cache_create));
                     // Effective cache spend (excludes regular token portion)
@@ -1892,9 +1946,14 @@ pub async fn chat_completions(
                             json!((cache_create_spend * 10000.0).round() / 10000.0),
                         );
                     }
-                    Some(Value::Object(m))
-                } else {
+                }
+                if let Some(src) = image_tokens_source {
+                    m.insert("image_tokens_source".to_string(), json!(src));
+                }
+                if m.is_empty() {
                     None
+                } else {
+                    Some(Value::Object(m))
                 }
             },
             cache_hit: None,
@@ -1913,6 +1972,7 @@ pub async fn chat_completions(
             proxy_server_request: None,
             body_archived: false,
             parquet_path: None,
+            image_tokens,
         };
 
         // Record spend log (don't fail the request if logging fails)
@@ -1987,6 +2047,7 @@ pub async fn chat_completions(
                 completion_tokens: spend_log.completion_tokens as i64,
                 cache_read_input_tokens: cache_read as i64,
                 cache_creation_input_tokens: cache_create as i64,
+                image_tokens: spend_log.image_tokens.unwrap_or(0) as i64,
                 spend: spend_log.spend,
                 api_requests: 1,
                 successful_requests: if is_success { 1 } else { 0 },
@@ -3076,6 +3137,81 @@ mod tests {
     fn test_extract_cache_creation_anthropic_format() {
         let usage = json!({"cache_creation_input_tokens": 50});
         assert_eq!(extract_cache_creation_tokens(&usage), 50);
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // Stage 107: Image token handler integration
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    #[test]
+    fn test_image_tokens_upstream_priority() {
+        // Qwen returns image_tokens in usage → upstream value wins over estimate.
+        let usage = json!({
+            "prompt_tokens": 1270,
+            "prompt_tokens_details": {"image_tokens": 400, "cached_tokens": 0}
+        });
+        let upstream = aigw_core::image_tokens::extract_image_tokens_from_usage(&usage);
+        assert_eq!(upstream, Some(400));
+        // If usage has image_tokens, the handler uses it and never estimates.
+        let image_tokens = upstream
+            .map(|t| (Some(t), Some("upstream")))
+            .unwrap_or((None, None));
+        assert_eq!(image_tokens, (Some(400), Some("upstream")));
+    }
+
+    #[test]
+    fn test_image_tokens_fallback_estimate() {
+        // OpenAI usage has no image_tokens → client-side estimate from body.
+        let body = json!({
+            "model": "gpt-4o",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "hi"},
+                    {"type": "image_url", "image_url": {"url": data_url_png(1024, 1024)}}
+                ]
+            }]
+        });
+        let est = aigw_core::image_tokens::calculate_image_tokens(&body, "gpt-4o");
+        assert_eq!(est, Some(765)); // 85 + 170 × ⌈1024/512⌉²
+    }
+
+    #[test]
+    fn test_image_tokens_text_only_null() {
+        // Text-only request → None (no image parts).
+        let body = json!({
+            "model": "qwen2.5-vl-72b",
+            "messages": [{"role": "user", "content": "hello"}]
+        });
+        assert_eq!(
+            aigw_core::image_tokens::calculate_image_tokens(&body, "qwen2.5-vl-72b"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_image_tokens_source_metadata() {
+        // The handler's metadata merge: when an estimate exists, the
+        // image_tokens_source key is written into the metadata JSON.
+        let mut m = serde_json::Map::new();
+        m.insert("image_tokens_source".to_string(), json!("estimated"));
+        let meta = serde_json::Value::Object(m);
+        assert_eq!(meta["image_tokens_source"], json!("estimated"));
+    }
+
+    /// Minimal valid PNG header (8-byte sig + IHDR) of given size → data URL.
+    /// Reuses aigw-core's decode path so the test exercises the same base64 engine.
+    fn data_url_png(w: u32, h: u32) -> String {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"\x89PNG\r\n\x1a\n");
+        bytes.extend_from_slice(&[0, 0, 0, 13]);
+        bytes.extend_from_slice(b"IHDR");
+        bytes.extend_from_slice(&w.to_be_bytes());
+        bytes.extend_from_slice(&h.to_be_bytes());
+        bytes.extend_from_slice(&[8, 6, 0, 0, 0]);
+        bytes.extend_from_slice(&[0, 0, 0, 0]);
+        let b64 = aigw_core::image_tokens::encode_png_header(&bytes);
+        format!("data:image/png;base64,{}", b64)
     }
 
     #[test]

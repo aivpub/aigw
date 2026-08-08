@@ -2197,6 +2197,7 @@ pub trait SpendLogStore {
         response: serde_json::Value,
         status: &str,
         metadata: Option<serde_json::Value>,
+        image_tokens: Option<i32>,
     ) -> Result<()>;
     async fn query_spend_logs(
         &self,
@@ -2275,8 +2276,8 @@ INSERT INTO spend_logs (
     cache_hit, cache_key, request_tags, team_id, organization_id,
     end_user, requester_ip_address, messages, response,
     session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request,
-    body_archived, parquet_path, request_id
-) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    body_archived, parquet_path, request_id, image_tokens
+) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 "#;
 
 const QUERY_SPEND_LOGS_ALL_SQLITE: &str = r#"
@@ -2288,7 +2289,7 @@ SELECT
     cache_hit, cache_key, request_tags, team_id, organization_id,
     end_user, requester_ip_address, messages, response,
     session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request,
-    body_archived, parquet_path, request_id
+    body_archived, parquet_path, request_id, image_tokens
 FROM spend_logs
 ORDER BY start_time DESC
 LIMIT ?
@@ -2303,7 +2304,7 @@ SELECT
     cache_hit, cache_key, request_tags, team_id, organization_id,
     end_user, requester_ip_address, messages, response,
     session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request,
-    body_archived, parquet_path, request_id
+    body_archived, parquet_path, request_id, image_tokens
 FROM spend_logs
 WHERE api_key = ?
 ORDER BY start_time DESC
@@ -2349,6 +2350,7 @@ impl SpendLogStore for SqlitePool {
             .bind(log.body_archived)
             .bind(&log.parquet_path)
             .bind(&log.request_id)
+            .bind(log.image_tokens)
             .execute(self)
             .await?;
         Ok(())
@@ -2368,14 +2370,15 @@ impl SpendLogStore for SqlitePool {
         response: serde_json::Value,
         status: &str,
         metadata: Option<serde_json::Value>,
+        image_tokens: Option<i32>,
     ) -> Result<()> {
         // COALESCE keeps an already-extracted upstream id when the caller
         // passes None (e.g. streaming where the id was extracted at chunk
         // time but the Phase 2 UPDATE doesn't re-supply it).
         let sql = if metadata.is_some() {
-            "UPDATE spend_logs SET spend=?, total_tokens=?, prompt_tokens=?, completion_tokens=?, end_time=?, request_duration_ms=?, completion_start_time=?, response=?, status=?, request_id=COALESCE(?, request_id), metadata=? WHERE call_id=?"
+            "UPDATE spend_logs SET spend=?, total_tokens=?, prompt_tokens=?, completion_tokens=?, end_time=?, request_duration_ms=?, completion_start_time=?, response=?, status=?, request_id=COALESCE(?, request_id), metadata=?, image_tokens=COALESCE(?, image_tokens) WHERE call_id=?"
         } else {
-            "UPDATE spend_logs SET spend=?, total_tokens=?, prompt_tokens=?, completion_tokens=?, end_time=?, request_duration_ms=?, completion_start_time=?, response=?, status=?, request_id=COALESCE(?, request_id) WHERE call_id=?"
+            "UPDATE spend_logs SET spend=?, total_tokens=?, prompt_tokens=?, completion_tokens=?, end_time=?, request_duration_ms=?, completion_start_time=?, response=?, status=?, request_id=COALESCE(?, request_id), image_tokens=COALESCE(?, image_tokens) WHERE call_id=?"
         };
         let mut q = sqlx::query(sql)
             .bind(spend)
@@ -2391,7 +2394,10 @@ impl SpendLogStore for SqlitePool {
         if let Some(m) = metadata {
             q = q.bind(m);
         }
-        q.bind(call_id).execute(self).await?;
+        q.bind(image_tokens)
+            .bind(call_id)
+            .execute(self)
+            .await?;
         Ok(())
     }
 
@@ -2605,7 +2611,7 @@ impl SpendLogStore for SqlitePool {
                 cache_hit, cache_key, request_tags, team_id, organization_id,
                 end_user, requester_ip_address, messages, response,
                 session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request,
-                body_archived, parquet_path, request_id
+                body_archived, parquet_path, request_id, image_tokens
             FROM spend_logs WHERE 1=1"#,
         );
 
@@ -2725,7 +2731,7 @@ impl SpendLogStore for SqlitePool {
             cache_hit, cache_key, request_tags, team_id, organization_id,
             end_user, requester_ip_address, messages, response,
             session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request,
-            body_archived, parquet_path, request_id
+            body_archived, parquet_path, request_id, image_tokens
             FROM spend_logs WHERE call_id = ?"#,
         )
         .bind(call_id)
@@ -2750,8 +2756,8 @@ impl SpendLogStore for MySqlPool {
              cache_hit, cache_key, request_tags, team_id, organization_id, \
              end_user, requester_ip_address, messages, response, \
              session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request, \
-             body_archived, parquet_path, request_id) \
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+             body_archived, parquet_path, request_id, image_tokens) \
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         )
         .bind(&log.call_id)
         .bind(&log.call_type)
@@ -2788,6 +2794,7 @@ impl SpendLogStore for MySqlPool {
         .bind(log.body_archived)
         .bind(&log.parquet_path)
         .bind(&log.request_id)
+        .bind(log.image_tokens)
         .execute(self)
         .await?;
         Ok(())
@@ -2807,11 +2814,12 @@ impl SpendLogStore for MySqlPool {
         response: serde_json::Value,
         status: &str,
         metadata: Option<serde_json::Value>,
+        image_tokens: Option<i32>,
     ) -> Result<()> {
         let sql = if metadata.is_some() {
-            "UPDATE spend_logs SET spend=?, total_tokens=?, prompt_tokens=?, completion_tokens=?, end_time=?, request_duration_ms=?, completion_start_time=?, response=?, status=?, request_id=COALESCE(?, request_id), metadata=? WHERE call_id=?"
+            "UPDATE spend_logs SET spend=?, total_tokens=?, prompt_tokens=?, completion_tokens=?, end_time=?, request_duration_ms=?, completion_start_time=?, response=?, status=?, request_id=COALESCE(?, request_id), metadata=?, image_tokens=COALESCE(?, image_tokens) WHERE call_id=?"
         } else {
-            "UPDATE spend_logs SET spend=?, total_tokens=?, prompt_tokens=?, completion_tokens=?, end_time=?, request_duration_ms=?, completion_start_time=?, response=?, status=?, request_id=COALESCE(?, request_id) WHERE call_id=?"
+            "UPDATE spend_logs SET spend=?, total_tokens=?, prompt_tokens=?, completion_tokens=?, end_time=?, request_duration_ms=?, completion_start_time=?, response=?, status=?, request_id=COALESCE(?, request_id), image_tokens=COALESCE(?, image_tokens) WHERE call_id=?"
         };
         let mut q = sqlx::query(sql)
             .bind(spend)
@@ -2827,7 +2835,10 @@ impl SpendLogStore for MySqlPool {
         if let Some(m) = metadata {
             q = q.bind(m);
         }
-        q.bind(call_id).execute(self).await?;
+        q.bind(image_tokens)
+            .bind(call_id)
+            .execute(self)
+            .await?;
         Ok(())
     }
 
@@ -2847,7 +2858,7 @@ impl SpendLogStore for MySqlPool {
                    cache_hit, cache_key, request_tags, team_id, organization_id, \
                    end_user, requester_ip_address, messages, response, \
                    session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request, \
-                   body_archived, parquet_path, request_id \
+                   body_archived, parquet_path, request_id, image_tokens \
                    FROM spend_logs WHERE start_time > '1000-01-01'";
         match api_key {
             Some(key) => sqlx::query_as(&format!(
@@ -3171,7 +3182,7 @@ impl SpendLogStore for MySqlPool {
             cache_hit, cache_key, request_tags, team_id, organization_id,
             end_user, requester_ip_address, messages, response,
             session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request,
-            body_archived, parquet_path, request_id
+            body_archived, parquet_path, request_id, image_tokens
             FROM spend_logs WHERE call_id = ?"#,
         )
         .bind(call_id)
@@ -3196,8 +3207,8 @@ impl SpendLogStore for PgPool {
             cache_hit, cache_key, request_tags, team_id, organization_id,
             end_user, requester_ip_address, messages, response,
             session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request,
-            body_archived, parquet_path, request_id)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35)"#
+            body_archived, parquet_path, request_id, image_tokens)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36)"#
         )
             .bind(&log.call_id).bind(&log.call_type).bind(&log.api_key)
             .bind(log.spend).bind(log.total_tokens).bind(log.prompt_tokens)
@@ -3211,7 +3222,7 @@ impl SpendLogStore for PgPool {
             .bind(&log.messages).bind(&log.response).bind(&log.session_id)
             .bind(&log.status).bind(&log.mcp_namespaced_tool_name).bind(&log.agent_id)
             .bind(&log.proxy_server_request).bind(log.body_archived).bind(&log.parquet_path)
-            .bind(&log.request_id)
+            .bind(&log.request_id).bind(log.image_tokens)
             .execute(self).await?;
         Ok(())
     }
@@ -3230,11 +3241,12 @@ impl SpendLogStore for PgPool {
         response: serde_json::Value,
         status: &str,
         metadata: Option<serde_json::Value>,
+        image_tokens: Option<i32>,
     ) -> Result<()> {
         let sql = if metadata.is_some() {
-            "UPDATE spend_logs SET spend=$1, total_tokens=$2, prompt_tokens=$3, completion_tokens=$4, end_time=$5, request_duration_ms=$6, completion_start_time=$7, response=$8, status=$9, request_id=COALESCE($10, request_id), metadata=$11 WHERE call_id=$12"
+            "UPDATE spend_logs SET spend=$1, total_tokens=$2, prompt_tokens=$3, completion_tokens=$4, end_time=$5, request_duration_ms=$6, completion_start_time=$7, response=$8, status=$9, request_id=COALESCE($10, request_id), metadata=$11, image_tokens=COALESCE($12, image_tokens) WHERE call_id=$13"
         } else {
-            "UPDATE spend_logs SET spend=$1, total_tokens=$2, prompt_tokens=$3, completion_tokens=$4, end_time=$5, request_duration_ms=$6, completion_start_time=$7, response=$8, status=$9, request_id=COALESCE($10, request_id) WHERE call_id=$11"
+            "UPDATE spend_logs SET spend=$1, total_tokens=$2, prompt_tokens=$3, completion_tokens=$4, end_time=$5, request_duration_ms=$6, completion_start_time=$7, response=$8, status=$9, request_id=COALESCE($10, request_id), image_tokens=COALESCE($11, image_tokens) WHERE call_id=$12"
         };
         let mut q = sqlx::query(sql)
             .bind(spend)
@@ -3250,7 +3262,10 @@ impl SpendLogStore for PgPool {
         if let Some(m) = metadata {
             q = q.bind(m);
         }
-        q.bind(call_id).execute(self).await?;
+        q.bind(image_tokens)
+            .bind(call_id)
+            .execute(self)
+            .await?;
         Ok(())
     }
 
@@ -3267,7 +3282,7 @@ impl SpendLogStore for PgPool {
             cache_hit, cache_key, request_tags, team_id, organization_id,
             end_user, requester_ip_address, messages, response,
             session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request,
-            body_archived, parquet_path, request_id
+            body_archived, parquet_path, request_id, image_tokens
             FROM spend_logs"#;
         match api_key {
             Some(key) => sqlx::query_as(&format!(
@@ -3590,7 +3605,7 @@ impl SpendLogStore for PgPool {
             cache_hit, cache_key, request_tags, team_id, organization_id,
             end_user, requester_ip_address, messages, response,
             session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request,
-            body_archived, parquet_path, request_id
+            body_archived, parquet_path, request_id, image_tokens
             FROM spend_logs WHERE call_id = $1"#,
         )
         .bind(call_id)
@@ -3627,6 +3642,7 @@ impl Database {
         response: serde_json::Value,
         status: &str,
         metadata: Option<serde_json::Value>,
+        image_tokens: Option<i32>,
     ) -> Result<()> {
         match self {
             Database::Sqlite(pool) => {
@@ -3643,6 +3659,7 @@ impl Database {
                     response,
                     status,
                     metadata,
+                    image_tokens,
                 )
                 .await
             }
@@ -3660,6 +3677,7 @@ impl Database {
                     response,
                     status,
                     metadata,
+                    image_tokens,
                 )
                 .await
             }
@@ -3677,6 +3695,7 @@ impl Database {
                     response,
                     status,
                     metadata,
+                    image_tokens,
                 )
                 .await
             }
@@ -3990,7 +4009,8 @@ impl Database {
                     COALESCE(SUM(COALESCE(JSON_EXTRACT(metadata, '$.cache_create_spend'), 0.0)), 0)
                 FROM spend_logs
                 WHERE date(CONVERT_TZ(start_time, '+00:00', 'OFFS_TZ')) >= date(?) AND date(CONVERT_TZ(start_time, '+00:00', 'OFFS_TZ')) <= date(?) {filter}"#;
-                let sql_mysql = sql_mysql.replace("OFFS_TZ", &Database::mysql_tz_offset(offset_minutes));
+                let sql_mysql =
+                    sql_mysql.replace("OFFS_TZ", &Database::mysql_tz_offset(offset_minutes));
                 let (filter_clause, params) =
                     build_activity_filter(user_id, team_id, organization_id, 0, false, true);
                 let sql = sql_mysql.replace("{filter}", &filter_clause);
@@ -4304,14 +4324,12 @@ impl Database {
                     .await
                     .map_err(DbError::from)
             }
-            Database::Postgres(pool) => {
-                sqlx::query_as(&sql_pg)
-                    .bind(start_date)
-                    .bind(end_date)
-                    .fetch_all(pool)
-                    .await
-                    .map_err(DbError::from)
-            }
+            Database::Postgres(pool) => sqlx::query_as(&sql_pg)
+                .bind(start_date)
+                .bind(end_date)
+                .fetch_all(pool)
+                .await
+                .map_err(DbError::from),
         }
     }
 }
@@ -7627,7 +7645,7 @@ impl Database {
             cache_hit, cache_key, request_tags, team_id, organization_id,
             end_user, requester_ip_address, messages, response,
             session_id, status, mcp_namespaced_tool_name, agent_id, proxy_server_request,
-            body_archived, parquet_path, request_id
+            body_archived, parquet_path, request_id, image_tokens
             FROM spend_logs {} ORDER BY start_time DESC LIMIT {} OFFSET {}"#,
             where_clause, l, o
         );
@@ -8052,6 +8070,7 @@ mod tests {
             body_archived: false,
             parquet_path: None,
             request_id: None,
+            image_tokens: None,
         }
     }
     /// Helper: create a SpendLog with cache tokens in metadata.
@@ -8120,6 +8139,7 @@ mod tests {
             body_archived: false,
             parquet_path: None,
             request_id: None,
+            image_tokens: None,
         }
     }
 
@@ -9034,15 +9054,13 @@ mod tests {
         // UTC 2026-08-04T20:00 = local (+08) 2026-08-05 04:00 — next local day.
         // UTC 2026-08-05T10:00 = local (+08) 2026-08-05 18:00 — same local day.
         let mut l1 = make_test_spend_log_full(&key_hash, "u1", 1.0, 100, 50, 50, "success", None);
-        l1.start_time =
-            chrono::DateTime::parse_from_rfc3339("2026-08-04T20:00:00+00:00")
-                .unwrap()
-                .with_timezone(&chrono::Utc);
+        l1.start_time = chrono::DateTime::parse_from_rfc3339("2026-08-04T20:00:00+00:00")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
         let mut l2 = make_test_spend_log_full(&key_hash, "u1", 2.0, 100, 50, 50, "success", None);
-        l2.start_time =
-            chrono::DateTime::parse_from_rfc3339("2026-08-05T10:00:00+00:00")
-                .unwrap()
-                .with_timezone(&chrono::Utc);
+        l2.start_time = chrono::DateTime::parse_from_rfc3339("2026-08-05T10:00:00+00:00")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
         db.insert_spend_log(&l1).await.expect("insert l1");
         db.insert_spend_log(&l2).await.expect("insert l2");
 
@@ -9072,10 +9090,9 @@ mod tests {
 
         // UTC 23:00 → local (+08) 07:00 next day.
         let mut l = make_test_spend_log_full(&key_hash, "u1", 1.0, 100, 50, 50, "success", None);
-        l.start_time =
-            chrono::DateTime::parse_from_rfc3339("2026-08-04T23:00:00+00:00")
-                .unwrap()
-                .with_timezone(&chrono::Utc);
+        l.start_time = chrono::DateTime::parse_from_rfc3339("2026-08-04T23:00:00+00:00")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
         db.insert_spend_log(&l).await.expect("insert");
 
         let rows = db
@@ -9097,10 +9114,9 @@ mod tests {
 
         // UTC 2026-08-05T10:00 = local 18:00 — on the query end date.
         let mut l = make_test_spend_log_full(&key_hash, "u1", 3.0, 100, 50, 50, "success", None);
-        l.start_time =
-            chrono::DateTime::parse_from_rfc3339("2026-08-05T10:00:00+00:00")
-                .unwrap()
-                .with_timezone(&chrono::Utc);
+        l.start_time = chrono::DateTime::parse_from_rfc3339("2026-08-05T10:00:00+00:00")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
         db.insert_spend_log(&l).await.expect("insert");
 
         // Single-day range start==end must include the end-day row (old raw-string
@@ -9123,10 +9139,9 @@ mod tests {
 
         // UTC 2026-08-04T20:00 = local (+08) 2026-08-05 04:00.
         let mut l = make_test_spend_log_full(&key_hash, "u1", 7.0, 100, 50, 50, "success", None);
-        l.start_time =
-            chrono::DateTime::parse_from_rfc3339("2026-08-04T20:00:00+00:00")
-                .unwrap()
-                .with_timezone(&chrono::Utc);
+        l.start_time = chrono::DateTime::parse_from_rfc3339("2026-08-04T20:00:00+00:00")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
         db.insert_spend_log(&l).await.expect("insert");
 
         // UTC day 08-04 has the row; local (+08) day 08-05 has it.
@@ -9162,15 +9177,13 @@ mod tests {
         // UTC 2026-08-06T05:00 = local (UTC-8) 2026-08-05 21:00 — previous local day.
         // UTC 2026-08-06T08:00 = local (UTC-8) 2026-08-06 00:00 — exactly local midnight.
         let mut l1 = make_test_spend_log_full(&key_hash, "u1", 1.0, 100, 50, 50, "success", None);
-        l1.start_time =
-            chrono::DateTime::parse_from_rfc3339("2026-08-06T05:00:00+00:00")
-                .unwrap()
-                .with_timezone(&chrono::Utc);
+        l1.start_time = chrono::DateTime::parse_from_rfc3339("2026-08-06T05:00:00+00:00")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
         let mut l2 = make_test_spend_log_full(&key_hash, "u1", 2.0, 100, 50, 50, "success", None);
-        l2.start_time =
-            chrono::DateTime::parse_from_rfc3339("2026-08-06T08:00:00+00:00")
-                .unwrap()
-                .with_timezone(&chrono::Utc);
+        l2.start_time = chrono::DateTime::parse_from_rfc3339("2026-08-06T08:00:00+00:00")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
         db.insert_spend_log(&l1).await.expect("insert l1");
         db.insert_spend_log(&l2).await.expect("insert l2");
 
@@ -9208,10 +9221,9 @@ mod tests {
         let key_hash = hash_token("sk-neg-offset-h");
 
         let mut l = make_test_spend_log_full(&key_hash, "u1", 1.0, 100, 50, 50, "success", None);
-        l.start_time =
-            chrono::DateTime::parse_from_rfc3339("2026-08-06T05:00:00+00:00")
-                .unwrap()
-                .with_timezone(&chrono::Utc);
+        l.start_time = chrono::DateTime::parse_from_rfc3339("2026-08-06T05:00:00+00:00")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
         db.insert_spend_log(&l).await.expect("insert");
 
         let rows = db
@@ -9234,10 +9246,9 @@ mod tests {
         let key_hash = hash_token("sk-neg-offset-aggregate");
 
         let mut l = make_test_spend_log_full(&key_hash, "u1", 3.0, 100, 50, 50, "success", None);
-        l.start_time =
-            chrono::DateTime::parse_from_rfc3339("2026-08-05T10:00:00+00:00")
-                .unwrap()
-                .with_timezone(&chrono::Utc);
+        l.start_time = chrono::DateTime::parse_from_rfc3339("2026-08-05T10:00:00+00:00")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
         db.insert_spend_log(&l).await.expect("insert");
 
         // UTC 08-05T10:00 = local (UTC-8) 08-05 02:00 — same local day as the range end.

@@ -587,6 +587,7 @@ async fn save_result(
         proxy_server_request: None,
         body_archived: false,
         parquet_path: None,
+        image_tokens: None,
     };
     let _ = db.insert_spend_log(&sl).await;
 }

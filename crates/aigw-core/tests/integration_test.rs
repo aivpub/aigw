@@ -263,6 +263,7 @@ mod postgres_tests {
             proxy_server_request: None,
             body_archived: false,
             parquet_path: None,
+            image_tokens: None,
             request_id: None,
         };
         db.insert_spend_log(&make_log(&key_a, 10.0, 100))

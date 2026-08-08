@@ -429,6 +429,7 @@ pub async fn messages_handler(
                     proxy_server_request: None,
                     body_archived: false,
                     parquet_path: None,
+                    image_tokens: None,
                 };
                 let _ = log_state.db.insert_spend_log(&sl).await;
             });
@@ -626,6 +627,7 @@ pub async fn messages_handler(
                     proxy_server_request: psr,
                     body_archived: false,
                     parquet_path: None,
+                    image_tokens: None,
                 };
                 let _ = state2.db.insert_spend_log(&sl).await;
             });
@@ -734,6 +736,7 @@ pub async fn messages_handler(
                 proxy_server_request: psr,
                 body_archived: false,
                 parquet_path: None,
+                image_tokens: None,
             };
             let _ = state.db.insert_spend_log(&sl).await;
         });
@@ -800,6 +803,7 @@ pub async fn messages_handler(
                 proxy_server_request: proxy_server_request.clone(),
                 body_archived: false,
                 parquet_path: None,
+                image_tokens: None,
             };
             let _ = state.db.insert_spend_log(&sl).await;
         }
@@ -1040,6 +1044,7 @@ pub async fn messages_handler(
                     assembled_response,
                     "success",
                     cache_metadata,
+                    None,
                 )
                 .await;
 
@@ -1179,6 +1184,26 @@ pub async fn messages_handler(
         // Build cache metadata JSON so cache tokens persist in spend_logs.metadata.
         // Mirrors the streaming path (above) and chat.rs non-streaming path.
         // Keys must match the Spend-Logs drawer extractCacheTokens + the activity SQL.
+        // Image tokens: Anthropic usage has no image_tokens — estimate from
+        // the original request body's Claude content blocks.
+        let image_tokens = usage
+            .and_then(|u| aigw_core::image_tokens::extract_image_tokens_from_usage(u))
+            .or_else(|| {
+                let blocks = body_val
+                    .get("messages")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                let est = aigw_core::image_tokens::estimate_image_tokens_from_blocks(
+                    &blocks,
+                    &upstream_model,
+                );
+                if est > 0 {
+                    Some(est as i32)
+                } else {
+                    None
+                }
+            });
         let non_stream_cache_metadata = if non_stream_cache_read > 0 || non_stream_cache_create > 0
         {
             let mut m = serde_json::Map::new();
@@ -1204,6 +1229,13 @@ pub async fn messages_handler(
                     json!((cache_create_spend * 10000.0).round() / 10000.0),
                 );
             }
+            if image_tokens.is_some() {
+                m.insert("image_tokens_source".to_string(), json!("estimated"));
+            }
+            Some(serde_json::Value::Object(m))
+        } else if image_tokens.is_some() {
+            let mut m = serde_json::Map::new();
+            m.insert("image_tokens_source".to_string(), json!("estimated"));
             Some(serde_json::Value::Object(m))
         } else {
             None
@@ -1251,6 +1283,7 @@ pub async fn messages_handler(
             proxy_server_request: proxy_server_request.clone(),
             body_archived: false,
             parquet_path: None,
+            image_tokens,
         };
 
         let _ = state.db.insert_spend_log(&spend_log).await;
@@ -1324,6 +1357,7 @@ pub async fn messages_handler(
                 completion_tokens: spend_log.completion_tokens as i64,
                 cache_read_input_tokens: non_stream_cache_read as i64,
                 cache_creation_input_tokens: non_stream_cache_create as i64,
+                image_tokens: spend_log.image_tokens.unwrap_or(0) as i64,
                 spend: spend_log.spend,
                 api_requests: 1,
                 successful_requests: if is_success { 1 } else { 0 },

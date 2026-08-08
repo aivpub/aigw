@@ -70,3 +70,52 @@ Feature: 端到端调用链路（mock）
     When 使用 key "e2e-image-user" 发送带图片的 POST /chat/completions 请求用 model "gpt-4o-mock"
     Then 响应状态码为 200
     And mock 上游收到的请求 body 保留 image_url 图片 parts
+
+  # ━━━━ Stage 107: Image Token Tracking ━━━━
+
+  Scenario: Qwen 返回 image_tokens — 存为 upstream 来源
+    Given mock 上游已启动
+    And 已配置 model "qwen-vl-proxy" 且上游 model 为 "qwen2.5-vl-72b" 指向 mock 上游
+    And mock 上游 chat 返回含 image_tokens 的 usage
+    And 一个普通 key "img-qwen-user" 已生成
+    When 使用 key "img-qwen-user" 发送带图片的 POST /chat/completions 请求用 model "qwen-vl-proxy"
+    Then 响应状态码为 200
+    And spend_logs 中 image_tokens 为 400
+    And spend_logs 的 metadata image_tokens_source 为 "upstream"
+
+  Scenario: OpenAI 不返回 image_tokens — 客户端估算 fallback
+    Given mock 上游已启动
+    And 已配置 model "gpt-4o-img" 指向 mock 上游
+    And mock 上游 chat 返回不含 image_tokens 的 usage
+    And 一个普通 key "img-gpt4o-user" 已生成
+    When 使用 key "img-gpt4o-user" 发送含 1 张 512x512 图片的 POST /chat/completions 请求用 model "gpt-4o-img"
+    Then 响应状态码为 200
+    And spend_logs 中 image_tokens 大于 0
+    And spend_logs 的 metadata image_tokens_source 为 "estimated"
+
+  Scenario: 纯文本请求 image_tokens 为 null
+    Given mock 上游已启动
+    And 已配置 model "qwen-vl-text" 且上游 model 为 "qwen2.5-vl-72b" 指向 mock 上游
+    And 一个普通 key "img-text-user" 已生成
+    When 使用 key "img-text-user" 发送 POST /chat/completions 请求用 model "qwen-vl-text"
+    Then 响应状态码为 200
+    And spend_logs 中 image_tokens 为 null
+
+  Scenario: 多图片求和正确（3 张 512x512 → 255）
+    Given mock 上游已启动
+    And 已配置 model "gpt-4o-multi" 指向 mock 上游
+    And mock 上游 chat 返回不含 image_tokens 的 usage
+    And 一个普通 key "img-multi-user" 已生成
+    When 使用 key "img-multi-user" 发送含 3 张 512x512 图片的 POST /chat/completions 请求用 model "gpt-4o-multi"
+    Then 响应状态码为 200
+    And spend_logs 中 image_tokens 为 255
+
+  Scenario: 流式路径 Phase 2 UPDATE 写入 image_tokens
+    Given mock 上游已启动
+    And 已配置 model "gpt-4o-stream-img" 指向 mock 上游
+    And mock 上游 chat 返回不含 image_tokens 的 usage
+    And 一个普通 key "img-stream-user" 已生成
+    When 使用 key "img-stream-user" 发送带图片的流式 POST /chat/completions 请求用 model "gpt-4o-stream-img"
+    Then 响应状态码为 200
+    And spend_logs 中 image_tokens 大于 0
+
