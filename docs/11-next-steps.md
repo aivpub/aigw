@@ -117,12 +117,13 @@ Phase 40:   ████████████████████ 100% (3
 Phase 41:   ████████████████████ 100% (2/2)  ✅ OpenAI Responses API 接入 (Stage 101-102)
 Phase 42:   ████████████████████ 100% (3/3)  ✅ Playground 多模态图片 (Stage 103-105)
 Phase 43:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3)  ⏳ Image Token Usage Tracking (Stage 106-108)
+Phase 44:   ░░░░░░░░░░░░░░░░░░░░   0% (0/0)  ⏳ 在途 P1 收尾（Responses 稳定 + Image Token + TD-006/TD-007，无 Stage 编号）
 Phase 45:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3)  ⏳ OpenAI Embeddings API 代理 (Stage 110-112)
 ```
 
 ---
 
-## Phase 42: Playground 多模态图片 ⏳（2026-08-07，34.5h）
+## Phase 42: Playground 多模态图片 ✅（2026-08-07，34.5h）
 
 **背景**: 用户要给 Playground 增加图片能力，让 qwen3.5-vl 等多模态模型在 playground 中识别图片。代码审计确认后端多模态转换部分就绪（`claude_message_to_openai` 正确生成 `data:{media_type};base64,{data}`），但 `openai_message_to_claude` 反向有 bug（硬编码 image/jpeg + 完整 data URL 塞入 data 字段），前端 Playground 仅纯文本。三路 subagent 并发实测收敛为 3 Stage。
 
@@ -158,8 +159,9 @@ Phase 45:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 | ✅ | Phase 42 Stage 103 多模态适配修复 + 模型模式暴露 | ✅ 完成（cd576dc） |
 | ✅ | Phase 42 Stage 104 Playground 图片输入 | ✅ 完成 |
 | ✅ | Phase 42 Stage 105 图片渲染 + SpendLog 详情 + 文档 | ✅ 完成 |
+| ✅ | Phase 39 补充 Stage 109 预算重置 cron 界面重构 | ✅ 完成（2026-08-08） |
 | P1 | Phase 43 Stage 106-108 Image Token Usage Tracking | ⏳ 待开始 |
-| P1 | Phase 44 在途 P1 收尾（Responses 稳定 + Image Token + TD-006/TD-007） | ⏳ 待开始 |
+| P1 | Phase 44 在途 P1 收尾（Responses 稳定 + Image Token + TD-006/TD-007，无 Stage 编号） | ⏳ 待开始 |
 | P1 | Phase 45 Stage 110 POST /1/embeddings Passthrough（四端点） | ⏳ 待 |
 | P1 | Phase 45 Stage 111 前端 OutputCard data + OpenAPI spec + real BDD | ⏳ 待开始 |
 | P1 | Phase 45 Stage 112 Embedding 模型接入 + 文档收尾 | ⏳ 待开始 |

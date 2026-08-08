@@ -51,6 +51,7 @@ Phase 40:   ████████████████████ 100% (3
 Phase 41:   ████████████████████ 100% (2/2 Stages) ✅ OpenAI Responses API 接入 (Stage 101-102)
 Phase 42:   ████████████████████ 100% (3/3 Stages) ✅ Playground 多模态图片 (Stage 103-105)
 Phase 43:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3 Stages) ⏳ Image Token Usage Tracking (Stage 106-108)
+Phase 44:   ░░░░░░░░░░░░░░░░░░░░   0% (0/0 Stages) ⏳ 在途 P1 收尾（Responses 稳定 + Image Token + TD-006/TD-007，无 Stage 编号）
 Phase 45:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3 Stages) ⏳ OpenAI Embeddings API 代理 (Stage 110-112)
 ```
 
@@ -133,7 +134,7 @@ Phase 45:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 - `docs/stages/stage-101.md`（Passthrough + Bridge 两个 Stage）
 - `docs/research/2026-08-04-openai-responses-api-support.md`（调研报告）
 
-### Phase 42：Playground 多模态图片 ⏳（2026-08-07）
+### Phase 42：Playground 多模态图片 ✅（2026-08-07）
 
 **背景**: 用户要给 Playground 增加图片能力，让 qwen3.5-vl 等多模态模型在 playground 中识别图片。后端多模态转换已部分就绪（`claude_message_to_openai` 正确生成 `data:{media_type};base64,{data}`；`openai_message_to_claude` 反向有 bug），前端 Playground 仅支持纯文本。分 3 Stage 交付：103 后端适配修复 + 模型模式暴露，104 Playground 图片输入（上传/粘贴/预览），105 图片渲染 + SpendLog 详情增强 + 文档收尾。
 
