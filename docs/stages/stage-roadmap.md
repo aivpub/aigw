@@ -8,7 +8,7 @@
 ## 当前状态
 
 - **当前 Phase**: **Phase 41 ✅ 完成（Stage 101-102 OpenAI Responses API，22h，2026-08-05）**；Phase 42 ✅ 完成（Stage 103-105 Playground 多模态图片，34.5h）；Phase 43 ⏳ 待开始（Stage 106-108 Image Token Usage Tracking，28h）；**Phase 44 ⏳ 待开始（Stage 110-112 OpenAI Embeddings API，24h）**
-- **状态**: **106/111 Stages** 已完成（Stage 98-100 ✅ + Stage 101-102 ✅ + Stage 103-105 ✅ + Stage 106-108 ⏳ + Stage 109 ✅ 预算重置 UI + Stage 110-112 ⏳）
+- **状态**: **106/111 Stages** 已完成（Phase 0-42 + Stage 109 ✅；Phase 43/44 待开始）。**注**：Phase 30（Stage 78-81）代码已落地且经 Phase 31 生产化修复（Stage 82-84 ✅），2026-08-08 待回写为 ✅。
 - **下一里程碑**: Phase 43 Stage 106 — Image Token Engine（10h）
 
 ### 整体进度
@@ -38,7 +38,7 @@ Phase 26:   ████████████████████ 100% (3
 Phase 27:   ████████████████████ 100% (3/3 Stages) ✅ 全栈质量修复 + Usage 图表增强
 Phase 28:   ████████████████████ 100% (1/1 Stage)  ✅ 安全与质量加固
 Phase 29:   ████████████████████ 100% (4/4 Stages) ✅ Cross-DB BDD Hardening
-Phase 30:   ░░░░░░░░░░░░░░░░░░░░   0% (0/4 Stages) ⚠️ 代码已落地，Phase 31 修复完成待一并标记 ✅
+Phase 30:   ░░░░░░░░░░░░░░░░░░░░   0% (0/4 Stages) ⚠️ 代码已落地 + Phase 31 生产化修复完成，2026-08-08 待回写 ✅
 Phase 31:   ████████████████████ 100% (3/3 Stages) ✅ Body Archive 生产化（Stage 82-84 全部完成）
 Phase 32:   ████████████████████ 100% (1/1 Stage)  ✅ request_id→call_id 改名 + 上游对账链路（Stage 85）
 Phase 33:   ████████████████████ 100% (1/1 Stage)  ✅ aigw↔aigw 多表只读增量同步（Stage 86）
