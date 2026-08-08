@@ -7,9 +7,9 @@
 
 ## 当前状态
 
-- **当前 Phase**: **Phase 43 ✅ 完成（Stage 106-108 Image Token Usage Tracking，28h，2026-08-08）**；**Phase 44 ⏳ 待开始（Stage 110-112 OpenAI Embeddings API，24h）**
-- **状态**: **113/114 Stages** 已完成（Phase 0-43 + Stage 109 ✅；Phase 44 待开始）。
-- **下一里程碑**: Phase 44 Stage 110 — OpenAI Embeddings API Passthrough（10h）
+- **当前 Phase**: **Phase 44 ✅ 完成（Stage 110-112 OpenAI Embeddings API，24h，2026-08-09）**
+- **状态**: **116/116 Stages** 已完成（Phase 0-44 全部交付；ALL STAGES COMPLETE）。
+- **下一里程碑**: 在途 P1 收尾（Responses 稳定 + Image Token + TD-006/TD-007）。
 
 ### 整体进度
 
@@ -51,7 +51,7 @@ Phase 40:   ████████████████████ 100% (3
 Phase 41:   ████████████████████ 100% (2/2 Stages) ✅ OpenAI Responses API 接入 (Stage 101-102)
 Phase 42:   ████████████████████ 100% (3/3 Stages) ✅ Playground 多模态图片 (Stage 103-105)
 Phase 43:   ████████████████████ 100% (3/3 Stages) ✅ Image Token Usage Tracking (Stage 106-108)
-Phase 44:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3 Stages) ⏳ OpenAI Embeddings API 代理 (Stage 110-112)
+Phase 44:   ████████████████████ 100% (3/3 Stages) ✅ OpenAI Embeddings API 代理 (Stage 110-112)
 ```
 
 ---
@@ -193,31 +193,34 @@ Phase 44:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 ---
 
-### Phase 44：OpenAI Embeddings API 代理 ⏳（2026-08-08，3 Stage，24h）
+### Phase 44：OpenAI Embeddings API 代理 ✅（2026-08-09，3 Stage，24h）
 
 **背景**: 用户有部分 Embedding 应用流量并想尝试更多，本地 + 托管 embedding 模型都在用。调研确认（`docs/research/2026-08-08-embedding-proxy-support.md`）LiteLLM（aigw 参照实现）把 `/v1/embeddings` 当一等公民端点，走与 chat 完全相同的 auth→budget→rate-limit→spend-log 管道；Kong/Portkey/new-api 均支持，Cloudflare/Helicone/Azure APIM 缺失（leader parity 非普适 table-stakes）。工程成本低：responses.rs 的非流式克隆，`ChatAuth`/`resolve_key_model_list`/`calc_spend`（prompt-only）/`OpenAIPassthrough`/`ModelResolver` 原样复用，零 schema 变更。
 
-**用户决策**: ① 有流量 → 现在交付；② 本地+托管模型 → 薄 OpenAI-compatible Passthrough 覆盖（`openai/` 前缀 → vLLM/BGE/Qwen3）；③ **排在在途 P1 收尾之后** → 编号 Phase 44；④ **四种端点都需要** → `/v1/embeddings` + `/embeddings` + `/engines/{model}/embeddings`（Azure legacy）+ `/openai/deployments/{model}/embeddings`（Azure）；⑤ health.rs embedding-mode 探测 → 非阻塞（记 TD-011）。
+**用户决策**: ① 有流量 → 现在交付；② 本地+托管模型 → 薄 OpenAI-compatible Passthrough 覆盖（`openai/` 前缀 → vLLM/BGE/Qwen3）；③ 排在在途 P1 收尾之后 → 编号 Phase 44；④ 四种端点都需要；⑤ health.rs embedding-mode 探测 → 非阻塞（记 TD-012a）。
 
-**拆分**: 3 Stage（Passthrough 后端 10h + 前端/OpenAPI/real BDD 8h + 模型接入/文档 6h），共 24h。
+**拆分**: 3 Stage（Passthrough 后端 10h + 前端/OpenAPI/real BDD 8h + 模型接入/文档 6h），共 24h。全部完成 — Stage 110 ✅（`41d0223`）/ Stage 111 ✅（`4637062`）/ Stage 112 ✅。
 
 | Stage | 状态 | 目标 | 类型 | 预估 |
 |-------|------|------|------|------|
-| Stage 110 | ⏳ 待开始 | **POST /v1/embeddings Passthrough（四端点）** — 新建 `routes/embeddings.rs`（responses.rs 非流式子集：ChatAuth 认证→校验 model+input（string/array，400）→resolver+router→**硬选 OpenAIPassthrough**（⚠️ 拒绝 AnthropicNative，防 OpenAIToAnthropic 破坏 embedding body）→上游 `{api_base}/embeddings`→非流式透传→SpendLog `call_type="embedding"` + calc_spend(prompt-only)）；注册 4 端点；`extract_prompt_tokens`/`extract_total_tokens` 提升 `pub(crate)`。TDD: 6 UT + 11 BDD | 后端+测试 | 10h |
-| Stage 111 | ⏳ 待开始 | **Frontend OutputCard `data[]` 分支 + OpenAPI spec + real BDD** — `parseOutput` 加 `data[]` 分支（渲染 embedding 向量维度 + usage，替代空态）；openapi.rs `embeddings_spec()` + expected_endpoints 18→19；real API BDD 验证真实 embedding 端点。TDD: 3 UT + 2 E2E × 3 viewports | 前端+测试 | 8h |
-| Stage 112 | ⏳ 待开始 | **Embedding 模型接入验证 + 文档收尾** — 验证 `/model/new` 注册 `mode="embed"` 模型 + `/v1/models` 展示 + `/v1/embeddings` 全链路（本地 vLLM + 托管 OpenAI 两种形态）；health.rs embedding 探测登记 TD-011（非阻塞）；charter L91/L204 + roadmap + next-steps + ADR-026 + TD-011。TDD: +2 BDD 场景 | 全栈+文档 | 6h |
+| Stage 110 | ✅ 完成 | **POST /v1/embeddings Passthrough（四端点）** — 新建 `routes/embeddings.rs`（responses.rs 非流式子集：ChatAuth 认证→校验 model+input（string/array，400）→resolver+router→**硬选 OpenAIPassthrough**（拒绝 AnthropicNative，防 OpenAIToAnthropic 破坏 embedding body）→上游 `{api_base}/embeddings`→非流式透传→SpendLog `call_type="embedding"` + calc_spend(prompt-only)）；注册 4 端点（`/v1/embeddings` + `/embeddings` 走无 Path wrapper，Azure 别名走 `embeddings_handler_with_path` 提取 `{model}` 入 body）；`extract_prompt_tokens`/`extract_total_tokens` 提升 `pub(crate)`；openapi.rs `embeddings_spec()` + expected_endpoints 18→19。TDD: 6 UT + 11 BDD | 后端+测试 | 10h |
+| Stage 111 | ✅ 完成 | **Frontend OutputCard `data[]` 分支 + OpenAPI spec + E2E** — `parseOutput` 加 `object=list` + `data[]` 分支（渲染向量维度 + 8 维截断预览 + usage）；i18n 2 keys；mock 加 EMB_SPEND_ROW + sampleDetailEmbedding；spend-logs.feature 2 E2E × 3 viewports；ADR-026 → Accepted + TD-012a/b 登记。TDD: 2 E2E × 3 viewports = 6 执行 | 前端+测试 | 8h |
+| Stage 112 | ✅ 完成 | **Embedding 模型接入验证 + 文档收尾** — models.feature +2 场景（`/model/new` 注册 mode=embed 模型 + `/v1/models` 展示 + `/v1/embeddings` 全链路 SpendLog call_type=embedding）；charter L91/L204 已有 `/v1/embeddings`；roadmap + next-steps + ADR-026 + TD-012a/b 收尾。TDD: +2 BDD 场景 | 全栈+文档 | 6h |
 
 **依赖关系**: Stage 110 → 111（前端依赖端点契约）→ 112（文档依赖全部落地）。
 
-**Phase 44 合计**: 24h，3 Stages。
+**Phase 44 合计**: 24h，3 Stages。✅ 全部完成（2026-08-09，总进度 116/116 — ALL STAGES COMPLETE）。
 
 **关键决策**:
 - **薄 OpenAI-compatible Passthrough，不做协议翻译**：`openai/`-前缀覆盖 OpenAI 托管 + vLLM/BGE/Qwen3 本地；不做 Gemini `:embedContent` / Cohere `/v2/embed` 翻译（Envoy 刚合并的差异化层，等真实 RAG 负载再上）。
-- **不加 `ClientProtocol::Embeddings` 变体**：Responses 加变体是因为 URL/校验/usage 全不同；embeddings 的 usage 解析复用现有 `extract_prompt_tokens`/`extract_total_tokens`，上游路径固定 `{api_base}/embeddings`，OpenAIPassthrough 透传足够。
+- **不加 `ClientProtocol::Embeddings` 变体**：embeddings 的 usage 解析复用现有 `extract_prompt_tokens`/`extract_total_tokens`，上游路径固定 `{api_base}/embeddings`，OpenAIPassthrough 透传足够。
 - **硬选 OpenAIPassthrough / 拒绝 AnthropicNative**：`select_adapter(OpenAI, AnthropicNative)` → `OpenAIToAnthropic`（adapter.rs L77）会把 embedding body 当 chat 转换产生垃圾。embedding 模型天然 OpenAI 兼容。
 - **`call_type="embedding"`**：对齐 litellm SDK 直调 call_type；aigw 全同步无 async 区分，用 `"embedding"` 语义最贴。
 - **计费 prompt-only**：usage `{prompt_tokens, total_tokens}`（completion=0），`calc_spend` 直接复用 → `prompt_tokens × input_cost_per_token`。
-- **四端点共用同一 handler**：差异仅路径匹配；Azure 别名的 model 取自 path param 并入 body。
+- **四端点共用同一 handler**：差异仅路径匹配；Azure 别名的 model 取自 path param 并入 body（axum Path<Option<String>> 在无参数路由会 500 → 拆 wrapper + with_path 两个公开 handler）。
+- **前端只渲染向量维度**：不渲染完整 1536 维数组，截断 8 维预览 + usage grid。
+
+**验证**：mock BDD 232 passed（2 新增 Stage 112 场景全绿；仅 pre-existing budget_reset next_tick flake）、aigw-server 135 UT、fe-bdd 333 passed（Stage 111 2 场景 × 3 viewports）、fmt + lint green。
 
 **设计文档**:
 - `docs/research/2026-08-08-embedding-proxy-support.md`（调研报告）
@@ -848,4 +851,5 @@ Phase 44:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 | v46.0 | 2026-08-08 | **Phase 41 完成回写（Stage 101-102 ✅）+ 测试缺口登记**：代码审计确认 Phase 41 两 Stage 已 2026-08-05 落地（`b90f42d` Stage 101 / `6a3ab61` Stage 102），roadmap/next-steps 此前积欠未同步——本次回写为 ✅，总进度 106/111。**实现修正**：Stage 101 `select_adapter(Responses, OpenAICompatible)` 实际接线 `ResponsesToChatCompletions`（非计划初稿的 `OpenAIPassthrough`），非流式 `/v1/responses` 实际返回 ChatCompletions 格式。**测试缺口登记**：① 计划声称的 19 适配器 UT 未落地（adapter.rs 无 `ResponsesToChatCompletions` 直测，桥接由 5 个 BDD 场景覆盖）；② `ResponsesToChatCompletionsStream` 未接入 handler 流式路径（流式路径转发原始 SSE 字节，mock 亦不返回真实 SSE 帧）——登记到 next-steps 待办，待后续补测。 |
 | v46.1 | 2026-08-08 | **Phase 44/45 重编号**：原 "Phase 44 在途 P1 收尾" 是无 Stage 的待办桶（Responses 稳定 + Image Token + TD-006/TD-007），非真实 Phase——降级为无 Phase 号的 next-steps 待办项。Embeddings 代理（Stage 110-112）由 Phase 45 **重编号为 Phase 44**（3 Stage 真实功能 Phase）。Stage 号不变，Phase 号只作分组标签。ADR-026 同步。 |
 | v47.0 | 2026-08-08 | **Phase 30 完成回写（Stage 78-81 ✅，总进度 110/111）**：Phase 30 代码自 2026-07-27 落地并经 Phase 31（Stage 82-84）生产化修复，roadmap 保持 ⚠️ 待修复直至审计缺陷核实完毕。本次回写前逐条核对 `docs/research/2026-07-25-body-archive-production-audit.md` 全部 28 项缺陷：**6 P0 + 10 P1 全部修复**（状态机 mark_job_*、配置单例化 config.rs body_archive 字段 + main.rs 注入、storage_configured 门禁 ×3、冷回源 spend.rs 详情端点、read_body_from_storage Err/None 区分、query_parquet_with_cache + FooterCache 激活、create_job/claim 事务化、前端路由化/分页/toast），**P2 10/12 修复**；剩余 P2-2（Engine panic 容错）/P2-3（shutdown 信号）登记 TD-005 不阻塞生产。Stage 78-81 全部回写 ✅，审计闭环，里程碑条 0%→100%。 |
-| v48.0 | 2026-08-08 | **Phase 43 完成（Stage 106-108 ✅，总进度 113/114）**：Image Token Usage Tracking 全部交付（28h，3 Stage）。Stage 106 引擎（`45d7323`）：零依赖 PNG/JPEG/WebP/GIF header parser + model-name auto-sniff 公式（OpenAI tiling 85+170×tiles / Qwen2.5-VL factor 28 / Qwen3-VL factor 32 / Anthropic 官方 ⌈w/28⌉×⌈h/28⌉）+ extract_image_tokens_from_usage 上游解析器，18 UT。Stage 107 handler+迁移：Migration 025（spend_logs + 6 daily_*_spend 加 image_tokens × 3 方言）+ SpendLog/DailySpendLog 字段 + chat.rs/v1_messages.rs 集成（上游优先 + fallback，streaming Phase 2 UPDATE）+ daily_spend_queue 聚合 + mock 上游真实 SSE 流式 + 5 BDD + 4 handler UT。Stage 108 前端+文档：SpendLog 详情 image_tokens + source badge（✓/⚠）+ 列表 🖼️ 标记 + i18n 3 keys + ADR-027 + TD-011。验证：aigw-core 391 + aigw-server 129 UT、mock BDD 219 pass（1 pre-existing budget_reset next_tick flake）、real sqlite 43/43、frontend BDD 327 pass。ADR-027 Accepted + TD-011a/b/c 登记。 |
+| v48.0 | 2026-08-08 | **Phase 43 完成（Stage 106-108 ✅，总进度 113/114）**：Image Token Usage Tracking 全部交付（28h，3 Stage）。Stage 106 引擎（`45d7323`）：零依赖 PNG/JPEG/WebP/GIF header parser + model-name auto-sniff 公式（OpenAI tiling 85+170×tiles / Qwen2.5-VL factor 28 / Qwen3-VL factor 32 / Anthropic 官方 ⌈w/28⌉×⌈h/28⌉）+ extract_image_tokens_from_usage 上游解析器，18 UT。Stage 107 handler+迁移：Migration 025（spend_logs + 6 daily_*_spend 加 image_tokens × 3 方言）+ SpendLog/DailySpendLog 字段 + chat.rs/v1_messages.rs 集成（上游优先 + fallback，streaming Phase 2 UPDATE）+ daily_spend_queue 聚合 mock 上游真实 SSE 流式 + 5 BDD + 4 handler UT。Stage 108 前端+文档：SpendLog 详情 image_tokens + source badge（✓/⚠）+ 列表 🖼️ 标记 + i18n 3 keys + ADR-027 + TD-011。验证：aigw-core 391 + aigw-server 129 UT、mock BDD 219 pass（1 pre-existing budget_reset next_tick flake）、real sqlite 43/43、frontend BDD 327 pass。ADR-027 Accepted + TD-011a/b/c 登记。 |
+| v49.0 | 2026-08-09 | **Phase 44 完成（Stage 110-112 ✅，总进度 116/116 — ALL STAGES COMPLETE）**：OpenAI Embeddings API 代理全部交付（24h，3 Stage）。Stage 110（`41d0223`）后端四端点：`routes/embeddings.rs`（responses.rs 非流式子集）+ 硬选 OpenAIPassthrough（拒绝 AnthropicNative）+ call_type=embedding + prompt-only 计费 + openapi embeddings_spec（18→19 端点）+ mock /v1/embeddings handler；**实现修正**：axum `Path<Option<String>>` 在无参数路由会 500 → 拆 `embeddings_handler`（无 Path wrapper）+ `embeddings_handler_with_path`（Azure 别名 Path<String>）两个公开 handler，共享 `embeddings_handler_inner`。TDD 6 UT + 11 BDD。Stage 111（`4637062`）前端：OutputCard `data[]` 分支（向量维度 + 8 维截断预览 + usage）+ i18n 2 keys + 2 E2E × 3 viewports（fe-bdd 333 pass）+ ADR-026 Accepted + TD-012a/b。Stage 112 模型接入 + 文档：models.feature +2 BDD（/model/new 注册 mode=embed + /v1/models 展示 + /v1/embeddings SpendLog call_type=embedding）+ roadmap/next-steps/ADR/TD 收尾。验证：aigw-server 135 UT、mock BDD 232 pass（2 新增全绿，仅 pre-existing budget_reset flake）、fmt + lint green。 |

@@ -71,3 +71,25 @@ Feature: 模型管理 CRUD
     When 使用普通 key "models-key-user" 发送 GET /v1/models 请求
     Then 响应状态码为 200
     And /v1/models 不返回 model_info 字段
+
+  # ── Stage 112: embedding 模型注册 + /v1/models 展示 + /v1/embeddings 全链路 ──
+
+  Scenario: 注册 embedding 模型（mode=embed）并在 /v1/models 展示
+    Given 管理员已认证
+    When 发送 POST /model/new 请求
+      """
+      {"model_name": "text-embedding-3-small", "litellm_params": {"model": "openai/text-embedding-3-small", "api_base": "https://api.openai.com"}, "model_info": {"mode": "embed", "input_cost_per_token": 0.00000002}}
+      """
+    Then 响应状态码为 200
+    When 发送 GET /v1/models 请求
+    Then 响应状态码为 200
+    And /v1/models 中模型 "text-embedding-3-small" 的 model_info.mode 为 "embed"
+
+  Scenario: embedding 模型走 /v1/embeddings 生成 SpendLog call_type=embedding
+    Given mock 上游已启动
+    And 已配置 model "text-embedding-3-small" 指向 mock 上游
+    And 一个普通 key "emb-model-full" 已生成
+    When 使用 key "emb-model-full" 发送 POST /v1/embeddings 请求
+    Then 响应状态码为 200
+    And SpendLog 中最近一条记录的 call_type 为 "embedding"
+

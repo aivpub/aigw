@@ -1,26 +1,24 @@
 # aigw -- 下一步行动
 
-**上次更新**: 2026-08-08
-**当前阶段**: **Phase 43 ✅ 完成（Stage 106-108 Image Token Usage Tracking，28h，2026-08-08）**；**Phase 44 ⏳ 待开始（Stage 110-112 OpenAI Embeddings API，24h）**
+**上次更新**: 2026-08-09
+**当前阶段**: **Phase 44 ✅ 完成（Stage 110-112 OpenAI Embeddings API，24h，2026-08-09）——116/116 Stages ALL STAGES COMPLETE**
 
 ---
 
-## 当前状态：113/114 Stages（Phase 0-43 + Stage 109 ✅；110-112 待开始）
+## 当前状态：116/116 Stages（Phase 0-44 全部完成 — ALL STAGES COMPLETE）
 
-**2026-08-08（三期）**: **Phase 43 全部完成（Stage 106-108 ✅）——Image Token Usage Tracking。** Stage 106 引擎（`45d7323`）：零依赖 header parser（PNG/JPEG/WebP/GIF）+ model-name auto-sniff 公式（OpenAI tiling / Qwen2.5-VL factor 28 / Qwen3-VL factor 32 / Anthropic 官方 ⌈w/28⌉×⌈h/28⌉）+ `extract_image_tokens_from_usage` 上游解析器，18 UT。Stage 107 handler+迁移（`85e...`）：Migration 025（spend_logs + 6 daily_*_spend 加 image_tokens 列 × 3 方言）+ SpendLog/DailySpendLog 字段 + chat.rs/v1_messages.rs 集成（上游优先 + fallback 估算，streaming Phase 2 UPDATE 填充）+ daily_spend_queue 聚合 + mock SSE 流式路径 + 5 BDD 场景 + 4 handler UT。Stage 108 前端+文档：SpendLog 详情 image_tokens + source badge（✓ upstream / ⚠ estimated）+ 列表 🖼️ 标记（桌面+mobile）+ i18n 3 keys + ADR-027 + TD-011a/b/c + roadmap/next-steps 回写。验证：aigw-core 391 + aigw-server 129 UT、mock BDD 219 pass（1 pre-existing budget_reset next_tick flake）、real sqlite BDD 43/43、frontend BDD 327 pass（含新增 2 场景 × 3 viewports）。
+**2026-08-09（四期）**: **Phase 44 全部完成（Stage 110-112 ✅）——OpenAI Embeddings API 代理。** Stage 110（`41d0223`）后端四端点：新建 `routes/embeddings.rs`（responses.rs 非流式子集：ChatAuth→校验 model+input→resolver+router→硬选 OpenAIPassthrough→上游 `/embeddings`→透传→SpendLog `call_type="embedding"` + prompt-only 计费）+ openapi `embeddings_spec()`（endpoints 18→19）+ mock `/v1/embeddings` handler + 6 UT + 11 BDD。**实现修正**：axum `Path<Option<String>>` 在无参数路由会 500 → 拆 `embeddings_handler`（无 Path wrapper）+ `embeddings_handler_with_path`（Azure 别名 Path<String>），共享 `embeddings_handler_inner`。Stage 111（`4637062`）前端：OutputCard `data[]` 分支（向量维度 + 8 维截断预览 + usage grid，替代空态）+ i18n 2 keys + 2 E2E × 3 viewports（fe-bdd 333 pass）。Stage 112 模型接入 + 文档：models.feature +2 BDD（`/model/new` 注册 mode=embed + `/v1/models` 展示 + `/v1/embeddings` SpendLog call_type=embedding）+ charter（L91/L204 已有 `/v1/embeddings`）+ roadmap/next-steps/ADR-026/TD-012 收尾。验证：aigw-server 135 UT、mock BDD 232 pass（2 新增全绿，仅 pre-existing budget_reset next_tick flake）、fe-bdd 333 pass、fmt + lint green。
 
-**待办**:
-1. **Phase 44 Stage 110**（P1, 10h）：`POST /v1/embeddings` Passthrough（四端点）— 新建 embeddings.rs + 硬选 OpenAIPassthrough + call_type="embedding" + TDD: 6 UT + 11 BDD
-2. **Phase 44 Stage 111**（P1, 8h）：前端 OutputCard `data[]` 分支 + OpenAPI spec + real BDD — TDD: 3 UT + 2 E2E
-3. **Phase 44 Stage 112**（P1, 6h）：Embedding 模型接入验证 + 文档收尾 — charter/roadmap/next-steps/ADR-026/TD-011
-4. **在途 P1 收尾（无 Phase 号）**：Responses 稳定 + TD-006/TD-007
-5. **Phase 41 测试缺口跟进（记录于 Phase 41 段）**：① 适配器级 UT 补 `ResponsesToChatCompletions` 直测（计划 19 个，实际未落地）；② `ResponsesToChatCompletionsStream` 接线 handler 流式路径 + mock 上游返回真实 SSE 帧
-6. TD-006 客户端 call_id 响应头回写
-7. TD-007 soft_budget 告警通道（tracing::warn → webhook/email/Prometheus alert）
-8. TD-009a/b/e 图片压缩 + 超大图 body 防御 + 外链渲染（视使用量触发）
-9. TD-010a health.rs embedding-mode 探测（Phase 46 候选）
-10. TD-011a/b/c image token 估算精度（视频/HEIC-AVIF/Anthropic downsizing，视使用量触发）
-11. 长期路线 LT-BodyMetrics/LT-BodyCompact/LT-BodyLifecycle 视数据量触发
+**待办**（ALL STAGES COMPLETE — 后续为在途/技术债）:
+1. **在途 P1 收尾（无 Phase 号）**：Responses 稳定 + TD-006/TD-007
+2. **Phase 41 测试缺口跟进**：① 适配器级 UT 补 `ResponsesToChatCompletions` 直测（计划 19 个，实际未落地）；② `ResponsesToChatCompletionsStream` 接线 handler 流式路径 + mock 上游返回真实 SSE 帧
+3. TD-006 客户端 call_id 响应头回写
+4. TD-007 soft_budget 告警通道（tracing::warn → webhook/email/Prometheus alert）
+5. TD-012a health.rs embedding-mode 探测（Phase 46 候选）；TD-012b 多模态 embedding 按模态计费
+6. TD-009a/b/e 图片压缩 + 超大图 body 防御 + 外链渲染（视使用量触发）
+7. TD-010a health.rs embedding-mode 探测（Phase 46 候选，与 TD-012a 合并）
+8. TD-011a/b/c image token 估算精度（视频/HEIC-AVIF/Anthropic downsizing，视使用量触发）
+9. 长期路线 LT-BodyMetrics/LT-BodyCompact/LT-BodyLifecycle 视数据量触发
 
 ---
 
@@ -109,8 +107,8 @@ Phase 39:   ████████████████████ 100% (4
 Phase 40:   ████████████████████ 100% (3/3)  ✅ BDD Coverage Enhancement (Stage 98-100)
 Phase 41:   ████████████████████ 100% (2/2)  ✅ OpenAI Responses API 接入 (Stage 101-102)
 Phase 42:   ████████████████████ 100% (3/3)  ✅ Playground 多模态图片 (Stage 103-105)
-Phase 43:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3)  ⏳ Image Token Usage Tracking (Stage 106-108)
-Phase 44:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3)  ⏳ OpenAI Embeddings API 代理 (Stage 110-112)
+Phase 43:   ████████████████████ 100% (3/3)  ✅ Image Token Usage Tracking (Stage 106-108)
+Phase 44:   ████████████████████ 100% (3/3)  ✅ OpenAI Embeddings API 代理 (Stage 110-112)
 ```
 
 ---
@@ -135,8 +133,8 @@ Phase 44:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 | 层 | 当前 |
 |---|------|
-| 后端单元 | ≥ 290 tests（含 Stage 99 daily_spend_queue 7 + auth_gateway 4 + rate_limit 5；Phase 44 预计 +6） |
-| mock BDD | ≥ 191 scenarios（含 Stage 98 13 new；Phase 44 预计 +13：Stage 110 11 + Stage 112 2） |
+| 后端单元 | ≥ 300 tests（aigw-server 135 含 embeddings 6 UT + openapi 8；aigw-core 395 等全 workspace ~791） |
+| mock BDD | ≥ 232 scenarios（含 Stage 110 11 + Stage 112 2；16 @skip 未计入） |
 | real BDD | ≥ 47 SQLite / ≥ 41 PG / ≥ 41 MySQL（含 Stage 100 11 new） |
 
 ---
@@ -152,12 +150,12 @@ Phase 44:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 | ✅ | Phase 42 Stage 104 Playground 图片输入 | ✅ 完成 |
 | ✅ | Phase 42 Stage 105 图片渲染 + SpendLog 详情 + 文档 | ✅ 完成 |
 | ✅ | Phase 39 补充 Stage 109 预算重置 cron 界面重构 | ✅ 完成（2026-08-08） |
-| P1 | Phase 43 Stage 106-108 Image Token Usage Tracking | ⏳ 待开始 |
-| P1 | Phase 44 Stage 110 POST /v1/embeddings Passthrough（四端点） | ⏳ 待开始 |
-| P1 | Phase 44 Stage 111 前端 OutputCard data + OpenAPI spec + real BDD | ⏳ 待开始 |
-| P1 | Phase 44 Stage 112 Embedding 模型接入 + 文档收尾 | ⏳ 待开始 |
+| ✅ | Phase 43 Stage 106-108 Image Token Usage Tracking | ✅ 完成（2026-08-08） |
+| ✅ | Phase 44 Stage 110-112 OpenAI Embeddings API | ✅ 完成（2026-08-09，116/116 ALL COMPLETE） |
 | P1 | 在途 P1 收尾（无 Phase 号）：Responses 稳定 + Image Token + TD-006/TD-007 | ⏳ 待开始 |
 | P2 | TD-006客户端 call_id 响应头回写 | 待处理 |
 | P2 | TD-007 soft_budget 告警通道 | 待处理 |
 | P2 | TD-009a/b/e 图片压缩 + 超大图 body 防御 + 外链渲染 | 待处理（视使用量） |
-| P2 | TD-010a health.rs embedding-mode 探测 | 待处理（Phase 46 候选） |
+| P2 | TD-010a / TD-012a health.rs embedding-mode 探测 | 待处理（Phase 46 候选） |
+| P3 | TD-012b 多模态 embedding 按模态计费 | 待处理（视使用量） |
+| P2 | TD-011a/b/c image token 估算精度 | 待处理（视使用量） |
