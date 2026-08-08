@@ -5,7 +5,7 @@
 
 ---
 
-## 当前状态：106/111 Stages（Phase 0-42 + Stage 109 ✅；106-108 + 110-112 待开始；Phase 30 代码已落地待回写）
+## 当前状态：110/111 Stages（Phase 0-42 + Stage 109 ✅；106-108 + 110-112 待开始）
 
 **2026-08-07**: Phase 40 全部完成（Stage 98-100 ✅）。Phase 41 规划落定——两 Stage 渐进交付（Passthrough 8h + Bridge 14h）。Phase 42 规划落定——Playground 多模态图片 3 Stage（Backend 6.5h + Frontend 16h + Render/Docs 12h），三路 subagent 并发实测代码改动量。**Phase 42 全部完成：Stage 103 ✅（`cd576dc`）+ Stage 104 ✅（`0f4868f`）+ Stage 105 ✅（图片渲染 + SpendLog 详情 + 文档，全量 frontend BDD 312 pass）。** Phase 43 规划落定——Image Token Usage Tracking 3 Stage（上游优先解析 + fallback 客户端估算），基于阿里云 DashScope 文档 + litellm/OpenRouter/OneAPI 源码调研确认：Qwen 返回 image_tokens（最完整），OpenAI/Anthropic 不返回，主流网关均不做预计算——aigw 将是行业差异化功能。
 
@@ -21,13 +21,12 @@
 5. **Phase 44 Stage 110**（P1, 10h）：`POST /v1/embeddings` Passthrough（四端点）— 新建 embeddings.rs + 硬选 OpenAIPassthrough + call_type="embedding" + TDD: 6 UT + 11 BDD
 6. **Phase 44 Stage 111**（P1, 8h）：前端 OutputCard `data[]` 分支 + OpenAPI spec + real BDD — TDD: 3 UT + 2 E2E
 7. **Phase 44 Stage 112**（P1, 6h）：Embedding 模型接入验证 + 文档收尾 — charter/roadmap/next-steps/ADR-026/TD-011
-8. Phase 30（Stage 78-81）代码已落地 + Phase 31 修复完成，待一并回写为 ✅
-9. **Phase 41 测试缺口跟进（记录于 Phase 41 段）**：① 适配器级 UT 补 `ResponsesToChatCompletions` 直测（计划 19 个，实际未落地）；② `ResponsesToChatCompletionsStream` 接线 handler 流式路径 + mock 上游返回真实 SSE 帧
-10. TD-006 客户端 call_id 响应头回写
-11. TD-007 soft_budget 告警通道（tracing::warn → webhook/email/Prometheus alert）
-12. TD-009a/b/e 图片压缩 + 超大图 body 防御 + 外链渲染（视使用量触发）
-13. TD-010a health.rs embedding-mode 探测（Phase 46 候选）
-14. 长期路线 LT-BodyMetrics/LT-BodyCompact/LT-BodyLifecycle 视数据量触发
+8. **Phase 41 测试缺口跟进（记录于 Phase 41 段）**：① 适配器级 UT 补 `ResponsesToChatCompletions` 直测（计划 19 个，实际未落地）；② `ResponsesToChatCompletionsStream` 接线 handler 流式路径 + mock 上游返回真实 SSE 帧
+9. TD-006 客户端 call_id 响应头回写
+10. TD-007 soft_budget 告警通道（tracing::warn → webhook/email/Prometheus alert）
+11. TD-009a/b/e 图片压缩 + 超大图 body 防御 + 外链渲染（视使用量触发）
+12. TD-010a health.rs embedding-mode 探测（Phase 46 候选）
+13. 长期路线 LT-BodyMetrics/LT-BodyCompact/LT-BodyLifecycle 视数据量触发
 
 ---
 
@@ -104,7 +103,7 @@ Phase 26:   ████████████████████ 100% (3
 Phase 27:   ████████████████████ 100% (3/3)  ✅ 全栈质量修复 + Usage 图表增强
 Phase 28:   ████████████████████ 100% (1/1)  ✅ 安全与质量加固
 Phase 29:   ████████████████████ 100% (4/4)  ✅ Cross-DB BDD Hardening
-Phase 30:   ░░░░░░░░░░░░░░░░░░░░   0% (0/4)  ⚠️ 代码已落地 + Phase 31 生产化修复完成，2026-08-08 待回写 ✅
+Phase 30:   ████████████████████ 100% (4/4)  ✅ Body Archive 冷存储（Stage 78-81 生产化后回写）
 Phase 31:   ████████████████████ 100% (3/3)  ✅ Stage 82-84 全部完成
 Phase 32:   ████████████████████ 100% (1/1)  ✅ request_id → call_id 改名 + 上游对账链路（Stage 85）
 Phase 33:   ████████████████████ 100% (1/1)  ✅ aigw↔aigw 多表只读增量同步（Stage 86）
@@ -164,7 +163,6 @@ Phase 44:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 | P1 | Phase 44 Stage 111 前端 OutputCard data + OpenAPI spec + real BDD | ⏳ 待开始 |
 | P1 | Phase 44 Stage 112 Embedding 模型接入 + 文档收尾 | ⏳ 待开始 |
 | P1 | 在途 P1 收尾（无 Phase 号）：Responses 稳定 + Image Token + TD-006/TD-007 | ⏳ 待开始 |
-| P2 | Phase 30 backfill 标记（Stage 78-81 ✅，代码已落地 + Phase 31 修复） | 待回写（2026-08-08 核实代码就绪） |
 | P2 | TD-006客户端 call_id 响应头回写 | 待处理 |
 | P2 | TD-007 soft_budget 告警通道 | 待处理 |
 | P2 | TD-009a/b/e 图片压缩 + 超大图 body 防御 + 外链渲染 | 待处理（视使用量） |

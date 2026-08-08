@@ -8,7 +8,7 @@
 ## 当前状态
 
 - **当前 Phase**: **Phase 41 ✅ 完成（Stage 101-102 OpenAI Responses API，22h，2026-08-05）**；Phase 42 ✅ 完成（Stage 103-105 Playground 多模态图片，34.5h）；Phase 43 ⏳ 待开始（Stage 106-108 Image Token Usage Tracking，28h）；**Phase 44 ⏳ 待开始（Stage 110-112 OpenAI Embeddings API，24h）**
-- **状态**: **106/111 Stages** 已完成（Phase 0-42 + Stage 109 ✅；Phase 43/44 待开始）。**注**：Phase 30（Stage 78-81）代码已落地且经 Phase 31 生产化修复（Stage 82-84 ✅），2026-08-08 待回写为 ✅。
+- **状态**: **110/111 Stages** 已完成（Phase 0-42 + Stage 109 ✅，含 Phase 30 Stage 78-81 生产化后回写；Phase 43/44 待开始）。
 - **下一里程碑**: Phase 43 Stage 106 — Image Token Engine（10h）
 
 ### 整体进度
@@ -38,7 +38,7 @@ Phase 26:   ████████████████████ 100% (3
 Phase 27:   ████████████████████ 100% (3/3 Stages) ✅ 全栈质量修复 + Usage 图表增强
 Phase 28:   ████████████████████ 100% (1/1 Stage)  ✅ 安全与质量加固
 Phase 29:   ████████████████████ 100% (4/4 Stages) ✅ Cross-DB BDD Hardening
-Phase 30:   ░░░░░░░░░░░░░░░░░░░░   0% (0/4 Stages) ⚠️ 代码已落地 + Phase 31 生产化修复完成，2026-08-08 待回写 ✅
+Phase 30:   ████████████████████ 100% (4/4 Stages) ✅ Body Archive 冷存储（Stage 78-81 生产化后回写）
 Phase 31:   ████████████████████ 100% (3/3 Stages) ✅ Body Archive 生产化（Stage 82-84 全部完成）
 Phase 32:   ████████████████████ 100% (1/1 Stage)  ✅ request_id→call_id 改名 + 上游对账链路（Stage 85）
 Phase 33:   ████████████████████ 100% (1/1 Stage)  ✅ aigw↔aigw 多表只读增量同步（Stage 86）
@@ -331,18 +331,20 @@ Phase 44:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 **设计文档**: `docs/stages/stage-86.md`
 
-### Phase 30：Body Archive 冷存储 ⏳
+### Phase 30：Body Archive 冷存储 ✅（2026-08-08 生产化后回写）
 
 **背景**: spend_logs 表 messages/response/proxy_server_request 三个 JSON body 字段占 95%+ 存储体积（日均增长 4-5 GB）。Stage 77 已将 body 从列表接口分离，本 Phase 实现 body 的 S3 Parquet 冷存储归档——主库只保留最近 7 天热数据，历史 body 迁移到对象存储并压缩为 Parquet 列式格式（ZSTD 压缩 8-11x），查询时自动路由热/冷数据。
+
+> **2026-08-08 回写**：代码自 2026-07-27 起落地（Phase 31 Stage 82-84 完成生产化修复），roadmap 保持 ⚠️ 待修复标记直至审计缺陷核实完毕。本次回写前逐条核对 `docs/research/2026-07-25-body-archive-production-audit.md` 全部 28 项缺陷：**6 P0 + 10 P1 全部修复**（状态机、配置单例化、storage_configured 门禁、冷回源、读路径缓存、事务化、前端生产化），**P2 10/12 修复**；剩余 2 项（P2-2 Engine panic 容错、P2-3 无 shutdown 信号）明确登记 TD-005 技术债，不阻塞生产。至此 Phase 30 回写 ✅。
 
 详见设计文档: `docs/plans/2026-07-22-body-archive-s3-parquet.md`
 
 | Stage | 状态 | 目标 | 类型 | 预估 |
 |-------|------|------|------|------|
-| Stage 78 | ⏳ 待开始 | **AsyncTask + Engine 框架 + Body Archiver 写链路** — Migration 020/021（async_jobs 三张通用表 + spend_logs 加列）；AsyncTask trait（tick + execute + finalize）+ Engine（宿主运行时，spawn tick/exec/cleanup loop）；StorageBackend 多类型适配（S3/COS/R2/MinIO/FS）；BodyArchiver impl AsyncTask（Parquet ZSTD + Bloom filter → 目标存储 + 清理器）。TDD: UT 覆盖 claim_next_step SKIP LOCKED、loop 并发、storage config 解析、parquet 写入 | 后端+测试 | 14h |
-| Stage 79 | ⏳ 待开始 | **Query Router + Footer Cache（读链路）** — query_parquet_with_cache(): footer 缓存（moka LRU）→ row group 定位（column statistics + Bloom filter）→ col chunk 读取 → 解码；get_message_body() 热/冷自动路由；详情端点集成存储 fallback。TDD: UT 覆盖路由逻辑、缓存命中/未命中、Parquet 读路径 | 后端+测试 | 10h |
-| Stage 80 | ⏳ 待开始 | **Admin API + Col Chunk Cache + 存量归档** — 5 个 admin 端点（trigger/jobs/stats/job_detail/logs）；引擎统计查询（loops/pending/running/stale）；Col chunk 文件系统 LFU 缓存（可选）；通过 API 触发存量归档。TDD: UT 覆盖 admin API 鉴权、Job 生命周期、col chunk 缓存 | 后端+测试 | 12h |
-| Stage 81 | ⏳ 待开始 | **前端 Jobs 管理页面** — Settings → Jobs Tab，按 step_type 分 Sub-Tab；统计卡片 + 手动触发 + 通用 JobList/JobDetail（Steps 表格 + logs 过滤 + 自动刷新）。TDD: 4 BDD × 3 viewports | 前端+测试 | 10h |
+| Stage 78 | ✅ 完成（2026-07-27 落地） | **AsyncTask + Engine 框架 + Body Archiver 写链路** — Migration 020/021（async_jobs 三张通用表 + spend_logs 加列）；AsyncTask trait（tick + execute + finalize）+ Engine（宿主运行时，spawn tick/exec/cleanup loop）；StorageBackend 多类型适配（S3/COS/R2/MinIO/FS）；BodyArchiver impl AsyncTask（Parquet ZSTD + Bloom filter → 目标存储 + 清理器）。TDD: UT 覆盖 claim_next_step SKIP LOCKED、loop 并发、storage config 解析、parquet 写入 | 后端+测试 | 14h |
+| Stage 79 | ✅ 完成（2026-07-27 落地） | **Query Router + Footer Cache（读链路）** — query_parquet_with_cache(): footer 缓存（moka LRU）→ row group 定位（column statistics + Bloom filter）→ col chunk 读取 → 解码；get_message_body() 热/冷自动路由；详情端点集成存储 fallback。TDD: UT 覆盖路由逻辑、缓存命中/未命中、Parquet 读路径 | 后端+测试 | 10h |
+| Stage 80 | ✅ 完成（2026-07-27 落地） | **Admin API + Col Chunk Cache + 存量归档** — 5 个 admin 端点（trigger/jobs/stats/job_detail/logs）；引擎统计查询（loops/pending/running/stale）；Col chunk 文件系统 LFU 缓存（可选）；通过 API 触发存量归档。TDD: UT 覆盖 admin API 鉴权、Job 生命周期、col chunk 缓存 | 后端+测试 | 12h |
+| Stage 81 | ✅ 完成（2026-07-27 落地） | **前端 Jobs 管理页面** — Settings → Jobs Tab，按 step_type 分 Sub-Tab；统计卡片 + 手动触发 + 通用 JobList/JobDetail（Steps 表格 + logs 过滤 + 自动刷新）。TDD: 4 BDD × 3 viewports | 前端+测试 | 10h |
 
 **依赖关系**: Stage 78 → Stage 79 → Stage 80 → Stage 81（严格串行）
 - 78（写链路 + Schema）→ 79 需要已归档的测试数据做读链路验证
@@ -361,7 +363,7 @@ Phase 44:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 **设计文档**: `docs/stages/stage-78.md` ~ `docs/stages/stage-81.md`
 
-> ⚠️ **生产审计结论**（2026-07-25）：Phase 30 代码已落地但未通过生产审计，三路 subagent 并行审计确认 6 个 P0 + 10 个 P1 + 12 个 P2 缺陷。Phase 30 状态标记为 ⚠️ 待修复，修复工作转入 Phase 31（Stage 82-84）。
+> ✅ **生产审计闭环**（2026-07-25 审计 → 2026-08-08 回写）：Phase 30 代码落地后经生产审计确认 6 P0 + 10 P1 + 12 P2 缺陷，修复工作转入 Phase 31（Stage 82-84）。2026-08-08 逐条核对审计报告：6 P0 + 10 P1 全部修复（状态机、配置单例化、storage_configured 门禁、冷回源、读路径缓存、事务化、前端生产化），P2 10/12 修复；剩余 P2-2（Engine panic 容错）/P2-3（无 shutdown 信号）登记 TD-005，不阻塞生产。审计闭环，Phase 30 回写 ✅。
 
 ### Phase 31：Body Archive 生产化 ✅
 
@@ -843,3 +845,4 @@ Phase 44:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 | v45.0 | 2026-08-08 | **Embeddings 代理规划（原编号 Phase 45，2026-08-08 重编号为 Phase 44）**：OpenAI Embeddings API 代理（Stage 110-112，3 Stage 共 24h）。基于 6 路 subagent 调研（`docs/research/2026-08-08-embedding-proxy-support.md`）：LiteLLM 把 `/v1/embeddings` 当一等公民端点（四路径 + 与 chat 相同管道 + call_type=embedding + prompt-only 计费）；Kong/Portkey/new-api 均支持（leader parity）；用户确认 ① 有流量想多尝试 ② 本地+托管模型 ③ **排在在途 P1 收尾之后** ④ **四端点都需要** ⑤ health 探测非阻塞。Stage 110 后端 Passthrough 四端点（10h，6 UT + 11 BDD）；Stage 111 前端 OutputCard `data[]` 分支 + OpenAPI spec + real BDD（8h，3 UT + 2 E2E）；Stage 112 模型接入验证 + 文档收尾（6h，+2 BDD）。硬选 OpenAIPassthrough 拒绝 AnthropicNative（防 OpenAIToAnthropic 破坏 body）；薄 OpenAI-compatible 透传不做协议翻译。ADR-026 + TD-011 登记。总进度 104/111。 |
 | v46.0 | 2026-08-08 | **Phase 41 完成回写（Stage 101-102 ✅）+ 测试缺口登记**：代码审计确认 Phase 41 两 Stage 已 2026-08-05 落地（`b90f42d` Stage 101 / `6a3ab61` Stage 102），roadmap/next-steps 此前积欠未同步——本次回写为 ✅，总进度 106/111。**实现修正**：Stage 101 `select_adapter(Responses, OpenAICompatible)` 实际接线 `ResponsesToChatCompletions`（非计划初稿的 `OpenAIPassthrough`），非流式 `/v1/responses` 实际返回 ChatCompletions 格式。**测试缺口登记**：① 计划声称的 19 适配器 UT 未落地（adapter.rs 无 `ResponsesToChatCompletions` 直测，桥接由 5 个 BDD 场景覆盖）；② `ResponsesToChatCompletionsStream` 未接入 handler 流式路径（流式路径转发原始 SSE 字节，mock 亦不返回真实 SSE 帧）——登记到 next-steps 待办，待后续补测。 |
 | v46.1 | 2026-08-08 | **Phase 44/45 重编号**：原 "Phase 44 在途 P1 收尾" 是无 Stage 的待办桶（Responses 稳定 + Image Token + TD-006/TD-007），非真实 Phase——降级为无 Phase 号的 next-steps 待办项。Embeddings 代理（Stage 110-112）由 Phase 45 **重编号为 Phase 44**（3 Stage 真实功能 Phase）。Stage 号不变，Phase 号只作分组标签。ADR-026 同步。 |
+| v47.0 | 2026-08-08 | **Phase 30 完成回写（Stage 78-81 ✅，总进度 110/111）**：Phase 30 代码自 2026-07-27 落地并经 Phase 31（Stage 82-84）生产化修复，roadmap 保持 ⚠️ 待修复直至审计缺陷核实完毕。本次回写前逐条核对 `docs/research/2026-07-25-body-archive-production-audit.md` 全部 28 项缺陷：**6 P0 + 10 P1 全部修复**（状态机 mark_job_*、配置单例化 config.rs body_archive 字段 + main.rs 注入、storage_configured 门禁 ×3、冷回源 spend.rs 详情端点、read_body_from_storage Err/None 区分、query_parquet_with_cache + FooterCache 激活、create_job/claim 事务化、前端路由化/分页/toast），**P2 10/12 修复**；剩余 P2-2（Engine panic 容错）/P2-3（shutdown 信号）登记 TD-005 不阻塞生产。Stage 78-81 全部回写 ✅，审计闭环，里程碑条 0%→100%。 |
