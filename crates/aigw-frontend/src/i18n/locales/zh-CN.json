@@ -698,6 +698,9 @@
         "org": "组织：",
         "mcpTool": "MCP 工具："
       },
+      "imageTokens": "图片 Token",
+      "imageTokensUpstream": "上游服务商报告值",
+      "imageTokensEstimated": "基于图片尺寸估算",
       "timing": {
         "total": "总耗时",
         "upstream": "上游耗时",

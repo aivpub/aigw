@@ -107,3 +107,19 @@ Feature: Spend Logs
     When I click on the spend log row with call id "req-img-001"
     And I switch to the raw tab in the detail drawer
     Then the raw tab should show the image_url JSON
+
+  # ── Stage 108: image_tokens display ──
+
+  Scenario: Detail drawer shows image tokens with upstream source badge
+    Given API endpoints are mocked
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    When I click on the spend log row with call id "req-img-001"
+    Then I should see "Image Tokens" in the detail drawer
+    And I should see the "upstream" image token source badge
+
+  Scenario: Spend log list marks multimodal rows with the image emoji
+    Given API endpoints are mocked
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    Then the spend log row with call id "req-img-001" should show the multimodal marker

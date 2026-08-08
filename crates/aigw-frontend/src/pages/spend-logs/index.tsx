@@ -35,6 +35,12 @@ import {
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { PaginationBar } from "@/components/ui/pagination";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   ScrollText,
   Calendar,
   RefreshCw,
@@ -87,6 +93,7 @@ interface SpendLog {
   cache_key?: string | null;
   mcp_namespaced_tool_name?: string | null;
   status: string | null;
+  image_tokens?: number | null;
 }
 
 interface SpendLogDetail {
@@ -120,6 +127,7 @@ interface SpendLogDetail {
   cache_key?: string | null;
   mcp_namespaced_tool_name?: string | null;
   status: string | null;
+  image_tokens?: number | null;
   messages?: unknown;
   response?: unknown;
   proxy_server_request?: unknown;
@@ -240,6 +248,18 @@ function extractCacheTokens(metadata: unknown): {
         ? (m.cache_create_spend as number)
         : undefined,
   };
+}
+
+/// Read metadata.image_tokens_source ("upstream" | "estimated").
+function imageTokensSource(log: {
+  metadata?: unknown;
+}): "upstream" | "estimated" | null {
+  if (!log.metadata || typeof log.metadata !== "object") return null;
+  const m = log.metadata as Record<string, unknown>;
+  const src = m.image_tokens_source;
+  if (src === "upstream") return "upstream";
+  if (src === "estimated") return "estimated";
+  return null;
 }
 function truncateEndUser(s: string): string {
   if (!s) return "—";
@@ -694,6 +714,35 @@ function DetailDrawer({
             {fmtTokens(log.prompt_tokens)}↑ / {fmtTokens(log.completion_tokens)}
             ↓ · {fmtTtft(log.ttft_ms)} / {fmtDuration(log.request_duration_ms)}
           </span>
+          {(() => {
+            const src = imageTokensSource(log);
+            return log.image_tokens != null && src ? (
+              <span className="flex items-center gap-1 text-[11px]">
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="inline-flex items-center gap-1 cursor-help">
+                        {src === "upstream" ? (
+                          <span className="text-emerald-600">✓</span>
+                        ) : (
+                          <span className="text-amber-600">⚠</span>
+                        )}
+                        <span className="text-foreground">
+                          {t("spendLogs.drawer.imageTokens")}:{" "}
+                          {fmtTokens(log.image_tokens)}
+                        </span>
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {src === "upstream"
+                        ? t("spendLogs.drawer.imageTokensUpstream")
+                        : t("spendLogs.drawer.imageTokensEstimated")}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </span>
+            ) : null;
+          })()}
           <span className="flex items-center gap-1 ml-auto">
             <code className="text-[10px] font-mono bg-muted rounded px-1 py-0.5">
               {log.key_name || truncate8(log.api_key)}
@@ -1456,6 +1505,15 @@ export function SpendLogsPage() {
                           </Badge>
                         ) : null}
                         <span className="font-medium">{log.model}</span>
+                        {log.image_tokens != null ? (
+                          <span
+                            className="text-[10px]"
+                            title={`Image Tokens: ${fmtTokens(log.image_tokens)}`}
+                            data-testid="multimodal-marker"
+                          >
+                            🖼️
+                          </span>
+                        ) : null}
                       </div>
                     </TableCell>
                     <TableCell className="text-xs whitespace-nowrap text-muted-foreground max-w-[100px] truncate">
@@ -1541,6 +1599,15 @@ export function SpendLogsPage() {
                     </Badge>
                   ) : null}
                   <span className="truncate">{log.model}</span>
+                  {log.image_tokens != null ? (
+                    <span
+                      className="text-[10px]"
+                      title={`Image Tokens: ${fmtTokens(log.image_tokens)}`}
+                      data-testid="multimodal-marker"
+                    >
+                      🖼️
+                    </span>
+                  ) : null}
                 </div>
                 {log.end_user ? (
                   <div className="text-xs text-muted-foreground mb-1">

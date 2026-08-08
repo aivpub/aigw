@@ -108,6 +108,23 @@
 - **Resolution**: 视生产图片使用量触发；-009a/b 建议随 Phase 42 后的小版本实施，c/d/e 按需。
 - **Target Phase**: 无固定排期（视使用量）。
 
+### TD-011: Image Token 估算精度与格式覆盖
+
+- **Date**: 2026-08-08
+- **Priority**: P2
+- **Source**: Phase 43（Image Token Usage Tracking）规划（ADR-027）
+- **Description**: aigw 客户端 image token 估算（OpenAI tiling / Qwen ViT factor / Anthropic 官方公式）是零依赖 header parser + model-name auto-sniff。部分场景精度/格式未覆盖。
+
+| Sub-ID | 条目 | 优先级 | 描述 |
+|--------|------|--------|------|
+| TD-011a | 视频 token 估算不支持 | P2 | 视频多模态请求的 token 需 `temporal_patch_size` + mRoPE 公式，超出 image-only 引擎能力。触发：视频多模态请求占比 > 5%。 |
+| TD-011b | HEIC/AVIF 格式不支持 | P3 | header parser 仅 PNG/JPEG/WebP/GIF；Apple 生态 HEIC 与 AVIF 无法解析 → 估算落空。触发：Apple 生态用户反馈。 |
+| TD-011c | Anthropic downsizing 规则未模拟 | P3 | Anthropic 官方公式 `⌈w/28⌉×⌈h/28⌉` 精确，但模型端还有"超出 max_tokens 自动缩放"规则（target=1568 tokens）未在客户端模拟。触发：用户反馈偏差 > 20%。 |
+
+- **Impact**: 估算值仅供参考（阿里云官方明示），不阻塞分析/对账用途；多模态占比低时影响可忽略。
+- **Resolution**: 视使用量按子条目触发实施。
+- **Target Phase**: 无固定排期。
+
 ## Resolved Items
 
 ### TD-002: @real_api step bindings implemented (Resolved 2026-07-05)

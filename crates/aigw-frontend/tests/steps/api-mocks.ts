@@ -40,6 +40,8 @@ const IMG_SPEND_ROW = {
   total_tokens: 120,
   prompt_tokens: 80,
   completion_tokens: 40,
+  image_tokens: 400,
+  metadata: { image_tokens_source: "upstream" },
   spend: 0.05,
   start_time: "2026-07-08T11:00:00Z",
   end_time: "2026-07-08T11:00:02Z",

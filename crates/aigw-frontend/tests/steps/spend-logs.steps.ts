@@ -292,3 +292,31 @@ Then("the raw tab should show the image_url JSON", async ({ page }) => {
   await dialog.waitFor({ timeout: 5000 });
   await expect(dialog).toContainText(/image_url|data:image/i, { timeout: 5000 });
 });
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Stage 108: image_tokens display
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Then("I should see {string} in the detail drawer", async ({ page }, text: string) => {
+  const dialog = page.locator("[role='dialog']");
+  await dialog.waitFor({ timeout: 5000 });
+  await expect(dialog).toContainText(text, { timeout: 5000 });
+});
+
+Then("I should see the {string} image token source badge", async ({ page }, source: string) => {
+  const dialog = page.locator("[role='dialog']");
+  await dialog.waitFor({ timeout: 5000 });
+  // The upstream source shows a ✓ emerald indicator; estimated shows ⚠ amber.
+  const indicator = source === "upstream" ? "✓" : "⚠";
+  await expect(dialog).toContainText(indicator, { timeout: 5000 });
+});
+
+Then("the spend log row with call id {string} should show the multimodal marker", async ({ page }, cid: string) => {
+  const truncated = cid.length <= 10 ? cid : `${cid.slice(0, 5)}…${cid.slice(-5)}`;
+  const row = page
+    .locator("[data-testid='spend-log-row']")
+    .filter({ hasText: truncated })
+    .filter({ visible: true })
+    .first();
+  await expect(row.locator("[data-testid='multimodal-marker']")).toBeVisible();
+});

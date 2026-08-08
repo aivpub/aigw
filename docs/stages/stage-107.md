@@ -2,7 +2,7 @@
 
 **Phase**: 43 — Image Token Usage Tracking
 **优先级**: P1
-**状态**: ⏳ 待开始
+**状态**: ✅ 完成（2026-08-08）
 **预估**: 10h
 **前置**: Stage 106（Core Engine）
 **后置**: Stage 108（前端 + Real API BDD + Docs）

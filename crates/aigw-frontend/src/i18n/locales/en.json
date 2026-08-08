@@ -698,6 +698,9 @@
         "org": "Org:",
         "mcpTool": "MCP Tool:"
       },
+      "imageTokens": "Image Tokens",
+      "imageTokensUpstream": "Reported by upstream provider",
+      "imageTokensEstimated": "Estimated from image dimensions",
       "timing": {
         "total": "Total",
         "upstream": "Upstream",

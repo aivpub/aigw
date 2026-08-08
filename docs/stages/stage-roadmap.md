@@ -1,15 +1,15 @@
 # aigw — AI Gateway Stagemap
 
 **项目**: aigw (litellm Rust 最小兼容替代)
-**最后更新**: 2026-08-07
+**最后更新**: 2026-08-08
 
 ---
 
 ## 当前状态
 
-- **当前 Phase**: **Phase 41 ✅ 完成（Stage 101-102 OpenAI Responses API，22h，2026-08-05）**；Phase 42 ✅ 完成（Stage 103-105 Playground 多模态图片，34.5h）；Phase 43 ⏳ 待开始（Stage 106-108 Image Token Usage Tracking，28h）；**Phase 44 ⏳ 待开始（Stage 110-112 OpenAI Embeddings API，24h）**
-- **状态**: **110/111 Stages** 已完成（Phase 0-42 + Stage 109 ✅，含 Phase 30 Stage 78-81 生产化后回写；Phase 43/44 待开始）。
-- **下一里程碑**: Phase 43 Stage 106 — Image Token Engine（10h）
+- **当前 Phase**: **Phase 43 ✅ 完成（Stage 106-108 Image Token Usage Tracking，28h，2026-08-08）**；**Phase 44 ⏳ 待开始（Stage 110-112 OpenAI Embeddings API，24h）**
+- **状态**: **113/114 Stages** 已完成（Phase 0-43 + Stage 109 ✅；Phase 44 待开始）。
+- **下一里程碑**: Phase 44 Stage 110 — OpenAI Embeddings API Passthrough（10h）
 
 ### 整体进度
 
@@ -50,7 +50,7 @@ Phase 39:   ████████████████████ 100% (4
 Phase 40:   ████████████████████ 100% (3/3 Stages) ✅ BDD Coverage Enhancement (Stage 98-100)
 Phase 41:   ████████████████████ 100% (2/2 Stages) ✅ OpenAI Responses API 接入 (Stage 101-102)
 Phase 42:   ████████████████████ 100% (3/3 Stages) ✅ Playground 多模态图片 (Stage 103-105)
-Phase 43:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3 Stages) ⏳ Image Token Usage Tracking (Stage 106-108)
+Phase 43:   ████████████████████ 100% (3/3 Stages) ✅ Image Token Usage Tracking (Stage 106-108)
 Phase 44:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3 Stages) ⏳ OpenAI Embeddings API 代理 (Stage 110-112)
 ```
 
@@ -160,23 +160,23 @@ Phase 44:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 ---
 
-### Phase 43：Image Token Usage Tracking ⏳（2026-08-07）
+### Phase 43：Image Token Usage Tracking ✅（2026-08-08，28h）
 
 **背景**: 多模态模型的 image token 用量数据分布不均：Qwen/DashScope 返回 `prompt_tokens_details.image_tokens`（最完整），OpenAI/Anthropic 不返回。业界网关（litellm/OpenRouter/OneAPI）均不做 image token 客户端预计算。aigw 填补此缺口：上游优先解析 + 对不返回的 provider 做客户端 fallback 估算。image_tokens 是 prompt_tokens 的子集，不改 calc_spend（仅用于分析与对账）。
 
 **核心预期**: 每条多模态请求的 SpendLog 包含 `image_tokens: Option<i32>`（source 标记 upstream/estimated）+ daily 聚合。
 
-**拆分**: 3 Stage（Core Engine 10h + Handler Integration 10h + Frontend/Docs 8h），共 28h。
+**拆分**: 3 Stage（Core Engine 10h + Handler Integration 10h + Frontend/Docs 8h），共 28h。全部完成 — Stage 106 ✅（`45d7323`）/ Stage 107 ✅ / Stage 108 ✅。
 
 | Stage | 状态 | 目标 | 类型 | 预估 |
 |-------|------|------|------|------|
-| Stage 106 | ⏳ 待开始 | **Image Token Engine (aigw-core)** — `extract_image_tokens_from_usage()` 上游解析器（Qwen OpenAI-compat + DashScope native）；`estimate_image_tokens_from_body()` fallback 估算（OpenAI tiling / Qwen ViT 用于验证）；Minimal PNG/JPEG/WebP/GIF header parser（零新增 deps）。Auto-sniff 策略（model name 匹配），不依赖 Deployment 配置。TDD: 15 UT。 | 后端 | 10h |
-| Stage 107 | ⏳ 待开始 | **Handler Integration + SpendLog/DailySpendLog + Migration 025 + BDD** — chat.rs / v1_messages.rs 上游取值优先 + fallback 估算；`image_tokens` 字段写入 + metadata `image_tokens_source` 标记；Migration 025（spend_logs + 6 daily_*_spend 加列）；daily_spend_queue 聚合；8 mock BDD 场景。Qwen 路径永远不触发估算（上游返回值优先）。 | 后端+测试 | 10h |
-| Stage 108 | ⏳ 待开始 | **Frontend Display + Real API BDD + Documentation** — SpendLog 抽屉展示 image_tokens + source badge（upstream/estimated）；列表 🖼️ 标记；i18n 3 keys；Real API BDD 用 Qwen 验证解析；ADR-026 + TD-010 + Roadmap/Next-Steps 收尾。 | 全栈+文档 | 8h |
+| Stage 106 | ✅ 完成 | **Image Token Engine (aigw-core)** — `extract_image_tokens_from_usage()` 上游解析器（Qwen OpenAI-compat + DashScope native）；`calculate_image_tokens()` fallback 估算（OpenAI tiling / Qwen ViT factor 28/32 / Anthropic 官方 ⌈w/28⌉×⌈h/28⌉）；Minimal PNG/JPEG/WebP/GIF header parser（零新增 deps）。Auto-sniff 策略（model name 匹配），不依赖 Deployment 配置。TDD: 18 UT。 | 后端 | 10h |
+| Stage 107 | ✅ 完成 | **Handler Integration + SpendLog/DailySpendLog + Migration 025 + BDD** — chat.rs / v1_messages.rs 上游取值优先 + fallback 估算；`image_tokens` 字段写入 + metadata `image_tokens_source` 标记；Migration 025（spend_logs + 6 daily_*_spend 加列，×3 方言）；daily_spend_queue 聚合；5 mock BDD 场景 + mock 上游真实 SSE 流式路径。Qwen 路径永远不触发估算（上游返回值优先）。TDD: 4 handler UT。 | 后端+测试 | 10h |
+| Stage 108 | ✅ 完成 | **Frontend Display + Real API BDD + Documentation** — SpendLog 抽屉展示 image_tokens + source badge（✓ upstream / ⚠ estimated）；列表 🖼️ 标记（桌面+mobile）；i18n 3 keys；2 E2E 场景 × 3 viewports；ADR-027 + TD-011 + Roadmap/Next-Steps 收尾。 | 全栈+文档 | 8h |
 
 **依赖关系**: Stage 106 → 107（串行，handler 依赖 engine）；Stage 107 → 108（前端依赖 API 字段就绪）。
 
-**Phase 43 合计**: 28h，3 Stages。
+**Phase 43 合计**: 28h，3 Stages。✅ 全部完成（2026-08-08）。
 
 **关键决策**:
 - **上游优先 + 客户端 fallback**：Qwen/Gemini 直接解析上游返回值（最精确），OpenAI/Anthropic 做客户端估算。
@@ -184,10 +184,12 @@ Phase 44:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 - **`image_token_strategy` 不在 Deployment 上**：auto-sniff model name 已经覆盖 >99% 场景。Qwen 的 ViT 公式仅用于验证/对账，handler 中 Qwen 永远不触发估算。
 - **Metadata 存 source，不建独立列**：`image_tokens_source: "upstream" \| "estimated"` 存在已有 metadata JSON 中，只在对账时需要溯源，不需要索引。
 - **`image_tokens` 字段名（非 `estimated_image_tokens`）**：因为 Qwen 的值是精确上游返回值，不是估算。
+- **Anthropic 用官方公式**：stage-107 初稿写"OpenAI 近似"，实现时改为官方公开精确公式（TD-011c 仍登记 downsizing 规则未模拟）。
 
 **设计文档**:
 - `docs/plans/2026-08-07-image-token-estimation.md`（总体规划 + 调研修正记录）
 - `docs/stages/stage-106.md` / `stage-107.md` / `stage-108.md`
+- ADR-027 / TD-011
 
 ---
 
@@ -846,3 +848,4 @@ Phase 44:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 | v46.0 | 2026-08-08 | **Phase 41 完成回写（Stage 101-102 ✅）+ 测试缺口登记**：代码审计确认 Phase 41 两 Stage 已 2026-08-05 落地（`b90f42d` Stage 101 / `6a3ab61` Stage 102），roadmap/next-steps 此前积欠未同步——本次回写为 ✅，总进度 106/111。**实现修正**：Stage 101 `select_adapter(Responses, OpenAICompatible)` 实际接线 `ResponsesToChatCompletions`（非计划初稿的 `OpenAIPassthrough`），非流式 `/v1/responses` 实际返回 ChatCompletions 格式。**测试缺口登记**：① 计划声称的 19 适配器 UT 未落地（adapter.rs 无 `ResponsesToChatCompletions` 直测，桥接由 5 个 BDD 场景覆盖）；② `ResponsesToChatCompletionsStream` 未接入 handler 流式路径（流式路径转发原始 SSE 字节，mock 亦不返回真实 SSE 帧）——登记到 next-steps 待办，待后续补测。 |
 | v46.1 | 2026-08-08 | **Phase 44/45 重编号**：原 "Phase 44 在途 P1 收尾" 是无 Stage 的待办桶（Responses 稳定 + Image Token + TD-006/TD-007），非真实 Phase——降级为无 Phase 号的 next-steps 待办项。Embeddings 代理（Stage 110-112）由 Phase 45 **重编号为 Phase 44**（3 Stage 真实功能 Phase）。Stage 号不变，Phase 号只作分组标签。ADR-026 同步。 |
 | v47.0 | 2026-08-08 | **Phase 30 完成回写（Stage 78-81 ✅，总进度 110/111）**：Phase 30 代码自 2026-07-27 落地并经 Phase 31（Stage 82-84）生产化修复，roadmap 保持 ⚠️ 待修复直至审计缺陷核实完毕。本次回写前逐条核对 `docs/research/2026-07-25-body-archive-production-audit.md` 全部 28 项缺陷：**6 P0 + 10 P1 全部修复**（状态机 mark_job_*、配置单例化 config.rs body_archive 字段 + main.rs 注入、storage_configured 门禁 ×3、冷回源 spend.rs 详情端点、read_body_from_storage Err/None 区分、query_parquet_with_cache + FooterCache 激活、create_job/claim 事务化、前端路由化/分页/toast），**P2 10/12 修复**；剩余 P2-2（Engine panic 容错）/P2-3（shutdown 信号）登记 TD-005 不阻塞生产。Stage 78-81 全部回写 ✅，审计闭环，里程碑条 0%→100%。 |
+| v48.0 | 2026-08-08 | **Phase 43 完成（Stage 106-108 ✅，总进度 113/114）**：Image Token Usage Tracking 全部交付（28h，3 Stage）。Stage 106 引擎（`45d7323`）：零依赖 PNG/JPEG/WebP/GIF header parser + model-name auto-sniff 公式（OpenAI tiling 85+170×tiles / Qwen2.5-VL factor 28 / Qwen3-VL factor 32 / Anthropic 官方 ⌈w/28⌉×⌈h/28⌉）+ extract_image_tokens_from_usage 上游解析器，18 UT。Stage 107 handler+迁移：Migration 025（spend_logs + 6 daily_*_spend 加 image_tokens × 3 方言）+ SpendLog/DailySpendLog 字段 + chat.rs/v1_messages.rs 集成（上游优先 + fallback，streaming Phase 2 UPDATE）+ daily_spend_queue 聚合 + mock 上游真实 SSE 流式 + 5 BDD + 4 handler UT。Stage 108 前端+文档：SpendLog 详情 image_tokens + source badge（✓/⚠）+ 列表 🖼️ 标记 + i18n 3 keys + ADR-027 + TD-011。验证：aigw-core 391 + aigw-server 129 UT、mock BDD 219 pass（1 pre-existing budget_reset next_tick flake）、real sqlite 43/43、frontend BDD 327 pass。ADR-027 Accepted + TD-011a/b/c 登记。 |

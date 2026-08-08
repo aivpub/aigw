@@ -2,7 +2,7 @@
 
 **Phase**: 43 — Image Token Usage Tracking
 **优先级**: P1
-**状态**: ⏳ 待开始
+**状态**: ✅ 完成（2026-08-08）
 **预估**: 8h
 **前置**: Stage 107（Handler 集成 — image_tokens 字段已在 API 返回中）
 **后置**: 无（Phase 收尾）

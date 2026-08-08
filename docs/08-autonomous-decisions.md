@@ -484,3 +484,27 @@
   - `call_type="embedding"` 端到端流入 SpendLog / daily 聚合 / 前端 badge，零 schema/查询变更。
   - 多模态 embedding（gemini-embedding-2 按模态计费 $0.45/$6.50/$12.00）超 aigw 单 `input_cost_per_token` 标量能力，登记 TD-011。
   - 在途 P1 收尾（Responses 稳定 + Image Token + TD-006/TD-007，无 Phase 号）优先于 Phase 44。设计文档：`docs/stages/stage-110.md`~`stage-112.md`。
+
+## ADR-027: Image Token Usage Tracking — 上游优先 + 客户端估算 fallback（Phase 43，Stage 106-108）
+
+- **Date**: 2026-08-08
+- **Status**: Accepted（Phase 43 全部完成，Stage 106-108 ✅）
+- **Decision**: aigw 对多模态请求的 image token 用量做跟踪：上游优先解析 + 客户端估算 fallback。核心决策：
+  (1) **上游优先**——Qwen OpenAI-compat `prompt_tokens_details.image_tokens` / DashScope native `usage.image_tokens` 直接解析（值精确），`image_tokens_source="upstream"`；
+  (2) **客户端估算 fallback**——OpenAI/Anthropic/DeepSeek/GLM 在 OpenAI-compatible 协议下均不返回 image token 分解，从 request body 解析 base64 图片宽高 → 按 provider 公式估算，`image_tokens_source="estimated"`；
+  (3) **不改 calc_spend**——image_tokens ⊆ prompt_tokens，上游已按总 prompt_tokens 计费，字段仅用于分析与对账；
+  (4) **策略 auto-sniff 不配 Deployment**——从 model name 自动识别公式（OpenAI tiling 85+170×tiles / Qwen2.5-VL factor 28 / Qwen3-VL factor 32 / Anthropic ⌈w/28⌉×⌈h/28⌉ 官方公式），>99% 场景覆盖；
+  (5) **Metadata 存 source 不建独立列**——`image_tokens_source: "upstream"|"estimated"` 存已有 metadata JSON，只在对账时溯源；
+  (6) **字段名 `image_tokens`**——Qwen 的值是精确上游返回值非估算，不叫 `estimated_image_tokens`。
+- **Background**: 多模态 image token 用量数据分布不均：Qwen/DashScope 原生返回 `image_tokens`，但 aigw 走 OpenAI-compatible 协议时几乎所有 provider（含 Qwen）都不返回；OpenAI/Anthropic 亦不返回。业界网关（litellm/OpenRouter/OneAPI）均不做客户端预计算——aigw 填补行业缺口。阿里云官方亦推荐客户端估算（"估算结果仅供参考，实际用量以 API 响应为准"）。Anthropic 官方公开视觉 token 精确公式 `⌈width/28⌉ × ⌈height/28⌉`。
+- **Key decisions**:
+  - **上游优先 + fallback 而非纯估算**：Qwen/Gemini 直接解析上游值（最精确）；OpenAI/Anthropic 做客户端估算。`calculate_image_tokens()` 先 extract 后 estimate，Qwen 返回 image_tokens 时 fallback 永不触发。
+  - **零依赖 header parser**：PNG IHDR / JPEG SOF / WebP VP8/VP8L/VP8X / GIF 逻辑屏描述符，仅 base64 解码，零新增 crate。
+  - **Anthropic 用官方公式**：stage-107 设计初稿曾写"Anthropic 用 OpenAI 公式近似"，实现时改为官方公开精确公式 `⌈w/28⌉×⌈h/28⌉`（TD-010c 仍登记模型 downsizing 规则未模拟）。
+  - **流式路径 Phase 2 UPDATE 写 image_tokens**：Phase 1 INSERT NULL（streaming 开始时 usage 未知），收到 final usage chunk 后 UPDATE 填充。
+  - **Migration 025 加 7 列**：spend_logs + 6 daily_*_spend 各加 image_tokens；daily_spend_queue 聚合 + 三方言 upsert。
+- **Consequences**:
+  - Phase 43 三 Stage：Stage 106 引擎（10h，18 UT）、Stage 107 handler+迁移+BDD（10h，4 UT + 5 BDD + mock SSE 流式）、Stage 108 前端+文档（8h，2 E2E × 3 viewports）。
+  - aigw 成为客户端 image token 预计算的行业先行者（litellm/OpenRouter/OneAPI 均无）。
+  - 注册 TD-010a（视频 token 估算不支持）/TD-010b（HEIC/AVIF 不支持）/TD-010c（Anthropic downsizing 规则未模拟）。
+  - 全量验证：aigw-core 391 UT + aigw-server 129 UT、mock BDD 219 pass、real sqlite BDD 43/43、frontend BDD 327 pass（含新增 2 场景 × 3 viewports）。

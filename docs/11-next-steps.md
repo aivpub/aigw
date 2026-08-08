@@ -1,32 +1,26 @@
 # aigw -- 下一步行动
 
 **上次更新**: 2026-08-08
-**当前阶段**: **Phase 41 ✅ 完成（Stage 101-102 OpenAI Responses API，22h，2026-08-05 回写）**；Phase 42 ✅ 完成（Stage 103-105 Playground 多模态图片，34.5h）；Phase 43 ⏳ 待开始（Stage 106-108 Image Token Usage Tracking，28h）；**Phase 44 ⏳ 待开始（Stage 110-112 OpenAI Embeddings API，24h）**
+**当前阶段**: **Phase 43 ✅ 完成（Stage 106-108 Image Token Usage Tracking，28h，2026-08-08）**；**Phase 44 ⏳ 待开始（Stage 110-112 OpenAI Embeddings API，24h）**
 
 ---
 
-## 当前状态：110/111 Stages（Phase 0-42 + Stage 109 ✅；106-108 + 110-112 待开始）
+## 当前状态：113/114 Stages（Phase 0-43 + Stage 109 ✅；110-112 待开始）
 
-**2026-08-07**: Phase 40 全部完成（Stage 98-100 ✅）。Phase 41 规划落定——两 Stage 渐进交付（Passthrough 8h + Bridge 14h）。Phase 42 规划落定——Playground 多模态图片 3 Stage（Backend 6.5h + Frontend 16h + Render/Docs 12h），三路 subagent 并发实测代码改动量。**Phase 42 全部完成：Stage 103 ✅（`cd576dc`）+ Stage 104 ✅（`0f4868f`）+ Stage 105 ✅（图片渲染 + SpendLog 详情 + 文档，全量 frontend BDD 312 pass）。** Phase 43 规划落定——Image Token Usage Tracking 3 Stage（上游优先解析 + fallback 客户端估算），基于阿里云 DashScope 文档 + litellm/OpenRouter/OneAPI 源码调研确认：Qwen 返回 image_tokens（最完整），OpenAI/Anthropic 不返回，主流网关均不做预计算——aigw 将是行业差异化功能。
-
-**2026-08-08**: 预算重置 cron 界面重构（预算重置 UI）——`GET /admin/budget-reset/stats` 端点（counts/preview/last_reset/next_tick_at）+ BudgetResetStatsCard（真实待重置数 / 上次重置 / 诚实 next-tick 倒计时）+ BudgetResetPreview（分实体明细 + 即将重置列表）+ BudgetResetTriggerDialog（范围选择 → 预览确认 → POST 后跳转 job 详情）+ job 表 trigger 列本地化 + job-detail formatStepResult 渲染 budget_reset 结果。TDD: 4 新 core UT + 2 后端 real BDD 场景 + 3 前端 BDD 场景 × 3 viewports。全部绿色（core 371 + bdd 215 + fe 87 jobs + 42 dashboard/i18n）。
-
-**2026-08-08（二期）**: 6 路 subagent 调研确认（`docs/research/2026-08-08-embedding-proxy-support.md`）aigw 应支持 OpenAI-compatible Embeddings 代理：LiteLLM 把 `/v1/embeddings` 当一等公民端点（四路径 + 与 chat 相同 auth→budget→rate-limit→spend-log 管道 + call_type=embedding + prompt-only 计费）；Kong/Portkey/new-api 均支持（leader parity）。用户确认 ① 有流量想多尝试 ② 本地+托管模型 ③ **排在在途 P1 收尾之后** ④ **四种端点都需要** ⑤ health 探测非阻塞。规划为 **Phase 44（Stage 110-112，24h）**，设计文档 `stage-110.md`~`stage-112.md`。
+**2026-08-08（三期）**: **Phase 43 全部完成（Stage 106-108 ✅）——Image Token Usage Tracking。** Stage 106 引擎（`45d7323`）：零依赖 header parser（PNG/JPEG/WebP/GIF）+ model-name auto-sniff 公式（OpenAI tiling / Qwen2.5-VL factor 28 / Qwen3-VL factor 32 / Anthropic 官方 ⌈w/28⌉×⌈h/28⌉）+ `extract_image_tokens_from_usage` 上游解析器，18 UT。Stage 107 handler+迁移（`85e...`）：Migration 025（spend_logs + 6 daily_*_spend 加 image_tokens 列 × 3 方言）+ SpendLog/DailySpendLog 字段 + chat.rs/v1_messages.rs 集成（上游优先 + fallback 估算，streaming Phase 2 UPDATE 填充）+ daily_spend_queue 聚合 + mock SSE 流式路径 + 5 BDD 场景 + 4 handler UT。Stage 108 前端+文档：SpendLog 详情 image_tokens + source badge（✓ upstream / ⚠ estimated）+ 列表 🖼️ 标记（桌面+mobile）+ i18n 3 keys + ADR-027 + TD-011a/b/c + roadmap/next-steps 回写。验证：aigw-core 391 + aigw-server 129 UT、mock BDD 219 pass（1 pre-existing budget_reset next_tick flake）、real sqlite BDD 43/43、frontend BDD 327 pass（含新增 2 场景 × 3 viewports）。
 
 **待办**:
-1. **Phase 43 Stage 106**（P1, 10h）：Image Token Engine — aigw-core 上游解析器 + fallback 估算 + header parser + 15 UT
-2. **Phase 43 Stage 107**（P1, 10h）：Handler 集成 + Migration 025 + 8 BDD
-3. **Phase 43 Stage 108**（P1, 8h）：前端展示 + Real API BDD + Docs
-4. **在途 P1 收尾（无 Phase 号）**：Responses 稳定 + Image Token + TD-006/TD-007
-5. **Phase 44 Stage 110**（P1, 10h）：`POST /v1/embeddings` Passthrough（四端点）— 新建 embeddings.rs + 硬选 OpenAIPassthrough + call_type="embedding" + TDD: 6 UT + 11 BDD
-6. **Phase 44 Stage 111**（P1, 8h）：前端 OutputCard `data[]` 分支 + OpenAPI spec + real BDD — TDD: 3 UT + 2 E2E
-7. **Phase 44 Stage 112**（P1, 6h）：Embedding 模型接入验证 + 文档收尾 — charter/roadmap/next-steps/ADR-026/TD-011
-8. **Phase 41 测试缺口跟进（记录于 Phase 41 段）**：① 适配器级 UT 补 `ResponsesToChatCompletions` 直测（计划 19 个，实际未落地）；② `ResponsesToChatCompletionsStream` 接线 handler 流式路径 + mock 上游返回真实 SSE 帧
-9. TD-006 客户端 call_id 响应头回写
-10. TD-007 soft_budget 告警通道（tracing::warn → webhook/email/Prometheus alert）
-11. TD-009a/b/e 图片压缩 + 超大图 body 防御 + 外链渲染（视使用量触发）
-12. TD-010a health.rs embedding-mode 探测（Phase 46 候选）
-13. 长期路线 LT-BodyMetrics/LT-BodyCompact/LT-BodyLifecycle 视数据量触发
+1. **Phase 44 Stage 110**（P1, 10h）：`POST /v1/embeddings` Passthrough（四端点）— 新建 embeddings.rs + 硬选 OpenAIPassthrough + call_type="embedding" + TDD: 6 UT + 11 BDD
+2. **Phase 44 Stage 111**（P1, 8h）：前端 OutputCard `data[]` 分支 + OpenAPI spec + real BDD — TDD: 3 UT + 2 E2E
+3. **Phase 44 Stage 112**（P1, 6h）：Embedding 模型接入验证 + 文档收尾 — charter/roadmap/next-steps/ADR-026/TD-011
+4. **在途 P1 收尾（无 Phase 号）**：Responses 稳定 + TD-006/TD-007
+5. **Phase 41 测试缺口跟进（记录于 Phase 41 段）**：① 适配器级 UT 补 `ResponsesToChatCompletions` 直测（计划 19 个，实际未落地）；② `ResponsesToChatCompletionsStream` 接线 handler 流式路径 + mock 上游返回真实 SSE 帧
+6. TD-006 客户端 call_id 响应头回写
+7. TD-007 soft_budget 告警通道（tracing::warn → webhook/email/Prometheus alert）
+8. TD-009a/b/e 图片压缩 + 超大图 body 防御 + 外链渲染（视使用量触发）
+9. TD-010a health.rs embedding-mode 探测（Phase 46 候选）
+10. TD-011a/b/c image token 估算精度（视频/HEIC-AVIF/Anthropic downsizing，视使用量触发）
+11. 长期路线 LT-BodyMetrics/LT-BodyCompact/LT-BodyLifecycle 视数据量触发
 
 ---
 
