@@ -731,6 +731,7 @@ async fn migrate_spend_logs(
 // Main entry point
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+#[allow(clippy::too_many_arguments)]
 pub async fn run_filtered(
     source_url: &str,
     target_url: &str,
@@ -769,7 +770,7 @@ pub async fn run_filtered(
     };
     eprintln!("Step 1: Source master_key obtained ({:?})", t0.elapsed());
 
-    let run_step = |s: u8| step_filter.map_or(true, |f| f == s);
+    let run_step = |s: u8| step_filter.is_none_or(|f| f == s);
 
     // Step 2: Migrate plain tables
     if run_step(2) {

@@ -177,26 +177,24 @@ pub async fn responses_handler(
             })?;
 
         if let Some(key) = key_record {
-            match resolve_key_model_list(&state, &key).await? {
-                Some(allowed_models) => {
-                    if !allowed_models.iter().any(|m| m == _model) {
-                        return Err((
-                            StatusCode::FORBIDDEN,
-                            Json(json!({
-                                "error": {
-                                    "message": format!(
-                                        "Model '{}' is not allowed for this API key",
-                                        _model
-                                    ),
-                                    "type": "auth_error",
-                                    "code": "model_not_allowed"
-                                }
-                            })),
-                        ));
-                    }
+            if let Some(allowed_models) = resolve_key_model_list(&state, &key).await? {
+                if !allowed_models.iter().any(|m| m == _model) {
+                    return Err((
+                        StatusCode::FORBIDDEN,
+                        Json(json!({
+                            "error": {
+                                "message": format!(
+                                    "Model '{}' is not allowed for this API key",
+                                    _model
+                                ),
+                                "type": "auth_error",
+                                "code": "model_not_allowed"
+                            }
+                        })),
+                    ));
                 }
-                None => { /* allow all models */ }
             }
+            // None → allow all models
 
             if let Some(max_budget) = key.max_budget_f64() {
                 if key.spend >= max_budget {
@@ -1045,11 +1043,11 @@ pub async fn responses_handler(
 
         // Extract usage — dual fallback
         let usage = adapted_resp.get("usage");
-        let prompt_tokens = usage.map(|u| extract_prompt_tokens(u)).unwrap_or(0);
-        let completion_tokens = usage.map(|u| extract_completion_tokens(u)).unwrap_or(0);
-        let total_tokens = usage.map(|u| extract_total_tokens(u)).unwrap_or(0);
-        let cache_read = usage.map(|u| extract_cache_read_tokens(u)).unwrap_or(0);
-        let cache_create = usage.map(|u| extract_cache_creation_tokens(u)).unwrap_or(0);
+        let prompt_tokens = usage.map(extract_prompt_tokens).unwrap_or(0);
+        let completion_tokens = usage.map(extract_completion_tokens).unwrap_or(0);
+        let total_tokens = usage.map(extract_total_tokens).unwrap_or(0);
+        let cache_read = usage.map(extract_cache_read_tokens).unwrap_or(0);
+        let cache_create = usage.map(extract_cache_creation_tokens).unwrap_or(0);
 
         let spend_amount = calc_spend(
             prompt_tokens,

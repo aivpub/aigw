@@ -215,7 +215,7 @@ pub async fn team_list(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&auth)?;
     let page = query.page.unwrap_or(1).max(1);
-    let page_size = query.page_size.unwrap_or(30).max(1).min(100);
+    let page_size = query.page_size.unwrap_or(30).clamp(1, 100);
     let offset = ((page - 1) * page_size) as i64;
     let limit = page_size as i64;
 
@@ -319,10 +319,7 @@ pub async fn team_update(
         existing.blocked = v.as_bool().unwrap_or(existing.blocked);
     }
     if let Some(v) = body.get("budget_duration") {
-        existing.budget_duration = v
-            .as_str()
-            .map(String::from)
-            .filter(|s| !s.is_empty());
+        existing.budget_duration = v.as_str().map(String::from).filter(|s| !s.is_empty());
     }
     if let Some(v) = body.get("soft_budget") {
         existing.soft_budget = v.as_f64().map(|vv| vv.to_string());
@@ -372,7 +369,7 @@ pub async fn team_deleted_list(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&auth)?;
     let page = query.page.unwrap_or(1).max(1);
-    let page_size = query.page_size.unwrap_or(30).max(1).min(100);
+    let page_size = query.page_size.unwrap_or(30).clamp(1, 100);
     let offset = ((page - 1) * page_size) as i64;
     let limit = page_size as i64;
 

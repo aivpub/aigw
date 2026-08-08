@@ -121,13 +121,13 @@ impl MessageAdapter for OpenAIPassthrough {
         mut body: Value,
         deployment: &Deployment,
     ) -> Result<Value, AdapterError> {
-        body.as_object_mut().map(|obj| {
+        if let Some(obj) = body.as_object_mut() {
             obj.insert("model".to_string(), json!(deployment.upstream_model));
             // Inject stream_options so upstream returns token usage in the final SSE chunk
             if obj.get("stream").and_then(|v| v.as_bool()).unwrap_or(false) {
                 obj.insert("stream_options".to_string(), json!({"include_usage": true}));
             }
-        });
+        }
         Ok(body)
     }
 
@@ -186,13 +186,13 @@ impl MessageAdapter for AnthropicToOpenAI {
 
         let mut json =
             serde_json::to_value(&oai_req).map_err(|e| AdapterError::Parse(e.to_string()))?;
-        json.as_object_mut().map(|obj| {
+        if let Some(obj) = json.as_object_mut() {
             obj.insert("model".to_string(), json!(deployment.upstream_model));
             // Inject stream_options so upstream returns token usage in the final SSE chunk
             if obj.get("stream").and_then(|v| v.as_bool()).unwrap_or(false) {
                 obj.insert("stream_options".to_string(), json!({"include_usage": true}));
             }
-        });
+        }
         Ok(json)
     }
 
@@ -358,7 +358,7 @@ pub fn fold_extra_systems_into_adjacent_user(messages: Vec<ChatMessage>) -> Vec<
             continue;
         }
         if msg.role == "user" && !pending_reminders.is_empty() {
-            let reminders: Vec<String> = pending_reminders.drain(..).collect();
+            let reminders: Vec<String> = std::mem::take(&mut pending_reminders);
             out.push(prepend_text_to_chat_message(msg, &reminders));
         } else {
             out.push(msg.clone());
@@ -474,6 +474,12 @@ pub struct AnthropicToOpenAIStream {
     current_block_index: i32,
     current_block: Option<BlockType>,
     started: bool,
+}
+
+impl Default for AnthropicToOpenAIStream {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AnthropicToOpenAIStream {
@@ -1559,9 +1565,9 @@ impl MessageAdapter for AnthropicPassthrough {
         // Anthropic requires `include_usage` in body for streaming responses
         // to include usage.{input_tokens, output_tokens} in message_delta events
         if is_stream {
-            json.as_object_mut().map(|obj| {
+            if let Some(obj) = json.as_object_mut() {
                 obj.insert("stream_options".to_string(), json!({"include_usage": true}));
-            });
+            }
         }
         Ok(json)
     }
@@ -1608,9 +1614,9 @@ impl MessageAdapter for OpenAIToAnthropic {
         let claude_req = DefaultAdapter::openai_to_claude_request(&oai_req, max_tokens);
         let mut json =
             serde_json::to_value(&claude_req).map_err(|e| AdapterError::Parse(e.to_string()))?;
-        json.as_object_mut().map(|obj| {
+        if let Some(obj) = json.as_object_mut() {
             obj.insert("model".to_string(), json!(deployment.upstream_model));
-        });
+        }
         Ok(json)
     }
 
@@ -1659,6 +1665,12 @@ pub struct OpenAIToAnthropicStream {
     current_block: Option<O2ABlockType>,
     started: bool,
     finished: bool,
+}
+
+impl Default for OpenAIToAnthropicStream {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl OpenAIToAnthropicStream {

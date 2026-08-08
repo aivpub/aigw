@@ -100,6 +100,7 @@ fn extract_pricing(
 /// If cache_read/cache_creation pricing is absent, falls back to input_cost_per_token
 /// (litellm `_cost_per_token_custom_pricing_helper` behaviour).
 /// Anthropic callers MUST normalize prompt_tokens before calling (add cache_read + cache_creation).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn calc_spend(
     prompt_tokens: i32,
     completion_tokens: i32,
@@ -865,26 +866,24 @@ pub async fn chat_completions(
 
         if let Some(key) = key_record {
             // Resolve model list with sentinel expansion
-            match resolve_key_model_list(&state, &key).await? {
-                Some(allowed_models) => {
-                    if !allowed_models.iter().any(|m| m == _model) {
-                        return Err((
-                            StatusCode::FORBIDDEN,
-                            Json(json!({
-                                "error": {
-                                    "message": format!(
-                                        "Model '{}' is not allowed for this API key",
-                                        _model
-                                    ),
-                                    "type": "auth_error",
-                                    "code": "model_not_allowed"
-                                }
-                            })),
-                        ));
-                    }
+            if let Some(allowed_models) = resolve_key_model_list(&state, &key).await? {
+                if !allowed_models.iter().any(|m| m == _model) {
+                    return Err((
+                        StatusCode::FORBIDDEN,
+                        Json(json!({
+                            "error": {
+                                "message": format!(
+                                    "Model '{}' is not allowed for this API key",
+                                    _model
+                                ),
+                                "type": "auth_error",
+                                "code": "model_not_allowed"
+                            }
+                        })),
+                    ));
                 }
-                None => { /* allow all models */ }
             }
+            // None → allow all models
 
             // Check budget
             if let Some(max_budget) = key.max_budget_f64() {
@@ -1853,13 +1852,13 @@ pub async fn chat_completions(
             .and_then(|u| u.get("completion_tokens"))
             .and_then(|v| v.as_i64())
             .unwrap_or(0) as i32;
-        let cache_read = usage.map(|u| extract_cache_read_tokens(u)).unwrap_or(0);
-        let cache_create = usage.map(|u| extract_cache_creation_tokens(u)).unwrap_or(0);
+        let cache_read = usage.map(extract_cache_read_tokens).unwrap_or(0);
+        let cache_create = usage.map(extract_cache_creation_tokens).unwrap_or(0);
         // Image tokens: upstream first (Qwen OpenAI-compat / DashScope native),
         // fallback to client-side estimation from the request body (OpenAI/
         // Anthropic don't report this breakdown). image_tokens ⊆ prompt_tokens.
         let (image_tokens, image_tokens_source) = usage
-            .and_then(|u| aigw_core::image_tokens::extract_image_tokens_from_usage(u))
+            .and_then(aigw_core::image_tokens::extract_image_tokens_from_usage)
             .map(|t| (Some(t), Some("upstream")))
             .unwrap_or_else(|| {
                 let est = aigw_core::image_tokens::calculate_image_tokens(

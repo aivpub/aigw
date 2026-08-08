@@ -2181,8 +2181,9 @@ impl Database {
 pub trait SpendLogStore {
     async fn insert_spend_log(&self, log: &SpendLog) -> Result<()>;
     /// Update a spend_log after streaming completes — fills in tokens, spend,
-    /// end_time, response, duration, TTFT, status, and (via COALESCE) the
-    /// upstream provider request_id.  Uses call_id as the unique key.
+    /// end_time, response, duration, TTFT, status, (via COALESCE) the upstream
+    /// provider request_id, and image_tokens.
+    #[allow(clippy::too_many_arguments)]
     async fn update_spend_log(
         &self,
         call_id: &str,
@@ -2356,6 +2357,10 @@ impl SpendLogStore for SqlitePool {
         Ok(())
     }
 
+    /// Update a spend_log after streaming completes — fills in tokens, spend,
+    /// end_time, response, duration, TTFT, status, (via COALESCE) the upstream
+    /// provider request_id, and image_tokens.
+    #[allow(clippy::too_many_arguments)]
     async fn update_spend_log(
         &self,
         call_id: &str,
@@ -2394,10 +2399,7 @@ impl SpendLogStore for SqlitePool {
         if let Some(m) = metadata {
             q = q.bind(m);
         }
-        q.bind(image_tokens)
-            .bind(call_id)
-            .execute(self)
-            .await?;
+        q.bind(image_tokens).bind(call_id).execute(self).await?;
         Ok(())
     }
 
@@ -2800,6 +2802,7 @@ impl SpendLogStore for MySqlPool {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn update_spend_log(
         &self,
         call_id: &str,
@@ -2835,10 +2838,7 @@ impl SpendLogStore for MySqlPool {
         if let Some(m) = metadata {
             q = q.bind(m);
         }
-        q.bind(image_tokens)
-            .bind(call_id)
-            .execute(self)
-            .await?;
+        q.bind(image_tokens).bind(call_id).execute(self).await?;
         Ok(())
     }
 
@@ -3098,7 +3098,7 @@ impl SpendLogStore for MySqlPool {
                 // Dual-column in-memory fuzzy search: match gateway call_id OR upstream request_id (substring).
                 if let Some(rid) = call_id {
                     if !log.call_id.contains(rid)
-                        && !log.request_id.as_deref().map_or(false, |r| r.contains(rid))
+                        && !log.request_id.as_deref().is_some_and(|r| r.contains(rid))
                     {
                         return false;
                     }
@@ -3212,7 +3212,7 @@ impl SpendLogStore for PgPool {
         )
             .bind(&log.call_id).bind(&log.call_type).bind(&log.api_key)
             .bind(log.spend).bind(log.total_tokens).bind(log.prompt_tokens)
-            .bind(log.completion_tokens).bind(log.start_time).bind(&log.end_time)
+            .bind(log.completion_tokens).bind(log.start_time).bind(log.end_time)
             .bind(log.request_duration_ms).bind(log.completion_start_time)
             .bind(&log.model).bind(&log.model_id).bind(&log.model_group)
             .bind(&log.custom_llm_provider).bind(&log.api_base).bind(&log.user)
@@ -3227,6 +3227,7 @@ impl SpendLogStore for PgPool {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn update_spend_log(
         &self,
         call_id: &str,
@@ -3262,10 +3263,7 @@ impl SpendLogStore for PgPool {
         if let Some(m) = metadata {
             q = q.bind(m);
         }
-        q.bind(image_tokens)
-            .bind(call_id)
-            .execute(self)
-            .await?;
+        q.bind(image_tokens).bind(call_id).execute(self).await?;
         Ok(())
     }
 
@@ -3364,13 +3362,13 @@ impl SpendLogStore for PgPool {
         end_date: Option<&str>,
         offset_minutes: i32,
     ) -> Result<Vec<SpendModelAgg>> {
-        let date_filter = if start_date.is_some() && end_date.is_some() {
+        let date_filter = if let (Some(sd), Some(ed)) = (start_date, end_date) {
             format!(
                 " AND date(start_time + make_interval(mins => {})) >= date('{}') AND date(start_time + make_interval(mins => {})) <= date('{}')",
                 offset_minutes,
-                start_date.unwrap().replace('\'', "''"),
+                sd.replace('\'', "''"),
                 offset_minutes,
-                end_date.unwrap().replace('\'', "''")
+                ed.replace('\'', "''")
             )
         } else {
             String::new()
@@ -3394,13 +3392,13 @@ impl SpendLogStore for PgPool {
         end_date: Option<&str>,
         offset_minutes: i32,
     ) -> Result<Vec<SpendModelGroupAgg>> {
-        let date_filter = if start_date.is_some() && end_date.is_some() {
+        let date_filter = if let (Some(sd), Some(ed)) = (start_date, end_date) {
             format!(
                 " AND date(start_time + make_interval(mins => {})) >= date('{}') AND date(start_time + make_interval(mins => {})) <= date('{}')",
                 offset_minutes,
-                start_date.unwrap().replace('\'', "''"),
+                sd.replace('\'', "''"),
                 offset_minutes,
-                end_date.unwrap().replace('\'', "''")
+                ed.replace('\'', "''")
             )
         } else {
             String::new()
@@ -3423,13 +3421,13 @@ impl SpendLogStore for PgPool {
         end_date: Option<&str>,
         offset_minutes: i32,
     ) -> Result<Vec<SpendProviderAgg>> {
-        let date_filter = if start_date.is_some() && end_date.is_some() {
+        let date_filter = if let (Some(sd), Some(ed)) = (start_date, end_date) {
             format!(
                 " AND date(sl.start_time + make_interval(mins => {})) >= date('{}') AND date(sl.start_time + make_interval(mins => {})) <= date('{}')",
                 offset_minutes,
-                start_date.unwrap().replace('\'', "''"),
+                sd.replace('\'', "''"),
                 offset_minutes,
-                end_date.unwrap().replace('\'', "''")
+                ed.replace('\'', "''")
             )
         } else {
             String::new()
@@ -3514,7 +3512,7 @@ impl SpendLogStore for PgPool {
                 // Dual-column in-memory fuzzy search: match gateway call_id OR upstream request_id (substring).
                 if let Some(rid) = call_id {
                     if !log.call_id.contains(rid)
-                        && !log.request_id.as_deref().map_or(false, |r| r.contains(rid))
+                        && !log.request_id.as_deref().is_some_and(|r| r.contains(rid))
                     {
                         return false;
                     }
@@ -3551,17 +3549,17 @@ impl SpendLogStore for PgPool {
             sql.push_str(&format!(" AND model = ${}", i));
             i += 1;
         }
-        if start_date.is_some() {
+        if let Some(sd) = start_date {
             sql.push_str(&format!(
                 " AND start_time >= '{}'{}",
-                start_date.unwrap().replace('\'', "''"),
+                sd.replace('\'', "''"),
                 ts_cast
             ));
         }
-        if end_date.is_some() {
+        if let Some(ed) = end_date {
             sql.push_str(&format!(
                 " AND start_time <= '{}'{}",
-                end_date.unwrap().replace('\'', "''"),
+                ed.replace('\'', "''"),
                 ts_cast
             ));
         }
@@ -3628,6 +3626,7 @@ impl Database {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn update_spend_log(
         &self,
         call_id: &str,
@@ -7554,6 +7553,7 @@ impl Database {
 
     // ── Spend Logs: status + token range filter ──
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn query_spend_logs_with_status_filter(
         &self,
         api_key: Option<&str>,

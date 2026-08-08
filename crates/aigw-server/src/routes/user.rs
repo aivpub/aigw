@@ -106,9 +106,7 @@ pub async fn user_new(
             .get("password")
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
-            .map(|plain| {
-                hash_password(plain).unwrap_or_else(|_| plain.to_string())
-            }),
+            .map(|plain| hash_password(plain).unwrap_or_else(|_| plain.to_string())),
         teams: body.get("teams").cloned().unwrap_or(json!([])),
         user_role: body
             .get("user_role")
@@ -214,7 +212,7 @@ pub async fn user_list(
     require_admin(&auth)?;
 
     let page = query.page.unwrap_or(1).max(1);
-    let page_size = query.page_size.unwrap_or(30).max(1).min(100);
+    let page_size = query.page_size.unwrap_or(30).clamp(1, 100);
 
     let all_users = state
         .db
@@ -310,10 +308,8 @@ pub async fn user_update(
     if let Some(v) = body.get("password") {
         if let Some(plain) = v.as_str() {
             if !plain.is_empty() {
-                existing.password = Some(
-                    hash_password(plain)
-                        .unwrap_or_else(|_| plain.to_string()),
-                );
+                existing.password =
+                    Some(hash_password(plain).unwrap_or_else(|_| plain.to_string()));
             }
         }
     }
@@ -345,10 +341,7 @@ pub async fn user_update(
         existing.max_parallel_requests = v.as_i64().map(|v| v.to_string());
     }
     if let Some(v) = body.get("budget_duration") {
-        existing.budget_duration = v
-            .as_str()
-            .map(String::from)
-            .filter(|s| !s.is_empty());
+        existing.budget_duration = v.as_str().map(String::from).filter(|s| !s.is_empty());
     }
     if let Some(v) = body.get("allowed_cache_controls") {
         existing.allowed_cache_controls = v.clone();

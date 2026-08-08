@@ -27,8 +27,12 @@ fn session_token() -> String {
         let triple = (b0 << 16) | (b1 << 8) | b2;
         out.push(char::from(CHARS[((triple >> 18) & 0x3F) as usize]));
         out.push(char::from(CHARS[((triple >> 12) & 0x3F) as usize]));
-        if n > 1 { out.push(char::from(CHARS[((triple >> 6) & 0x3F) as usize])); }
-        if n > 2 { out.push(char::from(CHARS[(triple & 0x3F) as usize])); }
+        if n > 1 {
+            out.push(char::from(CHARS[((triple >> 6) & 0x3F) as usize]));
+        }
+        if n > 2 {
+            out.push(char::from(CHARS[(triple & 0x3F) as usize]));
+        }
     }
     format!("sk-{}", &out[..22])
 }
@@ -63,11 +67,16 @@ async fn create_user_and_login(
         Some(&body),
     )
     .await;
-    assert_eq!(status, 200, "Failed to create user {}: status={}", user_id, status);
+    assert_eq!(
+        status, 200,
+        "Failed to create user {}: status={}",
+        user_id, status
+    );
 
-    world
-        .created_users
-        .insert(user_id.to_string(), (email.to_string(), password.to_string()));
+    world.created_users.insert(
+        user_id.to_string(),
+        (email.to_string(), password.to_string()),
+    );
 
     // Create a session key in virtual_keys (same as login flow)
     let raw_token = session_token();
@@ -144,25 +153,19 @@ async fn create_user_and_login(
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 #[given(regex = r#"^已存在用户 "(.+)" 邮箱 "(.+)" 角色 "(.+)"$"#)]
-async fn given_user_exists(
-    world: &mut TestWorld,
-    user_id: String,
-    email: String,
-    role: String,
-) {
+async fn given_user_exists(world: &mut TestWorld, user_id: String, email: String, role: String) {
     let cookie = create_user_and_login(world, &user_id, &email, "pass123", &role).await;
-    world.created_keys.insert(format!("cookie-{}", user_id), cookie);
+    world
+        .created_keys
+        .insert(format!("cookie-{}", user_id), cookie);
 }
 
 #[given(regex = r#"^管理员已创建 key "(.+)" 归属用户 "(.+)"$"#)]
-async fn given_admin_created_key_for_user(
-    world: &mut TestWorld,
-    alias: String,
-    user_id: String,
-) {
+async fn given_admin_created_key_for_user(world: &mut TestWorld, alias: String, user_id: String) {
     let state = world.ensure_state().await;
     let router = build_key_router(state);
-    let body = serde_json::json!({"key_alias": &alias, "user_id": &user_id, "models": ["gpt-4"]}).to_string();
+    let body = serde_json::json!({"key_alias": &alias, "user_id": &user_id, "models": ["gpt-4"]})
+        .to_string();
     let (status, resp_body) = make_request(
         &router,
         Method::POST,
@@ -184,7 +187,11 @@ async fn given_admin_created_key_for_user(
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 #[when(regex = r#"^用户 "(.+)" 创建 key 请求 body:$"#)]
-async fn when_user_creates_key(world: &mut TestWorld, user_id: String, step: &cucumber::gherkin::Step) {
+async fn when_user_creates_key(
+    world: &mut TestWorld,
+    user_id: String,
+    step: &cucumber::gherkin::Step,
+) {
     let state = world.ensure_state().await;
     let router = build_key_router(state);
     let cookie = world
@@ -239,14 +246,8 @@ async fn when_user_lists_keys(world: &mut TestWorld, user_id: String) {
         .get(&format!("cookie-{}", user_id))
         .cloned()
         .unwrap_or_else(|| panic!("No cookie for user {}", user_id));
-    let (s, b) = make_request_with_cookie(
-        &router,
-        Method::GET,
-        "/key/list",
-        Some(&cookie),
-        None,
-    )
-    .await;
+    let (s, b) =
+        make_request_with_cookie(&router, Method::GET, "/key/list", Some(&cookie), None).await;
     world.last_status = Some(s);
     world.last_body = b;
 }
@@ -262,14 +263,7 @@ async fn when_user_gets_key_info(world: &mut TestWorld, user_id: String, key_ref
         .unwrap_or_else(|| panic!("No cookie for user {}", user_id));
     let raw_key = world.created_keys.get(&key_ref).cloned().unwrap_or(key_ref);
     let uri = format!("/key/info?key={}", raw_key);
-    let (s, b) = make_request_with_cookie(
-        &router,
-        Method::GET,
-        &uri,
-        Some(&cookie),
-        None,
-    )
-    .await;
+    let (s, b) = make_request_with_cookie(&router, Method::GET, &uri, Some(&cookie), None).await;
     world.last_status = Some(s);
     world.last_body = b;
 }
@@ -305,7 +299,10 @@ async fn then_key_list_count_is(world: &mut TestWorld, expected: usize) {
         .get("keys")
         .and_then(|v| v.as_array())
         .unwrap_or_else(|| {
-            panic!("No 'keys' array in response: {}", serde_json::to_string_pretty(body).unwrap_or_default())
+            panic!(
+                "No 'keys' array in response: {}",
+                serde_json::to_string_pretty(body).unwrap_or_default()
+            )
         });
     assert_eq!(
         keys.len(),
@@ -323,9 +320,7 @@ async fn then_all_keys_belong_to(world: &mut TestWorld, user_id: String) {
     let keys = body
         .get("keys")
         .and_then(|v| v.as_array())
-        .unwrap_or_else(|| {
-            panic!("No 'keys' array in response")
-        });
+        .unwrap_or_else(|| panic!("No 'keys' array in response"));
     for key_entry in keys {
         let kid = key_entry
             .get("user_id")

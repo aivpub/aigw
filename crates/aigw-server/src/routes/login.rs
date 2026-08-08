@@ -154,7 +154,9 @@ pub async fn login(
                 }
                 user_id = user.user_id;
                 // Read real user_role from DB — non-admin users get their actual role
-                user_role = user.user_role.unwrap_or_else(|| "internal_user".to_string());
+                user_role = user
+                    .user_role
+                    .unwrap_or_else(|| "internal_user".to_string());
             }
             Ok(None) => {
                 return Err((
@@ -181,8 +183,8 @@ pub async fn login(
 
     let session_key = VirtualKey {
         token: token_hash.clone(),
-        key_name: Some(format!("ui-session-{}", &user_id)),
-        key_alias: Some(format!("ui-session-{}", &user_id)),
+        key_name: Some(format!("ui-session-{}", user_id)),
+        key_alias: Some(format!("ui-session-{}", user_id)),
         soft_budget_cooldown: "false".to_string(),
         spend: 0.0,
         expires: Some(expiry),
@@ -289,11 +291,7 @@ pub async fn logout_with_cleanup(
     State(state): State<SharedState>,
     headers: HeaderMap,
 ) -> Result<(StatusCode, [(String, String); 1], Json<Value>), (StatusCode, Json<Value>)> {
-    let master_key = state
-        .master_key
-        .as_ref()
-        .map(|k| k.clone())
-        .unwrap_or_default();
+    let master_key = state.master_key.clone().unwrap_or_default();
 
     // Extract JWT from cookie and delete the session key
     if let Some(token) = get_cookie(&headers, "token") {
@@ -315,11 +313,7 @@ pub async fn login_check(
     State(state): State<SharedState>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let master_key = state
-        .master_key
-        .as_ref()
-        .map(|k| k.clone())
-        .unwrap_or_default();
+    let master_key = state.master_key.clone().unwrap_or_default();
 
     let token = get_cookie(&headers, "token").ok_or_else(|| {
         (

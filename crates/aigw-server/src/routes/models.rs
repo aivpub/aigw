@@ -210,7 +210,7 @@ pub async fn model_list(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&auth)?;
     let page = query.page.unwrap_or(1).max(1);
-    let page_size = query.page_size.unwrap_or(30).max(1).min(100);
+    let page_size = query.page_size.unwrap_or(30).clamp(1, 100);
     let offset = ((page - 1) * page_size) as i64;
     let limit = page_size as i64;
 
@@ -317,7 +317,7 @@ pub async fn model_deleted_list(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&auth)?;
     let page = query.page.unwrap_or(1).max(1);
-    let page_size = query.page_size.unwrap_or(30).max(1).min(100);
+    let page_size = query.page_size.unwrap_or(30).clamp(1, 100);
     let offset = ((page - 1) * page_size) as i64;
     let limit = page_size as i64;
 
@@ -381,12 +381,16 @@ pub async fn model_delete(
     model.litellm_params =
         ModelResponse::decrypt_params(&model.litellm_params, state.aigw_master_key.as_deref());
 
-    state.db.archive_and_delete_model(&model).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": {"message": format!("{}", e)}})),
-        )
-    })?;
+    state
+        .db
+        .archive_and_delete_model(&model)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": {"message": format!("{}", e)}})),
+            )
+        })?;
 
     Ok(Json(json!({"status": "deleted"})))
 }

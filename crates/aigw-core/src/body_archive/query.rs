@@ -67,7 +67,7 @@ pub fn decode_body_from_parquet(
 
     // Build projection: only read the key col + messages, response, proxy_server_request
     let mask = ProjectionMask::columns(
-        &schema_desc,
+        schema_desc,
         [key_col, "messages", "response", "proxy_server_request"],
     );
 
@@ -211,7 +211,7 @@ pub async fn query_parquet_with_cache(
         .unwrap_or(0);
 
     let mask = ProjectionMask::columns(
-        &schema_desc,
+        schema_desc,
         [key_col, "messages", "response", "proxy_server_request"],
     );
 

@@ -465,6 +465,7 @@ async fn run_and_save_health_check(
 /// `response` is the parsed upstream response body (when available) — used to
 /// extract real usage tokens and compute spend via calc_spend, mirroring
 /// chat.rs's success/failure spend_log paths.
+#[allow(clippy::too_many_arguments)]
 async fn save_result(
     db: &Database,
     model_name: &str,

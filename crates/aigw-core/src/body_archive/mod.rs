@@ -342,7 +342,7 @@ impl AsyncTask for BodyArchiver {
                     "batch_size": self.config.archive.batch_size,
                 }),
             });
-            current = current + Duration::hours(1);
+            current += Duration::hours(1);
         }
 
         Ok(steps)

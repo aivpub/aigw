@@ -269,7 +269,7 @@ pub fn decode_base64_type15(envelope: &str) -> Result<String, String> {
     let rest = envelope
         .strip_prefix("base64:type15:")
         .ok_or_else(|| "not a base64:type15: envelope".to_string())?;
-    let cleaned: String = rest.replace('\n', "").replace('\r', "");
+    let cleaned: String = rest.replace(['\n', '\r'], "");
     let data = decode_base64_safe(&cleaned)?;
     String::from_utf8(data).map_err(|e| format!("UTF-8 decode failed: {}", e))
 }
@@ -287,7 +287,7 @@ fn decode_base64_safe(input: &str) -> Result<Vec<u8>, String> {
     // (stores encrypted JSON as "base64:type15:<encoded>")
     let encoded = encoded.strip_prefix("base64:type15:").unwrap_or(encoded);
     // Strip embedded newlines — MySQL JSON columns store literal \n in strings
-    let encoded: String = encoded.replace('\n', "").replace('\r', "");
+    let encoded: String = encoded.replace(['\n', '\r'], "");
 
     // 1. Try standard base64 first
     if let Ok(data) = BASE64_STD.decode(&encoded) {

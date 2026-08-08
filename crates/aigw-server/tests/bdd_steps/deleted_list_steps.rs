@@ -142,7 +142,11 @@ fn assert_alias_not_in_data(body: &serde_json::Value, alias: &str) {
 async fn given_background_teams(world: &mut TestWorld, team1: String, team2: String) {
     let state = world.ensure_state().await;
     for alias in [&team1, &team2] {
-        state.db.insert_team(&make_team(alias)).await.expect("insert team");
+        state
+            .db
+            .insert_team(&make_team(alias))
+            .await
+            .expect("insert team");
     }
 }
 
@@ -151,8 +155,16 @@ async fn given_background_teams(world: &mut TestWorld, team1: String, team2: Str
 #[given(expr = "team {string} 已被软删除")]
 async fn given_team_soft_deleted(world: &mut TestWorld, alias: String) {
     let state = world.ensure_state().await;
-    state.db.insert_team(&make_team(&alias)).await.expect("insert team");
-    state.db.delete_team(&alias).await.expect("delete team -> soft delete");
+    state
+        .db
+        .insert_team(&make_team(&alias))
+        .await
+        .expect("insert team");
+    state
+        .db
+        .delete_team(&alias)
+        .await
+        .expect("delete team -> soft delete");
 }
 
 /// Soft-delete a model: insert then delete.
@@ -171,7 +183,11 @@ async fn given_model_soft_deleted(world: &mut TestWorld, model_name: String) {
         updated_by: Some("test".to_string()),
     };
     state.db.insert_model(&model).await.expect("insert model");
-    state.db.delete_model(&model_id).await.expect("delete model -> soft delete");
+    state
+        .db
+        .delete_model(&model_id)
+        .await
+        .expect("delete model -> soft delete");
 }
 
 /// Soft-delete a user: insert then delete.
@@ -207,7 +223,11 @@ async fn given_user_soft_deleted(world: &mut TestWorld, user_id: String) {
         updated_at: Some(chrono::Utc::now()),
     };
     state.db.insert_user(&user).await.expect("insert user");
-    state.db.delete_user(&user_id).await.expect("delete user -> soft delete");
+    state
+        .db
+        .delete_user(&user_id)
+        .await
+        .expect("delete user -> soft delete");
 }
 
 /// Soft-delete an org: insert then delete.
@@ -228,8 +248,16 @@ async fn given_org_soft_deleted(world: &mut TestWorld, org_id: String) {
         updated_at: chrono::Utc::now(),
         updated_by: "test".to_string(),
     };
-    state.db.insert_organization(&org).await.expect("insert org");
-    state.db.delete_organization(&org_id).await.expect("delete org -> soft delete");
+    state
+        .db
+        .insert_organization(&org)
+        .await
+        .expect("insert org");
+    state
+        .db
+        .delete_organization(&org_id)
+        .await
+        .expect("delete org -> soft delete");
 }
 
 // ━━━━ When ━━━━

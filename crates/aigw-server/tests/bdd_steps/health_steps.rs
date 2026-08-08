@@ -385,9 +385,7 @@ async fn then_spend_log_health_check_exists(
 
 /// Insert a health_check row directly for the given model so the
 /// /health/latest endpoint has something to return.
-#[given(
-    expr = "已确认有模型 {string} 且健康检查表中有一条 status={string} 的记录"
-)]
+#[given(expr = "已确认有模型 {string} 且健康检查表中有一条 status={string} 的记录")]
 async fn given_model_with_health_check(world: &mut TestWorld, model_name: String, status: String) {
     let state = world.ensure_state().await;
     // Insert a proxy model first so health_latest can join
@@ -446,9 +444,7 @@ async fn when_get_health_latest_admin(world: &mut TestWorld) {
     world.last_body = b;
 }
 
-#[then(
-    expr = "响应 body data 数组中包含 model_name 为 {string} 且 status 为 {string} 的记录"
-)]
+#[then(expr = "响应 body data 数组中包含 model_name 为 {string} 且 status 为 {string} 的记录")]
 async fn then_data_contains_model_with_status(
     world: &mut TestWorld,
     model_name: String,
@@ -466,9 +462,7 @@ async fn then_data_contains_model_with_status(
                 && d.get("status").and_then(|v| v.as_str()) == Some(&status)
         })
         .unwrap_or_else(|| {
-            panic!(
-                "Expected model_name={model_name} status={status} not found in data: {body}"
-            )
+            panic!("Expected model_name={model_name} status={status} not found in data: {body}")
         });
     // Make sure the entry is real
     let _ = entry;
@@ -535,10 +529,7 @@ async fn then_body_has_uptime_and_db(world: &mut TestWorld) {
         body.get("uptime_seconds").is_some(),
         "body missing uptime_seconds: {body}",
     );
-    assert!(
-        body.get("db").is_some(),
-        "body missing db: {body}",
-    );
+    assert!(body.get("db").is_some(), "body missing db: {body}",);
     let db = &body["db"];
     assert!(
         db.get("connected").is_some(),
@@ -550,14 +541,7 @@ async fn then_body_has_uptime_and_db(world: &mut TestWorld) {
 async fn when_get_health_metrics_noauth(world: &mut TestWorld) {
     let state = world.ensure_state().await;
     let app = build_health_router(state);
-    let (s, b) = make_request(
-        &app,
-        Method::GET,
-        "/health/metrics",
-        None,
-        None,
-    )
-    .await;
+    let (s, b) = make_request(&app, Method::GET, "/health/metrics", None, None).await;
     world.last_status = Some(s);
     world.last_body = b;
 }

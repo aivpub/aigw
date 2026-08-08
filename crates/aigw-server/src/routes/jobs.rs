@@ -150,7 +150,7 @@ pub async fn trigger_job(
             let entity_type = req.payload.get("entity_type").and_then(|v| v.as_str());
             let candidates = match entity_type {
                 Some(et_str) => {
-                    let et = EntityType::from_str(et_str).ok_or((
+                    let et = et_str.parse::<EntityType>().map_err(|_| (
                         StatusCode::BAD_REQUEST,
                         Json(
                             serde_json::json!({"error": format!("unknown entity_type: {et_str}")}),
@@ -303,7 +303,10 @@ pub async fn job_detail_handler(
                         step_key: s.step_key.clone(),
                         status: s.status.clone(),
                         payload: s.payload.clone(),
-                        result: s.result.clone().unwrap_or(Value::Object(Default::default())),
+                        result: s
+                            .result
+                            .clone()
+                            .unwrap_or(Value::Object(Default::default())),
                         error_message: s.error_message.clone(),
                         retry_count: s.retry_count,
                         started_at: s.started_at.clone(),
@@ -427,9 +430,8 @@ pub async fn budget_reset_stats_handler(
     let last_reset = list_jobs(&state.db, Some("budget_reset"), None, 1, 0)
         .await
         .map(|(jobs, _)| {
-            jobs.into_iter().find(|j| {
-                j.status == "completed" || j.status == "partially_failed"
-            })
+            jobs.into_iter()
+                .find(|j| j.status == "completed" || j.status == "partially_failed")
         })
         .unwrap_or(None)
         .map(|j| {

@@ -206,13 +206,15 @@ pub enum RouterStrategy {
     // Future: LeastBusy, UsageBasedRouting, LatencyBased
 }
 
-impl RouterStrategy {
-    pub fn from_str(s: &str) -> Self {
+impl std::str::FromStr for RouterStrategy {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "simple-shuffle" => Self::SimpleShuffle,
+            "simple-shuffle" => Ok(Self::SimpleShuffle),
             other => {
                 tracing::warn!(strategy=%other, "unknown routing strategy, fallback to simple-shuffle");
-                Self::SimpleShuffle
+                Ok(Self::SimpleShuffle)
             }
         }
     }
@@ -250,7 +252,10 @@ impl Router {
 
     pub fn from_config(cfg: &RouterConfig) -> Self {
         Self {
-            strategy: RouterStrategy::from_str(&cfg.routing_strategy),
+            strategy: cfg
+                .routing_strategy
+                .parse()
+                .unwrap_or(RouterStrategy::SimpleShuffle),
             allowed_fails: cfg.allowed_fails,
             cooldown_time: cfg.cooldown_time,
             num_retries: cfg.num_retries,
@@ -268,7 +273,7 @@ impl Router {
 
         // 1. Filter out cooldown deployments
         let active: Vec<usize> = (0..deployments.len())
-            .filter(|&i| deployments[i].cooldown_until.map_or(true, |t| now >= t))
+            .filter(|&i| deployments[i].cooldown_until.is_none_or(|t| now >= t))
             .collect();
 
         if active.is_empty() {

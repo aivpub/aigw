@@ -18,7 +18,9 @@ async fn fresh_db(dir: &tempfile::TempDir, name: &str) -> String {
     let path = dir.path().join(name);
     let _ = std::fs::remove_file(&path);
     let url = format!("sqlite://{}", path.display());
-    let db = Database::init(&url).await.expect("Database::init + migrations");
+    let db = Database::init(&url)
+        .await
+        .expect("Database::init + migrations");
     drop(db);
     url
 }
@@ -35,7 +37,10 @@ async fn test_precheck_connectivity_check_runs() {
     let result = pre_check::run(&src, &tgt, "test-key-32-chars-long!!!!!!").await;
     // Returns Ok(bool) — false means some checks failed (expected: aigw schema
     // doesn't have LiteLLM_* tables), but the function itself doesn't error.
-    assert!(result.is_ok(), "pre_check should not error on valid connections");
+    assert!(
+        result.is_ok(),
+        "pre_check should not error on valid connections"
+    );
 }
 
 #[tokio::test]
@@ -58,7 +63,10 @@ async fn test_precheck_bad_source_url_errors() {
     // PreCheck returns Ok(false) when checks fail (e.g. table missing),
     // including when source DB file can't be opened (SQLite treats missing
     // file as connection success but table queries then fail).
-    assert!(!result.unwrap_or(true), "pre_check should fail with bad source");
+    assert!(
+        !result.unwrap_or(true),
+        "pre_check should fail with bad source"
+    );
 }
 
 #[tokio::test]
@@ -67,7 +75,10 @@ async fn test_precheck_bad_target_url_errors() {
     let bad_tgt = "sqlite:///nonexistent/path/db.sqlite";
     let result = pre_check::run(src, bad_tgt, "test-key-32-chars-long!!!!!!").await;
     // PreCheck returns Ok(false) when checks fail
-    assert!(!result.unwrap_or(true), "pre_check should fail with bad target");
+    assert!(
+        !result.unwrap_or(true),
+        "pre_check should fail with bad target"
+    );
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

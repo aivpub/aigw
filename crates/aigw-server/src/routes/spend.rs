@@ -241,7 +241,7 @@ pub async fn spend_logs(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let api_key = query.api_key.unwrap_or_else(|| auth.token_hash.clone());
     let page = query.page.unwrap_or(1).max(1);
-    let page_size = query.page_size.unwrap_or(30).max(1).min(100);
+    let page_size = query.page_size.unwrap_or(30).clamp(1, 100);
     let offset = (page - 1) * page_size;
 
     let (logs, total_count) = tokio::try_join!(
@@ -387,8 +387,7 @@ pub async fn global_spend_log_detail(
             .await
             .ok()
             .flatten()
-            .map(|k| k.key_alias)
-            .flatten()
+            .and_then(|k| k.key_alias)
     };
 
     let ttft_ms = compute_ttft(&log);
@@ -655,7 +654,7 @@ pub async fn global_spend_logs(
     require_admin(&auth)?;
 
     let page = query.page.unwrap_or(1).max(1);
-    let page_size = query.page_size.unwrap_or(30).max(1).min(100);
+    let page_size = query.page_size.unwrap_or(30).clamp(1, 100);
     let offset = (page - 1) * page_size;
 
     let (logs, total_count) = tokio::try_join!(
@@ -1175,6 +1174,25 @@ struct ActivityResult {
 
 /// Check whether start_date → end_date is 3 days or less (≤72h).
 /// Returns true for hourly aggregation, false for daily.
+/// Raw tuple rows returned by `query_activity_metadata` / `query_activity_{daily,hourly}`
+/// before projection into `ActivityMetadata` / `DailyRow`.
+type ActivityMetadataRaw = (f64, i64, i64, i64, i64, i64, i64, i64, i64, i64, f64, f64);
+type ActivityRowRaw = (
+    String,
+    f64,
+    i64,
+    i64,
+    i64,
+    i64,
+    i64,
+    i64,
+    i64,
+    i64,
+    i64,
+    f64,
+    f64,
+);
+
 fn is_hourly_range(start_date: &str, end_date: &str) -> bool {
     if let (Ok(s), Ok(e)) = (
         NaiveDate::parse_from_str(start_date, "%Y-%m-%d"),
@@ -1199,24 +1217,7 @@ async fn query_activity(db: &Database, query: &ActivityQuery) -> Result<Value, D
     let use_hourly = is_hourly_range(&query.start_date, &query.end_date);
     let offset_minutes = clamp_offset(query.offset_minutes);
 
-    let (metadata, rows): (
-        (f64, i64, i64, i64, i64, i64, i64, i64, i64, i64, f64, f64),
-        Vec<(
-            String,
-            f64,
-            i64,
-            i64,
-            i64,
-            i64,
-            i64,
-            i64,
-            i64,
-            i64,
-            i64,
-            f64,
-            f64,
-        )>,
-    ) = if use_hourly {
+    let (metadata, rows): (ActivityMetadataRaw, Vec<ActivityRowRaw>) = if use_hourly {
         tokio::try_join!(
             db.query_activity_metadata(
                 &query.start_date,

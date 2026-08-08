@@ -309,7 +309,10 @@ pub(crate) async fn ensure_organization(
     spend: f64,
 ) -> anyhow::Result<()> {
     let pool = aigw_migrate::native::SourcePool::connect(db_url).await?;
-    let del_sql = format!("DELETE FROM organizations WHERE organization_id = '{}'", org_id);
+    let del_sql = format!(
+        "DELETE FROM organizations WHERE organization_id = '{}'",
+        org_id
+    );
     let _ = pool.execute_raw(&del_sql).await;
 
     let now = pool.time_literal("2026-07-20T00:00:00");

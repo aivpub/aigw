@@ -116,7 +116,7 @@ pub fn compute_next_reset_at(
         }
 
         // 30d / 31d / 1mo (2592000–2678400): 1st of next month 00:00:00 UTC
-        d if d >= 2592000 && d <= 2678400 => {
+        d if (2592000..=2678400).contains(&d) => {
             let (year, month) = if now.month() == 12 {
                 (now.year() + 1, 1)
             } else {

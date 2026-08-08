@@ -252,10 +252,7 @@ async fn then_claude_role_is(world: &mut TestWorld, expected: String) {
 
 // ── New BDD steps for reasoning_content / usage details field preservation ──
 
-use aigw_core::models::{
-    AssistantMessage, Choice, Usage,
-    TokenDetails, ChatContent,
-};
+use aigw_core::models::{AssistantMessage, ChatContent, Choice, TokenDetails, Usage};
 
 #[given(expr = "一个包含 reasoning_content 的 OpenAI 响应")]
 async fn given_openai_with_reasoning(world: &mut TestWorld) {
@@ -290,7 +287,8 @@ async fn given_openai_with_reasoning(world: &mut TestWorld) {
 #[when(expr = "响应通过 OpenAI->Claude->OpenAI 往返转换")]
 async fn when_roundtrip_oai_claude_oai(world: &mut TestWorld) {
     let body = world.last_body.take().expect("no stored response");
-    let oai_resp: ChatCompletionResponse = serde_json::from_value(body).expect("parse OpenAI response");
+    let oai_resp: ChatCompletionResponse =
+        serde_json::from_value(body).expect("parse OpenAI response");
 
     // Convert to Claude via serde (bypassing the non-public function)
     // We serialize ChatCompletionResponse and use the AnthropicToOpenAI adapt_response path
@@ -312,7 +310,11 @@ async fn when_roundtrip_oai_claude_oai(world: &mut TestWorld) {
 async fn then_reasoning_content_is(world: &mut TestWorld, expected: String) {
     let body = world.last_body.as_ref().expect("no body");
     let rc = body.get("reasoning_content").and_then(|v| v.as_str());
-    assert_eq!(rc, Some(expected.as_str()), "reasoning_content should be preserved");
+    assert_eq!(
+        rc,
+        Some(expected.as_str()),
+        "reasoning_content should be preserved"
+    );
 }
 
 #[given(expr = "一个包含 reasoning_content 的 SSE Delta chunk")]
@@ -324,7 +326,8 @@ async fn given_delta_chunk(world: &mut TestWorld, step: &Step) {
 #[when(expr = "解析该 Delta chunk")]
 async fn when_parse_delta_chunk(world: &mut TestWorld) {
     let body = world.last_body.take().expect("no stored chunk");
-    let chunk: aigw_core::models::ChatCompletionChunk = serde_json::from_value(body).expect("parse chunk");
+    let chunk: aigw_core::models::ChatCompletionChunk =
+        serde_json::from_value(body).expect("parse chunk");
     let delta = &chunk.choices[0].delta;
     world.last_body = Some(serde_json::to_value(delta).expect("serialize delta"));
 }
@@ -370,7 +373,8 @@ async fn when_usage_roundtrip(world: &mut TestWorld) {
 #[then(expr = "cached_tokens 值为 {int}")]
 async fn then_cached_tokens_is(world: &mut TestWorld, expected: i32) {
     let body = world.last_body.as_ref().expect("no body");
-    let cached = body.get("prompt_tokens_details")
+    let cached = body
+        .get("prompt_tokens_details")
         .and_then(|v| v.get("cached_tokens"))
         .and_then(|v| v.as_i64());
     assert_eq!(cached, Some(expected as i64));
@@ -379,7 +383,8 @@ async fn then_cached_tokens_is(world: &mut TestWorld, expected: i32) {
 #[then(expr = "reasoning_tokens 值为 {int}")]
 async fn then_reasoning_tokens_is(world: &mut TestWorld, expected: i32) {
     let body = world.last_body.as_ref().expect("no body");
-    let reasoning = body.get("completion_tokens_details")
+    let reasoning = body
+        .get("completion_tokens_details")
         .and_then(|v| v.get("reasoning_tokens"))
         .and_then(|v| v.as_i64());
     assert_eq!(reasoning, Some(expected as i64));

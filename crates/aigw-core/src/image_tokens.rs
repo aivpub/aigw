@@ -143,17 +143,28 @@ pub fn extract_image_tokens_from_usage(usage: &Value) -> Option<i32> {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 /// Auto-sniff the token formula from the upstream model name.
+///
+/// Qwen 版本分界：
+/// - **Qwen2.x / Qwen3（< 3.5）** — 纯文本 base，视觉需独立 `-VL` 变体。
+/// - **Qwen3.5 起（含 3.5/3.6/…/4.x/5.x 所有后续版本）** — 原生统一多模态
+///   （`Qwen3_5ForConditionalGeneration` 自带 vision encoder，config.json 顶层含
+///   image/video token id，无独立 VL 后缀），直接视为多模态，ViT factor 32
+///   （patch_size 16 × spatial_merge_size 2）。
+///
+/// 因此：`qwen2.5/qwen25` 必须带 `vl`/`vision` 后缀才匹配；`qwen3.x`（x≥5）及所有
+/// 更高主版本直接匹配；`qwen3`（x<5）仅 `vl`/`vision` 后缀匹配（Qwen3 base 纯文本）。
 pub fn infer_strategy(upstream_model: &str) -> Option<CalculationStrategy> {
     let m = upstream_model.to_lowercase();
     if (m.contains("qwen2.5") || m.contains("qwen25")) && (m.contains("vl") || m.contains("vision"))
     {
         Some(CalculationStrategy::Qwen25VL)
-    } else if m.contains("qwen3") && (m.contains("vl") || m.contains("vision")) {
+    } else if is_qwen_native_multimodal(&m)
+        || m.contains("qwen3") && (m.contains("vl") || m.contains("vision"))
+    {
+        // Qwen3-VL factor 32；Qwen3.5 及更高版本原生多模态共用同一公式。
         Some(CalculationStrategy::Qwen3VL)
     } else if m.contains("gpt-4")
-        && (m.contains("vision")
-            || m.contains("4o")
-            || m.contains("turbo"))
+        && (m.contains("vision") || m.contains("4o") || m.contains("turbo"))
     {
         Some(CalculationStrategy::OpenAITiling)
     } else if m.contains("claude")
@@ -164,6 +175,31 @@ pub fn infer_strategy(upstream_model: &str) -> Option<CalculationStrategy> {
     } else {
         None
     }
+}
+
+/// Qwen 原生统一多模态检测（按版本号解析，零分配）：
+/// - `qwen3.5` / `qwen3.6` / … / `qwen3.9` → true（次版本 ≥ 5）
+/// - `qwen4` / `qwen5` / … 任何更高主版本 → true
+/// - `qwen2.x` / `qwen3.0-3.4` → false（需 `-VL` 后缀）
+fn is_qwen_native_multimodal(m: &str) -> bool {
+    let Some(ver) = m.strip_prefix("qwen") else {
+        return false;
+    };
+    let mut chars = ver.chars();
+    let Some(major) = chars.next().and_then(|c| c.to_digit(10)) else {
+        return false;
+    };
+    if major > 3 {
+        return true; // qwen4+ / qwen5+ / …
+    }
+    if major == 3 && chars.next() == Some('.') {
+        // qwen3.x：仅次版本 ≥ 5 才原生多模态
+        return chars
+            .next()
+            .and_then(|c| c.to_digit(10))
+            .is_some_and(|minor| minor >= 5);
+    }
+    false
 }
 
 /// Compute the token estimate for a single image.
@@ -550,6 +586,58 @@ mod tests {
             estimate_single(1024, 1024, CalculationStrategy::Qwen3VL),
             1024
         );
+    }
+
+    #[test]
+    fn test_infer_strategy_qwen35_native_multimodal() {
+        // Qwen3.5 原生多模态（无 VL 后缀）→ Qwen3VL 策略
+        assert_eq!(
+            infer_strategy("qwen3.5-4b-instruct"),
+            Some(CalculationStrategy::Qwen3VL)
+        );
+        assert_eq!(
+            infer_strategy("qwen3.5-56b-a3b-instruct"),
+            Some(CalculationStrategy::Qwen3VL)
+        );
+        // 次版本续代：qwen3.6 / qwen3.9 同样原生多模态
+        assert_eq!(
+            infer_strategy("qwen3.6-8b-instruct"),
+            Some(CalculationStrategy::Qwen3VL)
+        );
+        assert_eq!(
+            infer_strategy("qwen3.9-14b-instruct"),
+            Some(CalculationStrategy::Qwen3VL)
+        );
+        // 更高主版本：qwen4 / qwen5 原生多模态
+        assert_eq!(
+            infer_strategy("qwen4-72b-instruct"),
+            Some(CalculationStrategy::Qwen3VL)
+        );
+        assert_eq!(
+            infer_strategy("qwen5-200b-a3b-instruct"),
+            Some(CalculationStrategy::Qwen3VL)
+        );
+        // Qwen3.5-VL 显式后缀仍匹配
+        assert_eq!(
+            infer_strategy("qwen3.5-vl-8b"),
+            Some(CalculationStrategy::Qwen3VL)
+        );
+        // Qwen3-VL / Qwen2.5-VL 不变
+        assert_eq!(
+            infer_strategy("qwen3-vl-8b-instruct"),
+            Some(CalculationStrategy::Qwen3VL)
+        );
+        assert_eq!(
+            infer_strategy("qwen2.5-vl-72b-instruct"),
+            Some(CalculationStrategy::Qwen25VL)
+        );
+        // 纯文本 Qwen：qwen3.5+ 已原生多模态；qwen3 base（<3.5）仍为纯文本
+        assert_eq!(
+            infer_strategy("qwen3.5-4b-base"),
+            Some(CalculationStrategy::Qwen3VL)
+        );
+        assert_eq!(infer_strategy("qwen3-30b-a3b-instruct"), None);
+        assert_eq!(infer_strategy("qwen3.4-30b-a3b-instruct"), None);
     }
 
     // ── header parsers ──

@@ -136,9 +136,7 @@ async fn send_patch_req(
     } else {
         req
     };
-    let req = req
-        .body(axum::body::Body::from(body.to_string()))
-        .unwrap();
+    let req = req.body(axum::body::Body::from(body.to_string())).unwrap();
     let response = app.oneshot(req).await.unwrap();
     world.last_status = Some(response.status().as_u16());
     world.last_body = axum::body::to_bytes(response.into_body(), usize::MAX)
@@ -147,7 +145,9 @@ async fn send_patch_req(
         .and_then(|b| serde_json::from_slice(&b).ok());
 }
 
-#[when(regex = r"^使用 master-key 发送 PATCH key (.+) 的 router_settings 设置 cooldown_time=(\d+)$")]
+#[when(
+    regex = r"^使用 master-key 发送 PATCH key (.+) 的 router_settings 设置 cooldown_time=(\d+)$"
+)]
 async fn when_master_patch_key_cooldown(world: &mut TestWorld, token: String, cooldown_time: u32) {
     let uri = format!("/key/{}/router/settings", token);
     send_patch_req(

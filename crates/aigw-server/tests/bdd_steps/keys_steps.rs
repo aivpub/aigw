@@ -32,7 +32,14 @@ async fn create_key_with_fields(
             }
         }
     }
-    make_request(router, Method::POST, "/key/generate", Some(mk), Some(&body.to_string())).await
+    make_request(
+        router,
+        Method::POST,
+        "/key/generate",
+        Some(mk),
+        Some(&body.to_string()),
+    )
+    .await
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -90,8 +97,7 @@ async fn existing_key_with_fields(
     let state = world.ensure_state().await;
     let router = build_key_router(state);
     let extra = serde_json::json!({"key_alias": &key_alias, "max_budget": max_budget});
-    let (_, body) =
-        create_key_with_fields(&router, &world.master_key.clone(), &alias, extra).await;
+    let (_, body) = create_key_with_fields(&router, &world.master_key.clone(), &alias, extra).await;
     if let Some(ref b) = body {
         if let Some(raw) = b.get("key").and_then(|v| v.as_str()) {
             world.created_keys.insert(alias, raw.to_string());
@@ -421,9 +427,17 @@ async fn then_list_key_blocked_is(world: &mut TestWorld, alias: String, expected
     let key_entry = keys
         .iter()
         .find(|k| k.get("token").and_then(|v| v.as_str()) == Some(hash.as_str()))
-        .unwrap_or_else(|| panic!("Key '{}' (raw={}, hash={}) not found in list. List tokens: {:?}",
-            alias, raw, hash,
-            keys.iter().map(|k| k.get("token").and_then(|v| v.as_str()).unwrap_or("?")).collect::<Vec<_>>()));
+        .unwrap_or_else(|| {
+            panic!(
+                "Key '{}' (raw={}, hash={}) not found in list. List tokens: {:?}",
+                alias,
+                raw,
+                hash,
+                keys.iter()
+                    .map(|k| k.get("token").and_then(|v| v.as_str()).unwrap_or("?"))
+                    .collect::<Vec<_>>()
+            )
+        });
 
     let blocked = key_entry
         .get("blocked")
@@ -458,24 +472,23 @@ async fn then_list_key_other_fields_unchanged(
     let key_entry = keys
         .iter()
         .find(|k| k.get("token").and_then(|v| v.as_str()) == Some(hash.as_str()))
-        .unwrap_or_else(|| panic!("Key '{}' (raw={}, hash={}) not found in list", alias, raw, hash));
+        .unwrap_or_else(|| {
+            panic!(
+                "Key '{}' (raw={}, hash={}) not found in list",
+                alias, raw, hash
+            )
+        });
 
     let expected: serde_json::Value =
         serde_json::from_str(&expected_json).expect("invalid expected JSON");
 
     if let Some(expected_obj) = expected.as_object() {
         for (field, expected_val) in expected_obj {
-            let actual_val = key_entry
-                .get(field)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "Field '{}' not found in key entry: {:?}",
-                        field, key_entry
-                    )
-                });
+            let actual_val = key_entry.get(field).unwrap_or_else(|| {
+                panic!("Field '{}' not found in key entry: {:?}", field, key_entry)
+            });
             let match_found = if expected_val.is_number() && actual_val.is_number() {
-                (expected_val.as_f64().unwrap() - actual_val.as_f64().unwrap()).abs()
-                    < f64::EPSILON
+                (expected_val.as_f64().unwrap() - actual_val.as_f64().unwrap()).abs() < f64::EPSILON
             } else {
                 actual_val == expected_val
             };

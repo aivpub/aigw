@@ -525,7 +525,7 @@ async fn main() -> anyhow::Result<()> {
         // Must be INSIDE SetRequestIdLayer so RequestIdMakeSpan can read RequestId from extensions.
         .layer(
             TraceLayer::new_for_http()
-                .make_span_with(RequestIdMakeSpan::default())
+                .make_span_with(RequestIdMakeSpan)
                 .on_response(
                     DefaultOnResponse::new()
                         .include_headers(false)
@@ -779,11 +779,13 @@ async fn backfill_missing_reset_at(db: &Arc<Database>) -> anyhow::Result<()> {
                         .await?;
                 }
                 Database::Postgres(pool) => {
-                    sqlx::query("UPDATE users SET budget_reset_at = $1::timestamptz WHERE user_id = $2")
-                        .bind(&next_str)
-                        .bind(user_id)
-                        .execute(pool)
-                        .await?;
+                    sqlx::query(
+                        "UPDATE users SET budget_reset_at = $1::timestamptz WHERE user_id = $2",
+                    )
+                    .bind(&next_str)
+                    .bind(user_id)
+                    .execute(pool)
+                    .await?;
                 }
             }
             updated_users += 1;
@@ -845,11 +847,13 @@ async fn backfill_missing_reset_at(db: &Arc<Database>) -> anyhow::Result<()> {
                         .await?;
                 }
                 Database::Postgres(pool) => {
-                    sqlx::query("UPDATE budgets SET budget_reset_at = $1::timestamptz WHERE budget_id = $2")
-                        .bind(&next_str)
-                        .bind(budget_id)
-                        .execute(pool)
-                        .await?;
+                    sqlx::query(
+                        "UPDATE budgets SET budget_reset_at = $1::timestamptz WHERE budget_id = $2",
+                    )
+                    .bind(&next_str)
+                    .bind(budget_id)
+                    .execute(pool)
+                    .await?;
                 }
             }
             updated_orgs += 1;

@@ -271,6 +271,7 @@ async fn find_active_step_keys(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn create_job_sqlite(
     pool: &sqlx::SqlitePool,
     job_id: &str,
@@ -307,6 +308,7 @@ async fn create_job_sqlite(
     Ok(job_id.to_string())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn create_job_mysql(
     pool: &sqlx::MySqlPool,
     job_id: &str,
@@ -343,6 +345,7 @@ async fn create_job_mysql(
     Ok(job_id.to_string())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn create_job_pg(
     pool: &sqlx::PgPool,
     job_id: &str,

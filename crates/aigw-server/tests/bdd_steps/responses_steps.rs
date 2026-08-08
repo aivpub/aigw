@@ -193,7 +193,9 @@ async fn then_json_path_contains(world: &mut TestWorld, path: String, substr: St
     assert!(
         actual.contains(&substr),
         "JSON path '{}': expected to contain '{}', got '{}'",
-        path, substr, actual
+        path,
+        substr,
+        actual
     );
 }
 
@@ -222,7 +224,7 @@ async fn get_latest_spend_log(world: &mut TestWorld) -> aigw_core::models::Spend
 
 #[then(expr = "SpendLog 中最近一条记录的 call_id 非空")]
 async fn then_spendlog_call_id_nonempty(world: &mut TestWorld) {
- let log = get_latest_spend_log(world).await;
+    let log = get_latest_spend_log(world).await;
     assert!(!log.call_id.is_empty(), "call_id should not be empty");
 }
 
@@ -249,11 +251,7 @@ async fn then_spendlog_completion_tokens_positive(world: &mut TestWorld) {
 #[then(expr = "SpendLog 中最近一条记录的 spend 大于 0")]
 async fn then_spendlog_spend_positive(world: &mut TestWorld) {
     let log = get_latest_spend_log(world).await;
-    assert!(
-        log.spend > 0.0,
-        "spend should be > 0, got {}",
-        log.spend
-    );
+    assert!(log.spend > 0.0, "spend should be > 0, got {}", log.spend);
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -331,19 +329,25 @@ async fn when_post_responses_with_tool_call_response(world: &mut TestWorld, alia
 }
 
 #[then(regex = r#"^响应 JSON 中 \"(.+)\" 包含 type 为 \"(.+)\" 的项$"#)]
-async fn then_json_output_contains_type(world: &mut TestWorld, field: String, expected_type: String) {
+async fn then_json_output_contains_type(
+    world: &mut TestWorld,
+    field: String,
+    expected_type: String,
+) {
     let body = world.last_body.as_ref().expect("no response body");
     let arr = body
         .get(&field)
         .and_then(|v| v.as_array())
         .unwrap_or_else(|| {
-            panic!("Expected '{}' to be array, got:\n{}",
+            panic!(
+                "Expected '{}' to be array, got:\n{}",
                 field,
-                serde_json::to_string_pretty(body).unwrap_or_default())
+                serde_json::to_string_pretty(body).unwrap_or_default()
+            )
         });
-    let found = arr.iter().any(|item| {
-        item.get("type").and_then(|v| v.as_str()) == Some(&expected_type)
-    });
+    let found = arr
+        .iter()
+        .any(|item| item.get("type").and_then(|v| v.as_str()) == Some(&expected_type));
     assert!(
         found,
         "Expected '{}' to contain item with type '{}', got:\n{}",
@@ -356,11 +360,14 @@ async fn then_json_output_contains_type(world: &mut TestWorld, field: String, ex
 #[then(regex = r#"^该 function_call 的 \"(.+)\" 存在$"#)]
 async fn then_function_call_field_exists(world: &mut TestWorld, field: String) {
     let body = world.last_body.as_ref().expect("no response body");
-    let output = body.get("output").and_then(|v| v.as_array())
+    let output = body
+        .get("output")
+        .and_then(|v| v.as_array())
         .unwrap_or_else(|| panic!("no output array"));
-    let fc = output.iter().find(|item| {
-        item.get("type").and_then(|v| v.as_str()) == Some("function_call")
-    }).expect("no function_call in output");
+    let fc = output
+        .iter()
+        .find(|item| item.get("type").and_then(|v| v.as_str()) == Some("function_call"))
+        .expect("no function_call in output");
     let val = fc.get(&field);
     assert!(
         val.is_some() && !val.unwrap().is_null(),

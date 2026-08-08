@@ -366,7 +366,9 @@ pub async fn generate_key(
             if Some(uid.as_str()) != auth.user_id.as_deref() {
                 return Err((
                     StatusCode::FORBIDDEN,
-                    Json(json!({"error": {"message": "Cannot create keys for other users", "type": "forbidden"}})),
+                    Json(
+                        json!({"error": {"message": "Cannot create keys for other users", "type": "forbidden"}}),
+                    ),
                 ));
             }
         }
@@ -376,7 +378,7 @@ pub async fn generate_key(
         }
     }
 
-    let raw_token = req.key.clone().unwrap_or_else(|| generate_key_token());
+    let raw_token = req.key.clone().unwrap_or_else(generate_key_token);
     let hash = hash_token(&raw_token);
 
     // Check if key already exists
@@ -481,7 +483,7 @@ pub async fn key_list(
     };
 
     let page = query.page.unwrap_or(1).max(1);
-    let page_size = query.page_size.unwrap_or(30).max(1).min(100);
+    let page_size = query.page_size.unwrap_or(30).clamp(1, 100);
     let offset = ((page - 1) * page_size) as i64;
     let limit = page_size as i64;
 
@@ -568,8 +570,8 @@ pub async fn key_update(
 
     // If the token is already a 64-char hex SHA256 hash (e.g. from /key/list response),
     // use it directly; otherwise hash the raw token.
-    let already_hashed = token_param.len() == 64
-        && token_param.chars().all(|c| c.is_ascii_hexdigit());
+    let already_hashed =
+        token_param.len() == 64 && token_param.chars().all(|c| c.is_ascii_hexdigit());
     let hash = if already_hashed {
         token_param.to_string()
     } else {
@@ -605,7 +607,9 @@ pub async fn key_update(
             if new_uid != auth.user_id.as_deref().unwrap_or("") {
                 return Err((
                     StatusCode::FORBIDDEN,
-                    Json(json!({"error": {"message": "Cannot reassign key to another user", "type": "forbidden"}})),
+                    Json(
+                        json!({"error": {"message": "Cannot reassign key to another user", "type": "forbidden"}}),
+                    ),
                 ));
             }
         }
@@ -633,15 +637,27 @@ pub async fn key_update(
             .and_then(|v| v.as_bool())
             .map(|v| v.to_string())
             .unwrap_or_else(|| existing.soft_budget_cooldown.clone()),
-        spend: body.get("spend").and_then(|v| v.as_f64()).unwrap_or(existing.spend),
+        spend: body
+            .get("spend")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(existing.spend),
         expires: body
             .get("expires")
             .and_then(|v| v.as_str())
             .and_then(parse_rfc3339)
             .or(existing.expires),
-        models: body.get("models").cloned().unwrap_or_else(|| existing.models.clone()),
-        aliases: body.get("aliases").cloned().unwrap_or_else(|| existing.aliases.clone()),
-        config: body.get("config").cloned().unwrap_or_else(|| existing.config.clone()),
+        models: body
+            .get("models")
+            .cloned()
+            .unwrap_or_else(|| existing.models.clone()),
+        aliases: body
+            .get("aliases")
+            .cloned()
+            .unwrap_or_else(|| existing.aliases.clone()),
+        config: body
+            .get("config")
+            .cloned()
+            .unwrap_or_else(|| existing.config.clone()),
         router_settings: body
             .get("router_settings")
             .cloned()
@@ -675,7 +691,10 @@ pub async fn key_update(
             .and_then(|v| v.as_i64())
             .map(|v| v.to_string())
             .or_else(|| existing.max_parallel_requests.clone()),
-        metadata: body.get("metadata").cloned().unwrap_or_else(|| existing.metadata.clone()),
+        metadata: body
+            .get("metadata")
+            .cloned()
+            .unwrap_or_else(|| existing.metadata.clone()),
         blocked: body
             .get("blocked")
             .and_then(|v| v.as_bool())
@@ -726,7 +745,10 @@ pub async fn key_update(
             .get("allowed_routes")
             .cloned()
             .unwrap_or_else(|| existing.allowed_routes.clone()),
-        policies: body.get("policies").cloned().unwrap_or_else(|| existing.policies.clone()),
+        policies: body
+            .get("policies")
+            .cloned()
+            .unwrap_or_else(|| existing.policies.clone()),
         access_group_ids: body
             .get("access_group_ids")
             .cloned()
@@ -876,7 +898,7 @@ pub async fn key_deleted_list(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&auth)?;
     let page = query.page.unwrap_or(1).max(1);
-    let page_size = query.page_size.unwrap_or(30).max(1).min(100);
+    let page_size = query.page_size.unwrap_or(30).clamp(1, 100);
     let offset = ((page - 1) * page_size) as i64;
     let limit = page_size as i64;
 

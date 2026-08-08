@@ -266,7 +266,9 @@ async fn given_set_key_spend_and_expired_reset(world: &mut TestWorld, alias: Str
         "UPDATE virtual_keys SET spend = {}, budget_reset_at = '{}' WHERE token = '{}'",
         spend, past, hash,
     );
-    pool.execute_raw(&sql).await.expect("set spend + expired reset_at");
+    pool.execute_raw(&sql)
+        .await
+        .expect("set spend + expired reset_at");
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -327,11 +329,10 @@ async fn then_key_budget_reset_at_has_value(world: &mut TestWorld, alias: String
     );
 
     // Verify it's a valid timestamp
-    let parsed = chrono::DateTime::parse_from_rfc3339(reset_at_str)
-        .or_else(|_| {
-            chrono::NaiveDateTime::parse_from_str(reset_at_str, "%Y-%m-%d %H:%M:%S")
-                .map(|dt| dt.and_utc().into())
-        });
+    let parsed = chrono::DateTime::parse_from_rfc3339(reset_at_str).or_else(|_| {
+        chrono::NaiveDateTime::parse_from_str(reset_at_str, "%Y-%m-%d %H:%M:%S")
+            .map(|dt| dt.and_utc().into())
+    });
     assert!(
         parsed.is_ok(),
         "budget_reset_at '{}' is not a valid timestamp for key '{}'",
@@ -342,17 +343,16 @@ async fn then_key_budget_reset_at_has_value(world: &mut TestWorld, alias: String
 
 #[then(expr = "响应 body 中 budget_duration 为 {string}")]
 async fn then_budget_duration_is(world: &mut TestWorld, expected: String) {
-    let body = world
-        .last_body
-        .as_ref()
-        .expect("last_body is None");
+    let body = world.last_body.as_ref().expect("last_body is None");
 
     // key/info returns a flat JSON object — budget_duration is a top-level field
     let actual = body["budget_duration"].as_str().unwrap_or("<not-a-string>");
     assert_eq!(
-        actual, expected,
+        actual,
+        expected,
         "expected budget_duration='{}' but got '{}'\nfull response: {}",
-        expected, actual,
+        expected,
+        actual,
         serde_json::to_string_pretty(body).unwrap_or_default()
     );
 }
@@ -627,7 +627,9 @@ async fn create_key_with_budget_and_max(
 // ── Given ──
 //
 
-#[given(expr = "数据库中有 user {string} max_budget={float} spend={float} 和 key {string} max_budget={float} 关联该 user")]
+#[given(
+    expr = "数据库中有 user {string} max_budget={float} spend={float} 和 key {string} max_budget={float} 关联该 user"
+)]
 async fn given_user_and_key_with_user_budget(
     world: &mut TestWorld,
     user_id: String,
@@ -646,7 +648,9 @@ async fn given_user_and_key_with_user_budget(
     real_db_seed::cleanup_entity(&db_url, "key", &aigw_core::crypto::hash_token(&token))
         .await
         .ok();
-    real_db_seed::cleanup_entity(&db_url, "user", &user_id).await.ok();
+    real_db_seed::cleanup_entity(&db_url, "user", &user_id)
+        .await
+        .ok();
 
     // Seed user with the given max_budget and spend
     real_db_seed::ensure_user(&db_url, &user_id, None, Some(user_max_budget), user_spend)
@@ -655,7 +659,9 @@ async fn given_user_and_key_with_user_budget(
 
     // Seed key linked to the user
     let hash = aigw_core::crypto::hash_token(&token);
-    real_db_seed::cleanup_entity(&db_url, "key", &key_alias).await.ok();
+    real_db_seed::cleanup_entity(&db_url, "key", &key_alias)
+        .await
+        .ok();
     // Use raw SQL to create key with a specific user_id + max_budget
     let pool = aigw_migrate::native::SourcePool::connect(&db_url)
         .await
@@ -678,12 +684,12 @@ async fn given_user_and_key_with_user_budget(
     );
     pool.execute_raw(&sql).await.expect("insert key");
 
-    world
-        .created_keys
-        .insert(key_alias, token);
+    world.created_keys.insert(key_alias, token);
 }
 
-#[given(expr = "数据库中有 team {string} max_budget={float} spend={float} 和 key {string} 关联该 team")]
+#[given(
+    expr = "数据库中有 team {string} max_budget={float} spend={float} 和 key {string} 关联该 team"
+)]
 async fn given_team_and_key_with_team_budget(
     world: &mut TestWorld,
     team_id: String,
@@ -697,12 +703,23 @@ async fn given_team_and_key_with_team_budget(
     let db_url = test_db_url();
     let token = format!("sk-{}", key_alias);
 
-    real_db_seed::cleanup_entity(&db_url, "key", &key_alias).await.ok();
-    real_db_seed::cleanup_entity(&db_url, "team", &team_id).await.ok();
-
-    real_db_seed::ensure_team(&db_url, &team_id, None, Some(team_max_budget), None, team_spend)
+    real_db_seed::cleanup_entity(&db_url, "key", &key_alias)
         .await
-        .expect("ensure team");
+        .ok();
+    real_db_seed::cleanup_entity(&db_url, "team", &team_id)
+        .await
+        .ok();
+
+    real_db_seed::ensure_team(
+        &db_url,
+        &team_id,
+        None,
+        Some(team_max_budget),
+        None,
+        team_spend,
+    )
+    .await
+    .expect("ensure team");
 
     let hash = aigw_core::crypto::hash_token(&token);
     let pool = aigw_migrate::native::SourcePool::connect(&db_url)
@@ -726,12 +743,12 @@ async fn given_team_and_key_with_team_budget(
     );
     pool.execute_raw(&sql).await.expect("insert key");
 
-    world
-        .created_keys
-        .insert(key_alias, token);
+    world.created_keys.insert(key_alias, token);
 }
 
-#[given(expr = "数据库中有 key {string} max_budget={float} 和 user {string} max_budget={float} 和 team {string} max_budget={float}")]
+#[given(
+    expr = "数据库中有 key {string} max_budget={float} 和 user {string} max_budget={float} 和 team {string} max_budget={float}"
+)]
 async fn given_all_pass_scenario(
     world: &mut TestWorld,
     key_alias: String,
@@ -747,13 +764,25 @@ async fn given_all_pass_scenario(
     let db_url = test_db_url();
     let token = format!("sk-{}", key_alias);
 
-    real_db_seed::cleanup_entity(&db_url, "key", &key_alias).await.ok();
-    real_db_seed::cleanup_entity(&db_url, "user", &user_id).await.ok();
-    real_db_seed::cleanup_entity(&db_url, "team", &team_id).await.ok();
-
-    real_db_seed::ensure_user(&db_url, &user_id, Some(&team_id), Some(user_max_budget), 1.0)
+    real_db_seed::cleanup_entity(&db_url, "key", &key_alias)
         .await
-        .expect("ensure user");
+        .ok();
+    real_db_seed::cleanup_entity(&db_url, "user", &user_id)
+        .await
+        .ok();
+    real_db_seed::cleanup_entity(&db_url, "team", &team_id)
+        .await
+        .ok();
+
+    real_db_seed::ensure_user(
+        &db_url,
+        &user_id,
+        Some(&team_id),
+        Some(user_max_budget),
+        1.0,
+    )
+    .await
+    .expect("ensure user");
     real_db_seed::ensure_team(&db_url, &team_id, None, Some(team_max_budget), None, 1.0)
         .await
         .expect("ensure team");
@@ -780,12 +809,12 @@ async fn given_all_pass_scenario(
     );
     pool.execute_raw(&sql).await.expect("insert key");
 
-    world
-        .created_keys
-        .insert(key_alias, token);
+    world.created_keys.insert(key_alias, token);
 }
 
-#[given(expr = "数据库中有 org {string} budget_id={string} spend={float} 和 budget {string} max_budget={float}")]
+#[given(
+    expr = "数据库中有 org {string} budget_id={string} spend={float} 和 budget {string} max_budget={float}"
+)]
 async fn given_org_with_budget(
     _world: &mut TestWorld,
     org_id: String,
@@ -798,8 +827,12 @@ async fn given_org_with_budget(
         return;
     }
     let db_url = test_db_url();
-    real_db_seed::cleanup_entity(&db_url, "organization", &org_id).await.ok();
-    real_db_seed::cleanup_entity(&db_url, "budget", &budget_id).await.ok();
+    real_db_seed::cleanup_entity(&db_url, "organization", &org_id)
+        .await
+        .ok();
+    real_db_seed::cleanup_entity(&db_url, "budget", &budget_id)
+        .await
+        .ok();
 
     real_db_seed::ensure_organization(&db_url, &org_id, &budget_id, org_spend)
         .await
@@ -824,8 +857,12 @@ async fn given_team_and_key_linked_to_org(
     // We use budget-ml-o1 (the standard org alias used in the feature).
     let org_id = "budget-ml-o1";
 
-    real_db_seed::cleanup_entity(&db_url, "team", &team_id).await.ok();
-    real_db_seed::cleanup_entity(&db_url, "key", &key_alias).await.ok();
+    real_db_seed::cleanup_entity(&db_url, "team", &team_id)
+        .await
+        .ok();
+    real_db_seed::cleanup_entity(&db_url, "key", &key_alias)
+        .await
+        .ok();
 
     // Create team linked to the org, with high budget so it doesn't reject
     real_db_seed::ensure_team(&db_url, &team_id, Some(org_id), Some(500.0), None, 5.0)
@@ -854,9 +891,7 @@ async fn given_team_and_key_linked_to_org(
     );
     pool.execute_raw(&sql).await.expect("insert key");
 
-    world
-        .created_keys
-        .insert(key_alias, token);
+    world.created_keys.insert(key_alias, token);
 }
 
 //
@@ -986,12 +1021,13 @@ async fn then_key_spend_is(world: &mut TestWorld, alias: String, expected_spend:
     let pool = aigw_migrate::native::SourcePool::connect(&db_url)
         .await
         .expect("connect to test DB");
-    let sql = format!(
-        "SELECT spend FROM virtual_keys WHERE token = '{}'",
-        hash,
-    );
+    let sql = format!("SELECT spend FROM virtual_keys WHERE token = '{}'", hash,);
     let rows = pool.read_rows_sql(&sql).await.expect("query spend");
-    assert!(!rows.is_empty(), "key '{}' not found via spend query", alias);
+    assert!(
+        !rows.is_empty(),
+        "key '{}' not found via spend query",
+        alias
+    );
     let spend: f64 = rows[0]
         .iter()
         .find(|(col, _)| col == "spend")

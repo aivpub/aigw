@@ -132,7 +132,7 @@ pub async fn messages_handler(
     let (auth_token_hash, auth_user_id, auth_team_id, auth_org_id) = if let Some(token) = extracted
     {
         if token.is_empty() {
-            let request_id = format!("req_{}", &request_id);
+            let request_id = format!("req_{}", request_id);
             return Err((
                 StatusCode::UNAUTHORIZED,
                 Json(json!({
@@ -156,7 +156,7 @@ pub async fn messages_handler(
         } else {
             let token_hash = hash_token(token);
             let key = state.db.get_key_by_token(&token_hash).await.map_err(|_| {
-                let request_id = format!("req_{}", &request_id);
+                let request_id = format!("req_{}", request_id);
                 (
                     StatusCode::UNAUTHORIZED,
                     Json(json!({
@@ -170,7 +170,7 @@ pub async fn messages_handler(
                 )
             })?;
             let key = key.ok_or_else(|| {
-                let request_id = format!("req_{}", &request_id);
+                let request_id = format!("req_{}", request_id);
                 (
                     StatusCode::UNAUTHORIZED,
                     Json(json!({
@@ -206,7 +206,7 @@ pub async fn messages_handler(
         match try_cookie_jwt_auth(&state, &headers).await {
             Some((token_hash, user_id, team_id, org_id)) => (token_hash, user_id, team_id, org_id),
             None => {
-                let request_id = format!("req_{}", &request_id);
+                let request_id = format!("req_{}", request_id);
                 return Err((
                     StatusCode::UNAUTHORIZED,
                     Json(json!({
@@ -1166,10 +1166,10 @@ pub async fn messages_handler(
             .unwrap_or((prompt_tokens + completion_tokens) as i64)
             as i32;
         let non_stream_cache_read = usage
-            .map(|u| super::chat::extract_cache_read_tokens(u))
+            .map(super::chat::extract_cache_read_tokens)
             .unwrap_or(0);
         let non_stream_cache_create = usage
-            .map(|u| super::chat::extract_cache_creation_tokens(u))
+            .map(super::chat::extract_cache_creation_tokens)
             .unwrap_or(0);
         let spend_amount = super::chat::calc_spend(
             prompt_tokens,
@@ -1187,7 +1187,7 @@ pub async fn messages_handler(
         // Image tokens: Anthropic usage has no image_tokens — estimate from
         // the original request body's Claude content blocks.
         let image_tokens = usage
-            .and_then(|u| aigw_core::image_tokens::extract_image_tokens_from_usage(u))
+            .and_then(aigw_core::image_tokens::extract_image_tokens_from_usage)
             .or_else(|| {
                 let blocks = body_val
                     .get("messages")

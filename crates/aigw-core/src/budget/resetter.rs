@@ -23,6 +23,12 @@ pub const BUDGET_RESET_TICK_INTERVAL: Duration = Duration::from_secs(60);
 /// BudgetResetter — resets spend counters for entities whose budget period has elapsed.
 pub struct BudgetResetter;
 
+impl Default for BudgetResetter {
+    fn default() -> Self {
+        Self
+    }
+}
+
 impl BudgetResetter {
     pub fn new() -> Self {
         Self
@@ -40,6 +46,20 @@ pub enum EntityType {
     Team,
     User,
     Organization,
+}
+
+impl std::str::FromStr for EntityType {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "key" => Ok(EntityType::Key),
+            "team" => Ok(EntityType::Team),
+            "user" => Ok(EntityType::User),
+            "org" => Ok(EntityType::Organization),
+            _ => Err(()),
+        }
+    }
 }
 
 impl EntityType {
@@ -67,16 +87,6 @@ impl EntityType {
             EntityType::Team => "team_id",
             EntityType::User => "user_id",
             EntityType::Organization => "organization_id",
-        }
-    }
-
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "key" => Some(EntityType::Key),
-            "team" => Some(EntityType::Team),
-            "user" => Some(EntityType::User),
-            "org" => Some(EntityType::Organization),
-            _ => None,
         }
     }
 }
@@ -374,7 +384,14 @@ pub async fn preview_expired(
     let sql = preview_sql(db, et);
 
     // (entity_id, alias, spend, max_budget TEXT, budget_duration, budget_reset_at TEXT)
-    type PreviewRow = (String, Option<String>, f64, Option<String>, String, Option<String>);
+    type PreviewRow = (
+        String,
+        Option<String>,
+        f64,
+        Option<String>,
+        String,
+        Option<String>,
+    );
     let rows: Vec<PreviewRow> = match db {
         Database::Sqlite(pool) => sqlx::query_as(&sql).bind(limit).fetch_all(pool).await?,
         Database::Mysql(pool) => sqlx::query_as(&sql).bind(limit).fetch_all(pool).await?,
@@ -383,18 +400,20 @@ pub async fn preview_expired(
 
     Ok(rows
         .into_iter()
-        .map(|(entity_id, alias, spend, max_budget, budget_duration, budget_reset_at)| {
-            let alias = alias.unwrap_or_else(|| entity_id.clone());
-            PreviewEntity {
-                entity_type: et.as_str().to_string(),
-                entity_id,
-                alias,
-                spend,
-                max_budget: max_budget.and_then(|s| s.parse::<f64>().ok()),
-                budget_duration,
-                budget_reset_at,
-            }
-        })
+        .map(
+            |(entity_id, alias, spend, max_budget, budget_duration, budget_reset_at)| {
+                let alias = alias.unwrap_or_else(|| entity_id.clone());
+                PreviewEntity {
+                    entity_type: et.as_str().to_string(),
+                    entity_id,
+                    alias,
+                    spend,
+                    max_budget: max_budget.and_then(|s| s.parse::<f64>().ok()),
+                    budget_duration,
+                    budget_reset_at,
+                }
+            },
+        )
         .collect())
 }
 
@@ -411,7 +430,10 @@ fn reset_at_expr(db: &Database, col: &str) -> String {
 ///
 /// Reuses the existing `count_*` helpers on `Database` for the total columns, and
 /// `count_expired_resets`/`preview_expired` for the ready/preview data.
-pub async fn budget_reset_stats(db: &Database, preview_limit: i64) -> Result<BudgetResetStats, DbError> {
+pub async fn budget_reset_stats(
+    db: &Database,
+    preview_limit: i64,
+) -> Result<BudgetResetStats, DbError> {
     let keys_ready = count_expired_resets(db, EntityType::Key).await?;
     let teams_ready = count_expired_resets(db, EntityType::Team).await?;
     let users_ready = count_expired_resets(db, EntityType::User).await?;
@@ -433,10 +455,34 @@ pub async fn budget_reset_stats(db: &Database, preview_limit: i64) -> Result<Bud
     }
 
     let mut counts = std::collections::BTreeMap::new();
-    counts.insert("key".to_string(), EntityCount { ready: keys_ready, total: keys_total });
-    counts.insert("team".to_string(), EntityCount { ready: teams_ready, total: teams_total });
-    counts.insert("user".to_string(), EntityCount { ready: users_ready, total: users_total });
-    counts.insert("org".to_string(), EntityCount { ready: orgs_ready, total: orgs_total });
+    counts.insert(
+        "key".to_string(),
+        EntityCount {
+            ready: keys_ready,
+            total: keys_total,
+        },
+    );
+    counts.insert(
+        "team".to_string(),
+        EntityCount {
+            ready: teams_ready,
+            total: teams_total,
+        },
+    );
+    counts.insert(
+        "user".to_string(),
+        EntityCount {
+            ready: users_ready,
+            total: users_total,
+        },
+    );
+    counts.insert(
+        "org".to_string(),
+        EntityCount {
+            ready: orgs_ready,
+            total: orgs_total,
+        },
+    );
 
     let ready_total = keys_ready + teams_ready + users_ready + orgs_ready;
 
@@ -554,12 +600,9 @@ async fn execute_reset(
             entity_type.as_str()
         )));
     }
-    let next_reset_at =
-        compute_next_reset_at(trimmed, now, None, None).ok_or_else(|| {
-            DbError::Other(format!(
-                "unable to compute next_reset_at for '{trimmed}'"
-            ))
-        })?;
+    let next_reset_at = compute_next_reset_at(trimmed, now, None, None).ok_or_else(|| {
+        DbError::Other(format!("unable to compute next_reset_at for '{trimmed}'"))
+    })?;
     let next_reset_at_str = next_reset_at.to_rfc3339();
 
     // Execute the UPDATE(s)
@@ -688,8 +731,9 @@ impl AsyncTask for BudgetResetter {
             .as_str()
             .ok_or_else(|| DbError::Other("payload missing entity_type".into()))?;
 
-        let entity_type = EntityType::from_str(entity_type_str)
-            .ok_or_else(|| DbError::Other(format!("unknown entity_type '{entity_type_str}'")))?;
+        let entity_type = entity_type_str
+            .parse::<EntityType>()
+            .map_err(|_| DbError::Other(format!("unknown entity_type '{entity_type_str}'")))?;
 
         let entity_id = step.payload["entity_id"]
             .as_str()
@@ -731,8 +775,9 @@ impl AsyncTask for BudgetResetter {
             ));
         }
 
-        let entity_type = EntityType::from_str(entity_type_str)
-            .ok_or_else(|| DbError::Other(format!("unknown entity_type '{entity_type_str}'")))?;
+        let entity_type = entity_type_str
+            .parse::<EntityType>()
+            .map_err(|_| DbError::Other(format!("unknown entity_type '{entity_type_str}'")))?;
 
         let budget_duration = payload
             .get("budget_duration")
@@ -768,12 +813,12 @@ mod tests {
 
     #[test]
     fn test_entity_type_from_str() {
-        assert_eq!(EntityType::from_str("key"), Some(EntityType::Key));
-        assert_eq!(EntityType::from_str("team"), Some(EntityType::Team));
-        assert_eq!(EntityType::from_str("user"), Some(EntityType::User));
-        assert_eq!(EntityType::from_str("org"), Some(EntityType::Organization));
-        assert_eq!(EntityType::from_str("unknown"), None);
-        assert_eq!(EntityType::from_str(""), None);
+        assert_eq!("key".parse(), Ok(EntityType::Key));
+        assert_eq!("team".parse(), Ok(EntityType::Team));
+        assert_eq!("user".parse(), Ok(EntityType::User));
+        assert_eq!("org".parse(), Ok(EntityType::Organization));
+        assert!("unknown".parse::<EntityType>().is_err());
+        assert!("".parse::<EntityType>().is_err());
     }
 
     #[test]
@@ -1162,10 +1207,18 @@ mod tests {
     async fn test_count_expired_resets_empty_db() {
         let db = Database::init("sqlite::memory:").await.unwrap();
         assert_eq!(count_expired_resets(&db, EntityType::Key).await.unwrap(), 0);
-        assert_eq!(count_expired_resets(&db, EntityType::Team).await.unwrap(), 0);
-        assert_eq!(count_expired_resets(&db, EntityType::User).await.unwrap(), 0);
         assert_eq!(
-            count_expired_resets(&db, EntityType::Organization).await.unwrap(),
+            count_expired_resets(&db, EntityType::Team).await.unwrap(),
+            0
+        );
+        assert_eq!(
+            count_expired_resets(&db, EntityType::User).await.unwrap(),
+            0
+        );
+        assert_eq!(
+            count_expired_resets(&db, EntityType::Organization)
+                .await
+                .unwrap(),
             0
         );
     }
@@ -1239,10 +1292,8 @@ mod tests {
         let preview = preview_expired(&db, EntityType::Key, 10).await.unwrap();
         assert_eq!(preview.len(), 2);
 
-        let by_alias: std::collections::HashMap<_, _> = preview
-            .into_iter()
-            .map(|p| (p.alias.clone(), p))
-            .collect();
+        let by_alias: std::collections::HashMap<_, _> =
+            preview.into_iter().map(|p| (p.alias.clone(), p)).collect();
         let first = by_alias.get("prod-key-alias").expect("alias-preferred key");
         assert_eq!(first.entity_id, kh);
         assert_eq!(first.max_budget, Some(50.0));
@@ -1344,14 +1395,20 @@ mod tests {
             key_sql.contains("LIMIT $1"),
             "pg key preview must use $1, got: {key_sql}"
         );
-        assert!(!key_sql.contains("?"), "pg key preview must not use ?, got: {key_sql}");
+        assert!(
+            !key_sql.contains("?"),
+            "pg key preview must not use ?, got: {key_sql}"
+        );
 
         let org_sql = preview_sql(&db, EntityType::Organization);
         assert!(
             org_sql.contains("LIMIT $1"),
             "pg org preview must use $1, got: {org_sql}"
         );
-        assert!(!org_sql.contains("?"), "pg org preview must not use ?, got: {org_sql}");
+        assert!(
+            !org_sql.contains("?"),
+            "pg org preview must not use ?, got: {org_sql}"
+        );
     }
 
     #[tokio::test]

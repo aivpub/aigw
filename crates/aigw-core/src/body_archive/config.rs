@@ -211,10 +211,11 @@ impl Default for ArchivePolicy {
 }
 
 /// Footer cache configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "lowercase")]
 pub enum FooterCacheConfig {
     /// No caching — always re-fetch from S3.
+    #[default]
     None,
     /// In-memory LRU cache (moka).
     Mem {
@@ -245,17 +246,12 @@ fn default_redis_ttl() -> u64 {
     86400
 }
 
-impl Default for FooterCacheConfig {
-    fn default() -> Self {
-        Self::None
-    }
-}
-
 /// Column chunk cache configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "lowercase")]
 pub enum ColChunkCacheConfig {
     /// No caching.
+    #[default]
     None,
     /// File-system backed LFU cache.
     Fs {
@@ -275,12 +271,6 @@ fn default_max_size_mb() -> usize {
 }
 fn default_max_entry_mb() -> usize {
     100
-}
-
-impl Default for ColChunkCacheConfig {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 /// Storage backend — S3-compatible or local filesystem.

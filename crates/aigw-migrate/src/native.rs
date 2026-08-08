@@ -730,7 +730,7 @@ fn stream_pg_rows_keyset<'a>(
 
             // Clamp batch size to remaining limit when one is set.
             let limit_clause = match remaining {
-                Some(rem) if (rem as usize) < batch_size => rem as usize,
+                Some(rem) if rem < batch_size => rem,
                 _ => batch_size,
             };
             sql.push_str(&format!(" LIMIT {}", limit_clause));
@@ -883,7 +883,7 @@ fn stream_pg_rows_keyset_aigw<'a>(
 
             // Clamp batch size to remaining limit when one is set.
             let limit_clause = match remaining {
-                Some(rem) if (rem as usize) < batch_size => rem as usize,
+                Some(rem) if rem < batch_size => rem,
                 _ => batch_size,
             };
             sql.push_str(&format!(" LIMIT {}", limit_clause));
