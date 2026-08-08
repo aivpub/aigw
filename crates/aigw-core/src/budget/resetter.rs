@@ -315,19 +315,18 @@ pub async fn count_expired_resets(db: &Database, et: EntityType) -> Result<i64, 
     Ok(row.0)
 }
 
-/// Select up to `limit` entities of `et` that are due for reset, with display columns.
+/// Build the dialect-specific display SQL for `preview_expired`.
 ///
-/// `budget_reset_at` is selected as TEXT per dialect (mirroring `execute_reset`):
-/// sqlite plain, mysql `DATE_FORMAT`, pg `::text`. The server normalizes to RFC3339
-/// for display (mixed formats: backfill writes `%Y-%m-%d %H:%M:%S`, reset writes RFC3339).
-pub async fn preview_expired(
-    db: &Database,
-    et: EntityType,
-    limit: i64,
-) -> Result<Vec<PreviewEntity>, DbError> {
+/// Extracted from `preview_expired` so the per-dialect LIMIT placeholder can be
+/// unit-tested without a live connection (lazy pool — SQL is never executed).
+fn preview_sql(db: &Database, et: EntityType) -> String {
     let now_f = now_func(db);
     let alias = alias_column(et);
-    let sql = match et {
+    let limit_ph = match db {
+        Database::Postgres(_) => "$1",
+        _ => "?",
+    };
+    match et {
         EntityType::Organization => format!(
             r#"SELECT o.organization_id, {alias}, o.spend, b.max_budget,
                       b.budget_duration, {reset_at}
@@ -336,22 +335,43 @@ pub async fn preview_expired(
                WHERE b.budget_duration IS NOT NULL
                  AND b.budget_duration != ''
                  AND (b.budget_reset_at IS NULL OR b.budget_reset_at < {now_f})
-               ORDER BY {alias} LIMIT ?"#,
+               ORDER BY {alias} LIMIT {limit_ph}"#,
             alias = alias,
             reset_at = reset_at_expr(db, "b.budget_reset_at"),
+            limit_ph = limit_ph,
         ),
         _ => format!(
             "SELECT {pk}, {alias}, spend, max_budget, budget_duration, {reset_at} \
              FROM {table} \
              WHERE budget_duration IS NOT NULL AND budget_duration != '' \
                AND (budget_reset_at IS NULL OR budget_reset_at < {now_f}) \
-             ORDER BY {alias} LIMIT ?",
+             ORDER BY {alias} LIMIT {limit_ph}",
             pk = et.pk_column(),
             alias = alias,
             reset_at = reset_at_expr(db, "budget_reset_at"),
             table = et.table_name(),
+            limit_ph = limit_ph,
         ),
-    };
+    }
+}
+
+/// Select up to `limit` entities of `et` that are due for reset, with display columns.
+///
+/// `budget_reset_at` is selected as TEXT per dialect (mirroring `execute_reset`):
+/// sqlite plain, mysql `DATE_FORMAT`, pg `::text`. The server normalizes to RFC3339
+/// for display (mixed formats: backfill writes `%Y-%m-%d %H:%M:%S`, reset writes RFC3339).
+///
+/// The LIMIT placeholder is dialect-specific: sqlite/mysql use `?`, pg uses `$1`
+/// (`?` is not valid PostgreSQL — sqlx's `?`-style bound params are only usable with
+/// the `any` driver). Using the wrong placeholder surfaces as
+/// `syntax error at end of input` on PG, which is exactly what broke
+/// `GET /admin/budget-reset/stats` in the real-PG BDD run.
+pub async fn preview_expired(
+    db: &Database,
+    et: EntityType,
+    limit: i64,
+) -> Result<Vec<PreviewEntity>, DbError> {
+    let sql = preview_sql(db, et);
 
     // (entity_id, alias, spend, max_budget TEXT, budget_duration, budget_reset_at TEXT)
     type PreviewRow = (String, Option<String>, f64, Option<String>, String, Option<String>);
@@ -1306,5 +1326,51 @@ mod tests {
         assert!(types.contains("team"));
         assert!(types.contains("user"));
         assert!(types.contains("org"));
+    }
+
+    // ── preview_sql dialect LIMIT placeholder tests ──────────────────
+
+    /// The PG preview SQL must use `$1` for LIMIT, never `?` — `?` is not valid
+    /// PostgreSQL and sqlx only rewrites it under the `any` driver. A stray `?`
+    /// surfaces as `syntax error at end of input` on the live PG pool, which is
+    /// exactly the 500 seen on `GET /admin/budget-reset/stats` in real-PG BDD.
+    #[tokio::test]
+    async fn test_preview_sql_uses_pg_limit_placeholder() {
+        let pool = sqlx::PgPool::connect_lazy("postgres://localhost").unwrap();
+        let db = Database::Postgres(pool);
+
+        let key_sql = preview_sql(&db, EntityType::Key);
+        assert!(
+            key_sql.contains("LIMIT $1"),
+            "pg key preview must use $1, got: {key_sql}"
+        );
+        assert!(!key_sql.contains("?"), "pg key preview must not use ?, got: {key_sql}");
+
+        let org_sql = preview_sql(&db, EntityType::Organization);
+        assert!(
+            org_sql.contains("LIMIT $1"),
+            "pg org preview must use $1, got: {org_sql}"
+        );
+        assert!(!org_sql.contains("?"), "pg org preview must not use ?, got: {org_sql}");
+    }
+
+    #[tokio::test]
+    async fn test_preview_sql_uses_qmark_limit_placeholder_for_sqlite_mysql() {
+        for db in [
+            Database::Sqlite(sqlx::SqlitePool::connect_lazy("sqlite::memory:").unwrap()),
+            Database::Mysql(sqlx::MySqlPool::connect_lazy("mysql://localhost").unwrap()),
+        ] {
+            for et in [EntityType::Key, EntityType::Organization] {
+                let sql = preview_sql(&db, et);
+                assert!(
+                    sql.contains("LIMIT ?"),
+                    "{} preview must use '?', got: {sql}",
+                    match db {
+                        Database::Sqlite(_) => "sqlite",
+                        _ => "mysql",
+                    }
+                );
+            }
+        }
     }
 }
