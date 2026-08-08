@@ -9,10 +9,10 @@ use serde_json::{json, Value};
 
 /// Generate the complete OpenAPI 3.1.0 specification as a `serde_json::Value`.
 ///
-/// The spec covers all 18 endpoints across four tag groups:
+/// The spec covers all 19 endpoints across four tag groups:
 /// - "Key Management" (6 endpoints)
 /// - "Spend & Usage" (7 endpoints)
-/// - "Chat & Models" (2 endpoints)
+/// - "Chat & Models" (3 endpoints — chat completions, embeddings, models)
 /// - "Health" (3 endpoints)
 pub fn generate_openapi_spec() -> Value {
     json!({
@@ -46,7 +46,7 @@ pub fn generate_openapi_spec() -> Value {
             },
             {
                 "name": "Chat & Models",
-                "description": "OpenAI-compatible chat completions and model listing"
+                "description": "OpenAI-compatible chat completions, embeddings, and model listing"
             },
             {
                 "name": "Health",
@@ -95,6 +95,9 @@ pub fn generate_openapi_spec() -> Value {
             },
             "/v1/chat/completions": {
                 "post": chat_completions_spec()
+            },
+            "/v1/embeddings": {
+                "post": embeddings_spec()
             },
             "/v1/models": {
                 "get": models_list_spec()
@@ -947,6 +950,79 @@ fn chat_completions_spec() -> Value {
     })
 }
 
+fn embeddings_spec() -> Value {
+    json!({
+        "tags": ["Chat & Models"],
+        "summary": "Create embeddings",
+        "description": "OpenAI-compatible embeddings endpoint. Validates the API key, checks model permissions and budget, then proxies to the upstream embeddings provider. Supports string or array-of-strings input. Billed prompt-only.",
+        "operationId": "createEmbedding",
+        "security": auth_ref(),
+        "requestBody": {
+            "required": true,
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "required": ["model", "input"],
+                        "properties": {
+                            "model": { "type": "string", "description": "Embedding model name registered in proxy_models" },
+                            "input": {
+                                "oneOf": [
+                                    { "type": "string", "description": "Single input string" },
+                                    { "type": "array", "items": { "type": "string" }, "description": "Batch of input strings" }
+                                ]
+                            },
+                            "encoding_format": { "type": "string", "description": "Output format (e.g. float, base64)" },
+                            "dimensions": { "type": "integer", "description": "Number of dimensions for the output embedding (model-dependent)" },
+                            "user": { "type": "string" }
+                        }
+                    }
+                }
+            }
+        },
+        "responses": {
+            "200": {
+                "description": "Embedding response (object=list with data[] embedding vectors + usage)",
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "type": "object",
+                            "description": "OpenAI-compatible embeddings response"
+                        }
+                    }
+                }
+            },
+            "400": common_responses()["400"],
+            "401": common_responses()["401"],
+            "403": {
+                "description": "Forbidden — model not allowed or budget exceeded",
+                "content": {
+                    "application/json": {
+                        "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+                    }
+                }
+            },
+            "429": {
+                "description": "Too many requests — rate limit or budget exceeded",
+                "content": {
+                    "application/json": {
+                        "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+                    }
+                }
+            },
+            "502": {
+                "description": "Bad gateway — upstream provider error",
+                "content": {
+                    "application/json": {
+                        "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+                    }
+                }
+            },
+            "500": common_responses()["500"]
+        }
+    })
+}
+
 fn models_list_spec() -> Value {
     json!({
         "tags": ["Chat & Models"],
@@ -1104,6 +1180,7 @@ mod tests {
             "/global/spend/logs",
             "/global/spend/keys",
             "/v1/chat/completions",
+            "/v1/embeddings",
             "/v1/models",
             "/health",
             "/health/readiness",

@@ -45,8 +45,9 @@ use aigw_core::otel_tracing;
 
 /// Extract prompt tokens from usage JSON.
 /// Tries `input_tokens` (Responses API) first, falls back to
-/// `prompt_tokens` (Chat Completions).
-fn extract_prompt_tokens(usage: &Value) -> i32 {
+/// `prompt_tokens` (Chat Completions). `pub(crate)` so the Embeddings handler
+/// can reuse it (embeddings usage also reports `prompt_tokens`).
+pub(crate) fn extract_prompt_tokens(usage: &Value) -> i32 {
     usage
         .get("input_tokens")
         .or_else(|| usage.get("prompt_tokens"))
@@ -66,7 +67,8 @@ fn extract_completion_tokens(usage: &Value) -> i32 {
 }
 
 /// Extract total tokens from usage JSON.
-fn extract_total_tokens(usage: &Value) -> i32 {
+/// `pub(crate)` so the Embeddings handler can reuse it.
+pub(crate) fn extract_total_tokens(usage: &Value) -> i32 {
     usage
         .get("total_tokens")
         .and_then(|v| v.as_i64())

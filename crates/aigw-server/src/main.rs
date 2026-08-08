@@ -54,8 +54,8 @@ use axum::{middleware, routing::get, Router};
 use clap::Parser;
 use routes::keys::{self, AppState, SharedState};
 use routes::{
-    budget, chat, cors_layer, credentials, docs, health, jobs, login, models, org, responses,
-    router_settings, spend, team, user, v1_messages,
+    budget, chat, cors_layer, credentials, docs, embeddings, health, jobs, login, models, org,
+    responses, router_settings, spend, team, user, v1_messages,
 };
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -390,6 +390,23 @@ async fn main() -> anyhow::Result<()> {
             axum::routing::post(chat::chat_completions),
         )
         .route("/v1/models", get(chat::models_list))
+        // OpenAI Embeddings API endpoint (primary + 3 aliases, shared handler)
+        .route(
+            "/v1/embeddings",
+            axum::routing::post(embeddings::embeddings_handler),
+        )
+        .route(
+            "/embeddings",
+            axum::routing::post(embeddings::embeddings_handler),
+        )
+        .route(
+            "/engines/{model}/embeddings",
+            axum::routing::post(embeddings::embeddings_handler_with_path),
+        )
+        .route(
+            "/openai/deployments/{model}/embeddings",
+            axum::routing::post(embeddings::embeddings_handler_with_path),
+        )
         // Key management routes
         .route("/key/generate", axum::routing::post(keys::generate_key))
         .route("/key/info", get(keys::key_info))

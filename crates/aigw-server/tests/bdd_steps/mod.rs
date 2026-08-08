@@ -10,6 +10,7 @@ pub mod common;
 pub mod common_steps;
 pub mod deleted_list_steps;
 pub mod e2e_steps;
+pub mod embeddings_steps;
 pub mod error_steps;
 pub mod health_steps;
 pub mod keys_permission_steps;
