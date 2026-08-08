@@ -460,11 +460,11 @@
   - 多模态请求进 SpendLog `messages`/`response` JSONB 原样（含 base64），body_archive 按既有 `messages` 体积分片，超大图 body limit（32 MiB）与压缩留 TD-009。
   - qwen 系列聊天模板已在 Stage 60 嗅探（`chat_template_compat: strict`），图片 content-parts 不经 fold，无模板冲突。
 
-## ADR-026: OpenAI Embeddings API 代理支持（Phase 45，Stage 110-112）
+## ADR-026: OpenAI Embeddings API 代理支持（Phase 44，Stage 110-112）
 
 - **Date**: 2026-08-08
-- **Status**: Approved → Accepted（Phase 45 规划落定，Stage 110-112 ⏳）
-- **Decision**: aigw 实现 OpenAI-compatible Embeddings 代理（`POST /v1/embeddings`），3 Stage 共 24h，排在 Phase 44 之后。核心决策：
+- **Status**: Approved → Accepted（Phase 44 规划落定，Stage 110-112 ⏳）
+- **Decision**: aigw 实现 OpenAI-compatible Embeddings 代理（`POST /v1/embeddings`），3 Stage 共 24h，排在在途 P1 收尾之后。核心决策：
   (1) **薄 OpenAI-compatible Passthrough，不做协议翻译**——`openai/`-前缀覆盖 OpenAI 托管 + 本地 vLLM/BGE/Qwen3，不做 Gemini `:embedContent` / Cohere `/v2/embed` 翻译；
   (2) **四端点全部注册**——`/v1/embeddings` + `/embeddings` + `/engines/{model}/embeddings`（Azure legacy）+ `/openai/deployments/{model}/embeddings`（Azure），共用同一 handler；
   (3) **硬选 `OpenAIPassthrough` / 拒绝 AnthropicNative**——`select_adapter(OpenAI, AnthropicNative)` → `OpenAIToAnthropic` 会把 embedding body 当 chat 转换产生垃圾，embedding 模型天然 OpenAI 兼容；
@@ -480,7 +480,7 @@
   - **复用 `calc_spend` prompt-only**：embedding usage 无 completion_tokens，`calc_spend` 传 completion=0 → 零输出成本，`prompt_tokens × input_cost_per_token` 正确，无需新计费逻辑。
   - **前端 OutputCard 加 `data[]` 分支**：`parseOutput` 现无 embeddings `data[]` 分支会落空态；只渲染向量维度（不渲染完整数组），SpendLog 列表 badge/token pill 零改动。
 - **Consequences**:
-  - Phase 45 三 Stage：Stage 110 后端 Passthrough 四端点（10h，6 UT + 11 BDD）、Stage 111 前端 + OpenAPI + real BDD（8h，3 UT + 2 E2E）、Stage 112 模型接入验证 + 文档收尾（6h，+2 BDD）。
+  - Phase 44 三 Stage：Stage 110 后端 Passthrough 四端点（10h，6 UT + 11 BDD）、Stage 111 前端 + OpenAPI + real BDD（8h，3 UT + 2 E2E）、Stage 112 模型接入验证 + 文档收尾（6h，+2 BDD）。
   - `call_type="embedding"` 端到端流入 SpendLog / daily 聚合 / 前端 badge，零 schema/查询变更。
   - 多模态 embedding（gemini-embedding-2 按模态计费 $0.45/$6.50/$12.00）超 aigw 单 `input_cost_per_token` 标量能力，登记 TD-011。
-  - Phase 44 在途 P1 收尾（Responses 稳定 + Image Token + TD-006/TD-007）优先于 Phase 45。设计文档：`docs/stages/stage-110.md`~`stage-112.md`。
+  - 在途 P1 收尾（Responses 稳定 + Image Token + TD-006/TD-007，无 Phase 号）优先于 Phase 44。设计文档：`docs/stages/stage-110.md`~`stage-112.md`。

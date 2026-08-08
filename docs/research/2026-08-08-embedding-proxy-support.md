@@ -1,7 +1,7 @@
 # OpenAI Embeddings API 代理支持 — 调研报告
 
 **日期**: 2026-08-08
-**状态**: Accepted（用户已答复 5 项决策，规划为 Phase 45）
+**状态**: Accepted（用户已答复 5 项决策，规划为 Phase 44；2026-08-08 由原 Phase 45 重编号）
 **作者**: Claude Code Agent（6 路 subagent：4 研究 + 1 代码审计 + 1 综合）
 
 ---
@@ -12,7 +12,7 @@
 
 1. **已有部分 Embedding 应用流量**，并希望尝试更多 Embedding 应用 → 现在交付。
 2. **有本地和托管的 embedding 模型**（vLLM/BGE/Qwen3/Ollama + OpenAI text-embedding-3）→ 薄 OpenAI-compatible Passthrough 已覆盖。
-3. **排在 Phase 44 之后** → 规划为 **Phase 45**（当前 roadmap 无 Phase 44，Phase 45 紧随在途 P1 收尾之后）。
+3. **排在在途 P1 收尾之后** → 规划为 **Phase 44**（2026-08-08 由原 Phase 45 重编号：原"Phase 44 在途 P1 收尾"是无 Stage 的待办桶，降级为无 Phase 号待办，Embeddings 承接 Phase 44 编号）。
 4. **四种风格端点都需要** → `/v1/embeddings` + `/embeddings` + `/engines/{model}/embeddings`（Azure legacy）+ `/openai/deployments/{model}/embeddings`（Azure）。
 5. **health.rs embedding-mode 探测** → 非阻塞（记技术债）。
 
@@ -96,7 +96,7 @@
 | 5 | mock_upstream.rs `/v1/embeddings` handler + `embeddings.feature` + `embeddings_steps.rs` | M | ~11 场景 |
 | 6 | openapi.rs `embeddings_spec()` + `expected_endpoints` 18→19 | S | 现仅 chat/models 有 spec |
 | 7 | 前端 `OutputCard.tsx` `parseOutput` 加 `data[]` 分支 | M | 否则 embedding 响应详情抽屉空态 |
-| 8 | 文档：charter L91/L204、roadmap Phase 45、next-steps | S | 现明确排除 embeddings |
+| 8 | 文档：charter L91/L204、roadmap Phase 44、next-steps | S | 现明确排除 embeddings |
 | 9 | health.rs 探测按 `model_info.mode` 分支 | S | **非阻塞**（用户确认） |
 
 ---
@@ -107,7 +107,7 @@
 |---|------|------|
 | 1 | 是否有 embedding/RAG 流量 | **有，想尝试更多 Embedding 应用** → 现在交付 |
 | 2 | 本地/托管 embedding 模型 | **都有** → 薄 OpenAI-compatible Passthrough 覆盖 |
-| 3 | 排期 | **Phase 44 之后** → 规划为 **Phase 45** |
+| 3 | 排期 | **在途 P1 收尾之后** → 规划为 **Phase 44**（原 Phase 45，2026-08-08 重编号） |
 | 4 | 端点风格 | **四种都需要** → `/v1/embeddings` + `/embeddings` + 两个 Azure 别名 |
 | 5 | health.rs embedding-mode 探测 | **非阻塞** → 记技术债 |
 

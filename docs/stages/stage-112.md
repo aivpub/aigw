@@ -1,6 +1,6 @@
 # Stage 112: Embeddings 模型接入 + 文档收尾
 
-**所属**: Phase 45（Embeddings API 代理支持）
+**所属**: Phase 44（Embeddings API 代理支持）
 **预估**: 6h（后端 + 测试 + 文档）
 **依赖**: Stage 110 → 111 → 112
 
@@ -47,8 +47,8 @@ Scenario: embedding 模型走 /v1/embeddings
 | 文件 | 操作 | 说明 |
 |------|------|------|
 | `docs/01-charter.md` | 修改 | L91 上游协议加 `+ OpenAI Embeddings API (Passthrough)`；L204 Stage-4 scope 加 `/v1/embeddings` |
-| `docs/stages/stage-roadmap.md` | 修改 | Phase 45 登记 + v45.0 |
-| `docs/11-next-steps.md` | 修改 | Phase 44/45 todo + 测试目标表更新 |
+| `docs/stages/stage-roadmap.md` | 修改 | Phase 44 登记 + v45.0 |
+| `docs/11-next-steps.md` | 修改 | Phase 44 todo + 测试目标表更新 |
 | `docs/08-autonomous-decisions.md` | 修改 | ADR-026 |
 | `docs/12-technical-debt.md` | 修改 | TD-011（health embedding 探测 + 多模态 embedding 计费） |
 | `crates/aigw-server/tests/features/models.feature` | 修改 | +2 场景（mode=embed 注册 + /v1/models 展示） |

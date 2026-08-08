@@ -1,8 +1,8 @@
 # Stage 110: OpenAI Embeddings API Passthrough — 后端 handler + 四端点路由
 
-**所属**: Phase 45（Embeddings API 代理支持）
+**所属**: Phase 44（Embeddings API 代理支持）
 **预估**: 10h（后端 + 测试）
-**依赖**: 无（与 Phase 44 在途 P1 完全解耦，可独立交付）
+**依赖**: 无（与在途 P1 收尾完全解耦，可独立交付）
 
 ---
 

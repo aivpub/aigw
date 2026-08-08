@@ -7,7 +7,7 @@
 
 ## 当前状态
 
-- **当前 Phase**: **Phase 41 ✅ 完成（Stage 101-102 OpenAI Responses API，22h，2026-08-05）**；Phase 42 ✅ 完成（Stage 103-105 Playground 多模态图片，34.5h）；Phase 43 ⏳ 待开始（Stage 106-108 Image Token Usage Tracking，28h）；Phase 44 ⏳ 在途 P1 收尾；**Phase 45 ⏳ 待开始（Stage 110-112 OpenAI Embeddings API，24h）**
+- **当前 Phase**: **Phase 41 ✅ 完成（Stage 101-102 OpenAI Responses API，22h，2026-08-05）**；Phase 42 ✅ 完成（Stage 103-105 Playground 多模态图片，34.5h）；Phase 43 ⏳ 待开始（Stage 106-108 Image Token Usage Tracking，28h）；**Phase 44 ⏳ 待开始（Stage 110-112 OpenAI Embeddings API，24h）**
 - **状态**: **106/111 Stages** 已完成（Stage 98-100 ✅ + Stage 101-102 ✅ + Stage 103-105 ✅ + Stage 106-108 ⏳ + Stage 109 ✅ 预算重置 UI + Stage 110-112 ⏳）
 - **下一里程碑**: Phase 43 Stage 106 — Image Token Engine（10h）
 
@@ -51,8 +51,7 @@ Phase 40:   ████████████████████ 100% (3
 Phase 41:   ████████████████████ 100% (2/2 Stages) ✅ OpenAI Responses API 接入 (Stage 101-102)
 Phase 42:   ████████████████████ 100% (3/3 Stages) ✅ Playground 多模态图片 (Stage 103-105)
 Phase 43:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3 Stages) ⏳ Image Token Usage Tracking (Stage 106-108)
-Phase 44:   ░░░░░░░░░░░░░░░░░░░░   0% (0/0 Stages) ⏳ 在途 P1 收尾（Responses 稳定 + Image Token + TD-006/TD-007，无 Stage 编号）
-Phase 45:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3 Stages) ⏳ OpenAI Embeddings API 代理 (Stage 110-112)
+Phase 44:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3 Stages) ⏳ OpenAI Embeddings API 代理 (Stage 110-112)
 ```
 
 ---
@@ -192,11 +191,11 @@ Phase 45:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 ---
 
-### Phase 45：OpenAI Embeddings API 代理 ⏳（2026-08-08，3 Stage，24h）
+### Phase 44：OpenAI Embeddings API 代理 ⏳（2026-08-08，3 Stage，24h）
 
 **背景**: 用户有部分 Embedding 应用流量并想尝试更多，本地 + 托管 embedding 模型都在用。调研确认（`docs/research/2026-08-08-embedding-proxy-support.md`）LiteLLM（aigw 参照实现）把 `/v1/embeddings` 当一等公民端点，走与 chat 完全相同的 auth→budget→rate-limit→spend-log 管道；Kong/Portkey/new-api 均支持，Cloudflare/Helicone/Azure APIM 缺失（leader parity 非普适 table-stakes）。工程成本低：responses.rs 的非流式克隆，`ChatAuth`/`resolve_key_model_list`/`calc_spend`（prompt-only）/`OpenAIPassthrough`/`ModelResolver` 原样复用，零 schema 变更。
 
-**用户决策**: ① 有流量 → 现在交付；② 本地+托管模型 → 薄 OpenAI-compatible Passthrough 覆盖（`openai/` 前缀 → vLLM/BGE/Qwen3）；③ **排在 Phase 44 之后** → 编号 Phase 45；④ **四种端点都需要** → `/v1/embeddings` + `/embeddings` + `/engines/{model}/embeddings`（Azure legacy）+ `/openai/deployments/{model}/embeddings`（Azure）；⑤ health.rs embedding-mode 探测 → 非阻塞（记 TD-011）。
+**用户决策**: ① 有流量 → 现在交付；② 本地+托管模型 → 薄 OpenAI-compatible Passthrough 覆盖（`openai/` 前缀 → vLLM/BGE/Qwen3）；③ **排在在途 P1 收尾之后** → 编号 Phase 44；④ **四种端点都需要** → `/v1/embeddings` + `/embeddings` + `/engines/{model}/embeddings`（Azure legacy）+ `/openai/deployments/{model}/embeddings`（Azure）；⑤ health.rs embedding-mode 探测 → 非阻塞（记 TD-011）。
 
 **拆分**: 3 Stage（Passthrough 后端 10h + 前端/OpenAPI/real BDD 8h + 模型接入/文档 6h），共 24h。
 
@@ -208,7 +207,7 @@ Phase 45:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 **依赖关系**: Stage 110 → 111（前端依赖端点契约）→ 112（文档依赖全部落地）。
 
-**Phase 45 合计**: 24h，3 Stages。
+**Phase 44 合计**: 24h，3 Stages。
 
 **关键决策**:
 - **薄 OpenAI-compatible Passthrough，不做协议翻译**：`openai/`-前缀覆盖 OpenAI 托管 + vLLM/BGE/Qwen3 本地；不做 Gemini `:embedContent` / Cohere `/v2/embed` 翻译（Envoy 刚合并的差异化层，等真实 RAG 负载再上）。
@@ -841,5 +840,6 @@ Phase 45:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 | v42.0 | 2026-08-07 | **Phase 42 规划**：Playground 多模态图片能力，3 Stage 共 34.5h。基于代码审计确认后端多模态转换部分就绪（`claude_message_to_openai` 已正确生成 `data:{media_type};base64,{data}`；`openai_message_to_claude` 反向硬编码 `image/jpeg` + 完整 data URL 塞入 data 字段是 bug），前端 Playground 仅纯文本、src/ 无 file input 先例。三路 subagent 并发实测：Stage 103 后端适配修复 + `/v1/models` 暴露 model_info.mode + 6 BDD（6.5h）；Stage 104 Playground 图片输入（上传/粘贴/预览 + 双端点序列化 + 8 E2E × 3 viewports，16h）；Stage 105 图片渲染 + log-viewer output_text/image block + SpendLog 详情 + 文档收尾（12h）。总进度 99/105。设计文档：`stage-103~105.md`。 |
 | v42.1 | 2026-08-07 | **Phase 42 完成**（Stage 103-105 ✅，总进度 103/105）：Stage 103 `cd576dc` 后端适配修复（parse_data_url + model_info.mode + 8 UT + 6 BDD）；Stage 104 `0f4868f` Playground 图片输入（上传/粘贴/预览 + 双端点序列化 + 8 E2E × 3 viewports + 全量 300 pass）；Stage 105 图片渲染（log-viewer extractImages/ImageThumbnails + OutputCard Responses output[] 分支 + SpendLog 详情 3 UT + 5 E2E × 3 viewports + 全量 312 pass）。ADR-025 Approved→Accepted，TD-009 a/b/e 登记。 |
 | v43.0 | 2026-08-07 | **Phase 43 规划**：Image Token Usage Tracking — 上游优先解析 + 客户端 fallback 估算。3 Stage（106-108）共 28h。基于多轮调研（Qwen/VL config + 阿里云文档 + litellm/OpenRouter/OneAPI 源码）确认 Qwen/DashScope 返回 image_tokens（最完整），OpenAI/Anthropic 不返回；主流网关均不做预计算（aigw 将是行业差异化功能）。设计文档：`docs/stages/stage-106.md`~`stage-108.md` + `docs/plans/2026-08-07-image-token-estimation.md`。总进度 103/108。 |
-| v45.0 | 2026-08-08 | **Phase 45 规划**：OpenAI Embeddings API 代理（Stage 110-112，3 Stage 共 24h）。基于 6 路 subagent 调研（`docs/research/2026-08-08-embedding-proxy-support.md`）：LiteLLM 把 `/v1/embeddings` 当一等公民端点（四路径 + 与 chat 相同管道 + call_type=embedding + prompt-only 计费）；Kong/Portkey/new-api 均支持（leader parity）；用户确认 ① 有流量想多尝试 ② 本地+托管模型 ③ **Phase 44 之后** ④ **四端点都需要** ⑤ health 探测非阻塞。Stage 110 后端 Passthrough 四端点（10h，6 UT + 11 BDD）；Stage 111 前端 OutputCard `data[]` 分支 + OpenAPI spec + real BDD（8h，3 UT + 2 E2E）；Stage 112 模型接入验证 + 文档收尾（6h，+2 BDD）。硬选 OpenAIPassthrough 拒绝 AnthropicNative（防 OpenAIToAnthropic 破坏 body）；薄 OpenAI-compatible 透传不做协议翻译。ADR-026 + TD-011 登记。总进度 104/111。 |
+| v45.0 | 2026-08-08 | **Embeddings 代理规划（原编号 Phase 45，2026-08-08 重编号为 Phase 44）**：OpenAI Embeddings API 代理（Stage 110-112，3 Stage 共 24h）。基于 6 路 subagent 调研（`docs/research/2026-08-08-embedding-proxy-support.md`）：LiteLLM 把 `/v1/embeddings` 当一等公民端点（四路径 + 与 chat 相同管道 + call_type=embedding + prompt-only 计费）；Kong/Portkey/new-api 均支持（leader parity）；用户确认 ① 有流量想多尝试 ② 本地+托管模型 ③ **排在在途 P1 收尾之后** ④ **四端点都需要** ⑤ health 探测非阻塞。Stage 110 后端 Passthrough 四端点（10h，6 UT + 11 BDD）；Stage 111 前端 OutputCard `data[]` 分支 + OpenAPI spec + real BDD（8h，3 UT + 2 E2E）；Stage 112 模型接入验证 + 文档收尾（6h，+2 BDD）。硬选 OpenAIPassthrough 拒绝 AnthropicNative（防 OpenAIToAnthropic 破坏 body）；薄 OpenAI-compatible 透传不做协议翻译。ADR-026 + TD-011 登记。总进度 104/111。 |
 | v46.0 | 2026-08-08 | **Phase 41 完成回写（Stage 101-102 ✅）+ 测试缺口登记**：代码审计确认 Phase 41 两 Stage 已 2026-08-05 落地（`b90f42d` Stage 101 / `6a3ab61` Stage 102），roadmap/next-steps 此前积欠未同步——本次回写为 ✅，总进度 106/111。**实现修正**：Stage 101 `select_adapter(Responses, OpenAICompatible)` 实际接线 `ResponsesToChatCompletions`（非计划初稿的 `OpenAIPassthrough`），非流式 `/v1/responses` 实际返回 ChatCompletions 格式。**测试缺口登记**：① 计划声称的 19 适配器 UT 未落地（adapter.rs 无 `ResponsesToChatCompletions` 直测，桥接由 5 个 BDD 场景覆盖）；② `ResponsesToChatCompletionsStream` 未接入 handler 流式路径（流式路径转发原始 SSE 字节，mock 亦不返回真实 SSE 帧）——登记到 next-steps 待办，待后续补测。 |
+| v46.1 | 2026-08-08 | **Phase 44/45 重编号**：原 "Phase 44 在途 P1 收尾" 是无 Stage 的待办桶（Responses 稳定 + Image Token + TD-006/TD-007），非真实 Phase——降级为无 Phase 号的 next-steps 待办项。Embeddings 代理（Stage 110-112）由 Phase 45 **重编号为 Phase 44**（3 Stage 真实功能 Phase）。Stage 号不变，Phase 号只作分组标签。ADR-026 同步。 |

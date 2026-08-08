@@ -1,6 +1,6 @@
 # Stage 111: Embeddings Frontend + OpenAPI 展示 + real BDD
 
-**所属**: Phase 45（Embeddings API 代理支持）
+**所属**: Phase 44（Embeddings API 代理支持）
 **预估**: 8h（前端 + 测试 + 文档）
 **依赖**: Stage 110（端点就绪后前端按接口契约独立开发）
 
@@ -44,7 +44,7 @@ if (Array.isArray(obj.data)) → render 向量（embedding.length 维度）+ usa
 | `crates/aigw-frontend/src/i18n/locales/zh-CN.json` | 修改 | +2 keys |
 | `crates/aigw-server/src/openapi.rs` | 修改 | `embeddings_spec()` + expected_endpoints |
 | `crates/aigw-server/tests/bdd_steps/embeddings_steps.rs` | 修改 | real BDD step 绑定 |
-| `docs/stages/stage-roadmap.md` / `docs/11-next-steps.md` | 修改 | Phase 45 进度回写 |
+| `docs/stages/stage-roadmap.md` / `docs/11-next-steps.md` | 修改 | Phase 44 进度回写 |
 
 ## 4. TDD — 单元测试（3 UT）
 

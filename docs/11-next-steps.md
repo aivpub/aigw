@@ -1,7 +1,7 @@
 # aigw -- 下一步行动
 
 **上次更新**: 2026-08-08
-**当前阶段**: **Phase 41 ✅ 完成（Stage 101-102 OpenAI Responses API，22h，2026-08-05 回写）**；Phase 42 ✅ 完成（Stage 103-105 Playground 多模态图片，34.5h）；Phase 43 ⏳ 待开始（Stage 106-108 Image Token Usage Tracking，28h）；Phase 44 ⏳ 在途 P1 收尾；**Phase 45 ⏳ 待开始（Stage 110-112 OpenAI Embeddings API，24h）**
+**当前阶段**: **Phase 41 ✅ 完成（Stage 101-102 OpenAI Responses API，22h，2026-08-05 回写）**；Phase 42 ✅ 完成（Stage 103-105 Playground 多模态图片，34.5h）；Phase 43 ⏳ 待开始（Stage 106-108 Image Token Usage Tracking，28h）；**Phase 44 ⏳ 待开始（Stage 110-112 OpenAI Embeddings API，24h）**
 
 ---
 
@@ -11,16 +11,16 @@
 
 **2026-08-08**: 预算重置 cron 界面重构（预算重置 UI）——`GET /admin/budget-reset/stats` 端点（counts/preview/last_reset/next_tick_at）+ BudgetResetStatsCard（真实待重置数 / 上次重置 / 诚实 next-tick 倒计时）+ BudgetResetPreview（分实体明细 + 即将重置列表）+ BudgetResetTriggerDialog（范围选择 → 预览确认 → POST 后跳转 job 详情）+ job 表 trigger 列本地化 + job-detail formatStepResult 渲染 budget_reset 结果。TDD: 4 新 core UT + 2 后端 real BDD 场景 + 3 前端 BDD 场景 × 3 viewports。全部绿色（core 371 + bdd 215 + fe 87 jobs + 42 dashboard/i18n）。
 
-**2026-08-08（二期）**: 6 路 subagent 调研确认（`docs/research/2026-08-08-embedding-proxy-support.md`）aigw 应支持 OpenAI-compatible Embeddings 代理：LiteLLM 把 `/v1/embeddings` 当一等公民端点（四路径 + 与 chat 相同 auth→budget→rate-limit→spend-log 管道 + call_type=embedding + prompt-only 计费）；Kong/Portkey/new-api 均支持（leader parity）。用户确认 ① 有流量想多尝试 ② 本地+托管模型 ③ **排在 Phase 44 之后** ④ **四种端点都需要** ⑤ health 探测非阻塞。规划为 **Phase 45（Stage 110-112，24h）**，设计文档 `stage-110.md`~`stage-112.md`。
+**2026-08-08（二期）**: 6 路 subagent 调研确认（`docs/research/2026-08-08-embedding-proxy-support.md`）aigw 应支持 OpenAI-compatible Embeddings 代理：LiteLLM 把 `/v1/embeddings` 当一等公民端点（四路径 + 与 chat 相同 auth→budget→rate-limit→spend-log 管道 + call_type=embedding + prompt-only 计费）；Kong/Portkey/new-api 均支持（leader parity）。用户确认 ① 有流量想多尝试 ② 本地+托管模型 ③ **排在在途 P1 收尾之后** ④ **四种端点都需要** ⑤ health 探测非阻塞。规划为 **Phase 44（Stage 110-112，24h）**，设计文档 `stage-110.md`~`stage-112.md`。
 
 **待办**:
 1. **Phase 43 Stage 106**（P1, 10h）：Image Token Engine — aigw-core 上游解析器 + fallback 估算 + header parser + 15 UT
 2. **Phase 43 Stage 107**（P1, 10h）：Handler 集成 + Migration 025 + 8 BDD
 3. **Phase 43 Stage 108**（P1, 8h）：前端展示 + Real API BDD + Docs
-4. **Phase 44 在途 P1 收尾**：Responses 稳定 + Image Token + TD-006/TD-007
-5. **Phase 45 Stage 110**（P1, 10h）：`POST /v1/embeddings` Passthrough（四端点）— 新建 embeddings.rs + 硬选 OpenAIPassthrough + call_type="embedding" + TDD: 6 UT + 11 BDD
-6. **Phase 45 Stage 111**（P1, 8h）：前端 OutputCard `data[]` 分支 + OpenAPI spec + real BDD — TDD: 3 UT + 2 E2E
-7. **Phase 45 Stage 112**（P1, 6h）：Embedding 模型接入验证 + 文档收尾 — charter/roadmap/next-steps/ADR-026/TD-011
+4. **在途 P1 收尾（无 Phase 号）**：Responses 稳定 + Image Token + TD-006/TD-007
+5. **Phase 44 Stage 110**（P1, 10h）：`POST /v1/embeddings` Passthrough（四端点）— 新建 embeddings.rs + 硬选 OpenAIPassthrough + call_type="embedding" + TDD: 6 UT + 11 BDD
+6. **Phase 44 Stage 111**（P1, 8h）：前端 OutputCard `data[]` 分支 + OpenAPI spec + real BDD — TDD: 3 UT + 2 E2E
+7. **Phase 44 Stage 112**（P1, 6h）：Embedding 模型接入验证 + 文档收尾 — charter/roadmap/next-steps/ADR-026/TD-011
 8. Phase 30（Stage 78-81）代码已落地 + Phase 31 修复完成，待一并回写为 ✅
 9. **Phase 41 测试缺口跟进（记录于 Phase 41 段）**：① 适配器级 UT 补 `ResponsesToChatCompletions` 直测（计划 19 个，实际未落地）；② `ResponsesToChatCompletionsStream` 接线 handler 流式路径 + mock 上游返回真实 SSE 帧
 10. TD-006 客户端 call_id 响应头回写
@@ -117,8 +117,7 @@ Phase 40:   ████████████████████ 100% (3
 Phase 41:   ████████████████████ 100% (2/2)  ✅ OpenAI Responses API 接入 (Stage 101-102)
 Phase 42:   ████████████████████ 100% (3/3)  ✅ Playground 多模态图片 (Stage 103-105)
 Phase 43:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3)  ⏳ Image Token Usage Tracking (Stage 106-108)
-Phase 44:   ░░░░░░░░░░░░░░░░░░░░   0% (0/0)  ⏳ 在途 P1 收尾（Responses 稳定 + Image Token + TD-006/TD-007，无 Stage 编号）
-Phase 45:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3)  ⏳ OpenAI Embeddings API 代理 (Stage 110-112)
+Phase 44:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3)  ⏳ OpenAI Embeddings API 代理 (Stage 110-112)
 ```
 
 ---
@@ -143,8 +142,8 @@ Phase 45:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 | 层 | 当前 |
 |---|------|
-| 后端单元 | ≥ 290 tests（含 Stage 99 daily_spend_queue 7 + auth_gateway 4 + rate_limit 5；Phase 45 预计 +6） |
-| mock BDD | ≥ 191 scenarios（含 Stage 98 13 new；Phase 45 预计 +13：Stage 110 11 + Stage 112 2） |
+| 后端单元 | ≥ 290 tests（含 Stage 99 daily_spend_queue 7 + auth_gateway 4 + rate_limit 5；Phase 44 预计 +6） |
+| mock BDD | ≥ 191 scenarios（含 Stage 98 13 new；Phase 44 预计 +13：Stage 110 11 + Stage 112 2） |
 | real BDD | ≥ 47 SQLite / ≥ 41 PG / ≥ 41 MySQL（含 Stage 100 11 new） |
 
 ---
@@ -161,10 +160,10 @@ Phase 45:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 | ✅ | Phase 42 Stage 105 图片渲染 + SpendLog 详情 + 文档 | ✅ 完成 |
 | ✅ | Phase 39 补充 Stage 109 预算重置 cron 界面重构 | ✅ 完成（2026-08-08） |
 | P1 | Phase 43 Stage 106-108 Image Token Usage Tracking | ⏳ 待开始 |
-| P1 | Phase 44 在途 P1 收尾（Responses 稳定 + Image Token + TD-006/TD-007，无 Stage 编号） | ⏳ 待开始 |
-| P1 | Phase 45 Stage 110 POST /1/embeddings Passthrough（四端点） | ⏳ 待 |
-| P1 | Phase 45 Stage 111 前端 OutputCard data + OpenAPI spec + real BDD | ⏳ 待开始 |
-| P1 | Phase 45 Stage 112 Embedding 模型接入 + 文档收尾 | ⏳ 待开始 |
+| P1 | Phase 44 Stage 110 POST /v1/embeddings Passthrough（四端点） | ⏳ 待开始 |
+| P1 | Phase 44 Stage 111 前端 OutputCard data + OpenAPI spec + real BDD | ⏳ 待开始 |
+| P1 | Phase 44 Stage 112 Embedding 模型接入 + 文档收尾 | ⏳ 待开始 |
+| P1 | 在途 P1 收尾（无 Phase 号）：Responses 稳定 + Image Token + TD-006/TD-007 | ⏳ 待开始 |
 | P2 | Phase 30 backfill 标记 | 待处理 |
 | P2 | TD-006客户端 call_id 响应头回写 | 待处理 |
 | P2 | TD-007 soft_budget 告警通道 | 待处理 |
