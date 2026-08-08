@@ -125,6 +125,22 @@
 - **Resolution**: 视使用量按子条目触发实施。
 - **Target Phase**: 无固定排期。
 
+### TD-012: health.rs embedding-mode 探测缺失 + 多模态 embedding 计费
+
+- **Date**: 2026-08-09
+- **Priority**: P2
+- **Source**: Phase 44（OpenAI Embeddings API 代理）规划（ADR-026）
+- **Description**: 两个 embedding 相关缺口登记。
+
+| Sub-ID | 条目 | 优先级 | 描述 |
+|--------|------|--------|------|
+| TD-012a | health.rs embedding-mode 探测缺失 | P2 | 现有 `run_and_save_health_check` 对所有 OpenAICompatible 模型 POST `{model, messages:[...], max_tokens:1}` 到 `/chat/completions`，embedding-only 模型会 400 误报 unhealthy。需按 `model_info.mode="embed"` 分支探测 `/embeddings`。触发：embedding 模型接入 health 探测。Phase 46 候选。 |
+| TD-012b | 多模态 embedding 按模态计费不支持 | P3 | gemini-embedding-2 按模态计费（$0.45/$6.50/$12.00），超出 aigw 单 `input_cost_per_token` 标量能力。触发：真实多模态 embedding 流量。 |
+
+- **Impact**: 非阻塞。薄 passthrough 对 embedding 模型健康探测会误报；多模态 embedding 计费按标量 input_cost 欠精确。
+- **Resolution**: 视使用量触发。
+- **Target Phase**: 无固定排期（health 探测候选 Phase 46）。
+
 ## Resolved Items
 
 ### TD-002: @real_api step bindings implemented (Resolved 2026-07-05)

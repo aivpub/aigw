@@ -28,6 +28,28 @@ const sampleSpendLogs = [
   { call_id: "req-002", request_id: "msg_xyz789", call_type: "completion", model: "claude-sonnet-4-6", api_key: "sk-def***", key_name: "dev-claude-key", total_tokens: 567, prompt_tokens: 300, completion_tokens: 267, spend: 1.23, start_time: "2026-07-08T10:05:00Z", end_time: "2026-07-08T10:05:03Z", request_duration_ms: 2890, ttft_ms: 456.7, status: "success", custom_llm_provider: "anthropic", model_group: "claude-sonnet-4-6", user: "dev-user" },
 ];
 
+// Stage 111: embedding spend-log row — list + detail drawer render vectors.
+const EMB_SPEND_ROW = {
+  call_id: "req-emb-001",
+  request_id: "emb_req_001",
+  call_type: "embedding",
+  model: "text-embedding-3-small",
+  api_key: "sk-emb***",
+  key_name: "emb-key",
+  total_tokens: 12,
+  prompt_tokens: 12,
+  completion_tokens: 0,
+  spend: 0.000012,
+  start_time: "2026-07-08T12:00:00Z",
+  end_time: "2026-07-08T12:00:01Z",
+  request_duration_ms: 900,
+  ttft_ms: 300,
+  status: "success",
+  custom_llm_provider: "openai",
+  model_group: "text-embedding-3-small",
+  user: "emb-user",
+};
+
 // Stage 105: the multimodal detail mock is also present in the list so the
 // detail-drawer scenarios can click its row.
 const IMG_SPEND_ROW = {
@@ -89,6 +111,25 @@ const sampleDetailImage = {
         content: [{ type: "output_text", text: "It is a small red square." }],
       },
     ],
+  },
+};
+
+// Stage 111: embedding detail mock — object=list + data[].embedding vector
+const sampleDetailEmbedding = {
+  ...EMB_SPEND_ROW,
+  call_id: "req-emb-001",
+  messages: [{ role: "user", content: "Embed this text please" }],
+  response: {
+    object: "list",
+    data: [
+      {
+        object: "embedding",
+        embedding: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+        index: 0,
+      },
+    ],
+    model: "text-embedding-3-small",
+    usage: { prompt_tokens: 12, total_tokens: 12 },
   },
 };
 
@@ -236,10 +277,10 @@ export async function defineMockRoutes(route: Route, request: Request) {
 
   // Spend
   if (url.pathname === "/spend/logs") {
-    // Include the multimodal row so the Stage 105 detail scenarios can click it.
+    // Include the multimodal + embedding rows so the detail scenarios can click them.
     return route.fulfill({
       status: 200,
-      json: { data: [...sampleSpendLogs, IMG_SPEND_ROW] },
+      json: { data: [...sampleSpendLogs, IMG_SPEND_ROW, EMB_SPEND_ROW] },
     });
   }
   if (url.pathname.startsWith("/global/spend/logs/") && url.pathname !== "/global/spend/logs") {
@@ -252,7 +293,9 @@ export async function defineMockRoutes(route: Route, request: Request) {
           ? sampleDetailLog2
           : cid === "req-img-001"
             ? sampleDetailImage
-            : null;
+            : cid === "req-emb-001"
+              ? sampleDetailEmbedding
+              : null;
     if (detail) {
       return route.fulfill({ status: 200, json: detail });
     }
@@ -289,7 +332,7 @@ export async function defineMockRoutes(route: Route, request: Request) {
     return route.fulfill({ status: 200, json: { data: [{ provider: "openai", total_spend: 25.0, total_tokens: 50000, requests: 12 }, { provider: "anthropic", total_spend: 17.5, total_tokens: 30000, requests: 8 }], count: 2 } });
   }
   if (url.pathname === "/global/spend/logs") {
-    const allSpendLogs = [...sampleSpendLogs, IMG_SPEND_ROW];
+    const allSpendLogs = [...sampleSpendLogs, IMG_SPEND_ROW, EMB_SPEND_ROW];
     // Apply fuzzy search filter if ?request_id= query param present
     const q = url.searchParams.get("request_id");
     if (q) {

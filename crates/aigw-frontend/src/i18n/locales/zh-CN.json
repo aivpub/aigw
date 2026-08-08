@@ -1014,7 +1014,9 @@
     "copy": "复制",
     "parseError": "解析响应失败",
     "error": "错误",
-    "finish": "结束"
+    "finish": "结束",
+    "embeddingsNoVectors": "无嵌入向量",
+    "embeddingsDims": "维"
   },
   "pagination": {
     "showing": "第 {{from}}–{{to}} 条，共 {{total}} 条",

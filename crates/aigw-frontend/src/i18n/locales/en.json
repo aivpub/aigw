@@ -1014,7 +1014,9 @@
     "copy": "Copy",
     "parseError": "Failed to parse response",
     "error": "Error",
-    "finish": "Finish"
+    "finish": "Finish",
+    "embeddingsNoVectors": "No embedding vectors",
+    "embeddingsDims": "dims"
   },
   "pagination": {
     "showing": "Showing {{from}}–{{to}} of {{total}}",

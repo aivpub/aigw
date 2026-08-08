@@ -123,3 +123,20 @@ Feature: Spend Logs
     And I am logged in as admin
     And I am on the Spend Logs page
     Then the spend log row with call id "req-img-001" should show the multimodal marker
+
+  # ── Stage 111: embedding response rendering ──
+
+  Scenario: Detail drawer shows embedding response vectors instead of empty state
+    Given API endpoints are mocked
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    When I click on the spend log row with call id "req-emb-001"
+    Then the detail drawer should show embedding vector dimensions
+    And the detail drawer should show the prompt_tokens usage
+
+  Scenario: Spend log list type badge shows embedding call type
+    Given API endpoints are mocked
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    Then the spend log row with call id "req-emb-001" should show the "embedding" type badge
+

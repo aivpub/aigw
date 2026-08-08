@@ -320,3 +320,31 @@ Then("the spend log row with call id {string} should show the multimodal marker"
     .first();
   await expect(row.locator("[data-testid='multimodal-marker']")).toBeVisible();
 });
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Stage 111: embedding response rendering
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Then("the detail drawer should show embedding vector dimensions", async ({ page }) => {
+  const dialog = page.locator("[role='dialog']");
+  await dialog.waitFor({ timeout: 5000 });
+  // parseOutput data[] branch renders "[0.1, 0.2, …] (9 dims)".
+  await expect(dialog).toContainText(/dims|维/i, { timeout: 5000 });
+  await expect(dialog).toContainText(/\[0\.1/, { timeout: 5000 });
+});
+
+Then("the detail drawer should show the prompt_tokens usage", async ({ page }) => {
+  const dialog = page.locator("[role='dialog']");
+  await dialog.waitFor({ timeout: 5000 });
+  await expect(dialog).toContainText(/prompt_tokens|prompt/i, { timeout: 5000 });
+});
+
+Then("the spend log row with call id {string} should show the {string} type badge", async ({ page }, cid: string, type: string) => {
+  const truncated = cid.length <= 10 ? cid : `${cid.slice(0, 5)}…${cid.slice(-5)}`;
+  const row = page
+    .locator("[data-testid='spend-log-row']")
+    .filter({ hasText: truncated })
+    .filter({ visible: true })
+    .first();
+  await expect(row).toContainText(type, { timeout: 5000 });
+});

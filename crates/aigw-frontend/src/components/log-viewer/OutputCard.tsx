@@ -161,6 +161,45 @@ function parseOutput(raw: unknown): ParsedOutput {
       };
     }
 
+    // Embeddings API: object=list with data[].embedding vectors.
+    // Don't render the full vector array — just the dimension count + a short
+    // truncated preview, so the detail drawer isn't flooded with a 1536-dim
+    // JSON blob. Usage (prompt_tokens/total_tokens) is rendered by the caller.
+    if (
+      (r as Record<string, unknown>).object === "list" &&
+      Array.isArray((r as Record<string, unknown>).data)
+    ) {
+      const data = (r as Record<string, unknown>).data as Array<
+        Record<string, unknown>
+      >;
+      const first = data[0];
+      const vector = (first?.embedding as unknown[] | undefined) ?? [];
+      let text = "";
+      if (vector.length > 0) {
+        const preview = vector
+          .slice(0, 8)
+          .map((v) => (typeof v === "number" ? v.toFixed(4) : String(v)))
+          .join(", ");
+        text = `[${preview}${vector.length > 8 ? ", …" : ""}] (${
+          vector.length
+        } dims)`;
+      } else {
+        text = i18n.t("logViewer.embeddingsNoVectors");
+      }
+      return {
+        text,
+        images: [],
+        toolCalls: null,
+        usage:
+          ((r as Record<string, unknown>).usage as Record<
+            string,
+            unknown
+          > | null) ?? null,
+        finishReason: `${data.length} vector${data.length !== 1 ? "s" : ""}`,
+        error: null,
+      };
+    }
+
     return empty;
   } catch {
     return { ...empty, error: i18n.t("logViewer.parseError") };
