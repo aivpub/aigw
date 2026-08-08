@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { Fragment, useState, useMemo, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
 import { format } from "date-fns";
@@ -515,9 +515,8 @@ export function ModelsPage() {
                             const isExpanded = expanded.has(model.model_id);
 
                             return (
-                              <>
+                              <Fragment key={model.model_id}>
                                 <TableRow
-                                  key={model.model_id}
                                   className="cursor-pointer hover:bg-muted/50"
                                   onClick={() => toggleExpand(model.model_id)}
                                   data-model-name={model.model_name}
@@ -746,7 +745,7 @@ export function ModelsPage() {
                                     </TableCell>
                                   </TableRow>
                                 )}
-                              </>
+                              </Fragment>
                             );
                           })}
                       {!isLoading && filteredModels.length === 0 && (

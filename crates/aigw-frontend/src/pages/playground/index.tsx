@@ -9,7 +9,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectContent,
@@ -149,10 +148,10 @@ function MessageBubble({
                 : t("logViewer.assistant")}
           </span>
           {msg.tokens && (
-            <Badge variant="outline" className="text-[9px] px-1 py-0 h-4">
+            <span className="inline-flex items-center rounded-md border px-1 py-0 text-[9px] font-semibold">
               {msg.tokens.prompt + msg.tokens.completion}
               {t("playground.tokensSuffix")}
-            </Badge>
+            </span>
           )}
         </div>
 
@@ -1210,12 +1209,11 @@ export function PlaygroundPage() {
                 <span className="flex items-center gap-2">
                   <span>
                     {t("playground.modelLabel")}:{" "}
-                    <Badge
-                      variant="outline"
-                      className="text-[9px] px-1 py-0 h-4"
+                    <span
+                      className="inline-flex items-center rounded-md border px-1 py-0 text-[9px] font-semibold"
                     >
                       {quoteName(settings.model, 20)}
-                    </Badge>
+                    </span>
                   </span>
                   {settings.streaming && (
                     <span className="flex items-center gap-0.5">
