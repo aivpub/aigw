@@ -7,9 +7,9 @@
 
 ## 当前状态
 
-- **当前 Phase**: Phase 41 ⏳ 待开始（Stage 101-102 OpenAI Responses API，22h）；Phase 42 ✅ 完成（Stage 103-105 Playground 多模态图片，34.5h）；Phase 43 ⏳ 待开始（Stage 106-108 Image Token Usage Tracking，28h）；Phase 44 ⏳ 在途 P1 收尾；**Phase 45 ⏳ 待开始（Stage 110-112 OpenAI Embeddings API，24h）**
-- **状态**: **104/108 Stages** 已完成（Stage 98-100 ✅ + Stage 101-102 ⏳ + Stage 103-105 ✅ + Stage 106-108 ⏳ + Stage 109 ✅ 预算重置 UI）
-- **下一里程碑**: Phase 41 Stage 101 — OpenAI Responses API Passthrough（8h）
+- **当前 Phase**: **Phase 41 ✅ 完成（Stage 101-102 OpenAI Responses API，22h，2026-08-05）**；Phase 42 ✅ 完成（Stage 103-105 Playground 多模态图片，34.5h）；Phase 43 ⏳ 待开始（Stage 106-108 Image Token Usage Tracking，28h）；Phase 44 ⏳ 在途 P1 收尾；**Phase 45 ⏳ 待开始（Stage 110-112 OpenAI Embeddings API，24h）**
+- **状态**: **106/111 Stages** 已完成（Stage 98-100 ✅ + Stage 101-102 ✅ + Stage 103-105 ✅ + Stage 106-108 ⏳ + Stage 109 ✅ 预算重置 UI + Stage 110-112 ⏳）
+- **下一里程碑**: Phase 43 Stage 106 — Image Token Engine（10h）
 
 ### 整体进度
 
@@ -48,7 +48,7 @@ Phase 36:   ████████████████████ 100% (1
 Phase 38:   ████████████████████ 100% (3/3 Stages) ✅ UI 多语言 i18n 支持 (Stage 91-93)
 Phase 39:   ████████████████████ 100% (4/4 Stages) ✅ Budget Reset 周期任务 + 配置
 Phase 40:   ████████████████████ 100% (3/3 Stages) ✅ BDD Coverage Enhancement (Stage 98-100)
-Phase 41:   ░░░░░░░░░░░░░░░░░░░░   0% (0/2 Stages) ⏳ OpenAI Responses API 接入 (Stage 101-102)
+Phase 41:   ████████████████████ 100% (2/2 Stages) ✅ OpenAI Responses API 接入 (Stage 101-102)
 Phase 42:   ████████████████████ 100% (3/3 Stages) ✅ Playground 多模态图片 (Stage 103-105)
 Phase 43:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3 Stages) ⏳ Image Token Usage Tracking (Stage 106-108)
 Phase 45:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3 Stages) ⏳ OpenAI Embeddings API 代理 (Stage 110-112)
@@ -107,7 +107,7 @@ Phase 45:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 **设计文档**: `docs/stages/stage-94.md` ~ `stage-97.md` / `docs/stages/stage-109.md` / `docs/research/2026-08-01-budget-reset-architecture.md` / `docs/08-autonomous-decisions.md` ADR-024
 
-### Phase 41：OpenAI Responses API 透明桥接 ⏳（2026-08-05）
+### Phase 41：OpenAI Responses API 透明桥接 ✅（2026-08-05，22h）
 
 **背景**: OpenAI 于 2025 年推出 Responses API（`POST /v1/responses`）。`/v1/responses` 上游生态极窄（仅 OpenAI + litellm），绝大多数 provider 只支持 `/v1/chat/completions`。分两个 Stage：Stage 101 先做 Passthrough 让端点可用，Stage 102 加 Responses→Chat 协议转换覆盖所有上游。
 
@@ -115,18 +115,19 @@ Phase 45:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 | Stage | 状态 | 目标 | 类型 | 预估 |
 |-------|------|------|------|------|
-| Stage 101 | ⏳ 待开始 | **POST /v1/responses Passthrough** — 新建 `responses.rs` handler（认证→校验 `input` 字段→上游 `{api_base}/responses`→SpendLog）；新增 `ClientProtocol::Responses` 枚举变体 + `select_adapter` arm 复用 `OpenAIPassthrough`；Usage 字段双 fallback（`input_tokens`/`prompt_tokens`）；流式 SSE 透传 + 两阶段 SpendLog。TDD: 6 UT + 4 BDD | 后端+测试 | 8h |
-| Stage 102 | ⏳ 待开始 | **Responses→Chat 协议桥接** — 新增 `ResponsesToChatCompletions` 适配器（`MessageAdapter` + `StreamAdapter`）；请求转换（`input→messages`、`instructions→system`、`max_output_tokens→max_tokens`）；响应转换（`choices→output`、`prompt_tokens→input_tokens`）；流式 SSE 事件映射（`delta.content→output_text.delta`、`delta.tool_calls→function_call_arguments.delta`、`finish+usage→response.completed`）；handler 集成。TDD: 11 适配器 UT + 6 BDD | 后端+测试 | 14h |
+| Stage 101 | ✅ 完成（2026-08-05，b90f42d） | **POST /v1/responses Passthrough** — 新建 `responses.rs` handler（认证→校验 `input` 字段→上游 `{api_base}/responses`→SpendLog）；新增 `ClientProtocol::Responses` 枚举变体 + `select_adapter` arm（实现直接复用 `ResponsesToChatCompletions`，非计划初稿的 `OpenAIPassthrough`，见关键决策修正）；Usage 字段双 fallback（`input_tokens`/`prompt_tokens`）；流式 SSE 透传 + 两阶段 SpendLog。TDD: 6 UT + 6 BDD | 后端+测试 | 8h |
+| Stage 102 | ✅ 完成（2026-08-05，6a3ab61） | **Responses→Chat 协议桥接** — 新增 `ResponsesToChatCompletions` 适配器（`MessageAdapter` + `StreamAdapter`）；请求转换（`input→messages`、`instructions→system`、`max_output_tokens→max_tokens`）；响应转换（`choices→output`、`prompt_tokens→input_tokens`）；流式 SSE 事件映射（`delta.content→output_text.delta`、`delta.tool_calls→function_call_arguments.delta`、`finish+usage→response.completed`）；handler 集成。TDD: 6 UT + 5 BDD（适配器级 UT 未单独拆分，桥接逻辑由 5 个新增 BDD 场景覆盖） | 后端+测试 | 14h |
 
 **依赖关系**: Stage 101 → 102（101 落地端点骨架 + `ClientProtocol::Responses`，102 在此基础上加适配器转换，渐进式交付，独立测试验收）。
 
-**Phase 41 合计**: 22h，2 Stages。
+**Phase 41 合计**: 22h，2 Stages。✅ 全部完成（2026-08-05 代码落地，2026-08-08 文档回写）。
 
 **关键决策**:
 - **先 Passthrough 后 Bridge，分开验收**：两个 Stage 独立可测，101 验证端点→认证→SpendLog 链路正确，102 验证协议转换正确。
-- **Passthrough 也需新建 `ClientProtocol::Responses`**：`OpenAIPassthrough` 的 `client_protocol()` 返回 `ClientProtocol::OpenAI`，但 Responses API 的校验逻辑（`input` vs `messages`）、上游 URL 路径（`responses` vs `chat/completions`）、Usage 字段解析都不同。新增变体让 handler 层可以区分处理，同时复用 `adapt_request`/`adapt_response`/`stream_adapter` 的透传行为。
-- **适配器复用策略**：Stage 101 的 `select_adapter(ClientProtocol::Responses, ProviderType::OpenAICompatible)` → `OpenAIPassthrough`（只改 model + stream_options，不转换格式）。Stage 102 替换为 `ResponsesToChatCompletions`。
+- **⚠️ 实现修正——101 未复用 `OpenAIPassthrough`**：Stage 101 落地时 `select_adapter(ClientProtocol::Responses, ProviderType::OpenAICompatible)` 直接接线到 `ResponsesToChatCompletions`（Stage 102 的桥接适配器），而非计划初稿的 `OpenAIPassthrough`。因此非流式 `/v1/responses` 请求实际走桥接路径返回 ChatCompletions 格式。流式路径仍为原始 SSE 透传（`stream_adapter` 未接线，见测试缺口）。
 - **显式丢弃字段**: `reasoning`（ChatCompletions 无对应）、`previous_response_id`/`conversation`（需服务端会话）、`web_search_preview`/`code_interpreter`/`mcp` 工具（Stage 102 400 拒绝）。
+
+**测试缺口（已记录）**: ① Stage 102 声称的 19 适配器 UT 未落地——adapter.rs 测试模块 68 个 UT 中无 `ResponsesToChatCompletions` 直测，桥接逻辑仅由 5 个 BDD 场景覆盖；② 流式 SSE 桥接（`ResponsesToChatCompletionsStream`）未接入 handler——responses.rs 流式路径转发原始字节、从不调用 `stream_adapter`，流式 SSE 事件转换实际未被执行路径覆盖（mock 上游亦不返回真实 SSE 帧）。
 
 **设计文档**:
 - `docs/stages/stage-101.md`（Passthrough + Bridge 两个 Stage）
@@ -840,3 +841,4 @@ Phase 45:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 | v42.1 | 2026-08-07 | **Phase 42 完成**（Stage 103-105 ✅，总进度 103/105）：Stage 103 `cd576dc` 后端适配修复（parse_data_url + model_info.mode + 8 UT + 6 BDD）；Stage 104 `0f4868f` Playground 图片输入（上传/粘贴/预览 + 双端点序列化 + 8 E2E × 3 viewports + 全量 300 pass）；Stage 105 图片渲染（log-viewer extractImages/ImageThumbnails + OutputCard Responses output[] 分支 + SpendLog 详情 3 UT + 5 E2E × 3 viewports + 全量 312 pass）。ADR-025 Approved→Accepted，TD-009 a/b/e 登记。 |
 | v43.0 | 2026-08-07 | **Phase 43 规划**：Image Token Usage Tracking — 上游优先解析 + 客户端 fallback 估算。3 Stage（106-108）共 28h。基于多轮调研（Qwen/VL config + 阿里云文档 + litellm/OpenRouter/OneAPI 源码）确认 Qwen/DashScope 返回 image_tokens（最完整），OpenAI/Anthropic 不返回；主流网关均不做预计算（aigw 将是行业差异化功能）。设计文档：`docs/stages/stage-106.md`~`stage-108.md` + `docs/plans/2026-08-07-image-token-estimation.md`。总进度 103/108。 |
 | v45.0 | 2026-08-08 | **Phase 45 规划**：OpenAI Embeddings API 代理（Stage 110-112，3 Stage 共 24h）。基于 6 路 subagent 调研（`docs/research/2026-08-08-embedding-proxy-support.md`）：LiteLLM 把 `/v1/embeddings` 当一等公民端点（四路径 + 与 chat 相同管道 + call_type=embedding + prompt-only 计费）；Kong/Portkey/new-api 均支持（leader parity）；用户确认 ① 有流量想多尝试 ② 本地+托管模型 ③ **Phase 44 之后** ④ **四端点都需要** ⑤ health 探测非阻塞。Stage 110 后端 Passthrough 四端点（10h，6 UT + 11 BDD）；Stage 111 前端 OutputCard `data[]` 分支 + OpenAPI spec + real BDD（8h，3 UT + 2 E2E）；Stage 112 模型接入验证 + 文档收尾（6h，+2 BDD）。硬选 OpenAIPassthrough 拒绝 AnthropicNative（防 OpenAIToAnthropic 破坏 body）；薄 OpenAI-compatible 透传不做协议翻译。ADR-026 + TD-011 登记。总进度 104/111。 |
+| v46.0 | 2026-08-08 | **Phase 41 完成回写（Stage 101-102 ✅）+ 测试缺口登记**：代码审计确认 Phase 41 两 Stage 已 2026-08-05 落地（`b90f42d` Stage 101 / `6a3ab61` Stage 102），roadmap/next-steps 此前积欠未同步——本次回写为 ✅，总进度 106/111。**实现修正**：Stage 101 `select_adapter(Responses, OpenAICompatible)` 实际接线 `ResponsesToChatCompletions`（非计划初稿的 `OpenAIPassthrough`），非流式 `/v1/responses` 实际返回 ChatCompletions 格式。**测试缺口登记**：① 计划声称的 19 适配器 UT 未落地（adapter.rs 无 `ResponsesToChatCompletions` 直测，桥接由 5 个 BDD 场景覆盖）；② `ResponsesToChatCompletionsStream` 未接入 handler 流式路径（流式路径转发原始 SSE 字节，mock 亦不返回真实 SSE 帧）——登记到 next-steps 待办，待后续补测。 |
