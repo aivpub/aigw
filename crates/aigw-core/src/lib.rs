@@ -26,6 +26,7 @@ pub mod daily_spend_queue;
 pub mod db;
 pub mod deployment;
 pub mod engine;
+pub mod image_tokens;
 pub mod instance;
 pub mod metrics;
 pub mod middleware;
@@ -49,6 +50,10 @@ pub use crypto::{
 pub use db::CredentialsStore;
 pub use deployment::{Deployment, ProviderType};
 pub use engine::{Engine, EngineConfig};
+pub use image_tokens::{
+    calculate_image_tokens, decode_image_dimensions, estimate_image_tokens_from_blocks,
+    estimate_single, extract_image_tokens_from_usage, infer_strategy, CalculationStrategy,
+};
 pub use metrics::{MetricsRecorder, RequestSummary};
 pub use models::{
     Budget, Credential, DailySpendKind, DailySpendLog, Organization, OrganizationMembership,
