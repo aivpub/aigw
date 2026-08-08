@@ -4,6 +4,19 @@ import { syncCapturedBodies } from "./api-mocks";
 
 const { Given, When, Then } = createBdd();
 
+/**
+ * Tailwind `lg` breakpoint (1024px): at/above it the desktop settings sidebar
+ * renders inline; below it settings live in the mobile Sheet. The old "is any
+ * settings button visible" heuristic broke when the sidebar gained a collapsible
+ * toggle (title "Collapse/Expand settings") — it also matches /settings/i, so
+ * the step collapsed the desktop sidebar, hid the model combobox, and timed out.
+ * Viewport width is the stable signal (mocks run at 1280/768/375px).
+ */
+function isMobileViewport(page: Parameters<Parameters<typeof createBdd>[0]>[0]) {
+  const vp = page.viewportSize();
+  return !!vp && vp.width < 1024;
+}
+
 Given("I am on the Playground page", async ({ page }) => {
   await page.goto("/dash/playground");
   await page.waitForLoadState("domcontentloaded");
@@ -64,13 +77,16 @@ Then("the chat area should show {string}", async ({ page }, text: string) => {
 
 When("I select model {string} from the settings panel", async ({ page }, model: string) => {
   // Open settings if on mobile (force:true — sticky header or Sheet overlay may intercept clicks)
-  const settingsBtn = page.getByRole("button", { name: /settings/i });
-  const isMobile = await settingsBtn.isVisible().catch(() => false);
+  const isMobile = isMobileViewport(page);
   if (isMobile) {
-    await settingsBtn.click({ force: true });
-    await page.waitForTimeout(300);
+    const settingsBtn = page.getByRole("button", { name: /settings/i });
+    if (await settingsBtn.isVisible().catch(() => false)) {
+      await settingsBtn.click({ force: true });
+      await page.waitForTimeout(300);
+    }
   }
-  // force:true on mobile — Sheet's fixed overlay intercepts all clicks inside the Sheet portal
+  // force:true on mobile — Sheet's fixed overlay intercepts all clicks inside the Sheet portal.
+  // On desktop the model combobox is the FIRST combobox in the settings sidebar.
   await page.getByRole("combobox").first().click({ force: isMobile });
   await page.waitForTimeout(300);
   await page.getByRole("option", { name: model }).click({ force: isMobile });
@@ -130,12 +146,14 @@ When("I click the Send button", async ({ page }) => {
   const modelText = await page.locator("main").textContent();
   const needsModel = !modelText || !modelText.match(/gpt-4|claude/i);
   if (needsModel) {
-    // Open settings sheet
-    const settingsBtn = page.getByRole("button", { name: /settings/i });
-    const onMobile = await settingsBtn.isVisible().catch(() => false);
+    // Open settings sheet (mobile) — desktop sidebar is already visible
+    const onMobile = isMobileViewport(page);
     if (onMobile) {
-      await settingsBtn.click({ force: true });
-      await page.waitForTimeout(300);
+      const settingsBtn = page.getByRole("button", { name: /settings/i });
+      if (await settingsBtn.isVisible().catch(() => false)) {
+        await settingsBtn.click({ force: true });
+        await page.waitForTimeout(300);
+      }
     }
     const combo = page.getByRole("combobox");
     if (await combo.first().isVisible().catch(() => false)) {
@@ -246,11 +264,13 @@ When("I remove the first image attachment", async ({ page }) => {
 
 When("I switch the endpoint type to Claude Messages", async ({ page }) => {
   // Endpoint selector is in the settings panel/sheet. Pick "Claude Messages".
-  const settingsBtn = page.getByRole("button", { name: /settings/i });
-  const onMobile = await settingsBtn.isVisible().catch(() => false);
+  const onMobile = isMobileViewport(page);
   if (onMobile) {
-    await settingsBtn.click({ force: true });
-    await page.waitForTimeout(300);
+    const settingsBtn = page.getByRole("button", { name: /settings/i });
+    if (await settingsBtn.isVisible().catch(() => false)) {
+      await settingsBtn.click({ force: true });
+      await page.waitForTimeout(300);
+    }
   }
   const combos = page.getByRole("combobox");
   // Last combobox in settings is endpoint type (chat / messages)

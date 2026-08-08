@@ -13,7 +13,9 @@ export default defineConfig({
   expect: { timeout: 5000 },
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 1,
-  workers: process.env.CI ? 1 : 2,
+  // Local: 5 workers; CI (single-core runners) stays at 1. Workers are bounded
+  // by project count (3 viewports), so 5 means up to 5 concurrent pages per run.
+  workers: process.env.CI ? 1 : 5,
   reporter: [
     ["html", { outputFolder: "tests/output/html-report" }],
     ["list"],
