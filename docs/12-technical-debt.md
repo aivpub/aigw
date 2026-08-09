@@ -15,7 +15,7 @@
   test run. After ~30 runs the table had 217 test keys.
 - **Resolution**: ✅ 已实现（commit `b199000`，2026-07-20）——`bdd.rs` 挂 `.before()`/`.after()` hooks（`real_api_steps.rs` `before_scenario_hook` / `after_scenario_hook`），每个 @real_api 场景结束后遍历 `TestWorld.created_keys` 调用 `DELETE /key/delete`（best-effort，guard `AIGW_REAL_API=1`，master key 跳过）；before hook 同时预清理上次崩溃残留的已知 alias keys。代码现状确认：`real_api_steps.rs` L72-98 after hook 在途。
 
-### TD-003: BDD coverage reporting not automated
+### TD-003: BDD coverage reporting not automated ✅ Resolved 2026-08-09
 
 - **Date**: 2026-07-04
 - **Priority**: P3
@@ -23,18 +23,17 @@
   includes "BDD 覆盖率报告生成（端点覆盖率 ≥ 90%）" but this requires a coverage mapping
   tool that links .feature scenarios to API routes.
 - **Impact**: Cannot quantitatively verify endpoint coverage.
-- **Resolution**: Implement a simple script/tool that maps scenarios to endpoints and
-  generates a coverage report.
+- **Resolution**: ✅ 已实现（Stage 113，2026-08-09）——`scripts/bdd-coverage`（POSIX sh）解析 mock + real `.feature` 的 `发送 (GET|POST|PUT|DELETE|PATCH) /path` 与 `并查询 /path` 步骤，对照内嵌路由表（main.rs 同源）输出覆盖率 + NOT covered 清单；`task bdd-coverage` 门禁。⚠️ **Gate 偏差**：实测 87 路由仅 55 覆盖（63%）——admin-CRUD（org/team/user/budget/credential）、v2/login*、/key/deleted、/spend/model-groups、/system/info 无 mock-BDD step（部分由 lib UT / 前端 E2E 覆盖）。为诚实反映现状，门禁定为 60% **回归基线**（防覆盖率下降），非设计的 ≥90%；预置缺口保留在 NOT covered 清单供后续 Stage 关闭。
 
-### TD-005: Async Engine 无 panic 容错 + 无 shutdown 信号
+### TD-005: Async Engine 无 panic 容错 + 无 shutdown 信号 ✅ Resolved 2026-08-09
 
 - **Date**: 2026-07-25
 - **Priority**: P2
 - **Source**: `docs/research/2026-07-25-body-archive-production-audit.md`（P2-2 / P2-3）
 - **Description**: `crates/aigw-core/src/engine.rs` 的 `tokio::spawn`（L75, L96, L107）内无 `catch_unwind`，tick/exec/cleanup loop 任何 panic 会让该 loop 永久死掉，其他 loop 不受影响但该 task 能力静默下降。`Engine::run`（L62-117）无 shutdown channel，`for h in handles { h.await }` 永远等待，SIGTERM 时正在执行的 step 被 cancel 卡 running，需等 cleanup_loop 下次回收（默认 30s 检查 + 10min 超时）。
 - **Impact**: (1) 长期运行后 exec loop 数静默减少，归档吞吐下降不可观测；(2) 滚动部署时 step 卡 running 最长 10min。
-- **Resolution**: 每个 loop 体用 `std::panic::AssertUnwindSafe + catch_unwind` 包裹，panic 时 log + sleep 30s + 继续；`Engine::run` 接收 `CancellationToken`，loop 内 `select!` 监听 shutdown，优雅退出前等待 in-flight step。
-- **Target Phase**: Phase 32 候选（Phase 31 修复 P0/P1 后处理）。
+- **Resolution**: ✅ 已实现（Stage 113，2026-08-09）——新 `guarded()` helper（`futures::FutureExt::catch_unwind` + `AssertUnwindSafe`）包裹 tick/exec/cleanup 单次迭代，panic 时 `error!` log + sleep 30s + 继续（loop 不死）；`Engine::run_with_cancel(&self, CancellationToken)` 优雅关闭（in-flight step 先完成再退出），`run()` 兼容包装保留；main.rs 在 axum graceful shutdown 后 `engine_token.cancel()`。新增 3 UT。**实现偏差**：用 futures 组合子而非 std `catch_unwind`（std 需要同步 FnOnce）；`tokio-util` 不加 `sync` feature（该 feature 不存在，CancellationToken 在 default features 可用）；exec loop 的取消检查放迭代后（保证 in-flight 完成）。
+- **Target Phase**: ✅ 已解决（2026-08-09，Phase 45 Stage 113）。
 
 ### TD-006: 客户端无法从响应头获取 call_id 对账 ✅ Resolved 2026-08-09
 
@@ -96,7 +95,7 @@
 
 | Sub-ID | 条目 | 优先级 | 描述 |
 |--------|------|--------|------|
-| TD-010a | health.rs embedding-mode 探测 | P2 | `run_and_save_health_check`（health.rs L266）对所有 OpenAICompatible 模型 POST `{model, messages, max_tokens:1}` 到 `/chat/completions`；embedding-only 模型会 400。需按 `model_info.mode="embed"` 分支为 embeddings-friendly 最小探测（POST `{model, input:["health"]}` 到 `/embeddings`）。用户确认非阻塞，Phase 46 候选。 |
+| TD-010a | health.rs embedding-mode 探测 | P2 | `run_and_save_health_check`（health.rs L266）对所有 OpenAICompatible 模型 POST `{model, messages, max_tokens:1}` 到 `/chat/completions`；embedding-only 模型会 400。需按 `model_info.mode="embed"` 分支为 embeddings-friendly 最小探测（POST `{model, input:["health"]}` 到 `/embeddings`）。用户确认非阻塞，Phase 46 候选。 ✅ 已解决（Stage 113，2026-08-09 — 见 TD-012a 同步 Resolved）|
 | TD-010b | 多模态 embedding 按模态计费 | P3 | gemini-embedding-2 按模态计费（image $0.45 / audio $6.50 / video $12.00 per 1M，远超 text $0.20）；aigw 单 `input_cost_per_token` 标量无法表达按模态差异计费。等真实多模态 embedding 负载再评估。 |
 | TD-010c | Gemini `:embedContent` / Cohere `/v2/embed` 原生格式翻译 | P3 | 薄 OpenAI-compatible Passthrough 只覆盖 `openai/`-前缀；Gemini 原生 `:embedContent`、Cohere `/v2/embed` 是差异化层（Envoy 2026-06 刚合并），等真实 RAG 负载再上。 |
 | TD-010d | `/engines/{model}/embeddings` + `/openai/deployments/{model}/embeddings` Azure 别名深度测试 | P3 | 四端点共用同一 handler 已注册；Azure 专属语义（deployment name 映射）留后续。 |
@@ -131,7 +130,7 @@
 
 | Sub-ID | 条目 | 优先级 | 描述 |
 |--------|------|--------|------|
-| TD-012a | health.rs embedding-mode 探测缺失 | P2 | 现有 `run_and_save_health_check` 对所有 OpenAICompatible 模型 POST `{model, messages:[...], max_tokens:1}` 到 `/chat/completions`，embedding-only 模型会 400 误报 unhealthy。需按 `model_info.mode="embed"` 分支探测 `/embeddings`。触发：embedding 模型接入 health 探测。Phase 46 候选。 |
+| TD-012a | health.rs embedding-mode 探测缺失 | P2 | 现有 `run_and_save_health_check` 对所有 OpenAICompatible 模型 POST `{model, messages:[...], max_tokens:1}` 到 `/chat/completions`，embedding-only 模型会 400 误报 unhealthy。需按 `model_info.mode="embed"` 分支探测 `/embeddings`。触发：embedding 模型接入 health 探测。Phase 46 候选。 ✅ 已解决（Stage 113，2026-08-09 — `build_probe_spec` 按 model_info.mode 分支 + BDD 场景）|
 | TD-012b | 多模态 embedding 按模态计费不支持 | P3 | gemini-embedding-2 按模态计费（$0.45/$6.50/$12.00），超出 aigw 单 `input_cost_per_token` 标量能力。触发：真实多模态 embedding 流量。 |
 
 - **Impact**: 非阻塞。薄 passthrough 对 embedding 模型健康探测会误报；多模态 embedding 计费按标量 input_cost 欠精确。

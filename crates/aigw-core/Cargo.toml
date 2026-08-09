@@ -6,6 +6,7 @@ description = "AI Gateway core library — data models, database, router, middle
 
 [dependencies]
 tokio = { workspace = true }
+tokio-util = { version = "0.7" }
 axum = { workspace = true }
 sqlx = { workspace = true }
 reqwest = { workspace = true, optional = true }

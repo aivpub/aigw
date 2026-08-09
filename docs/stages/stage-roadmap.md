@@ -7,9 +7,9 @@
 
 ## 当前状态
 
-- **当前 Phase**: **Phase 44 ✅ 完成（Stage 110-112 OpenAI Embeddings API，24h，2026-08-09）+ 在途 P1 收尾全完成（Responses 稳定 + TD-006/TD-007）**；**Phase 45 ⏳ 规划（Stage 113-115 技术债清理，28h）**
-- **状态**: **116/116 Stages** 已完成（Phase 0-44 全部交付；ALL STAGES COMPLETE）+ 在途 P1 收尾 ✅（`caae61f`/`361b99d`/`b485f30`/`6e7a58c` + `x-call-id` 改名 `6b6822c`）。
-- **下一里程碑**: Phase 45 Stage 113 — 后端可靠性加固（TD-005 Async Engine 容错 + TD-010a health embedding 探测 + TD-003 BDD 覆盖率，8h）
+- **当前 Phase**: **Phase 44 ✅ 完成（Stage 110-112 OpenAI Embeddings API，24h，2026-08-09）+ 在途 P1 收尾全完成（Responses 稳定 + TD-006/TD-007）**；**Phase 45 🔄 进行中（Stage 113 ✅ → Stage 114 ⏳，技术债清理，28h）**
+- **状态**: **116/116 Stages** 已完成（Phase 0-44 全部交付；ALL STAGES COMPLETE）+ 在途 P1 收尾 ✅（`caae61f`/`361b99d`/`b485f30`/`6e7a58c` + `x-call-id` 改名 `6b6822c`）+ **Phase 45 Stage 113 ✅（TD-005 Engine 容错 + TD-010a health embed 探测 + TD-003 BDD 覆盖率，2026-08-09）**。
+- **下一里程碑**: Phase 45 Stage 114 — 前端体验（TD-009a/b 图片压缩 + TD-008a/b i18n 懒加载，10h）
 
 ### 整体进度
 
@@ -52,7 +52,7 @@ Phase 41:   ████████████████████ 100% (2
 Phase 42:   ████████████████████ 100% (3/3 Stages) ✅ Playground 多模态图片 (Stage 103-105)
 Phase 43:   ████████████████████ 100% (3/3 Stages) ✅ Image Token Usage Tracking (Stage 106-108)
 Phase 44:   ████████████████████ 100% (3/3 Stages) ✅ OpenAI Embeddings API 代理 (Stage 110-112)
-Phase 45:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3 Stages) ⏳ 技术债清理 (Stage 113-115)
+Phase 45:   ░░░░░░░░░░░░░░░░░░░░  33% (1/3 Stages) 🔄 技术债清理 (Stage 113 ✅ → 114 ⏳)
 ```
 
 ---
@@ -229,23 +229,26 @@ Phase 45:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 ---
 
-### Phase 45：技术债清理 ⏳（2026-08-09 规划，3 Stage，28h）
+### Phase 45：技术债清理 🔄（2026-08-09 规划，3 Stage，28h）
 
 **背景**: Phase 44 + 在途 P1 收尾全部完成后，剩余技术债按风险/依赖/现实性排序收敛。核实确认 TD-004 已修复（`b199000`）；TD-011b（HEIC/AVIF）方案变更为前端转码（后端 ISO-BMFF 解析脆弱 + Chrome 不渲染）；TD-011a（视频）重定义为 Playground 视频输入（token 估算留待真实负载）。总体规划：`docs/plans/2026-08-09-tech-debt-cleanup.md`。
 
-| Stage | 状态 | 目标 | 类型 | 预估 |
-|-------|------|------|------|------|
-| Stage 113 | ⏳ 待开始 | **后端可靠性加固** — TD-005 Async Engine 三 loop panic 容错 + CancellationToken 优雅关闭；TD-010a health embedding-mode 探测（`/embeddings` 分支）；TD-003 BDD 覆盖率脚本 + `task bdd-coverage`。TDD: ~10 UT + 1 BDD | 后端+测试 | 8h |
+| Stage | 状态 | 目标 |类型 | 预估 |
+-------|------|------|------|------|
+| Stage 113 | ✅ 完成（2026-08-09） | **后端可靠性加固** — TD-005 Async Engine 三 loop panic 容错（`guarded()` futures catch_unwind + 30s backoff）+ `Engine::run_with_cancel` 优雅关闭；TD-010a health embedding-mode 探测（`build_probe_spec` 按 model_info.mode 分支 `/embeddings`）；TD-003 BDD 覆盖率脚本 + `task bdd-coverage`（60% 回归基线，见 stage-113 实现偏差）。TDD: ~10 UT + 1 BDD | 后端+测试 | 8h |
 | Stage 114 | ⏳ 待开始 | **前端体验** — TD-009a/b Playground 图片压缩（canvas）+ 超大图 body 防御；TD-008a/b i18n 懒加载 + 翻译 TS 类型。TDD: 3 fe-bdd × 3 viewports + build 分包 | 前端+测试 | 10h |
 | Stage 115 | ⏳ 待开始 | **多模态精度** — TD-011b HEIC/AVIF 前端转码；TD-011c Anthropic downsizing；TD-012b 多模态 embedding 按模态计费；TD-011a 视频输入（可选）。TDD: ~7 core UT + 2 fe-bdd × 3 viewports | 全栈+测试 | 10h |
 
 **依赖关系**: 113 → 114 → 115（无硬依赖，按价值排序串行；Stage 内子项可并行）。
 
-**Phase 45 合计**: 28h，3 Stages。
+**Phase 45 合计**: 28h，3 Stages（进度 1/3）。
+
+**验证（Stage 113）**: aigw-core 409 + aigw-server 136 UT、mock BDD 233 场景（新增 embed 探针场景通过；仅 pre-existing budget_reset next_tick flake）、bdd-coverage 63% PASS、fmt + lint green。ADR-028 Accepted + TD-003/005/010a/012a Resolved。
 
 **设计文档**:
 - `docs/plans/2026-08-09-tech-debt-cleanup.md`
-- `docs/stages/stage-113.md` / `stage-114.md` / `stage-115.md`
+- `docs/stages/stage-113.md`（含 Implementation Notes）/ `stage-114.md` / `stage-115.md`
+- `docs/stages/stage-113-review-log.md`
 
 ---
 
@@ -875,3 +878,4 @@ Phase 45:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 | v48.0 | 2026-08-08 | **Phase 43 完成（Stage 106-108 ✅，总进度 113/114）**：Image Token Usage Tracking 全部交付（28h，3 Stage）。Stage 106 引擎（`45d7323`）：零依赖 PNG/JPEG/WebP/GIF header parser + model-name auto-sniff 公式（OpenAI tiling 85+170×tiles / Qwen2.5-VL factor 28 / Qwen3-VL factor 32 / Anthropic 官方 ⌈w/28⌉×⌈h/28⌉）+ extract_image_tokens_from_usage 上游解析器，18 UT。Stage 107 handler+迁移：Migration 025（spend_logs + 6 daily_*_spend 加 image_tokens × 3 方言）+ SpendLog/DailySpendLog 字段 + chat.rs/v1_messages.rs 集成（上游优先 + fallback，streaming Phase 2 UPDATE）+ daily_spend_queue 聚合 mock 上游真实 SSE 流式 + 5 BDD + 4 handler UT。Stage 108 前端+文档：SpendLog 详情 image_tokens + source badge（✓/⚠）+ 列表 🖼️ 标记 + i18n 3 keys + ADR-027 + TD-011。验证：aigw-core 391 + aigw-server 129 UT、mock BDD 219 pass（1 pre-existing budget_reset next_tick flake）、real sqlite 43/43、frontend BDD 327 pass。ADR-027 Accepted + TD-011a/b/c 登记。 |
 | v49.0 | 2026-08-09 | **Phase 44 完成（Stage 110-112 ✅，总进度 116/116 — ALL STAGES COMPLETE）**：OpenAI Embeddings API 代理全部交付（24h，3 Stage）。Stage 110（`41d0223`）后端四端点：`routes/embeddings.rs`（responses.rs 非流式子集）+ 硬选 OpenAIPassthrough（拒绝 AnthropicNative）+ call_type=embedding + prompt-only 计费 + openapi embeddings_spec（18→19 端点）+ mock /v1/embeddings handler；**实现修正**：axum `Path<Option<String>>` 在无参数路由会 500 → 拆 `embeddings_handler`（无 Path wrapper）+ `embeddings_handler_with_path`（Azure 别名 Path<String>）两个公开 handler，共享 `embeddings_handler_inner`。TDD 6 UT + 11 BDD。Stage 111（`4637062`）前端：OutputCard `data[]` 分支（向量维度 + 8 维截断预览 + usage）+ i18n 2 keys + 2 E2E × 3 viewports（fe-bdd 333 pass）+ ADR-026 Accepted + TD-012a/b。Stage 112 模型接入 + 文档：models.feature +2 BDD（/model/new 注册 mode=embed + /v1/models 展示 + /v1/embeddings SpendLog call_type=embedding）+ roadmap/next-steps/ADR/TD 收尾。验证：aigw-server 135 UT、mock BDD 232 pass（2 新增全绿，仅 pre-existing budget_reset flake）、fmt + lint green。 |
 | v49.1 | 2026-08-09 | **在途 P1 收尾完成（Responses 稳定 + TD-006/TD-007 ✅）+ Phase 45 规划**：① Responses 适配器级 UT 7 个直测 + stream tool-call args 修复（`caae61f`）；② 流式 SSE 接线（responses.rs 接 stream_adapter 转 Responses SSE 事件，mock 上游真实 Chat SSE 帧，BDD 断言三事件）（`361b99d`）；③ TD-006 `x-call-id` 响应头回写（`b485f30`，头名改 `x-call-id` `6b6822c`）——`aigw_core::request_id::UuidV7RequestId` + main.rs PropagateRequestIdLayer 覆盖全路由 + BDD 匹配 SpendLog.call_id；④ TD-007 soft_budget webhook 告警（`6e7a58c`）——`aigw_core::alerts` dispatcher + `general_settings.alert_webhook` + 3 UT + 2 config UT。⑤ 核实 TD-004 已修复（`b199000`）并补标 Resolved（`cb84341`）。⑥ **Phase 45 规划**：技术债清理 3 Stage（Stage 113 后端可靠性 TD-005+TD-010a+TD-003 8h / Stage 114 前端 TD-009ab+TD-008ab 10h / Stage 115 多模态 TD-011 重定义+TD-012b 10h），HEIC/AVIF 改前端转码、视频重定义为 Playground 输入。设计文档：`docs/plans/2026-08-09-tech-debt-cleanup.md` + `stage-113~115.md`。验证：workspace 796 UT、mock BDD 233 pass（新增 SSE-events + x-call-id 场景，仅 pre-existing budget_reset flake）。 |
+| v50.0 | 2026-08-09 | **Phase 45 Stage 113 完成（总进度 117/117）**：后端可靠性加固三项落地。① TD-005 Engine panic 容错 + 优雅关闭——`guarded()`（futures `catch_unwind` + `AssertUnwindSafe`）包裹三 loop 单次迭代（panic → log + 30s backoff + continue）+ `Engine::run_with_cancel(CancellationToken)`（in-flight step 先完成再退出，`run()` 兼容包装保留）+ main.rs axum 优雅关闭后 cancel；3 新 UT（`test_run_with_cancel_returns_on_cancel` / `test_tick_loop_panic_keeps_task_alive` / `test_guarded_recovers_panic`）。**实现偏差**：std catch_unwind 无法 await async → futures 组合子；tokio-util 不加 sync feature（不存在）；exec 取消检查放迭代后。② TD-010a health embedding 探测——`run_and_save_health_check` 增 `model_info` 参数（设计初稿读 `raw_params["model_info"]` 会静默失效，resolver raw_params 只含 litellm_params）+ `build_probe_spec` 分支 embed 走 `{api_base}/embeddings` body `input:["ping"]`；1 UT + 1 BDD。③ TD-003 `scripts/bdd-coverage` + `task bdd-coverage`——解析 mock+real feature（`发送 METHOD /path` + `并查询 /path`）对照内嵌路由表；实测 63%（55/87），**门禁 60% 回归基线**（admin-CRUD/login/key-deleted/model-groups/system-info 无 mock-BDD step，预置缺口列 NOT covered）。验证：aigw-core 409 + aigw-server 136 UT、mock BDD 233 场景（仅 pre-existing budget_reset flake）、bdd-coverage PASS、fmt + lint green。ADR-028 Accepted + TD-003/005/010a/012a Resolved。 |

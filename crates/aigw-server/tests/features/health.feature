@@ -36,6 +36,15 @@ Feature: 健康检查
     Then 健康检查结果中 "hc-fail-model" 为 unhealthy
     And spend_logs 中存在 model="hc-fail-model" 且 call_type=health_check 且 status "failure" 的记录
 
+  # ━━━━ Stage 113 TD-010a: embedding-mode 模型探针走 /v1/embeddings ━━━━
+
+  Scenario: embedding 模型健康探针走 /embeddings 分支返回 healthy
+    Given 健康检查 mock 上游已启动
+    And 已配置 embedding 模型 "hc-embed-model" 指向健康检查 mock 上游
+    When 发送 POST /model/health-check/all 请求
+    Then 健康检查结果中 "hc-embed-model" 为 healthy
+    And 健康检查探针请求 "/v1/embeddings" 且 body 含 "input" 字段
+
   # ━━━━ Stage 98: 路由端点 BDD 补全 ━━━━
 
   Scenario: health_latest 返回最新检查记录

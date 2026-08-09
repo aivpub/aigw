@@ -4,8 +4,12 @@
 //! `async_jobs` / `async_job_steps` / `async_job_logs` tables
 //! for multi-replica coordination.
 
+use std::future::Future;
+use std::panic::AssertUnwindSafe;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
@@ -58,8 +62,22 @@ impl Engine {
         self.tasks.push(task);
     }
 
-    /// Run all loops until shutdown (never returns).
+    /// Run all loops until shutdown (never returns). Wrapper that creates a
+    /// fresh cancellation token (never cancelled) so callers can keep the
+    /// pre-TD-005 signature.
     pub async fn run(&self) {
+        self.run_with_cancel(CancellationToken::new()).await;
+    }
+
+    /// Run all loops until shutdown or cancellation.
+    ///
+    /// Each loop body is wrapped in `catch_unwind` so a panic in one task's
+    /// tick/exec/cleanup iteration is logged and recovered (sleep + continue)
+    /// instead of silently killing that loop's tokio task forever (TD-005).
+    ///
+    /// On cancellation the current in-flight step completes before the loop
+    /// exits, and `run_with_cancel` returns after all loops observe the token.
+    pub async fn run_with_cancel(&self, token: CancellationToken) {
         if self.tasks.is_empty() {
             warn!("Engine::run() called with no registered tasks — nothing to do");
             return;
@@ -72,8 +90,9 @@ impl Engine {
             let db = self.db.clone();
             let task = Arc::clone(task);
             let tick_interval = task.tick_interval();
+            let token = token.clone();
             handles.push(tokio::spawn(async move {
-                tick_loop(db, task, tick_interval).await;
+                tick_loop(db, task, tick_interval, token).await;
             }));
         }
 
@@ -93,8 +112,9 @@ impl Engine {
                 let db = self.db.clone();
                 let task = Arc::clone(task);
                 let poll = self.config.poll_interval;
+                let token = token.clone();
                 handles.push(tokio::spawn(async move {
-                    exec_loop(db, task, poll).await;
+                    exec_loop(db, task, poll, token).await;
                 }));
             }
         }
@@ -104,12 +124,14 @@ impl Engine {
             let db = self.db.clone();
             let interval = self.config.cleanup_interval;
             let timeout = self.config.step_timeout;
+            let token = token.clone();
             handles.push(tokio::spawn(async move {
-                cleanup_loop(db, interval, timeout).await;
+                cleanup_loop(db, interval, timeout, token).await;
             }));
         }
 
-        // Keep all loops alive
+        // Keep all loops alive; cancellation makes each loop return so all
+        // handles complete and `run_with_cancel` returns.
         for h in handles {
             let _ = h.await;
         }
@@ -434,75 +456,174 @@ pub async fn append_log(
 // Loops
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-async fn tick_loop(db: Arc<Database>, task: Arc<dyn AsyncTask>, interval: Duration) {
-    loop {
-        tokio::time::sleep(interval).await;
-        match task.tick(&db).await {
-            Ok(Some(steps)) => {
-                let step_type = task.step_type();
-                info!(step_type, count = steps.len(), "tick: new work");
-
-                if let Err(e) = create_job(&db, step_type, "cron", None, &steps, 3).await {
-                    // Ignore unique constraint violations (concurrent tick)
-                    let err_str = e.to_string();
-                    if err_str.contains("UNIQUE")
-                        || err_str.contains("unique")
-                        || err_str.contains("duplicate")
-                    {
-                        debug!(step_type, "tick: concurrent job already created, skipping");
-                    } else {
-                        error!(step_type, %e, "tick: failed to create job");
-                    }
-                }
-            }
-            Ok(None) => {
-                debug!(step_type = task.step_type(), "tick: no new work");
-            }
-            Err(e) => {
-                error!(step_type = task.step_type(), %e, "tick error");
-            }
+/// Run a single `body` future and swallow panics, returning `true` if the
+/// iteration panicked (so the caller can log + back off) and `false` otherwise.
+///
+/// Uses `FutureExt::catch_unwind()` from futures (the combinator, not
+/// `std::panic::catch_unwind`) so a panic during the awaited body is captured
+/// and turned into a normal error result — the tokio task never dies (TD-005).
+///
+/// `AssertUnwindSafe` is required because the boxed dyn Future is not
+/// `UnwindSafe` by construction; we accept that a panic may leave shared state
+/// in an inconsistent state, but the alternative (a permanently dead loop) is
+/// strictly worse. Panics are logged and the caller backs off before retrying.
+async fn guarded(body: Pin<Box<dyn Future<Output = ()> + Send>>) -> bool {
+    use futures::FutureExt as _;
+    let body = AssertUnwindSafe(body);
+    match body.catch_unwind().await {
+        Ok(()) => false,
+        Err(p) => {
+            let msg = if let Some(s) = p.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = p.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "unknown panic payload".to_string()
+            };
+            error!("engine loop iteration panicked (recovering): {}", msg);
+            true
         }
     }
 }
 
-async fn exec_loop(db: Arc<Database>, task: Arc<dyn AsyncTask>, poll_interval: Duration) {
+async fn tick_loop(
+    db: Arc<Database>,
+    task: Arc<dyn AsyncTask>,
+    interval: Duration,
+    token: CancellationToken,
+) {
+    loop {
+        tokio::select! {
+            _ = token.cancelled() => {
+                info!(step_type = task.step_type(), "tick loop shutting down (cancelled)");
+                return;
+            }
+            _ = tokio::time::sleep(interval) => {}
+        }
+        let step_type = task.step_type();
+        let tick_db = db.clone();
+        let tick_task = task.clone();
+        let panicked = guarded(Box::pin(async move {
+            match tick_task.tick(&tick_db).await {
+                Ok(Some(steps)) => {
+                    info!(step_type, count = steps.len(), "tick: new work");
+
+                    if let Err(e) = create_job(&tick_db, step_type, "cron", None, &steps, 3).await {
+                        // Ignore unique constraint violations (concurrent tick)
+                        let err_str = e.to_string();
+                        if err_str.contains("UNIQUE")
+                            || err_str.contains("unique")
+                            || err_str.contains("duplicate")
+                        {
+                            debug!(step_type, "tick: concurrent job already created, skipping");
+                        } else {
+                            error!(step_type, %e, "tick: failed to create job");
+                        }
+                    }
+                }
+                Ok(None) => {
+                    debug!(step_type, "tick: no new work");
+                }
+                Err(e) => {
+                    error!(step_type, %e, "tick error");
+                }
+            }
+        }))
+        .await;
+        if panicked {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        }
+    }
+}
+
+async fn exec_loop(
+    db: Arc<Database>,
+    task: Arc<dyn AsyncTask>,
+    poll_interval: Duration,
+    token: CancellationToken,
+) {
     let step_type = task.step_type();
     loop {
-        match claim_next_step(&db, step_type).await {
-            Ok(Some(step)) => {
-                let job_id = step.job_id.clone();
-                let step_key = step.step_key.clone();
+        // Graceful shutdown boundary: only checked between iterations so an
+        // in-flight step always completes before the loop exits (TD-005).
+        if token.is_cancelled() {
+            info!(step_type, "exec loop shutting down (cancelled)");
+            return;
+        }
+        let exec_db = db.clone();
+        let exec_task = task.clone();
+        let idle_token = token.clone();
+        let panicked = guarded(Box::pin(async move {
+            match claim_next_step(&exec_db, step_type).await {
+                Ok(Some(step)) => {
+                    let job_id = step.job_id.clone();
+                    let step_key = step.step_key.clone();
 
-                // Transition job from 'pending' to 'running' (optimistic lock)
-                mark_job_running(&db, &job_id).await;
+                    // Transition job from 'pending' to 'running' (optimistic lock)
+                    mark_job_running(&exec_db, &job_id).await;
 
-                append_log(&db, &job_id, Some(&step_key), "info", "step started").await;
+                    append_log(&exec_db, &job_id, Some(&step_key), "info", "step started").await;
 
-                match task.execute(&db, &step).await {
-                    Ok(output) => {
-                        complete_step(&db, &step, output, &task, &job_id).await;
-                    }
-                    Err(e) => {
-                        fail_step(&db, &step, &e.to_string(), &task, &job_id).await;
+                    match exec_task.execute(&exec_db, &step).await {
+                        Ok(output) => {
+                            complete_step(&exec_db, &step, output, &exec_task, &job_id).await;
+                        }
+                        Err(e) => {
+                            fail_step(&exec_db, &step, &e.to_string(), &exec_task, &job_id).await;
+                        }
                     }
                 }
+                Ok(None) => {
+                    // Idle wait: no in-flight step to preserve, so cancellation
+                    // interrupts the sleep immediately (prompt shutdown).
+                    tokio::select! {
+                        _ = idle_token.cancelled() => {}
+                        _ = tokio::time::sleep(poll_interval) => {}
+                    }
+                }
+                Err(e) => {
+                    error!(step_type, %e, "claim_next_step error");
+                    tokio::time::sleep(poll_interval).await;
+                }
             }
-            Ok(None) => {
-                tokio::time::sleep(poll_interval).await;
-            }
-            Err(e) => {
-                error!(step_type, %e, "claim_next_step error");
-                tokio::time::sleep(poll_interval).await;
-            }
+        }))
+        .await;
+        if panicked {
+            tokio::time::sleep(Duration::from_secs(30)).await;
         }
     }
 }
 
-async fn cleanup_loop(db: Arc<Database>, interval: Duration, timeout: Duration) {
+async fn cleanup_loop(
+    db: Arc<Database>,
+    interval: Duration,
+    timeout: Duration,
+    token: CancellationToken,
+) {
     loop {
-        tokio::time::sleep(interval).await;
-        if let Err(e) = cleanup_stale_steps(&db, timeout).await {
-            error!("cleanup_stale_steps error: {}", e);
+        if token.is_cancelled() {
+            info!("cleanup loop shutting down (cancelled)");
+            return;
+        }
+        let clean_db = db.clone();
+        let panicked = guarded(Box::pin(async move {
+            if let Err(e) = cleanup_stale_steps(&clean_db, timeout).await {
+                error!("cleanup_stale_steps error: {}", e);
+            }
+        }))
+        .await;
+        if panicked {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        }
+        // Graceful shutdown boundary: any in-flight cleanup completed above.
+        if token.is_cancelled() {
+            info!("cleanup loop shutting down (cancelled)");
+            return;
+        }
+        // Cancellable idle sleep (prompt shutdown between iterations).
+        tokio::select! {
+            _ = token.cancelled() => {}
+            _ = tokio::time::sleep(interval) => {}
         }
     }
 }
@@ -1570,6 +1691,50 @@ async fn count_steps_by_status(db: &Database, step_type: &str, status: &str) -> 
 mod tests {
     use super::*;
 
+    struct NoopTask;
+    #[async_trait::async_trait]
+    impl AsyncTask for NoopTask {
+        fn step_type(&self) -> &'static str {
+            "test_task"
+        }
+        async fn tick(&self, _db: &Database) -> Result<Option<Vec<NewStep>>> {
+            Ok(None)
+        }
+        fn tick_interval(&self) -> Duration {
+            Duration::from_secs(60)
+        }
+        async fn execute(&self, _db: &Database, _step: &StepRecord) -> Result<StepOutput> {
+            Ok(StepOutput {
+                result: serde_json::json!({"ok": true}),
+            })
+        }
+    }
+
+    // TD-005: a task whose tick panics once. The guarded loop must recover
+    // (no panic escapes → the spawned task stays alive) and keep looping.
+    struct PanicOnceTask;
+    static PANIC_TICK: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    #[async_trait::async_trait]
+    impl AsyncTask for PanicOnceTask {
+        fn step_type(&self) -> &'static str {
+            "panic_task"
+        }
+        async fn tick(&self, _db: &Database) -> Result<Option<Vec<NewStep>>> {
+            if PANIC_TICK.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                panic!("tick panic (expected in test)");
+            }
+            Ok(None)
+        }
+        fn tick_interval(&self) -> Duration {
+            Duration::from_millis(10)
+        }
+        async fn execute(&self, _db: &Database, _step: &StepRecord) -> Result<StepOutput> {
+            Ok(StepOutput {
+                result: serde_json::json!({"ok": true}),
+            })
+        }
+    }
+
     #[tokio::test]
     async fn test_claim_next_step_sqlite_returns_none_when_empty() {
         let db = Database::init("sqlite::memory:").await.expect("db init");
@@ -1658,26 +1823,6 @@ mod tests {
     #[tokio::test]
     async fn test_exec_loop_claim_execute_completes_job() {
         use crate::async_task::AsyncTask;
-        use std::sync::Arc;
-
-        struct NoopTask;
-        #[async_trait::async_trait]
-        impl AsyncTask for NoopTask {
-            fn step_type(&self) -> &'static str {
-                "test_task"
-            }
-            async fn tick(&self, _db: &Database) -> Result<Option<Vec<NewStep>>> {
-                Ok(None)
-            }
-            fn tick_interval(&self) -> Duration {
-                Duration::from_secs(60)
-            }
-            async fn execute(&self, _db: &Database, _step: &StepRecord) -> Result<StepOutput> {
-                Ok(StepOutput {
-                    result: serde_json::json!({"ok": true}),
-                })
-            }
-        }
 
         let db = Database::init("sqlite::memory:").await.expect("db init");
         let exec_db = db.clone();
@@ -1700,9 +1845,14 @@ mod tests {
         // so the claim+execute+complete path runs to completion.
         let task: Arc<dyn AsyncTask> = Arc::new(NoopTask);
         tokio::spawn(async move {
-            exec_loop(Arc::new(exec_db), task, Duration::from_millis(50)).await;
+            exec_loop(
+                Arc::new(exec_db),
+                task,
+                Duration::from_millis(50),
+                CancellationToken::new(),
+            )
+            .await;
         });
-
         // Wait for the job to reach a terminal state.
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         loop {
@@ -1726,5 +1876,70 @@ mod tests {
             );
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
+    }
+
+    // TD-005: cancellation makes run_with_cancel return instead of hanging.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_run_with_cancel_returns_on_cancel() {
+        let db = Database::init("sqlite::memory:").await.expect("db init");
+        let mut engine = Engine::new(Arc::new(db), EngineConfig::default());
+        engine.register(Arc::new(NoopTask));
+        let token = CancellationToken::new();
+        // Give the loops a moment to spin up, then cancel.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        token.cancel();
+        tokio::time::timeout(Duration::from_secs(5), engine.run_with_cancel(token))
+            .await
+            .expect("run_with_cancel must return after cancellation");
+    }
+
+    // TD-005: a panic inside a tick iteration must not kill the loop task.
+    // The loop recovers (guarded returns true → 30s backoff) and the spawned
+    // tokio task stays alive. We assert the task is NOT finished after the
+    // panic (a dead loop would terminate the task).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_tick_loop_panic_keeps_task_alive() {
+        let db = Database::init("sqlite::memory:").await.expect("db init");
+        PANIC_TICK.store(0, std::sync::atomic::Ordering::SeqCst);
+        let mut engine = Engine::new(Arc::new(db), EngineConfig::default());
+        engine.register(Arc::new(PanicOnceTask));
+        let token = CancellationToken::new();
+        let engine_for_task = std::sync::Arc::new(engine);
+        let handle = tokio::spawn({
+            let token = token.clone();
+            let engine = engine_for_task.clone();
+            async move { engine.run_with_cancel(token).await }
+        });
+
+        // Wait long enough for the first tick to fire and panic (~10ms interval).
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        assert!(
+            !handle.is_finished(),
+            "engine task died after a tick panic — guarded recovery failed"
+        );
+        // The loop is in the 30s backoff but still alive; cancel stops it.
+        token.cancel();
+    }
+
+    // TD-005: guarded() swallows a panicking body and reports recovery.
+    #[tokio::test]
+    async fn test_guarded_recovers_panic() {
+        let panicked = guarded(Box::pin(async {
+            panic!("boom (expected)");
+        }))
+        .await;
+        assert!(panicked, "guarded must report that the body panicked");
+
+        let ran = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let ran_c = ran.clone();
+        let ok = guarded(Box::pin(async move {
+            ran_c.store(true, std::sync::atomic::Ordering::SeqCst);
+        }))
+        .await;
+        assert!(!ok, "non-panicking body must report no panic");
+        assert!(
+            ran.load(std::sync::atomic::Ordering::SeqCst),
+            "non-panicking body must execute"
+        );
     }
 }

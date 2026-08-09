@@ -208,10 +208,7 @@ async fn then_gw_call_id_header_matches(world: &mut TestWorld) {
         .get("x-call-id")
         .and_then(|v| v.to_str().ok())
         .expect("response missing x-call-id header");
-    assert!(
-        !call_id.is_empty(),
-        "x-call-id header should not be empty"
-    );
+    assert!(!call_id.is_empty(), "x-call-id header should not be empty");
     // The header must equal the SpendLog.call_id (gateway request id = UUID v7)
     let expected = call_id.to_string();
     let log = get_latest_spend_log(world).await;

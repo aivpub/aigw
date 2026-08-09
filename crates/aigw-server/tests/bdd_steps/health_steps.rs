@@ -68,8 +68,10 @@ async fn given_health_mock_started(_world: &mut TestWorld) {
         let upstream = MockUpstream::start().await;
         *guard = Some(upstream);
     } else {
-        // Reset mock responses to defaults for scenario isolation
-        guard.as_mut().unwrap().reset_responses();
+        // Reset mock responses AND recorded requests to defaults for
+        // scenario isolation (recorded requests persist across scenarios
+        // otherwise and would break path/body assertions).
+        guard.as_mut().unwrap().reset_all();
     }
 }
 
@@ -149,6 +151,83 @@ async fn given_health_mock_returns_status(_world: &mut TestWorld, path: String, 
         &path,
         status,
         serde_json::json!({"error": {"message": "mock error", "type": "server_error"}}),
+    );
+}
+
+/// Register an embedding-mode model (`model_info.mode = "embed"`) whose
+/// api_base points at the health mock. TD-010a: health probe must branch to
+/// `/embeddings` for such models instead of `/chat/completions`.
+#[given(expr = "已配置 embedding 模型 {string} 指向健康检查 mock 上游")]
+async fn given_embed_model_points_to_health_mock(world: &mut TestWorld, name: String) {
+    let state = world.ensure_state().await;
+    let mu = health_mock_upstream().lock().await;
+    let mock_base = mu
+        .as_ref()
+        .expect("health mock upstream not started")
+        .url()
+        .to_string();
+    let model = aigw_core::models::ProxyModel {
+        model_id: uuid::Uuid::new_v4().to_string(),
+        model_name: name.clone(),
+        litellm_params: serde_json::json!({
+            "model": name,
+            "api_base": format!("{mock_base}/v1"),
+            "custom_llm_provider": "openai"
+        }),
+        model_info: serde_json::json!({
+            "mode": "embed",
+            "input_cost_per_token": 0.00000002,
+            "output_cost_per_token": 0.0
+        }),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        created_by: Some("test".to_string()),
+        updated_at: chrono::Utc::now().to_rfc3339(),
+        updated_by: Some("test".to_string()),
+    };
+    state.db.insert_model(&model).await.expect("insert model");
+    world
+        .created_keys
+        .insert(format!("model:{name}"), model.model_id.clone());
+}
+
+/// TD-010a: assert the health probe for an embedding-mode model hit the mock
+/// upstream on `/v1/embeddings` with an embeddings-shaped body (input, not
+/// messages). This proves the probe branched by `model_info.mode="embed"`.
+#[then(expr = "健康检查探针请求 {string} 且 body 含 {string} 字段")]
+async fn then_health_probe_request(world: &mut TestWorld, path: String, field: String) {
+    let state = world.ensure_state().await;
+    let app = build_health_router(state.clone());
+    let (_s, _b) = make_request(
+        &app,
+        Method::GET,
+        "/health/latest",
+        Some(&world.master_key.clone()),
+        None,
+    )
+    .await;
+
+    // The health mock records every upstream request; the probe is the last one.
+    let mu = health_mock_upstream().lock().await;
+    let upstream = mu.as_ref().expect("health mock upstream not started");
+    let requests = upstream.recorded_requests();
+    assert!(
+        !requests.is_empty(),
+        "Expected the health probe to have reached the mock upstream"
+    );
+    let last = requests.last().expect("no recorded probe request");
+    assert_eq!(
+        last.path,
+        path,
+        "Expected health probe to hit '{}', got '{}' (recorded: {:?})",
+        path,
+        last.path,
+        requests.iter().map(|r| &r.path).collect::<Vec<_>>()
+    );
+    assert!(
+        last.body.get(&field).is_some(),
+        "Expected probe body to carry '{}' field, got {:?}",
+        field,
+        last.body
     );
 }
 

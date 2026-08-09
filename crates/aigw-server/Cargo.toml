@@ -30,6 +30,7 @@ tower-http = { workspace = true }
 rust-embed = { workspace = true }
 mime_guess = "2"
 tokio-stream = "0.1"
+tokio-util = { version = "0.7" }
 fastrand = "2"
 headers = "0.4"
 prometheus = "0.14.0"

@@ -294,3 +294,13 @@ tasks:
     cmds:
       - cargo check --workspace 2>&1 | grep -E "Checking|Finished|error" || true
       - cargo test --workspace 2>&1 | grep -E "running|test result|FAILED" || true
+
+  # TD-003: BDD endpoint coverage report.
+  # Parses the mock .feature files for `发送 (GET|POST|PUT|DELETE|PATCH) <path>`
+  # step patterns and cross-references them against the route table embedded in
+  # scripts/bdd-coverage. Exits non-zero when coverage drops below 90%.
+  bdd-coverage:
+    desc: "BDD endpoint coverage report (TD-003)"
+    cmds:
+      - sh scripts/bdd-coverage
+

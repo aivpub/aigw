@@ -310,6 +310,9 @@ async fn main() -> anyhow::Result<()> {
     });
 
     // Start async job engine with body_archive and budget_reset workers
+    // TD-005: the engine is given a CancellationToken so SIGTERM/Ctrl+C cancels
+    // it gracefully — loops stop and in-flight steps complete before exit.
+    let engine_token = tokio_util::sync::CancellationToken::new();
     {
         let mut engine = Engine::new(Arc::clone(&db_arc), EngineConfig::default());
         engine.register(body_archiver);
@@ -327,10 +330,10 @@ async fn main() -> anyhow::Result<()> {
                 }
             });
         }
-        tokio::spawn(async move { engine.run().await });
+        let token = engine_token.clone();
+        tokio::spawn(async move { engine.run_with_cancel(token).await });
         tracing::info!("Async job engine started");
     }
-
     // Build compression config from general_settings
     let compression_cfg = config
         .as_ref()
@@ -574,12 +577,16 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!("Server listening on {}", addr);
 
-    axum::serve(
+    let server_fut = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown_signal())
-    .await?;
+    .with_graceful_shutdown(shutdown_signal());
+    server_fut.await?;
+
+    // TD-005: the axum graceful shutdown completed (SIGTERM/Ctrl+C). Cancel the
+    // engine token so the async job loops also stop (after in-flight steps).
+    engine_token.cancel();
 
     Ok(())
 }

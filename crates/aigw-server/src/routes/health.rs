@@ -140,8 +140,9 @@ pub async fn model_health_check(
     let db = state.db.clone();
     let mn = model.model_name.clone();
     let mi = model.model_id.clone();
+    let mm = model.model_info.clone();
     tokio::spawn(async move {
-        run_and_save_health_check(&resolver, &db, &mn, &mi).await;
+        run_and_save_health_check(&resolver, &db, &mn, &mi, mm).await;
     });
 
     Ok(Json(
@@ -179,15 +180,14 @@ pub async fn model_health_check_all(
     // Spawn worker tasks: one per model, running concurrently
     let resolver = state.resolver.clone();
     let db = state.db.clone();
+    let model_infos: Vec<Value> = models.iter().map(|m| m.model_info.clone()).collect();
     tokio::spawn(async move {
         let mut handles = Vec::new();
-        for (mn, mi) in to_check {
+        for ((mn, mi), mm) in to_check.into_iter().zip(model_infos) {
             let r = resolver.clone();
             let d = db.clone();
-            let mn = mn.clone();
-            let mi = mi.clone();
             handles.push(tokio::spawn(async move {
-                run_and_save_health_check(&r, &d, &mn, &mi).await;
+                run_and_save_health_check(&r, &d, &mn, &mi, mm).await;
             }));
         }
         // Await all
@@ -268,6 +268,7 @@ async fn run_and_save_health_check(
     db: &Database,
     model_name: &str,
     model_id: &str,
+    model_info: Value,
 ) {
     // Use ModelResolver to get the properly decrypted Deployment (handles
     // encryption + credential references). Distinguish three resolve outcomes:
@@ -323,29 +324,17 @@ async fn run_and_save_health_check(
     // AnthropicNative -> /v1/messages, x-api-key + anthropic-version. This
     // fixes the bug where Anthropic-native models were probed on the wrong
     // path with the wrong auth header and always reported unhealthy.
-    let base = deployment.api_base.trim_end_matches('/').to_string();
-    let (probe_path, is_anthropic) = match deployment.provider_type {
-        ProviderType::AnthropicNative => ("messages".to_string(), true),
-        ProviderType::OpenAICompatible => {
-            if base.ends_with("/v1") || base.contains("/v1/") {
-                ("chat/completions".to_string(), false)
-            } else {
-                ("v1/chat/completions".to_string(), false)
-            }
-        }
-    };
-    let probe_url = format!("{}/{}", base, probe_path);
-
-    // Anthropic-native upstreams speak the /v1/messages schema; OpenAI-compatible
-    // upstreams speak /v1/chat/completions. Both accept the same ping body here
-    // (model + messages + max_tokens=1); the adapter divergence is in the URL
-    // and auth headers, not the body fields for a minimal probe.
-    let test_body = json!({
-        "model": deployment.upstream_model,
-        "messages": [{"role": "user", "content": "ping"}],
-        "max_tokens": 1,
-        "stream": false
-    });
+    //
+    // TD-010a: embedding-mode models (model_info.mode = "embed") cannot answer
+    // a chat probe (embedding-only upstreams 400 /chat/completions). Branch to
+    // POST {api_base}/embeddings with `{model, input:["ping"]}` instead.
+    let (probe_path, test_body, is_embed) = build_probe_spec(&deployment, &model_info);
+    let probe_url = format!(
+        "{}/{}",
+        deployment.api_base.trim_end_matches('/'),
+        probe_path
+    );
+    let is_anthropic = !is_embed && deployment.provider_type == ProviderType::AnthropicNative;
 
     let start = std::time::Instant::now();
     let mut req = reqwest::Client::new()
@@ -353,7 +342,6 @@ async fn run_and_save_health_check(
         .header("Content-Type", "application/json")
         .json(&test_body)
         .timeout(std::time::Duration::from_secs(15));
-
     if let Some(ref key) = deployment.api_key {
         if is_anthropic {
             req = req.header("x-api-key", key);
@@ -410,9 +398,9 @@ async fn run_and_save_health_check(
         }
         Err(e) => {
             let elapsed = start.elapsed().as_secs_f64() * 1000.0;
-            // Fallback: GET base — if even that fails, the upstream is unreachable.
+            // Fallback: GET api_base — if even that fails, the upstream is unreachable.
             let mut fallback = reqwest::Client::new()
-                .get(&base)
+                .get(deployment.api_base.trim_end_matches('/'))
                 .timeout(std::time::Duration::from_secs(10));
             if let Some(ref key) = deployment.api_key {
                 if is_anthropic {
@@ -453,6 +441,54 @@ async fn run_and_save_health_check(
             }
         }
     }
+}
+
+/// Build the probe path + body for a health-check ping.
+///
+/// TD-010a: embedding-mode models (`model_info.mode = "embed"`) cannot answer
+/// a chat probe — embedding-only upstreams 400 `/chat/completions`. They are
+/// probed with POST `{api_base}/embeddings` and an embeddings-shaped body
+/// (`{model, input:["ping"]}`) instead. Non-embed models keep the existing
+/// chat/messages path and body.
+fn build_probe_spec(
+    deployment: &aigw_core::deployment::Deployment,
+    model_info: &Value,
+) -> (String, Value, bool) {
+    let is_embed = model_info.get("mode").and_then(|v| v.as_str()) == Some("embed");
+    let base = deployment.api_base.trim_end_matches('/').to_string();
+    let probe_path = if is_embed {
+        if base.ends_with("/v1") || base.contains("/v1/") {
+            "embeddings".to_string()
+        } else {
+            "v1/embeddings".to_string()
+        }
+    } else {
+        match deployment.provider_type {
+            ProviderType::AnthropicNative => "messages".to_string(),
+            ProviderType::OpenAICompatible => {
+                if base.ends_with("/v1") || base.contains("/v1/") {
+                    "chat/completions".to_string()
+                } else {
+                    "v1/chat/completions".to_string()
+                }
+            }
+        }
+    };
+    let body = if is_embed {
+        json!({
+            "model": deployment.upstream_model,
+            "input": ["ping"],
+            "encoding_format": "float"
+        })
+    } else {
+        json!({
+            "model": deployment.upstream_model,
+            "messages": [{"role": "user", "content": "ping"}],
+            "max_tokens": 1,
+            "stream": false
+        })
+    };
+    (probe_path, body, is_embed)
 }
 
 /// Insert a health_checks row AND a spend_logs row for the probe.
@@ -742,6 +778,77 @@ mod tests {
             body_archiver: None,
             metrics: None,
         })
+    }
+
+    // TD-010a: the probe-URL builder must route an embedding-mode model
+    // (model_info.mode="embed") to /embeddings with an embeddings-shaped body,
+    // and keep the chat path for a normal OpenAI model.
+    #[test]
+    fn test_probe_shape_branch_by_embed_mode() {
+        let base = "https://upstream.example.com/v1".to_string();
+
+        // Embedding mode → /embeddings + input body.
+        let embed_deployment = aigw_core::deployment::Deployment {
+            api_base: base.clone(),
+            api_key: Some("sk-embed".into()),
+            upstream_model: "text-embedding-3-small".into(),
+            provider_type: ProviderType::OpenAICompatible,
+            input_cost_per_token: None,
+            output_cost_per_token: None,
+            cache_read_input_token_cost: None,
+            cache_creation_input_token_cost: None,
+            raw_params: serde_json::json!({}),
+            model_id: Some("m1".into()),
+            model_group: Some("text-embedding-3-small".into()),
+            custom_llm_provider: Some("openai".into()),
+            chat_template_compat: None,
+            fail_count: 0,
+            cooldown_until: None,
+        };
+        let (probe_path, body, is_embed) =
+            build_probe_spec(&embed_deployment, &serde_json::json!({"mode": "embed"}));
+        assert!(is_embed, "embed-mode model must be probed as embed");
+        assert_eq!(probe_path, "embeddings");
+        assert!(
+            body.get("input").is_some(),
+            "embed probe must carry input, got {:?}",
+            body
+        );
+        assert!(
+            body.get("messages").is_none(),
+            "embed probe must NOT carry messages"
+        );
+
+        // Non-embed OpenAI → chat path.
+        let chat_deployment = aigw_core::deployment::Deployment {
+            api_base: base.clone(),
+            api_key: Some("sk-chat".into()),
+            upstream_model: "gpt-4".into(),
+            provider_type: ProviderType::OpenAICompatible,
+            input_cost_per_token: None,
+            output_cost_per_token: None,
+            cache_read_input_token_cost: None,
+            cache_creation_input_token_cost: None,
+            raw_params: serde_json::json!({}),
+            model_id: Some("m2".into()),
+            model_group: Some("gpt-4".into()),
+            custom_llm_provider: Some("openai".into()),
+            chat_template_compat: None,
+            fail_count: 0,
+            cooldown_until: None,
+        };
+        let (probe_path, body, is_embed) =
+            build_probe_spec(&chat_deployment, &serde_json::json!({}));
+        assert!(!is_embed, "non-embed model must use chat probe");
+        assert_eq!(probe_path, "chat/completions");
+        assert!(
+            body.get("messages").is_some(),
+            "chat probe must carry messages"
+        );
+        assert!(
+            body.get("input").is_none(),
+            "chat probe must NOT carry input"
+        );
     }
 
     #[tokio::test]

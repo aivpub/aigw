@@ -226,6 +226,11 @@ impl MockUpstream {
     pub fn reset_responses(&self) {
         self.state.reset_responses();
     }
+
+    /// Reset both responses AND recorded requests (full scenario isolation).
+    pub fn reset_all(&self) {
+        self.state.reset_all();
+    }
 }
 
 impl Drop for MockUpstream {
