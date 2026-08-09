@@ -59,6 +59,10 @@ fn check_entity(entity_type: &str, spend: f64, max_budget: Option<f64>) -> Resul
 
 /// Log a warning if the entity has exceeded its soft_budget threshold
 /// but not the hard max_budget. Never rejects — only logs.
+///
+/// If a global alert webhook is configured (TD-007), the exceedance is also
+/// POSTed as a fire-and-forget JSON payload so operators get a real-time
+/// notification (Slack/Feishu/whatever the webhook URL points at).
 fn check_soft_budget(
     entity_type: &str,
     entity_id: Option<&str>,
@@ -77,6 +81,8 @@ fn check_soft_budget(
             soft_budget = %sb,
             "soft_budget exceeded (request continues)"
         );
+        // TD-007: push to the configured alert webhook (if any)
+        crate::alerts::dispatch_soft_budget_alert(entity_type, entity_id, spend, sb);
     }
 }
 

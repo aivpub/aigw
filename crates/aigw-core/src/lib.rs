@@ -16,6 +16,7 @@
 //! ```
 
 pub mod adapter;
+pub mod alerts;
 pub mod async_task;
 pub mod auth;
 pub mod body_archive;

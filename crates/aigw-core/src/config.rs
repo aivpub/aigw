@@ -106,6 +106,14 @@ pub struct GeneralSettings {
         skip_serializing_if = "Option::is_none"
     )]
     pub request_body_limit_mb: Option<u32>,
+
+    /// Optional outbound alert webhook URL (TD-007). When set, soft_budget
+    /// exceedance is POSTed here (JSON, fire-and-forget) in addition to the
+    /// existing tracing::warn log. Points at any HTTP endpoint (Slack/Feishu
+    /// incoming webhook, custom alert service, ...). Unset → alerts stay
+    /// log-only.
+    #[serde(rename = "alert_webhook", skip_serializing_if = "Option::is_none")]
+    pub alert_webhook: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -287,5 +295,24 @@ mod tests {
             cfg.general_settings.unwrap().request_body_limit_mb,
             Some(50)
         );
+    }
+
+    #[test]
+    fn alert_webhook_parsed_from_yaml() {
+        // TD-007: general_settings.alert_webhook deserializes.
+        let yaml =
+            "general_settings:\n  alert_webhook: https://hooks.example.com/aigw\nmodel_list: []\n";
+        let cfg: AigwConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            cfg.general_settings.unwrap().alert_webhook.as_deref(),
+            Some("https://hooks.example.com/aigw")
+        );
+    }
+
+    #[test]
+    fn alert_webhook_absent_is_none() {
+        let yaml = "general_settings: {}\nmodel_list: []\n";
+        let cfg: AigwConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(cfg.general_settings.unwrap().alert_webhook.is_none());
     }
 }

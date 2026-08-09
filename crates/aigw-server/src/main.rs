@@ -259,6 +259,15 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // Build shared state
+    // TD-007: wire the alert webhook (general_settings.alert_webhook) into the
+    // global alerts dispatcher so soft_budget exceedance is POSTed out.
+    aigw_core::alerts::set_alert_webhook(
+        config
+            .as_ref()
+            .and_then(|c| c.general_settings.as_ref())
+            .and_then(|gs| gs.alert_webhook.clone()),
+    );
+
     let db_arc = Arc::new(db);
     let daily_spend_queue = Arc::new(DailySpendQueue::new(Arc::clone(&db_arc)));
 
