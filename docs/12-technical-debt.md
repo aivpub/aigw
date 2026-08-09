@@ -2,7 +2,7 @@
 
 ## Active Items
 
-### TD-004: BDD @real_api tests leak virtual keys in upstream DB
+### TD-004: BDD @real_api tests leak virtual keys in upstream DB ✅ Resolved 2026-07-20
 
 - **Date**: 2026-07-20
 - **Priority**: P2
@@ -13,10 +13,7 @@
   217 stale keys accumulated before first manual cleanup (`hack/backup-bdd-test-keys.sql`).
 - **Impact**: upstream `LiteLLM_VerificationToken` table grows unboundedly on each
   test run. After ~30 runs the table had 217 test keys.
-- **Resolution**: Add `after_scenario` hook in `bdd.rs` (or a new step module) that
-  iterates `TestWorld.created_keys` and calls `DELETE /key/delete` for each key
-  created during the scenario. Must guard on `AIGW_REAL_API=1` and handle cleanup
-  gracefully (key may have been deleted mid-test).
+- **Resolution**: ✅ 已实现（commit `b199000`，2026-07-20）——`bdd.rs` 挂 `.before()`/`.after()` hooks（`real_api_steps.rs` `before_scenario_hook` / `after_scenario_hook`），每个 @real_api 场景结束后遍历 `TestWorld.created_keys` 调用 `DELETE /key/delete`（best-effort，guard `AIGW_REAL_API=1`，master key 跳过）；before hook 同时预清理上次崩溃残留的已知 alias keys。代码现状确认：`real_api_steps.rs` L72-98 after hook 在途。
 
 ### TD-003: BDD coverage reporting not automated
 
