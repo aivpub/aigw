@@ -9,16 +9,16 @@
 
 **2026-08-09（四期）**: **Phase 44 全部完成（Stage 110-112 ✅）——OpenAI Embeddings API 代理。** Stage 110（`41d0223`）后端四端点：新建 `routes/embeddings.rs`（responses.rs 非流式子集：ChatAuth→校验 model+input→resolver+router→硬选 OpenAIPassthrough→上游 `/embeddings`→透传→SpendLog `call_type="embedding"` + prompt-only 计费）+ openapi `embeddings_spec()`（endpoints 18→19）+ mock `/v1/embeddings` handler + 6 UT + 11 BDD。**实现修正**：axum `Path<Option<String>>` 在无参数路由会 500 → 拆 `embeddings_handler`（无 Path wrapper）+ `embeddings_handler_with_path`（Azure 别名 Path<String>），共享 `embeddings_handler_inner`。Stage 111（`4637062`）前端：OutputCard `data[]` 分支（向量维度 + 8 维截断预览 + usage grid，替代空态）+ i18n 2 keys + 2 E2E × 3 viewports（fe-bdd 333 pass）。Stage 112 模型接入 + 文档：models.feature +2 BDD（`/model/new` 注册 mode=embed + `/v1/models` 展示 + `/v1/embeddings` SpendLog call_type=embedding）+ charter（L91/L204 已有 `/v1/embeddings`）+ roadmap/next-steps/ADR-026/TD-012 收尾。验证：aigw-server 135 UT、mock BDD 232 pass（2 新增全绿，仅 pre-existing budget_reset next_tick flake）、fe-bdd 333 pass、fmt + lint green。
 
-**待办**（ALL STAGES COMPLETE — 后续为在途/技术债）:
-1. **在途 P1 收尾（无 Phase 号）**：Responses 稳定 + TD-006/TD-007
-2. **Phase 41 测试缺口跟进**：① 适配器级 UT 补 `ResponsesToChatCompletions` 直测（计划 19 个，实际未落地）；② `ResponsesToChatCompletionsStream` 接线 handler 流式路径 + mock 上游返回真实 SSE 帧
-3. TD-006 客户端 call_id 响应头回写
-4. TD-007 soft_budget 告警通道（tracing::warn → webhook/email/Prometheus alert）
-5. TD-012a health.rs embedding-mode 探测（Phase 46 候选）；TD-012b 多模态 embedding 按模态计费
-6. TD-009a/b/e 图片压缩 + 超大图 body 防御 + 外链渲染（视使用量触发）
-7. TD-010a health.rs embedding-mode 探测（Phase 46 候选，与 TD-012a 合并）
-8. TD-011a/b/c image token 估算精度（视频/HEIC-AVIF/Anthropic downsizing，视使用量触发）
-9. 长期路线 LT-BodyMetrics/LT-BodyCompact/LT-BodyLifecycle 视数据量触发
+**2026-08-09（在途 P1 收尾）**: **Responses 稳定 + TD-006/TD-007 全部完成。** ① Responses 适配器级 UT：`ResponsesToChatCompletions` + `ResponsesToChatCompletionsStream` 直测 7 个（`caae61f`），并修复 stream tool-call 参数增量块（`id/name` null）被丢弃的潜在 bug；② 流式 SSE 接线：responses.rs 流式路径接 `adapter.stream_adapter()` 把上游 Chat SSE 转 Responses SSE 事件（response.created / output_text.delta / function_call_arguments.delta / response.completed / [DONE]），mock 上游返回真实 Chat SSE 帧，BDD 断言含三事件（`361b99d`）；③ TD-006：`x-call-id` 响应头回写（== SpendLog.call_id）——`aigw_core::request_id::UuidV7RequestId` + main.rs `PropagateRequestIdLayer(x-call-id)` 覆盖全路由 + BDD 场景（`b485f30`，头名改 `x-call-id` `6b6822c`）；④ TD-007：soft_budget 超限 → `general_settings.alert_webhook` 可选 webhook 通知（fire-and-forget）+ config 字段 + 3 alerts UT + 2 config UT（`6e7a58c`）。验证：workspace 796 UT、mock BDD 233 pass（新增 SSE-events + x-call-id 场景全绿，仅 pre-existing budget_reset flake）。
+
+**待办**（ALL STAGES COMPLETE — 剩余为技术债）:
+1. **Phase 41 测试缺口**：① 适配器级 UT 已补（7 个直测）；② 流式 SSE 接线已落地 —— ✅ 全部关闭
+2. TD-012a health.rs embedding-mode 探测（Phase 46 候选）；TD-012b 多模态 embedding 按模态计费
+3. TD-009a/b/e 图片压缩 + 超大图 body 防御 + 外链渲染（视使用量触发）
+4. TD-010a health.rs embedding-mode 探测（Phase 46 候选，与 TD-012a 合并）
+5. TD-011a/b/c image token 估算精度（视频/HEIC-AVIF/Anthropic downsizing，视使用量触发）
+6. TD-005 Async Engine panic 容错 + shutdown 信号（Phase 31 遗留，P2）
+7. 长期路线 LT-BodyMetrics/LT-BodyCompact/LT-BodyLifecycle 视数据量触发
 
 ---
 
@@ -152,10 +152,10 @@ Phase 44:   ████████████████████ 100% (3
 | ✅ | Phase 39 补充 Stage 109 预算重置 cron 界面重构 | ✅ 完成（2026-08-08） |
 | ✅ | Phase 43 Stage 106-108 Image Token Usage Tracking | ✅ 完成（2026-08-08） |
 | ✅ | Phase 44 Stage 110-112 OpenAI Embeddings API | ✅ 完成（2026-08-09，116/116 ALL COMPLETE） |
-| P1 | 在途 P1 收尾（无 Phase 号）：Responses 稳定 + Image Token + TD-006/TD-007 | ⏳ 待开始 |
-| P2 | TD-006客户端 call_id 响应头回写 | 待处理 |
-| P2 | TD-007 soft_budget 告警通道 | 待处理 |
+| ✅ | 在途 P1 收尾：Responses 稳定（适配器 UT + 流式 SSE）+ TD-006 x-call-id + TD-007 webhook | ✅ 完成（2026-08-09） |
+| P2 | TD-005 Async Engine panic 容错 + shutdown 信号 | 待处理 |
 | P2 | TD-009a/b/e 图片压缩 + 超大图 body 防御 + 外链渲染 | 待处理（视使用量） |
 | P2 | TD-010a / TD-012a health.rs embedding-mode 探测 | 待处理（Phase 46 候选） |
 | P3 | TD-012b 多模态 embedding 按模态计费 | 待处理（视使用量） |
 | P2 | TD-011a/b/c image token 估算精度 | 待处理（视使用量） |
+| P2 | Phase 41 测试缺口（适配器 UT + 流式接线） | ✅ 关闭（2026-08-09） |

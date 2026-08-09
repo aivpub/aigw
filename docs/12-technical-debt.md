@@ -39,17 +39,17 @@
 - **Resolution**: 每个 loop 体用 `std::panic::AssertUnwindSafe + catch_unwind` 包裹，panic 时 log + sleep 30s + 继续；`Engine::run` 接收 `CancellationToken`，loop 内 `select!` 监听 shutdown，优雅退出前等待 in-flight step。
 - **Target Phase**: Phase 32 候选（Phase 31 修复 P0/P1 后处理）。
 
-### TD-006: 客户端无法从响应头获取 call_id 对账
+### TD-006: 客户端无法从响应头获取 call_id 对账 ✅ Resolved 2026-08-09
 
 - **Date**: 2026-07-27
 - **Priority**: P2
 - **Source**: `docs/plans/2026-07-25-request-id-to-gw-call-id-rename.md` §10
 - **Description**: aigw 未配置 `tower_http::PropagateRequestIdLayer`，调用方无法从响应头拿到 aigw 生成的调用 ID。Stage 85 完成后 DB 有 `call_id`（可前端/日志查），但客户端若想就地用调用 ID 对账需自行从响应 body 取，响应头无回写。
 - **Impact**: 客户端对账需多一跳（查 API/前端），无法响应头直取。不阻塞 Stage 85 核心预期（DB 侧对账链路已打通）。
-- **Resolution**: 后续加 `PropagateRequestIdLayer` 或自定义响应头 `x-call-id` 回写客户端。需评估是否暴露内部 ID 给客户端的安全影响。
-- **Target Phase**: 视客户端对账需求触发，暂不排期。
+- **Resolution**: ✅ 已实现（commit `b485f30` + `6b6822c`）——main.rs 挂 `PropagateRequestIdLayer(x-call-id)`，所有路由（chat/messages/responses/embeddings）响应头回写网关调用 ID（== `spend_logs.call_id`）；responses.rs 非流式成功响应额外直接写 `x-call-id`；`aigw_core::request_id::UuidV7RequestId` 供 server + 测试共享。BDD 场景 `响应头包含 x-call-id 且匹配 SpendLog call_id` 覆盖。安全评估：暴露的是网关内部 UUID v7（非 secret，仅用于关联查询），已在文档注明。
+- **Target Phase**: ✅ 已解决（2026-08-09）。
 
-### TD-007: soft_budget 告警通道未实现
+### TD-007: soft_budget 告警通道未实现 ✅ Resolved 2026-08-09
 
 - **Date**: 2026-07-30
 - **Priority**: P2
@@ -57,8 +57,8 @@
 - **Status Update 2026-08-04**: Stage 97 实现了 soft_budget 超限 `tracing::warn!` 结构化日志（含 entity_type、entity_id、spent、soft_budget 字段）。生产环境可通过 tracing subscriber（OpenTelemetry exporter、log aggregator）消费这些事件。外部通知通道（Slack/Email/Webhook）仍待接入。
 - **Description**: soft_budget 超限检查记 tracing warn 日志但放行请求。litellm 的完整 soft_budget 告警走 Slack/Email/Webhook 外部通知通道，aigw 当前无外部通知集成。
 - **Impact**: soft_budget 超限需管理员主动查日志才能发现，无法实时告警。不阻塞核心预期（hard budget check + 周期 reset 已完整）。
-- **Resolution**: 后续接入通知通道（webhook / 邮件 / 企微），在 BudgetEnforcer soft 超限分支触发。需评估告警去重（soft_budget_cooldown）与通知模板。
-- **Target Phase**: 视运维告警需求触发，暂不排期。
+- **Resolution**: ✅ 已实现（commit `6e7a58c`）——新 `aigw_core::alerts` dispatcher：`general_settings.alert_webhook` 可选配置，`check_soft_budget` 超限时 POST JSON 到 webhook（fire-and-forget，3s 超时，失败仅 warn，不阻塞请求路径）；未配置 → 保持 `tracing::warn`。config.rs 加字段 + UT，Cargo.toml default features 补 reqwest。后续增强（邮件/企微模板、告警去重）视运维需求。
+- **Target Phase**: ✅ 已解决（2026-08-09）。
 
 ### TD-008: i18n 后续改进项
 
