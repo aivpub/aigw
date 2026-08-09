@@ -117,9 +117,11 @@ export function BudgetResetPreview({
                           className={TYPE_COLORS[p.entity_type] ?? "bg-muted"}
                         >
                           {t(
-                            `jobs.budgetReset.entityTypes.${
-                              p.entity_type === "org" ? "orgs" : p.entity_type === "key" ? "keys" : `${p.entity_type}s`
-                            }`,
+                            (p.entity_type === "org"
+                              ? "jobs.budgetReset.entityTypes.orgs"
+                              : p.entity_type === "key"
+                                ? "jobs.budgetReset.entityTypes.keys"
+                                : `jobs.budgetReset.entityTypes.${p.entity_type}s`) as "jobs.budgetReset.entityTypes.orgs",
                           )}
                         </Badge>
                       </td>

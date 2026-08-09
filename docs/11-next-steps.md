@@ -1,19 +1,18 @@
 # aigw -- 下一步行动
 
 **上次更新**: 2026-08-09
-**当前阶段**: **Phase 45 Stage 113 ✅ 完成（后端可靠性加固 — TD-005 Engine 容错 + TD-010a health embed 探测 + TD-003 BDD 覆盖率）；Stage 114 待开始**
+**当前阶段**: **Phase 45 Stage 114 ✅ 完成（前端体验 — TD-009a/b 图片压缩 + TD-008a/b i18n 增强）；Stage 115 待开始**
 
 ---
 
-## 当前状态：116/116 Stages 完成；Phase 45 进行中（Stage 113 ✅ → 114 ⏳）
+## 当前状态：116/116 Stages 完成；Phase 45 进行中（Stage 113-114 ✅ → 115 ⏳）
 
-**2026-08-09（Phase 45 Stage 113 ✅）**: 后端可靠性加固三项技术债落地。① TD-005 Engine panic 容错 + 优雅关闭——`guarded()`（futures `catch_unwind` + `AssertUnwindSafe`）包裹 tick/exec/cleanup 单次迭代（panic → log + 30s backoff + continue，loop 不死）+ `Engine::run_with_cancel(CancellationToken)`（in-flight step 先完成再退出，`run()` 兼容包装保留）+ main.rs 在 axum 优雅关闭后 cancel token；3 新 UT。② TD-010a health embedding 探测——`run_and_save_health_check` 增 `model_info` 参数（设计初稿读 raw_params 会静默失效，改直取）+ `build_probe_spec` 分支 embed 走 `{api_base}/embeddings` body `input:["ping"]`；1 UT + 1 BDD。③ TD-003 `scripts/bdd-coverage` + `task bdd-coverage`——解析 mock+real feature 措辞对照内嵌路由表；实测 63%（55/87），门禁定 60% 回归基线（admin-CRUD/login/key-deleted/model-groups/system-info 无 mock-BDD step，预置缺口列 NOT covered）。验证：aigw-core 409 + aigw-server 136 UT、mock BDD 233 场景（仅 pre-existing budget_reset flake）、bdd-coverage PASS、fmt + lint green。ADR-028 Accepted + TD-003/005/010a/012a Resolved。
+**2026-08-09（Phase 45 Stage 114 ✅）**: 前端体验四项技术债落地。① TD-009a Playground 图片压缩——`src/lib/image.ts` `compressImage`（canvas 2048px + JPEG 0.8，取「原图 vs 压缩」较小者保真，小图原样 PNG）+ 上传/粘贴统一走压缩；E2E 2400x2400 照片压缩后 <2MB。② TD-009b 请求体超限防御——handleSend 预检 `∑ dataUrlBytes > 24MiB` → toast + 拒绝（`window.__AIGW_MAX_IMAGE_BODY__` 测试 override 解决 sessionStorage 配额限制）。③ TD-008a i18n 懒加载——en 同步 eager + 检测语言 eager（zh-CN 首访首帧中文）+ 另一语言动态 `import()` 独立 chunk（zh-CN 25kB lazy）；修复 en-US 归一化（防 Unknown dynamic import）。④ TD-008b 翻译 TS 类型——`scripts/fe-i18n-types` 生成 `resources.d.ts`（增广 i18next CustomTypeOptions，不翻转全局 strict）；暴露并修复 5 个缺失 key + 1 拼写错误。验证：3 新 BDD 场景 × 3 viewports = 9/9、i18n-switcher 9/9、全量 fe-bdd 342 pass、fe-build 分包、fe-lint + tsc 通过。ADR-029 Accepted + TD-008a/b + TD-009a/b Resolved。
 
-**待办**（Phase 45 技术债清理，Stage 113 ✅ → 114 ⏳ → 115 ⏳）:
-1. **Phase 45 Stage 114**（P1, 10h）：前端体验 — TD-009a/b 图片压缩 + body 防御；TD-008a/b i18n 懒加载 + TS 类型
-2. **Phase 45 Stage 115**（P1, 10h）：多模态精度 — TD-011b HEIC/AVIF 前端转码（方案变更）；TD-011c Anthropic downsizing；TD-012b 多模态 embedding 按模态计费；TD-011a 视频输入（可选）
-3. TD-008c/d 后端错误多语言 + RTL、TD-009e 外链缩略图、TD-011a 视频 token 估算（剩余部分）→ 视使用量触发
-4. 长期路线 LT-BodyMetrics/LT-BodyCompact/LT-BodyLifecycle 视数据量触发
+**待办**（Phase 45 技术债清理，Stage 113-114 ✅ → 115 ⏳）:
+1. **Phase 45 Stage 115**（P1, 10h）：多模态精度 — TD-011b HEIC/AVIF 前端转码（方案变更）；TD-011c Anthropic downsizing；TD-012b 多模态 embedding 按模态计费；TD-011a 视频输入（可选）
+2. TD-008c/d 后端错误多语言 + RTL、TD-009e 外链缩略图、TD-011a 视频 token 估算（剩余部分）→ 视使用量触发
+3. 长期路线 LT-BodyMetrics/LT-BodyCompact/LT-BodyLifecycle 视数据量触发
 
 ---
 
@@ -104,7 +103,7 @@ Phase 41:   ████████████████████ 100% (2
 Phase 42:   ████████████████████ 100% (3/3)  ✅ Playground 多模态图片 (Stage 103-105)
 Phase 43:   ████████████████████ 100% (3/3)  ✅ Image Token Usage Tracking (Stage 106-108)
 Phase 44:   ████████████████████ 100% (3/3)  ✅ OpenAI Embeddings API 代理 (Stage 110-112)
-Phase 45:   ░░░░░░░░░░░░░░░░░░░░  33% (1/3)  🔄 技术债清理 (Stage 113 ✅ → 114 ⏳)
+Phase 45:   ░░░░░░░░░░░░░░░░░░░░  67% (2/3)  🔄 技术债清理 (Stage 113-114 ✅ → 115 ⏳)
 ```
 
 ---
@@ -131,6 +130,7 @@ Phase 45:   ░░░░░░░░░░░░░░░░░░░░  33% (1
 |---|------|
 | 后端单元 | ≥ 300 tests（aigw-server 136 含 embeddings 6 UT + openapi 8 + health probe 1；aigw-core 409 等全 workspace ~815） |
 | mock BDD | ≥ 233 scenarios（含 Stage 113 embed 探针 1；16 @skip 未计入） |
+| 前端 BDD | ≥ 342 passed（Stage 114 全量回归；含 3 压缩场景 × 3 viewports + i18n-switcher 9） |
 | real BDD | ≥ 47 SQLite / ≥ 41 PG / ≥ 41 MySQL（含 Stage 100 11 new） |
 
 ---
@@ -151,7 +151,7 @@ Phase 45:   ░░░░░░░░░░░░░░░░░░░░  33% (1
 | ✅ | 在途 P1 收尾：Responses 稳定（适配器 UT + 流式 SSE）+ TD-006 x-call-id + TD-007 webhook | ✅ 完成（2026-08-09） |
 | ✅ | TD-004 BDD @real_api 键泄漏 | ✅ 已修复（b199000，2026-07-20） |
 | ✅ | Phase 45 Stage 113 后端可靠性加固（TD-005 + TD-010a + TD-003） | ✅ 完成（2026-08-09） |
-| P1 | Phase 45 Stage 114 前端体验（TD-009a/b 图片压缩 + TD-008a/b i18n 懒加载） | ⏳ 待开始 |
-| P1 | Phase 45 Stage 115 多模态精度（TD-011b/c + TD-012b + TD-011a 可选） | ⏳ 待开始 |
+| ✅ | Phase 45 Stage 114 前端体验（TD-009a/b 图片压缩 + TD-008a/b i18n 懒加载） | ✅ 完成（2026-08-09） |
+| P1 | Phase 45 Stage 115 多模态精度（TD-011b/c + TD-012b + TD-011a 可选） | ⏳ 待开始（Stage 114 完成后） |
 | P2 | TD-008c/d 后端错误多语言 + RTL、TD-009e 外链缩略图、TD-011a 视频 token 估算（剩余） | 待处理（视使用量） |
 | P2 | Phase 41 测试缺口（适配器 UT + 流式接线） | ✅ 关闭（2026-08-09） |

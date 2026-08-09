@@ -204,7 +204,7 @@ export const KNOWN_STEP_TYPES: string[] = ["body_archive", "budget_reset"];
 
 export function stepTypeLabel(st: string): string {
   const key = STEP_LABELS[st];
-  return key ? i18n.t(key) : st.replace(/_/g, " ");
+  return key ? i18n.t(key as never) : st.replace(/_/g, " ");
 }
 
 /** Format a number with K/M suffixes. */

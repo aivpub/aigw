@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { createBdd } from "playwright-bdd";
 import { expect } from "@playwright/test";
 import { syncCapturedBodies } from "./api-mocks";
@@ -206,6 +209,13 @@ Then("the playground should be displayed in a mobile-friendly format", async ({ 
 const PNG_1PX =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
 
+/** Large photo-like PNG (2400x2400, ~3.3MB) — used to verify TD-009a downscaling:
+ * the uploaded data URL must be SMALLER after compressImage. */
+const LARGE_PHOTO_PATH = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../fixtures/large-photo.png",
+);
+
 function uploadImages(page: import("@playwright/test").Page, count: number) {
   return page.locator("[data-testid='playground-file-input']").setInputFiles(
     Array.from({ length: count }, (_, i) => ({
@@ -216,9 +226,67 @@ function uploadImages(page: import("@playwright/test").Page, count: number) {
   );
 }
 
+/** Upload the large-photo fixture (bypasses the 1x1 default). */
+function uploadLargePhoto(page: import("@playwright/test").Page) {
+  return page.locator("[data-testid='playground-file-input']").setInputFiles({
+    name: "large-photo.png",
+    mimeType: "image/png",
+    buffer: fs.readFileSync(LARGE_PHOTO_PATH),
+  });
+}
+
 When("I upload an image to the playground", async ({ page }) => {
   await uploadImages(page, 1);
   await page.waitForTimeout(300);
+});
+
+When("I upload a large photo to the playground", async ({ page }) => {
+  await uploadLargePhoto(page);
+  await page.waitForTimeout(800); // canvas decode + downscale takes longer
+});
+
+/** Upload an "oversized" image by lowering the gateway body-limit under test.
+ * The component reads `window.__AIGW_MAX_IMAGE_BODY__` (TD-009b test hook); we set
+ * it to 1 byte so ANY real upload exceeds it and the reject path fires. This
+ * exercises the actual pre-send gate without a >24MiB fixture (sessionStorage
+ * quota makes one untestable). */
+When("I upload an oversized image to the playground", async ({ page }) => {
+  await page.evaluate(() => {
+    (globalThis as unknown as { __AIGW_MAX_IMAGE_BODY__?: number }).__AIGW_MAX_IMAGE_BODY__ = 1;
+  });
+  await uploadLargePhoto(page);
+  await page.waitForTimeout(600);
+});
+
+Then("I should see the attachment-too-large toast", async ({ page }) => {
+  await expect(page.getByText(/24 MB/i)).toBeVisible({ timeout: 5000 });
+});
+
+Then("no chat request should have been sent", async ({ page }) => {
+  // handleSend bails before fetch when the body limit is exceeded, so the mock
+  // never replies "Mock response: I am doing well!" — that absence proves no
+  // chat request reached the upstream mock.
+  await page.waitForTimeout(500);
+  await expect(page.getByText(/Mock response: I am doing well!/i)).toHaveCount(0);
+});
+
+Then("the pending image should be compressed to a smaller data URL", async ({ page }) => {
+  // The pending thumbnail src is the compressed data URL; assert it starts with
+  // data:image/jpeg (downscaled photo) and is smaller than the 3.3MB source.
+  const thumb = page.locator("[data-testid='playground-pending-image']").first();
+  const src = (await thumb.getAttribute("src")) ?? "";
+  expect(src.startsWith("data:image/jpeg")).toBeTruthy();
+  // 3.3MB source → compressed base64 should be < 2MB (way under source).
+  const b64len = src.length - src.indexOf(",") - 1;
+  expect(b64len).toBeLessThan(2 * 1024 * 1024);
+});
+
+Then("the pending image should be the original tiny PNG unchanged", async ({ page }) => {
+  const thumb = page.locator("[data-testid='playground-pending-image']").first();
+  const src = (await thumb.getAttribute("src")) ?? "";
+  // 1x1 PNG passes through compression untouched (stays PNG, not re-encoded).
+  expect(src.startsWith("data:image/png")).toBeTruthy();
+  expect(src).toContain("iVBORw0KGgo"); // original 1x1 PNG payload
 });
 
 When("I upload {int} images to the playground", async ({ page }, count: number) => {

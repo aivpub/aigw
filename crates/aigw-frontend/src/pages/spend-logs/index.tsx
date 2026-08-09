@@ -487,7 +487,7 @@ function TimePresetBar({
           onClick={() => onPreset(p)}
           className="h-7 text-xs"
         >
-          {t(PRESET_LABEL_MAP[p])}
+          {t(PRESET_LABEL_MAP[p] as never)}
         </Button>
       ))}
       {preset === "custom" && (
@@ -1251,7 +1251,7 @@ export function SpendLogsPage() {
                 onClick={() => handlePreset(p)}
                 className="h-7 text-xs"
               >
-                {t(PRESET_LABEL_MAP[p])}
+                {t(PRESET_LABEL_MAP[p] as never)}
               </Button>
             ))}
             {preset === "custom" && (
@@ -1387,7 +1387,7 @@ export function SpendLogsPage() {
               variant="outline"
               size="sm"
               onClick={() =>
-                exportToCSV(logs, startDate, endDate, buildCSVHeaders(t))
+                exportToCSV(logs, startDate, endDate, buildCSVHeaders(t as unknown as (key: string) => string))
               }
               disabled={logs.length === 0}
               className="h-7 shrink-0 text-xs"

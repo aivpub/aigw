@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+import i18n from "@/i18n";
 import { apiGet, apiPost } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -50,13 +51,16 @@ interface BudgetListResponse {
   total_pages?: number;
 }
 
-function durationLabel(d: string, t: ReturnType<typeof useTranslation>["t"]): string {
-  const m: Record<string, string> = {
-    "24h": t("budgets.resetCycleOptions.daily"),
-    "7d": t("budgets.resetCycleOptions.weekly"),
-    "30d": t("budgets.resetCycleOptions.monthly"),
-  };
-  return m[d] ?? d;
+function durationLabel(d: string, _t: ReturnType<typeof useTranslation>["t"]): string {
+  const key =
+    d === "24h"
+      ? "budgets.resetCycleOptions.daily"
+      : d === "7d"
+        ? "budgets.resetCycleOptions.weekly"
+        : d === "30d"
+          ? "budgets.resetCycleOptions.monthly"
+          : null;
+  return key ? (i18n.t(key) as string) : d;
 }
 
 export function BudgetsPage() {

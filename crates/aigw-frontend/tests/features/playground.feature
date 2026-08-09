@@ -89,3 +89,22 @@ Feature: Playground Chat
     And I type "describe this" into the chat input
     And I click the Send button
     Then the user message should render an image thumbnail
+
+  # ── Stage 114 TD-009a/b: image compression + body-limit defense ──
+
+  Scenario: Large photo upload is downscaled (compressed data URL is smaller)
+    When I upload a large photo to the playground
+    Then the pending image should be compressed to a smaller data URL
+
+  Scenario: Small image upload is NOT compressed (keeps original)
+    When I upload an image to the playground
+    Then the pending image should be the original tiny PNG unchanged
+
+  Scenario: Oversized attachment is rejected with a toast and no request is sent
+    When I select model "gpt-4" from the settings panel
+    And I upload an oversized image to the playground
+    And I type "describe this" into the chat input
+    And I click the Send button
+    Then I should see the attachment-too-large toast
+    And no chat request should have been sent
+

@@ -109,7 +109,11 @@ tasks:
     desc: "lint frontend"
     dir: crates/aigw-frontend
     cmds:
+      # TD-008b: regenerate i18n translation types from en.json so t('key')
+      # stays compile-time checked, then lint + typecheck.
+      - sh ../../scripts/fe-i18n-types
       - npm run lint
+      - npx tsc -b
       - echo "fe-lint passed"
 
   fe-bdd:

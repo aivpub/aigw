@@ -55,7 +55,8 @@
     "deleted": "已删除",
     "searchModels": "搜索模型...",
     "loadingModels": "加载模型...",
-    "noMatchingModels": "没有匹配的模型"
+    "noMatchingModels": "没有匹配的模型",
+    "copyFailed": "复制失败 — 剪贴板不可用"
   },
   "sidebar": {
     "brand": "aigw",
@@ -260,7 +261,10 @@
       "copied": "已复制到剪贴板",
       "copyFailed": "复制失败 — 剪贴板不可用"
     },
-    "noDeletedRecords": "暂无已删除记录"
+    "noDeletedRecords": "暂无已删除记录",
+    "deletedKeys": "已删除密钥（{{count}}）",
+    "tpmLabel": "TPM 限制",
+    "rpmLabel": "RPM 限制"
   },
   "models": {
     "title": "模型管理",
@@ -717,7 +721,9 @@
         "cost": "费用",
         "duration": "耗时"
       },
-      "fetchError": "加载失败,点击重试"
+      "fetchError": "加载失败,点击重试",
+      "tabDescription": "描述",
+      "tabParams": "参数"
     },
     "noData": "暂无数据",
     "search": {
@@ -780,6 +786,7 @@
     "attachImage": "添加图片",
     "removeImage": "移除图片",
     "imagePreview": "图片附件",
+    "imageTooLarge": "附件超过 24 MB 请求体限制——请移除部分图片。",
     "expandSettings": "展开设置",
     "collapseSettings": "收起设置",
     "codeDialog": {
@@ -830,7 +837,10 @@
   "jobs": {
     "title": "任务管理",
     "description": "管理定时任务与流水线",
-    "trigger": "手动触发",
+    "trigger": {
+      "cron": "定时",
+      "manual": "手动"
+    },
     "noJobs": "暂无任务",
     "subTabs": {
       "bodyArchive": "Body Archive",
@@ -886,10 +896,6 @@
     "endDate": "结束日期",
     "batchSize": "批量大小",
     "triggerJob": "触发任务",
-    "trigger": {
-      "cron": "定时",
-      "manual": "手动"
-    },
     "triggerToast": "任务 {{jobId}}... 已创建，包含 {{totalSteps}} 个步骤",
     "summary": "摘要",
     "steps": {
@@ -991,7 +997,8 @@
     "max": "最大",
     "healthy": "健康",
     "unhealthy": "异常",
-    "loading": "加载中..."
+    "loading": "加载中...",
+    "min": "连接池最小"
   },
   "logViewer": {
     "input": "输入",

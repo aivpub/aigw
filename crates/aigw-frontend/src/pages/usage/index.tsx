@@ -423,7 +423,7 @@ export function UsagePage() {
               onClick={() => handlePreset(k)}
               className="h-7 text-xs"
             >
-              {t(PRESET_LABELS[k])}
+              {t(PRESET_LABELS[k] as never)}
             </Button>
           ))}
           {preset === "custom" && (

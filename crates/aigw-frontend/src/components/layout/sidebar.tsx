@@ -22,7 +22,7 @@ interface NavGroup {
   title: string;
   items: {
     to: string;
-    labelKey: string;
+    labelKey: string; // i18n dot-key (see sidebar.nav.* / sidebar.group.*)
     icon: React.ComponentType<{ className?: string }>;
   }[];
 }
@@ -157,7 +157,7 @@ export function Sidebar({
                     key={item.to}
                     to={item.to}
                     onClick={onClose}
-                    title={collapsed ? t(item.labelKey) : undefined}
+                    title={collapsed ? t(item.labelKey as never) : undefined}
                     className={({ isActive }) =>
                       cn(
                         "flex items-center gap-3 rounded-md text-sm font-medium transition-colors",
@@ -169,7 +169,7 @@ export function Sidebar({
                     }
                   >
                     <item.icon className="h-4 w-4 shrink-0" />
-                    {!collapsed && t(item.labelKey)}
+                    {!collapsed && t(item.labelKey as never)}
                   </NavLink>
                 ))}
               </div>

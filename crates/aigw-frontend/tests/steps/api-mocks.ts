@@ -561,6 +561,10 @@ const mockedPages = new WeakSet<Page>();
 export async function mockAllApis(page: Page, _opts?: MockOptions) {
   if (mockedPages.has(page)) return;
   mockedPages.add(page);
+  // Fresh captured bodies per page so "no request sent" assertions aren't
+  // polluted by a previous scenario in the same worker (Stage 114 TD-009b).
+  lastChatBody = {};
+  lastMessagesBody = {};
   await page.route("**/*", defineMockRoutes);
   exposeCapturedBodies(page);
 }

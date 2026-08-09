@@ -56,23 +56,23 @@
 - **Resolution**: ✅ 已实现（commit `6e7a58c`）——新 `aigw_core::alerts` dispatcher：`general_settings.alert_webhook` 可选配置，`check_soft_budget` 超限时 POST JSON 到 webhook（fire-and-forget，3s 超时，失败仅 warn，不阻塞请求路径）；未配置 → 保持 `tracing::warn`。config.rs 加字段 + UT，Cargo.toml default features 补 reqwest。后续增强（邮件/企微模板、告警去重）视运维需求。
 - **Target Phase**: ✅ 已解决（2026-08-09）。
 
-### TD-008: i18n 后续改进项
+### TD-008: i18n 后续改进项 ✅ TD-008a/b Resolved 2026-08-09
 
 - **Date**: 2026-08-01
 - **Priority**: P3
 
 | Sub-ID | 条目 | 优先级 | 描述 |
 |--------|------|--------|------|
-| TD-008a | 翻译文件懒加载 | P3 | 当前所有翻译 bundle 在一个 JS chunk 中。当翻译条目增长到 1000+ 时，按命名空间动态 `import()` 可减首屏体积。 |
-| TD-008b | TypeScript 类型安全 | P3 | 从 JSON 翻译文件自动生成翻译 key 的 TS 类型（如 `i18next-resources-for-ts`），让 `t('key')` 有 IDE 自动补全和编译期校验。 |
+| TD-008a | 翻译文件懒加载 |3 | 当前所有翻译 bundle 在一个 JS chunk 中。当翻译条目增长到 1000+ 时，按命名空间动态 `import()` 可减首屏体积。 ✅ 已解决（Stage 114，2026-08-09 — en 同步 eager + 检测语言 eager（zh-CN 首访首帧中文）+ 另一语言动态 `import()` 独立 chunk（zh-CN 25kB lazy）；en-US 归一化到 en 防 Unknown dynamic import） |
+| TD-008b | TypeScript 类型安全 | P3 | 从 JSON 翻译文件自动生成翻译 key 的 TS 类型（如 `i18next-resources-for-ts`），让 `t('key')` 有 IDE 自动补全和编译期校验。 ✅ 已解决（Stage 114，2026-08-09 — `scripts/fe-i18n-types` 从 en.json 生成 `resources.d.ts` 增广 `i18next.CustomTypeOptions`，`tsc -b` 通过；顺带暴露并修复 5 个缺失 key + 1 个拼写错误） |
 | TD-008c | 后端 API 错误消息多语言 | P3 | 当前前端 UI 已双语，但后端 API 返回的英文错误消息仍显示英文。需设计后端 i18n 策略（Accept-Language header 或配置）。 |
 | TD-008d | RTL 语言支持 | P3 | 当前仅支持 LTR 语言（中/英）。如需支持阿拉伯语等 RTL 语言，需配合 Tailwind RTL 变体 + CSS logical properties。 |
 
 - **Impact**: 当前双语支持已覆盖 100% 前端 UI 文本，TD-008 a-d 均为增量优化，不阻塞使用。
-- **Resolution**: 按需在各子条目触发条件满足时实施。
-- **Target Phase**: 无固定排期。
+- **Resolution**: a/b 已在 Stage 114 解决（2026-08-09）；c/d 视需求触发。
+- **Target Phase**: c/d 无固定排期。
 
-### TD-009: 多模态图片 base64 体积与渲染增强项
+### TD-009: 多模态图片 base64 体积与渲染增强项 ✅ TD-009a/b Resolved 2026-08-09
 
 - **Date**: 2026-08-07
 - **Priority**: P2
@@ -81,8 +81,8 @@
 
 | Sub-ID | 条目 | 优先级 | 描述 |
 |--------|------|--------|------|
-| TD-009a | 图片压缩/缩放 | P2 | 前端上传前用 canvas 压缩（如最长边 2048px + JPEG 0.8），降低 base64 体积与 token 成本；需评估与"原图保真"诉求的取舍。 |
-| TD-009b | 超大图/多图 body limit 防御 | P2 | 上传前估算 `∑ data URL 长度`，超限（如 >24 MiB）前端提示并拒绝；后端 `request_body_limit_mb` 已默认 32 MiB 但无 413 友好提示。 |
+| TD-009a | 图片压缩/缩放 | P2 | 前端上传前用 canvas 压缩（如最长边 2048px + JPEG 0.8），降低 base64 体积与 token 成本；需评估与"原图保真"诉求的取舍。 ✅ 已解决（Stage 114，2026-08-09 — `compressImage` 取「原图 vs JPEG 2048px@0.8」较小者，小图保真；E2E 2400x2400 照片压缩后 <2MB） |
+| TD-009b | 超大图/多图 body limit 防御 | P2 | 上传前估算 `∑ data URL 长度`，超限（如 >24 MiB）前端提示并拒绝；后端 `request_body_limit_mb` 已默认 32 MiB 但无 413 友好提示。 ✅ 已解决（Stage 114，2026-08-09 — handleSend 预检 `∑ dataUrlBytes > 24MiB` → toast + 拒绝，`window.__AIGW_MAX_IMAGE_BODY__` 测试 override；E2E 验证 toast + 无请求） |
 | TD-009c | 图片点击放大/灯箱 | P3 | Playground 缩略图点击放大已在 2026-08-07 `1394a9c` 实现（Dialog lightbox）；SpendLog 详情缩略图放大仍待做。 |
 | TD-009d | `/v1/models` 模式标签 UI | P3 | Playground 模型下拉按 `model_info.mode` 显示多模态/纯文本标签，当前不做（阶段已定不强制过滤）。 |
 | TD-009e | 外链 image_url 渲染 | P3 | `extractImages` 只渲染 `data:image/` 前缀；SpendLog 里 `https://` image_url 不渲染（admin-only 详情仍收窄任意 URL fetch 面）。后续如需支持外链缩略图，需代理/白名单域名。 |

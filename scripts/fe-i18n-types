@@ -1,0 +1,59 @@
+#!/bin/sh
+# TD-008b: regenerate crates/aigw-frontend/src/i18n/resources.d.ts from en.json.
+#
+# The i18next CustomTypeOptions augmentation gives t('key') compile-time
+# checking in every file that imports useTranslation, without flipping the
+# global `strict` flag. Run after editing en.json (or zh-CN.json):
+#   sh scripts/fe-i18n-types
+set -u
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+EN="$ROOT/crates/aigw-frontend/src/i18n/locales/en.json"
+OUT="$ROOT/crates/aigw-frontend/src/i18n/resources.d.ts"
+
+python3 - "$EN" "$OUT" <<'PY'
+import json, sys
+en, out = sys.argv[1], sys.argv[2]
+data = json.load(open(en))
+
+def emit_obj(o, indent=0):
+    pad = "  " * indent
+    lines = []
+    for k, v in o.items():
+        key = json.dumps(k) if not k.isidentifier() else k
+        if isinstance(v, dict):
+            inner = emit_obj(v, indent + 1)
+            lines.append(f"{pad}  {key}: {{")
+            lines.append(inner)
+            lines.append(f"{pad}  }},")
+        else:
+            lines.append(f"{pad}  {key}: string;")
+    return "\n".join(lines)
+
+header = '''/**
+ * TD-008b: typed translation resources.
+ *
+ * Generated from crates/aigw-frontend/src/i18n/locales/en.json. Augmenting
+ * i18next CustomTypeOptions makes t('key') compile-time checked in files that
+ * import useTranslation, without flipping the global strict flag.
+ *
+ * Regenerate after editing en.json with:
+ *   scripts/fe-i18n-types
+ */
+import "i18next";
+
+declare module "i18next" {
+  interface CustomTypeOptions {
+    defaultNS: "translation";
+    resources: {
+      translation: {
+'''
+footer = '''
+      };
+    };
+  }
+}
+'''
+with open(out, "w") as f:
+    f.write(header + emit_obj(data) + footer)
+print(f"resources.d.ts regenerated from {en} -> {out}")
+PY

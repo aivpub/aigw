@@ -55,7 +55,8 @@
     "deleted": "Deleted",
     "searchModels": "Search models...",
     "loadingModels": "Loading models...",
-    "noMatchingModels": "No matching models"
+    "noMatchingModels": "No matching models",
+    "copyFailed": "Copy failed — clipboard unavailable"
   },
   "sidebar": {
     "brand": "aigw",
@@ -260,7 +261,10 @@
       "copied": "Copied to clipboard",
       "copyFailed": "Copy failed — clipboard unavailable"
     },
-    "noDeletedRecords": "No deleted records"
+    "noDeletedRecords": "No deleted records",
+    "deletedKeys": "Deleted keys ({{count}})",
+    "tpmLabel": "TPM Limit",
+    "rpmLabel": "RPM Limit"
   },
   "models": {
     "title": "Models",
@@ -717,7 +721,9 @@
         "cost": "Cost",
         "duration": "Duration"
       },
-      "fetchError": "Failed to load, click to retry"
+      "fetchError": "Failed to load, click to retry",
+      "tabDescription": "Description",
+      "tabParams": "Params"
     },
     "noData": "No data available",
     "search": {
@@ -780,6 +786,7 @@
     "attachImage": "Attach image",
     "removeImage": "Remove image",
     "imagePreview": "Image attachment",
+    "imageTooLarge": "Attachments exceed the 24 MB request body limit — remove some images.",
     "expandSettings": "Expand settings",
     "collapseSettings": "Collapse settings",
     "codeDialog": {
@@ -830,7 +837,10 @@
   "jobs": {
     "title": "Jobs",
     "description": "Manage scheduled tasks and pipelines",
-    "trigger": "Manual Trigger",
+    "trigger": {
+      "cron": "Scheduled",
+      "manual": "Manual"
+    },
     "noJobs": "No jobs found",
     "subTabs": {
       "bodyArchive": "Body Archive",
@@ -886,10 +896,6 @@
     "endDate": "End Date",
     "batchSize": "Batch Size",
     "triggerJob": "Trigger Job",
-    "trigger": {
-      "cron": "Scheduled",
-      "manual": "Manual"
-    },
     "triggerToast": "Job {{jobId}}... created with {{totalSteps}} steps",
     "summary": "Summary",
     "steps": {
@@ -991,7 +997,8 @@
     "max": "Max",
     "healthy": "Healthy",
     "unhealthy": "Unhealthy",
-    "loading": "Loading..."
+    "loading": "Loading...",
+    "min": "Pool min"
   },
   "logViewer": {
     "input": "Input",

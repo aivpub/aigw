@@ -306,7 +306,7 @@ export function DashboardPage() {
                       }}
                       formatter={(value) => [
                         fmtSpend(value as number),
-                        t("dashboard.spend"),
+                        t("dashboard.spendLogs"),
                       ]}
                     />
                     <Bar
@@ -363,7 +363,7 @@ export function DashboardPage() {
                       }}
                       formatter={(value) => [
                         fmtSpend(value as number),
-                        t("dashboard.spend"),
+                        t("dashboard.spendLogs"),
                       ]}
                     />
                     <Legend />

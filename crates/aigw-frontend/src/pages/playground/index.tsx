@@ -3,7 +3,9 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import i18n from "@/i18n";
 import { apiGet } from "@/lib/api";
+import { compressImage, dataUrlBytes } from "@/lib/image";
 import { marked } from "marked";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -631,25 +633,25 @@ export function PlaygroundPage() {
   }, [pendingImages]);
 
   // ── Stage 104: file upload + clipboard paste → base64 data URLs ──
-  // Raster-only guard: SVG passed to <img> does not run scripts, but keeping to
-  // common raster types is the cheapest way to avoid exotic vectors. Oversized
-  // files (>20MB) are skipped — body limit (32MiB) and token cost are the
-  // caller's concern (TD-009a/b).
+  // Stage 114 (TD-009a/b): uploads are downscaled via compressImage (canvas,
+  // max 2048px edge, JPEG 0.8) so the base64 body + token cost stay bounded.
+  // Oversized source files (>20MB) are skipped; the pre-send body-limit check
+  // (24MiB ∑ data-URL bytes, TD-009b) lives in handleSend.
   const RASTER_MIME = /^image\/(png|jpe?g|gif|webp)$/i;
   const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
-  const addImageFiles = useCallback((files: File[] | FileList) => {
+  const addImageFiles = useCallback(async (files: File[] | FileList) => {
     const list = Array.from(files);
     for (const f of list) {
       if (!RASTER_MIME.test(f.type)) continue;
       if (f.size > MAX_IMAGE_BYTES) continue;
-      const reader = new FileReader();
-      reader.onload = () => {
-        const result = String(reader.result ?? "");
-        if (result.startsWith("data:")) {
-          setPendingImages((prev) => [...prev, result]);
-        }
-      };
-      reader.readAsDataURL(f);
+      // TD-009a: compress, then use the smaller of original/compressed so small
+      // images (avatars, diagrams) keep their fidelity and only oversized photos
+      // are downscaled.
+      const result = await compressImage(f);
+      const dataUrl = result.dataUrl;
+      if (dataUrl && dataUrl.startsWith("data:")) {
+        setPendingImages((prev) => [...prev, dataUrl]);
+      }
     }
   }, []);
 
@@ -667,7 +669,7 @@ export function PlaygroundPage() {
       }
       if (files.length) {
         e.preventDefault(); // avoid pasting image binary as text into Textarea
-        addImageFiles(files);
+        void addImageFiles(files);
       }
     };
     window.addEventListener("paste", onPaste);
@@ -876,6 +878,21 @@ export function PlaygroundPage() {
           presence_penalty: settings.presPenalty,
           stream: settings.streaming,
         };
+      }
+
+      // TD-009b: pre-send body-limit defense. Sum the data-URL bytes across all
+      // image attachments; if the request body would exceed the gateway's
+      // 24 MiB limit, refuse with a toast instead of a silent 413.
+      // `window.__AIGW_MAX_IMAGE_BODY__` lets tests lower the threshold so the
+      // reject path is exercisable without shipping a >24MiB fixture.
+      const images = newMessages.flatMap((m) => m.images ?? []);
+      const imageBytes = images.reduce((acc, src) => acc + dataUrlBytes(src), 0);
+      const BODY_LIMIT =
+        (globalThis as unknown as { __AIGW_MAX_IMAGE_BODY__?: number })
+          .__AIGW_MAX_IMAGE_BODY__ ?? 24 * 1024 * 1024;
+      if (imageBytes > BODY_LIMIT) {
+        toast(t("playground.imageTooLarge"), { duration: 4000 });
+        return;
       }
 
       const res = await fetch(endpoint, {

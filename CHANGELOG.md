@@ -3,6 +3,11 @@
 ## [未发布]
 
 ### 新增
+- Stage 114: Playground 图片上传压缩（`src/lib/image.ts` `compressImage`——canvas 2048px + JPEG 0.8，取「原图 vs 压缩」较小者保真）——TD-009a 解决
+- Stage 114: 请求体超限防御（handleSend 预检 ∑ dataUrlBytes > 24MiB → toast + 拒绝）——TD-009b 解决
+- Stage 114: i18n 翻译懒加载（en eager + 检测语言 eager + zh-CN 独立 lazy chunk 25kB）——TD-008a 解决
+- Stage 114: 翻译 TS 类型（`scripts/fe-i18n-types` 生成 `resources.d.ts` 增广 i18next CustomTypeOptions，t('key') 编译期校验）——TD-008b 解决
+- Stage 114: Playground 压缩/超限/小图保真 3 BDD 场景 × 3 viewports
 - Stage 113: Async Engine panic 容错（`guarded()` catch_unwind 包裹三 loop 迭代）+ CancellationToken 优雅关闭（`Engine::run_with_cancel`）——TD-005 解决
 - Stage 113: `task bdd-coverage` 端点覆盖率报告脚本（`scripts/bdd-coverage`，mock+real feature 解析）——TD-003 解决
 - Stage 113: health 探测 embedding-mode 分支 — `model_info.mode="embed"` 模型走 `{api_base}/embeddings` 探针（body `input:["ping"]`）——TD-010a 解决
@@ -18,10 +23,12 @@
 - Stage 103: `openai_message_to_claude` 修 image 转换 bug — data URL 剥离 + media_type 推导（parse_data_url）
 
 ### 修复
+- Stage 114: i18n 动态 import 归一化（navigator=en-US → en bundle，防 Unknown dynamic import unhandled-rejection）
+- Stage 114: 修复 5 个缺失 i18n key（health.min/keys.deletedKeys/keys.tpmLabel+rpmLabel/drawer.tabDescription+tabParams）+ dashboard.spend 拼写错误
 - Stage 113: 后端 loop panic 不再杀死 tokio task（tick/exec/cleanup 静默降级问题）
 - Stage 103: `test_activity_reports_timezone_metadata` date-sensitive 修复（固定 start_time 在查询窗口内）
 
 ### 技术债
-- 解决: TD-005 / TD-003 / TD-010a（Stage 113）
+- 解决: TD-008a/b + TD-009a/b（Stage 114）；TD-005 / TD-003 / TD-010a（Stage 113）
 - 引入: 无
 

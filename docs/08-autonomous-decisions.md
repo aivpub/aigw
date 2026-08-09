@@ -531,3 +531,24 @@
   - 验证：aigw-core 409 UT（engine +3）、aigw-server 136 UT（health +1）、mock BDD 233 场景（新增 embed 探针场景通过；仅 pre-existing budget_reset next_tick flake）、bdd-coverage 63% PASS（60% 回归基线）、fmt + lint green。
   - 遗留：bdd-coverage 的 admin-CRUD/login/key-deleted/model-groups/system-info 缺口待后续 Stage 关闭；exec-loop panic backoff 的 30s 取消延迟可接受。
   - 设计文档：`docs/stages/stage-113.md` + `docs/stages/stage-113-review-log.md`。
+
+## ADR-029: Phase 45 Stage 114 前端体验（TD-009a/b 图片压缩 + TD-008a/b i18n 增强）
+
+- **Date**: 2026-08-09
+- **Status**: Accepted（Phase 45 Stage 114 完成 ✅）
+- **Decision**: Phase 45 第二个 Stage 落地四项前端技术债，核心决策：
+  (1) **压缩策略「两者取其小」**——`compressImage` 返回 `min(原图 data URL, canvas JPEG 2048px@0.8)`；小图（1x1 PNG）原样保真，仅 >2048px 大图降采样。透明 PNG 白底填色转 JPEG。
+  (2) **body-limit 防御可测**——handleSend 预检 `∑ dataUrlBytes > 24MiB` → toast + 拒绝；`window.__AIGW_MAX_IMAGE_BODY__` 测试 override（sessionStorage 配额 ~5MB 无法构造真实 >24MB data URL）。
+  (3) **i18n 懒加载保首屏**——en 同步 eager（登录/401 不白屏）+ **检测语言 eager**（`navigator=zh-CN` 首访首帧即中文）+ 另一语言动态 `import()` 独立 chunk（zh-CN 25kB lazy）；en-US 归一化到 en 防 Unknown dynamic import。
+  (4) **typed resources 不翻转全局 strict**——`scripts/fe-i18n-types` 从 en.json 生成 `resources.d.ts` 增广 `i18next.CustomTypeOptions`；`t('key')` 在用到处编译期校验，避免全局 strict 波及 20+ 文件。顺带暴露并修复 5 个缺失 i18n key + 1 个拼写错误（dashboard.spend → spendLogs）。
+- **Background**: Phase 45（技术债清理）Stage 114 纯前端（TD-009a/b Playground 图片压缩 + body 防御；TD-008a/b i18n 懒加载 + TS 类型安全）。
+- **Key decisions**:
+  - **压缩「两者取其小」而非强制压缩**：小图（图标/示意图）保持 PNG 保真，仅大图 JPEG 降采样——兼顾 token 成本与原图保真。
+  - **per-page captured-body reset**：`mockAllApis` 每页重置 `lastChatBody`，避免 cross-scenario 泄漏污染「no request」断言。
+  - **playwright-bdd 括号即 capture group**：step 文本避免 `(..)`，否则 bddgen 匹配失败。
+  - **动态 t() 用 `as never` cast**：编译期无法追踪变量字符串 key；budgets durationLabel 改用模块 `i18n.t` 规避 TS2589 深递归。
+- **Consequences**:
+  - TD-008a/b + TD-009a/b Resolved（2026-08-09）。
+  - 验证：3 新 BDD 场景 × 3 viewports = 9/9 ✅、i18n-switcher 9/9 ✅、全量 fe-bdd 342 pass（11.6m，en-US 动态 import 修复后无 unhandled-rejection）、fe-build 分包（zh-CN 25kB lazy）、fe-lint + tsc 通过。
+  - 遗留：HEIC/AVIF 前端转码（TD-011b）留 Stage 115；typed t() 对变量 key 需 cast。
+  - 设计文档：`docs/stages/stage-114.md` + `docs/stages/stage-114-review-log.md`。
