@@ -1,22 +1,47 @@
 # aigw Configuration
 # Copy to config.yaml and customize
 
-general_settings:
-  master_key: ${MASTER_KEY:-sk-master-change-me}
-  database_url: sqlite:/app/data/aigw.db
-  # Maximum accepted HTTP request body size in MiB. Default 32.
-  # Covers large LLM requests (long context, tool definitions, base64 attachments).
-  # Set to 0 to restore axum's built-in 2 MiB limit.
-  # request_body_limit_mb: 32
-  # OpenTelemetry distributed tracing (optional)
-  # otel:
-  #   enabled: false
-  #   endpoint: "http://localhost:4317"
-  #   service_name: "aigw"
-  #   sample_rate: 1.0
-  #   exporter: "otlp_grpc"
+# general_settings:
+#   # Literal-config fallback for ${MASTER_KEY:-sk-master-change-me} / database_url.
+#   # CLI/ENV wins over these; both are parsed and used where wired.
+#   master_key: ${MASTER_KEY:-sk-master-change-me}
+#   database_url: sqlite:/app/data/aigw.db
+#   deployment_mode: onprem
+#   custom_key_generate_length: 8
+#   disable_custom_api_keys: false
+#   # Alert webhook: soft_budget exceedance is POSTed here (JSON, fire-and-forget)
+#   # in addition to the warning log. Any HTTP endpoint (Slack/Feishu/webhook).
+#   # alert_webhook: https://hooks.example.com/alert
+#   # Prometheus histogram bucket overrides (replace defaults when set):
+#   # metrics_buckets:
+#   #   latency: [0.5, 1, 2, 5, 10, 20, 30]
+#   #   ttft: [0.25, 0.5, 1, 2.5, 5, 10]
+#   #   queue_time: [0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1]
+#   # Response compression (gzip/deflate/brotli):
+#   # compression:
+#   #   enabled: true
+#   #   level: 6
+#   #   algorithms: ["gzip", "deflate", "brotli"]
+#   # Maximum accepted HTTP request body size in MiB. Default 32.
+#   # Covers large LLM requests (long context, tool definitions, base64 attachments).
+#   # Set to 0 to restore axum's built-in 2 MiB limit.
+#   request_body_limit_mb: 32
+#   # OpenTelemetry distributed tracing (optional)
+#   otel:
+#     enabled: false
+#     endpoint: "http://localhost:4317"
+#     service_name: "aigw"
+#     sample_rate: 1.0
+#     exporter: "otlp_grpc"
+
+# Budget reset — periodic spend reset for entities with budget_duration set.
+# budget_reset:
+#   enabled: true
 
 model_list:
+  # model_list is parsed but NOT auto-seeded into proxy_models at boot: models
+  # must be created via the admin API (/model/new) or aigw-migrate, then they
+  # are resolved from the DB. This block documents the litellm-compatible shape.
   - model_name: gpt-4o
     litellm_params:
       model: gpt-4o
@@ -39,6 +64,12 @@ model_list:
       rpm: 1000
       tpm: 100000
 
+# Router settings — NOTE: the `router_settings` / `litellm_settings` /
+# `environment_variables` blocks below are parsed for litellm compatibility but
+# are NOT wired into the running router today. The router uses
+# `RouterConfig::default()` (routing_strategy=simple-shuffle, allowed_fails=3,
+# cooldown=30s, num_retries=0) and runtime overrides live in the DB
+# `/router/settings` endpoint instead of this file.
 router_settings:
   routing_strategy: usage-based-routing-v2
   allowed_fails: 3
@@ -65,6 +96,7 @@ litellm_settings:
 #     endpoint: ""           # optional, empty = AWS default
 #     access_key_id: "${AWS_ACCESS_KEY_ID}"
 #     secret_access_key: "${AWS_SECRET_ACCESS_KEY}"
+#     session_token: ""      # optional STS session token
 #     prefix: ""             # optional key prefix inside the bucket
 #     use_ssl: true
 #     compatibility_mode: false  # enable for COS/R2/MinIO
@@ -75,13 +107,15 @@ litellm_settings:
 #     archive_after_hours: 1       # don't archive rows newer than N hours
 #     null_body_after_days: 7      # null body columns after N days (if null_body_after_archive)
 #     batch_size: 5000             # rows per archive batch
-#     row_group_size: 5000         # parquet row group size
+#     row_group_size: 500          # parquet row group size (default 500)
 #     check_interval_secs: 300     # seconds between tick() discovery scans
 #     null_body_after_archive: true  # set to false to keep body in DB even after archive
 #     vacuum_after_null: true      # VACUUM after nulling (SQLite only)
 #     bloom_min_rows: 10           # skip Bloom filter when fewer than N rows (saves ~75% overhead)
 #     compression: zstd            # parquet compression: zstd | snappy | gzip | lz4 | none
-#     compression_level: 3         # zstd: 1-22, gzip: 1-9 (default: 3)
+#     compression_level: 3         # zstd: 1-22, gzip: 1-9 (default: 6)
+#     multipart_part_size_mb: 16   # S3 multipart part size (min 5, default 16)
+#     max_parquet_body_mb: 64      # per-object compressed-parquet cap before splitting
 #
 #   # Footer cache — avoids re-fetching parquet footers on repeated reads.
 #   # footer_cache:
