@@ -507,3 +507,114 @@ fn test_default_tables_excludes_config_and_has_11() {
         assert!(DEFAULT_TABLES.contains(&t), "missing default table {}", t);
     }
 }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Regression: source schema OLDER than target (pre-025 source lacks the
+// `image_tokens` column added by migration 025). sync_spend_logs must
+// intersect source columns instead of projecting the full target column list,
+// or the SELECT fails with "column image_tokens does not exist".
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Build an aigw SQLite DB with migration 025 NOT applied — i.e. a source
+/// whose spend_logs lacks `image_tokens` (older release). SQLite has no DROP
+/// COLUMN, so we derive the post-024 column list from the freshly-initialized
+/// DB, rebuild `spend_logs` without `image_tokens`, and copy the rows over.
+async fn fresh_aigw_db_without_025(dir: &tempfile::TempDir, name: &str) -> String {
+    let path = dir.path().join(name);
+    let url = format!("sqlite://{}", path.display());
+    let db = aigw_core::db::Database::init(&url)
+        .await
+        .expect("Database::init + migrations (incl 025)");
+    drop(db);
+
+    let pool = SourcePool::connect(&url).await.unwrap();
+    // Current (post-025) spend_logs columns; drop image_tokens to simulate a
+    // pre-025 source.
+    let cols: Vec<(String, String, bool)> = pool
+        .column_types("spend_logs")
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|(n, _, _)| n != "image_tokens")
+        .collect();
+    let col_names = cols
+        .iter()
+        .map(|(n, _, _)| format!("\"{}\"", n))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    pool.execute_raw("ALTER TABLE spend_logs RENAME TO spend_logs_tmp")
+        .await
+        .expect("rename spend_logs");
+    // Recreate WITHOUT image_tokens. Keep it simple: TEXT/INTEGER/REAL by
+    // nullable flag is enough for the migration-copy to work; the row VALUES
+    // are carried verbatim and sqlite is dynamically typed.
+    let create = format!(
+        "CREATE TABLE spend_logs ({})",
+        cols.iter()
+            .map(|(n, _ty, nullable)| {
+                let ty = if *nullable { "TEXT" } else { "INTEGER" };
+                format!("\"{}\" {}", n, ty)
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    pool.execute_raw(&create)
+        .await
+        .expect("create pre-025 spend_logs");
+    let insert = format!(
+        "INSERT INTO spend_logs ({}) SELECT {} FROM spend_logs_tmp",
+        col_names, col_names
+    );
+    pool.execute_raw(&insert)
+        .await
+        .expect("copy rows into pre-025 spend_logs");
+    pool.execute_raw("DROP TABLE spend_logs_tmp")
+        .await
+        .expect("drop tmp");
+    url
+}
+
+#[tokio::test]
+async fn test_sync_older_source_schema_without_image_tokens() {
+    let src_dir = tempfile::tempdir().unwrap();
+    let tgt_dir = tempfile::tempdir().unwrap();
+    let source_url = fresh_aigw_db_without_025(&src_dir, "source.db").await;
+    let target_url = fresh_aigw_db(&tgt_dir, "target.db").await; // post-025 (has image_tokens)
+
+    // Seed a spend_log row on the OLD source.
+    let now = chrono::Utc::now();
+    let ts = now.format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    seed_spend_log(&source_url, "src-old-001", &ts, "gpt-4", "{}").await;
+
+    // Sync spend_logs only. Must NOT fail on image_tokens; the row lands with
+    // image_tokens NULL (pre-025 source has no such data).
+    let cursor = CursorRange {
+        resume_after: None,
+        end_before: None,
+    };
+    run_sync(
+        &source_url,
+        &target_url,
+        &["spend_logs".to_string()],
+        &cursor,
+        false,
+        10,
+        false,
+    )
+    .await
+    .expect("sync must succeed with a pre-025 source (no image_tokens)");
+
+    assert_eq!(count_rows(&target_url, "spend_logs").await, 1);
+    // The synced row carries NULL image_tokens (column exists on target only).
+    let pool = SourcePool::connect(&target_url).await.unwrap();
+    let rows = pool.read_rows("spend_logs").await.unwrap();
+    assert_eq!(rows.len(), 1);
+    let row = &rows[0];
+    // UnifiedRow is Vec<(name, Value)> — find image_tokens (present, NULL).
+    let img = row.iter().find(|(n, _)| n == "image_tokens");
+    assert!(
+        img.map(|(_, v)| v.is_null()).unwrap_or(true),
+        "image_tokens should be NULL on a row synced from a pre-025 source"
+    );
+}

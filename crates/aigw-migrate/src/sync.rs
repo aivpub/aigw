@@ -529,9 +529,28 @@ async fn sync_spend_logs(
     } else {
         std::collections::HashSet::new()
     };
+    // Intersect with the SOURCE columns so a source running an OLDER schema
+    // (pre-025: no `image_tokens`, pre-023: no `call_id`) doesn't make the
+    // SELECT project a column that doesn't exist there. Columns present only on
+    // the target (added by later migrations, e.g. migration 025 image_tokens)
+    // are dropped from the projection and stay NULL/default on the target —
+    // a pre-025 source simply has no such data to carry over.
+    // Exception: `call_id` (the target PK) is kept even when the source is
+    // pre-023 and names that column `request_id` — the SELECT maps call_id →
+    // request_id and the override fetches request_id's value for the insert.
+    let src_col_names: std::collections::HashSet<String> = source
+        .column_types("spend_logs")
+        .await?
+        .into_iter()
+        .map(|(n, _, _)| n)
+        .collect();
+    let source_has_request_id = src_col_names.contains("request_id");
     let filtered_cols: Vec<(String, String, bool)> = tgt_cols_all
         .iter()
-        .filter(|(c, _, _)| !skip_set.contains(c.as_str()))
+        .filter(|(c, _, _)| {
+            !skip_set.contains(c.as_str())
+                && (src_col_names.contains(c) || (c == "call_id" && source_has_request_id))
+        })
         .cloned()
         .collect();
     if filtered_cols.is_empty() {
