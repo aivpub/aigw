@@ -810,6 +810,7 @@ declare module "i18next" {
       curl: string;
       sdk: string;
     },
+    heicUnsupported: string;
   },
   routerSettings: {
     title: string;

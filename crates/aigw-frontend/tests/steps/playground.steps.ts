@@ -281,6 +281,21 @@ Then("the pending image should be compressed to a smaller data URL", async ({ pa
   expect(b64len).toBeLessThan(2 * 1024 * 1024);
 });
 
+/** Upload a synthetic HEIC file — Chromium cannot decode HEIC, so
+ * compressImage returns null → the TD-011b reject toast fires. */
+When("I upload a HEIC image to the playground", async ({ page }) => {
+  await page.locator("[data-testid='playground-file-input']").setInputFiles({
+    name: "photo.heic",
+    mimeType: "image/heic",
+    buffer: Buffer.from([0, 0, 0, 24, 102, 116, 121, 112, 104, 101, 105, 99]), // ftyp heic box
+  });
+  await page.waitForTimeout(500);
+});
+
+Then("I should see the HEIC-unsupported toast", async ({ page }) => {
+  await expect(page.getByText(/HEIC\/HEIF/i)).toBeVisible({ timeout: 5000 });
+});
+
 Then("the pending image should be the original tiny PNG unchanged", async ({ page }) => {
   const thumb = page.locator("[data-testid='playground-pending-image']").first();
   const src = (await thumb.getAttribute("src")) ?? "";

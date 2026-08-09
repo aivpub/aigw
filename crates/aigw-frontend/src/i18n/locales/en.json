@@ -793,7 +793,8 @@
       "title": "Call Code",
       "curl": "curl",
       "sdk": "SDK (Python)"
-    }
+    },
+    "heicUnsupported": "HEIC/HEIF images can't be previewed in this browser — open in Safari or convert to JPEG/PNG."
   },
   "routerSettings": {
     "title": "Router Settings",

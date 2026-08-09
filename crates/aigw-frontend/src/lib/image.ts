@@ -54,10 +54,10 @@ export async function compressImage(file: File): Promise<CompressResult> {
   try {
     bitmap = await loadBitmap(file);
   } catch {
-    // Undecodable by this browser (HEIC/AVIF on Chromium/Firefox). Keep the
-    // original — the upload path already guards RASTER_MIME, and this file
-    // would have been rejected upstream anyway.
-    return { dataUrl: originalDataUrl, originalBytes, compressedBytes: dataUrlBytes(originalDataUrl) };
+    // Undecodable by this browser (HEIC/AVIF on Chromium/Firefox). Return null
+    // so the caller can surface a friendly rejection (TD-011b) instead of
+    // attaching an image the user can't preview or that upstream would reject.
+    return { dataUrl: null, originalBytes, compressedBytes: 0 };
   }
 
   const { width, height } = bitmapSize(bitmap);

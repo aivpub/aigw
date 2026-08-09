@@ -402,6 +402,7 @@ mod router_tests {
             model_group: None,
             custom_llm_provider: None,
             chat_template_compat: None,
+            modal_pricing: None,
             fail_count: 0,
             cooldown_until: None,
         }

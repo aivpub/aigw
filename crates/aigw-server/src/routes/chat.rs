@@ -122,6 +122,41 @@ pub(crate) fn calc_spend(
         + completion_tokens as f64 * output_cost.unwrap_or(0.0)
 }
 
+/// Per-modality input cost (TD-012b): price a multimodal input whose tokens are
+/// broken down by modality (image/audio/video) against `modal_pricing` (USD per
+/// 1M tokens), falling back to the deployment's scalar `input_cost_per_token`
+/// when no modal pricing is configured or a modality is unknown.
+///
+/// `modal_tokens` is a map of modality → token count. Sums `Σ tokens × price`.
+/// NOTE: `modal_pricing` values are USD-per-1M-tokens (e.g. Gemini image $0.45/M)
+/// so they're divided by 1e6; the scalar `input_cost` is already per-token
+/// (aigw's model_info input_cost_per_token is per-token) and is used as-is.
+///
+/// Wired into the embeddings spend path once a request carries per-modality
+/// input tokens (gemini-embedding-2 style); the pure math + UTs are the current
+/// deliverable (TD-012b defers real-load wiring until such traffic exists).
+#[allow(dead_code)]
+pub(crate) fn calc_spend_modal(
+    modal_tokens: &[(&str, i32)],
+    input_cost: Option<f64>,
+    modal_pricing: Option<&aigw_core::models::ModalPricing>,
+) -> f64 {
+    let scalar = input_cost.unwrap_or(0.0);
+    modal_tokens
+        .iter()
+        .map(|(modal, tokens)| {
+            let per_token = match *modal {
+                "image" => modal_pricing.and_then(|p| p.image).map(|v| v / 1_000_000.0),
+                "audio" => modal_pricing.and_then(|p| p.audio).map(|v| v / 1_000_000.0),
+                "video" => modal_pricing.and_then(|p| p.video).map(|v| v / 1_000_000.0),
+                _ => None,
+            }
+            .unwrap_or(scalar);
+            (*tokens as f64) * per_token
+        })
+        .sum()
+}
+
 /// Extract cache-read tokens from usage JSON (Anthropic + OpenAI formats).
 pub(crate) fn extract_cache_read_tokens(usage: &Value) -> i32 {
     // Anthropic: usage.cache_read_input_tokens
@@ -3099,6 +3134,50 @@ mod tests {
             "expected 6.875, got {}",
             spend
         );
+    }
+
+    #[test]
+    fn test_calc_spend_modal_image_only() {
+        // 1000 image tokens × $0.45/M = 0.00045
+        let mp = aigw_core::models::ModalPricing {
+            image: Some(0.45),
+            audio: Some(6.50),
+            video: Some(12.00),
+        };
+        let spend = calc_spend_modal(&[("image", 1000)], Some(0.0002), Some(&mp));
+        assert!((spend - 0.00045).abs() < 1e-12, "got {spend}");
+    }
+
+    #[test]
+    fn test_calc_spend_modal_mixed_audio_video() {
+        // audio 500 tokens × $6.50/M + video 100 tokens × $12.00/M
+        let mp = aigw_core::models::ModalPricing {
+            image: Some(0.45),
+            audio: Some(6.50),
+            video: Some(12.00),
+        };
+        let spend = calc_spend_modal(&[("audio", 500), ("video", 100)], Some(0.0002), Some(&mp));
+        let expected = 500.0 * 6.50 / 1e6 + 100.0 * 12.00 / 1e6;
+        assert!((spend - expected).abs() < 1e-12, "got {spend}");
+    }
+
+    #[test]
+    fn test_calc_spend_modal_unknown_falls_back_scalar() {
+        // unknown modality → scalar input cost per token
+        let mp = aigw_core::models::ModalPricing {
+            image: Some(0.45),
+            audio: None,
+            video: None,
+        };
+        let spend = calc_spend_modal(&[("text", 1000)], Some(0.0002), Some(&mp));
+        assert!((spend - 0.2).abs() < 1e-10, "got {spend}");
+    }
+
+    #[test]
+    fn test_calc_spend_modal_no_modal_pricing_scalar() {
+        // no modal_pricing configured → scalar input cost for all modalities
+        let spend = calc_spend_modal(&[("image", 1000)], Some(0.0002), None);
+        assert!((spend - 0.2).abs() < 1e-10, "got {spend}");
     }
 
     #[test]

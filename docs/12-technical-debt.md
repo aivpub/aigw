@@ -104,7 +104,7 @@
 - **Resolution**: 视生产图片使用量触发；-009a/b 建议随 Phase 42 后的小版本实施，c/d/e 按需。
 - **Target Phase**: 无固定排期（视使用量）。
 
-### TD-011: Image Token 估算精度与格式覆盖
+### TD-011: Image Token 估算精度与格式覆盖 ✅ TD-011b/c Resolved 2026-08-09（TD-011a 剩余）
 
 - **Date**: 2026-08-08
 - **Priority**: P2
@@ -113,15 +113,15 @@
 
 | Sub-ID | 条目 | 优先级 | 描述 |
 |--------|------|--------|------|
-| TD-011a | 视频 token 估算不支持 | P2 | 视频多模态请求的 token 需 `temporal_patch_size` + mRoPE 公式，超出 image-only 引擎能力。触发：视频多模态请求占比 > 5%。 |
-| TD-011b | HEIC/AVIF 格式不支持 | P3 | header parser 仅 PNG/JPEG/WebP/GIF；Apple 生态 HEIC 与 AVIF 无法解析 → 估算落空。触发：Apple 生态用户反馈。 |
-| TD-011c | Anthropic downsizing 规则未模拟 | P3 | Anthropic 官方公式 `⌈w/28⌉×⌈h/28⌉` 精确，但模型端还有"超出 max_tokens 自动缩放"规则（target=1568 tokens）未在客户端模拟。触发：用户反馈偏差 > 20%。 |
+| TD-011a | 视频 token 估算不支持 | P2 | 视频多模态请求的 token 需 `temporal_patch_size` + mRoPE 公式，超出 image-only 引擎能力。触发：视频多模态请求占比 > 5%。 **剩余**（Stage 115 按设计「可选」跳过 Playground 视频输入；token 估算维持待触发） |
+| TD-011b | HEIC/AVIF 格式不支持 | P3 | header parser 仅 PNG/JPEG/WebP/GIF；Apple 生态 HEIC 与 AVIF 无法解析 → 估算落空。触发：Apple 生态用户反馈。 ✅ 已解决（Stage 115，2026-08-09 — 前端转码：compressImage 检测 heic/avif → createImageBitmap（Safari 可解码）→ JPEG；无法解码浏览器 toast 提示；E2E 验证 Chromium reject 路径） |
+| TD-011c | Anthropic downsizing 规则未模拟 | P3 | Anthropic 官方公式 `⌈w/28⌉×⌈h/28⌉` 精确，但模型端还有"超出 max_tokens 自动缩放"规则（target=1568 tokens）未在客户端模拟。触发：用户反馈偏差 > 20%。 ✅ 已解决（Stage 115，2026-08-09 — `estimate_anthropic` 迭代缩放保比例到 ≤1568，4 UT） |
 
 - **Impact**: 估算值仅供参考（阿里云官方明示），不阻塞分析/对账用途；多模态占比低时影响可忽略。
-- **Resolution**: 视使用量按子条目触发实施。
-- **Target Phase**: 无固定排期。
+- **Resolution**: b/c 已在 Stage 115 解决（2026-08-09）；a 剩余（视频输入 + token 估算留待真实负载）。
+- **Target Phase**: TD-011a 无固定排期（视使用量触发）。
 
-### TD-012: health.rs embedding-mode 探测缺失 + 多模态 embedding 计费
+### TD-012: health.rs embedding-mode 探测缺失 + 多模态 embedding 计费 ✅ Resolved 2026-08-09
 
 - **Date**: 2026-08-09
 - **Priority**: P2
@@ -131,7 +131,7 @@
 | Sub-ID | 条目 | 优先级 | 描述 |
 |--------|------|--------|------|
 | TD-012a | health.rs embedding-mode 探测缺失 | P2 | 现有 `run_and_save_health_check` 对所有 OpenAICompatible 模型 POST `{model, messages:[...], max_tokens:1}` 到 `/chat/completions`，embedding-only 模型会 400 误报 unhealthy。需按 `model_info.mode="embed"` 分支探测 `/embeddings`。触发：embedding 模型接入 health 探测。Phase 46 候选。 ✅ 已解决（Stage 113，2026-08-09 — `build_probe_spec` 按 model_info.mode 分支 + BDD 场景）|
-| TD-012b | 多模态 embedding 按模态计费不支持 | P3 | gemini-embedding-2 按模态计费（$0.45/$6.50/$12.00），超出 aigw 单 `input_cost_per_token` 标量能力。触发：真实多模态 embedding 流量。 |
+| TD-012b | 多模态 embedding 按模态计费不支持 | P3 | gemini-embedding-2 按模态计费（$0.45/$6.50/$12.00），超出 aigw 单 `input_cost_per_token` 标量能力。触发：真实多模态 embedding 流量。 ✅ 已解决（Stage 115，2026-08-09 — `ModalPricing` + `Deployment.modal_pricing` + resolver 提取 + `calc_spend_modal` 纯函数 + 6 UT；**embeddings.rs 接线留待真实 per-modal input 流量**） |
 
 - **Impact**: 非阻塞。薄 passthrough 对 embedding 模型健康探测会误报；多模态 embedding 计费按标量 input_cost 欠精确。
 - **Resolution**: 视使用量触发。

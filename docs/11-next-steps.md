@@ -1,11 +1,13 @@
 # aigw -- 下一步行动
 
 **上次更新**: 2026-08-09
-**当前阶段**: **Phase 45 Stage 114 ✅ 完成（前端体验 — TD-009a/b 图片压缩 + TD-008a/b i18n 增强）；Stage 115 待开始**
+**当前阶段**: **Phase 45 全部完成（Stage 113-115 ✅ — 技术债清理收官）；ALL STAGES + Phase 45 COMPLETE**
 
 ---
 
-## 当前状态：116/116 Stages 完成；Phase 45 进行中（Stage 113-114 ✅ → 115 ⏳）
+## 当前状态：116/116 Stages + Phase 45 技术债清理全部完成
+
+**2026-08-09（Phase 45 Stage 115 ✅ — 收官）**: 多模态精度三项落地。① TD-011c Anthropic downsizing——`estimate_anthropic` 迭代缩放保比例到 ≤1568 target（⌈x/28⌉ 向上取整 overshoot 修正），4 UT。② TD-012b 多模态按模态计费——`ModalPricing{image,audio,video}` + `Deployment.modal_pricing` + resolver 提取 + `calc_spend_modal` 纯函数（modal/1M vs scalar per-token 单位校准）+ 6 UT；**embeddings.rs 接线留待真实 per-modal input 流量**（TD 描述「等真实负载再评估」）。③ TD-011b HEIC/AVIF 前端转码——`compressImage` 检测 heic/avif → Safari 解码转 JPEG，无法解码浏览器 toast（失败返回 null 使 caller 可区分）；E2E 验证 Chromium reject 路径。**TD-011a 视频输入 SKIPPED**（设计标记可选 + 无真实流量，记录剩余）。验证：aigw-core 415 + aigw-server 140 UT、fmt + lint green、playground.feature 57/57（含 HEIC 场景 × 3 viewports）。ADR-030 Accepted + TD-011b/c/012b Resolved。
 
 **2026-08-09（Phase 45 Stage 114 ✅）**: 前端体验四项技术债落地。① TD-009a Playground 图片压缩——`src/lib/image.ts` `compressImage`（canvas 2048px + JPEG 0.8，取「原图 vs 压缩」较小者保真，小图原样 PNG）+ 上传/粘贴统一走压缩；E2E 2400x2400 照片压缩后 <2MB。② TD-009b 请求体超限防御——handleSend 预检 `∑ dataUrlBytes > 24MiB` → toast + 拒绝（`window.__AIGW_MAX_IMAGE_BODY__` 测试 override 解决 sessionStorage 配额限制）。③ TD-008a i18n 懒加载——en 同步 eager + 检测语言 eager（zh-CN 首访首帧中文）+ 另一语言动态 `import()` 独立 chunk（zh-CN 25kB lazy）；修复 en-US 归一化（防 Unknown dynamic import）。④ TD-008b 翻译 TS 类型——`scripts/fe-i18n-types` 生成 `resources.d.ts`（增广 i18next CustomTypeOptions，不翻转全局 strict）；暴露并修复 5 个缺失 key + 1 拼写错误。验证：3 新 BDD 场景 × 3 viewports = 9/9、i18n-switcher 9/9、全量 fe-bdd 342 pass、fe-build 分包、fe-lint + tsc 通过。ADR-029 Accepted + TD-008a/b + TD-009a/b Resolved。
 
@@ -103,7 +105,7 @@ Phase 41:   ████████████████████ 100% (2
 Phase 42:   ████████████████████ 100% (3/3)  ✅ Playground 多模态图片 (Stage 103-105)
 Phase 43:   ████████████████████ 100% (3/3)  ✅ Image Token Usage Tracking (Stage 106-108)
 Phase 44:   ████████████████████ 100% (3/3)  ✅ OpenAI Embeddings API 代理 (Stage 110-112)
-Phase 45:   ░░░░░░░░░░░░░░░░░░░░  67% (2/3)  🔄 技术债清理 (Stage 113-114 ✅ → 115 ⏳)
+Phase 45:   ████████████████████ 100% (3/3)  ✅ 技术债清理 (Stage 113-115 全部完成)
 ```
 
 ---

@@ -108,3 +108,10 @@ Feature: Playground Chat
     Then I should see the attachment-too-large toast
     And no chat request should have been sent
 
+  # ── Stage 115 TD-011b: HEIC/AVIF transcode ──
+
+  Scenario: HEIC upload is rejected with a toast when the browser can't decode
+    When I upload a HEIC image to the playground
+    Then I should see the HEIC-unsupported toast
+    And I should see 0 image preview
+

@@ -637,12 +637,19 @@ export function PlaygroundPage() {
   // max 2048px edge, JPEG 0.8) so the base64 body + token cost stay bounded.
   // Oversized source files (>20MB) are skipped; the pre-send body-limit check
   // (24MiB ∑ data-URL bytes, TD-009b) lives in handleSend.
+  // Stage 115 (TD-011b): HEIC/AVIF are accepted and transcoded to JPEG by
+  // compressImage when the browser can decode them (Safari); on browsers that
+  // can't (Chromium/Firefox) they're rejected with a toast.
   const RASTER_MIME = /^image\/(png|jpe?g|gif|webp)$/i;
+  const HEIC_AVIF_MIME = /^image\/(heic|heif|avif)$/i;
   const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
   const addImageFiles = useCallback(async (files: File[] | FileList) => {
     const list = Array.from(files);
     for (const f of list) {
-      if (!RASTER_MIME.test(f.type)) continue;
+      // TD-011b: HEIC/AVIF pass through compressImage which transcodes to JPEG
+      // only if the browser can decode them (Safari). Non-decodable browsers
+      // fall through to a friendly rejection toast below.
+      if (!RASTER_MIME.test(f.type) && !HEIC_AVIF_MIME.test(f.type)) continue;
       if (f.size > MAX_IMAGE_BYTES) continue;
       // TD-009a: compress, then use the smaller of original/compressed so small
       // images (avatars, diagrams) keep their fidelity and only oversized photos
@@ -651,6 +658,10 @@ export function PlaygroundPage() {
       const dataUrl = result.dataUrl;
       if (dataUrl && dataUrl.startsWith("data:")) {
         setPendingImages((prev) => [...prev, dataUrl]);
+      } else if (HEIC_AVIF_MIME.test(f.type)) {
+        // Browser cannot decode HEIC/AVIF (e.g. Chromium). Tell the user to
+        // open in Safari or convert to JPEG/PNG first.
+        toast(t("playground.heicUnsupported"), { duration: 5000 });
       }
     }
   }, []);

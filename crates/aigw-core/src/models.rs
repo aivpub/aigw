@@ -129,6 +129,18 @@ impl VirtualKey {
 // spend_logs (24 columns, matches LiteLLM_SpendLogs)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+/// Per-modality input pricing (TD-012b), USD per 1M tokens — supports
+/// providers like Gemini embeddings that bill image/audio/video differently.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ModalPricing {
+    /// USD per 1M image input tokens.
+    pub image: Option<f64>,
+    /// USD per 1M audio input tokens.
+    pub audio: Option<f64>,
+    /// USD per 1M video input tokens.
+    pub video: Option<f64>,
+}
+
 /// Spend log entry — column-compatible with litellm's `LiteLLM_SpendLogs`
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct SpendLog {

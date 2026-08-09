@@ -3,6 +3,9 @@
 ## [未发布]
 
 ### 新增
+- Stage 115: Anthropic image token downsizing（`estimate_anthropic` 迭代缩放保比例到 ≤1568 target）——TD-011c 解决
+- Stage 115: 多模态按模态计费（`ModalPricing` + `Deployment.modal_pricing` + resolver 提取 + `calc_spend_modal` 纯函数 + 6 UT）——TD-012b 解决（embeddings.rs 接线留待真实负载）
+- Stage 115: HEIC/AVIF 前端转码（`compressImage` 检测 heic/avif → Safari 解码转 JPEG；无法解码浏览器 toast 提示）——TD-011b 解决
 - Stage 114: Playground 图片上传压缩（`src/lib/image.ts` `compressImage`——canvas 2048px + JPEG 0.8，取「原图 vs 压缩」较小者保真）——TD-009a 解决
 - Stage 114: 请求体超限防御（handleSend 预检 ∑ dataUrlBytes > 24MiB → toast + 拒绝）——TD-009b 解决
 - Stage 114: i18n 翻译懒加载（en eager + 检测语言 eager + zh-CN 独立 lazy chunk 25kB）——TD-008a 解决
@@ -23,12 +26,13 @@
 - Stage 103: `openai_message_to_claude` 修 image 转换 bug — data URL 剥离 + media_type 推导（parse_data_url）
 
 ### 修复
+- Stage 115: `compressImage` 解码失败返回 null（原返回原图 → caller 无法区分「无法渲染」）；TD-011c 单次缩放 overshoot → 迭代缩放
 - Stage 114: i18n 动态 import 归一化（navigator=en-US → en bundle，防 Unknown dynamic import unhandled-rejection）
 - Stage 114: 修复 5 个缺失 i18n key（health.min/keys.deletedKeys/keys.tpmLabel+rpmLabel/drawer.tabDescription+tabParams）+ dashboard.spend 拼写错误
 - Stage 113: 后端 loop panic 不再杀死 tokio task（tick/exec/cleanup 静默降级问题）
 - Stage 103: `test_activity_reports_timezone_metadata` date-sensitive 修复（固定 start_time 在查询窗口内）
 
 ### 技术债
-- 解决: TD-008a/b + TD-009a/b（Stage 114）；TD-005 / TD-003 / TD-010a（Stage 113）
-- 引入: 无
+- 解决: TD-011b/c + TD-012b（Stage 115）；TD-008a/b + TD-009a/b（Stage 114）；TD-005 / TD-003 / TD-010a（Stage 113）——Phase 45 技术债清理全收官
+- 引入: 无（TD-011a 视频输入维持剩余，待真实负载）
 

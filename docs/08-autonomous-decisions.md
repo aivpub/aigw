@@ -552,3 +552,23 @@
   - 验证：3 新 BDD 场景 × 3 viewports = 9/9 ✅、i18n-switcher 9/9 ✅、全量 fe-bdd 342 pass（11.6m，en-US 动态 import 修复后无 unhandled-rejection）、fe-build 分包（zh-CN 25kB lazy）、fe-lint + tsc 通过。
   - 遗留：HEIC/AVIF 前端转码（TD-011b）留 Stage 115；typed t() 对变量 key 需 cast。
   - 设计文档：`docs/stages/stage-114.md` + `docs/stages/stage-114-review-log.md`。
+
+## ADR-030: Phase 45 Stage 115 多模态精度（TD-011b/c + TD-012b；TD-011a 跳过）
+
+- **Date**: 2026-08-09
+- **Status**: Accepted（Phase 45 Stage 115 完成 ✅，Phase 45 全交付）
+- **Decision**: Phase 45 收官 Stage 落地三项多模态精度技术债，核心决策：
+  (1) **Anthropic downsizing 用迭代缩放**——`estimate_anthropic` 若 ⌈w/28⌉×⌈h/28⌉ > 1568，`scale=sqrt(target/est)` 迭代缩放直到 tiled 估算 ≤ target（保宽高比；⌈x/28⌉ 向上取整会 overshoot，单次缩放不够）。
+  (2) **TD-012b 交付数据模型 + 纯函数 + UT，接线留待真实负载**——新增 `ModalPricing{image,audio,video}`（USD/1M）+ `Deployment.modal_pricing` + resolver 提取 + `calc_spend_modal(modal_tokens, input_cost, modal_pricing)` 纯函数（modal_price ÷1e6，scalar 原样 per-token）+ 6 UT；embeddings.rs 的 per-modal input token 计数无来源（gemini-embedding-2 式 API 才带），与 TD「等真实负载再评估」一致。
+  (3) **HEIC/AVIF 前端转码失败语义改 null**——compressImage 解码失败返回 `dataUrl: null`（非原图），caller 对 HEIC/AVIF 弹不支持 toast；Chromium reject 路径 E2E 验证，Safari 成功路径由逻辑保证。
+  (4) **TD-011a 视频输入 SKIPPED**——设计标记「可选（工作量高）」，无真实视频流量，按设计允许跳过并记录剩余。
+- **Background**: Phase 45（技术债清理）最后一个 Stage——多模态精度（TD-011 重定义 + TD-012b）。Stage 114 已交付图片压缩/i18n；本 Stage 收尾 image token 精度 + 多模态计费能力。
+- **Key decisions**:
+  - **TD-012b 单元单位**：modal_pricing 值 USD-per-1M（÷1e6），scalar input_cost_per_token 已是 per-token（原样）——UT 校准防混用（0.2 vs 2e-4 bug 捕获）。
+  - **部署构造点全量补 modal_pricing**：resolver 3 处 + 测试构造 12 处（adapter/router/deployment/health/anthropic_native_steps）全补 `modal_pricing`。
+  - **不新增 mock BDD**：TD-011c/012b 为纯函数 UT 覆盖（无 HTTP 面），HEIC 转码 E2E 覆盖 reject 路径。
+- **Consequences**:
+  - TD-011b/c + TD-012b Resolved（2026-08-09）；TD-011a 剩余（视频输入 + token 估算待真实负载）。
+  - 验证：aigw-core 415（image_tokens 23 + resolver 12）+ aigw-server 140（calc_spend_modal 4）、fmt + lint green、playground.feature 57/57（含 HEIC 场景 × 3 viewports）。
+  - **Phase 45 全交付（Stage 113-115）**：TD-003/005/008a/b/009a/b/010a/011b/c/012a/b 全部 Resolved；技术债清理收官。
+  - 设计文档：`docs/stages/stage-115.md` + `docs/stages/stage-115-review-log.md`。

@@ -793,7 +793,8 @@
       "title": "调用代码",
       "curl": "curl",
       "sdk": "SDK (Python)"
-    }
+    },
+    "heicUnsupported": "此浏览器无法预览 HEIC/HEIF 图片——请在 Safari 中打开或转换为 JPEG/PNG。"
   },
   "routerSettings": {
     "title": "路由设置",

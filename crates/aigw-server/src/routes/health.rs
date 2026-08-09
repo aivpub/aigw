@@ -802,6 +802,7 @@ mod tests {
             model_group: Some("text-embedding-3-small".into()),
             custom_llm_provider: Some("openai".into()),
             chat_template_compat: None,
+            modal_pricing: None,
             fail_count: 0,
             cooldown_until: None,
         };
@@ -834,6 +835,7 @@ mod tests {
             model_group: Some("gpt-4".into()),
             custom_llm_provider: Some("openai".into()),
             chat_template_compat: None,
+            modal_pricing: None,
             fail_count: 0,
             cooldown_until: None,
         };

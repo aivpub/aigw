@@ -44,6 +44,11 @@ pub struct Deployment {
     /// chat template compatibility mode from model_info
     /// "auto" (default/absent) / "strict" (fold extra system messages) / "loose" (passthrough)
     pub chat_template_compat: Option<String>,
+    /// Per-modality input pricing (TD-012b), extracted from model_info
+    /// `modal_pricing: {image, audio, video}` (USD per 1M tokens, e.g. Gemini
+    /// embeddings image $0.45 / audio $6.50 / video $12.00). None when the
+    /// deployment is single-modal (falls back to input_cost_per_token).
+    pub modal_pricing: Option<crate::models::ModalPricing>,
     /// Runtime cooldown tracking — not persisted, managed by Router.
     /// Number of consecutive failures for this deployment.
     pub fail_count: u32,
@@ -156,6 +161,7 @@ mod tests {
             model_group: Some("gpt-4".to_string()),
             custom_llm_provider: Some("openai".to_string()),
             chat_template_compat: None,
+            modal_pricing: None,
             fail_count: 0,
             cooldown_until: None,
         };

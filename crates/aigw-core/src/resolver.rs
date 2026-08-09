@@ -87,6 +87,7 @@ impl ModelResolver {
                     model_group: None,
                     custom_llm_provider: None,
                     chat_template_compat: None,
+                    modal_pricing: None,
                     fail_count: 0,
                     cooldown_until: None,
                 }]);
@@ -282,6 +283,7 @@ impl ModelResolver {
                 .get("chat_template_compat")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
+            let modal_pricing = extract_modal_pricing(&m.model_info);
 
             Ok(Deployment {
                 api_base,
@@ -297,6 +299,7 @@ impl ModelResolver {
                 model_group: model_group.clone(),
                 custom_llm_provider: custom_llm_provider.clone(),
                 chat_template_compat,
+                modal_pricing,
                 fail_count: 0,
                 cooldown_until: None,
             })
@@ -330,6 +333,7 @@ impl ModelResolver {
                 .get("chat_template_compat")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
+            let modal_pricing = extract_modal_pricing(&m.model_info);
 
             // When proxy_models has api_key=None (encrypted/empty), fall back to env vars.
             // api_base from DB is authoritative — only fill missing api_key from env.
@@ -356,11 +360,29 @@ impl ModelResolver {
                 model_group,
                 custom_llm_provider,
                 chat_template_compat,
+                modal_pricing,
                 fail_count: 0,
                 cooldown_until: None,
             })
         }
     }
+}
+
+/// Extract per-modality pricing (TD-012b) from model_info.modal_pricing
+/// `{image, audio, video}` — USD per 1M tokens. Absent → None (single-modal,
+/// falls back to input_cost_per_token).
+fn extract_modal_pricing(model_info: &Value) -> Option<crate::models::ModalPricing> {
+    let obj = model_info.get("modal_pricing")?.as_object()?;
+    let get = |k: &str| obj.get(k).and_then(|v| v.as_f64());
+    let pricing = crate::models::ModalPricing {
+        image: get("image"),
+        audio: get("audio"),
+        video: get("video"),
+    };
+    if pricing.image.is_none() && pricing.audio.is_none() && pricing.video.is_none() {
+        return None;
+    }
+    Some(pricing)
 }
 
 /// Extract pricing — primary from model_info, fallback to litellm_params.
@@ -632,5 +654,44 @@ mod tests {
         // raw_params preserves all original fields, not just the resolved ones
         assert_eq!(deployments[0].raw_params["rpm"].as_i64(), Some(100));
         assert_eq!(deployments[0].raw_params["tpm"].as_i64(), Some(5000));
+    }
+
+    // TD-012b: model_info.modal_pricing flows into Deployment.modal_pricing.
+    #[tokio::test]
+    async fn test_resolve_modal_pricing_extracted() {
+        let db = Database::init("sqlite::memory:").await.unwrap();
+        insert_plaintext_model(
+            &db,
+            "gemini-embedding-2",
+            json!({"model": "gemini-embedding-2", "api_base": "https://generativelanguage.googleapis.com", "custom_llm_provider": "google"}),
+            json!({"modal_pricing": {"image": 0.45, "audio": 6.50, "video": 12.00}}),
+        )
+        .await;
+
+        let resolver = make_resolver(db, None).await;
+        let deployments = resolver.resolve("gemini-embedding-2").await.unwrap();
+        let mp = deployments[0]
+            .modal_pricing
+            .as_ref()
+            .expect("modal_pricing set");
+        assert_eq!(mp.image, Some(0.45));
+        assert_eq!(mp.audio, Some(6.50));
+        assert_eq!(mp.video, Some(12.00));
+    }
+
+    // TD-012b: no modal_pricing → None (single-modal fallback to scalar).
+    #[tokio::test]
+    async fn test_resolve_modal_pricing_absent_is_none() {
+        let db = Database::init("sqlite::memory:").await.unwrap();
+        insert_plaintext_model(
+            &db,
+            "gpt-4",
+            json!({"model": "gpt-4", "api_base": "https://api.openai.com/v1"}),
+            json!({}),
+        )
+        .await;
+        let resolver = make_resolver(db, None).await;
+        let deployments = resolver.resolve("gpt-4").await.unwrap();
+        assert!(deployments[0].modal_pricing.is_none());
     }
 }
