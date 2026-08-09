@@ -2301,33 +2301,39 @@ impl StreamAdapter for ResponsesToChatCompletionsStream {
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("");
 
-                            // New tool call
+                            // Ensure the tool-call slot exists (id/name may be
+                            // null on argument-delta chunks — OpenAI streams
+                            // id+name on the first chunk, then args-only).
+                            while self.tool_call_buf.len() <= idx {
+                                self.tool_call_buf.push(ToolCallState {
+                                    call_id: String::new(),
+                                    name: String::new(),
+                                    arguments: String::new(),
+                                    done: false,
+                                });
+                            }
+                            let buf = &mut self.tool_call_buf[idx];
+
+                            // New tool call (id + name present) → register
                             if let (Some(id), Some(name)) = (tc_id, tc_name) {
-                                while self.tool_call_buf.len() <= idx {
-                                    self.tool_call_buf.push(ToolCallState {
-                                        call_id: String::new(),
-                                        name: String::new(),
-                                        arguments: String::new(),
-                                        done: false,
-                                    });
-                                }
-                                let buf = &mut self.tool_call_buf[idx];
                                 if !buf.done && buf.call_id.is_empty() {
                                     buf.call_id = id;
                                     buf.name = name;
                                 }
-                                if !tc_args.is_empty() {
-                                    buf.arguments.push_str(tc_args);
-                                    let arg_delta = json!({
-                                        "delta": tc_args,
-                                        "call_id": buf.call_id,
-                                        "output_index": idx
-                                    });
-                                    out.extend_from_slice(&self.emit_sse(
-                                        "response.function_call_arguments.delta",
-                                        &serde_json::to_string(&arg_delta).unwrap(),
-                                    ));
-                                }
+                            }
+                            // Argument delta (may arrive with null id/name —
+                            // use the stored call_id from the first chunk)
+                            if !tc_args.is_empty() {
+                                buf.arguments.push_str(tc_args);
+                                let arg_delta = json!({
+                                    "delta": tc_args,
+                                    "call_id": buf.call_id,
+                                    "output_index": idx
+                                });
+                                out.extend_from_slice(&self.emit_sse(
+                                    "response.function_call_arguments.delta",
+                                    &serde_json::to_string(&arg_delta).unwrap(),
+                                ));
                             }
                         }
                     }
@@ -2408,6 +2414,7 @@ impl StreamAdapter for ResponsesToChatCompletionsStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::deployment::ProviderType;
     use crate::models::{ChatContent, ChatMessage, TokenDetails};
 
     fn make_openai_req(text: &str) -> ChatCompletionRequest {
@@ -2567,6 +2574,255 @@ mod tests {
     fn test_passthrough_stream() {
         let mut stream = PassthroughStream;
         assert_eq!(stream.next(b"test").unwrap(), b"test");
+    }
+
+    // ── Stage 102 Responses→Chat bridge — adapter-level UT (Phase 41 test gap ①) ──
+
+    #[test]
+    fn test_responses_to_chat_adapt_request_string_input() {
+        let body = serde_json::json!({
+            "model": "gpt-4o",
+            "input": "Hello from Responses",
+            "instructions": "Be helpful",
+            "max_output_tokens": 128,
+            "reasoning": {"effort": "low"},
+            "stream": true
+        });
+        let dep = Deployment {
+            api_base: "https://api.openai.com/v1".to_string(),
+            api_key: Some("sk-test".to_string()),
+            upstream_model: "gpt-4o-upstream".to_string(),
+            provider_type: ProviderType::OpenAICompatible,
+            input_cost_per_token: None,
+            output_cost_per_token: None,
+            cache_read_input_token_cost: None,
+            cache_creation_input_token_cost: None,
+            raw_params: serde_json::json!({}),
+            model_id: None,
+            model_group: None,
+            custom_llm_provider: None,
+            chat_template_compat: None,
+            fail_count: 0,
+            cooldown_until: None,
+        };
+        let adapted = ResponsesToChatCompletions
+            .adapt_request(body, &dep)
+            .expect("adapt_request");
+        // instructions → prepended system message (index 0)
+        assert_eq!(
+            adapted["messages"][0]["role"].as_str(),
+            Some("system"),
+            "instructions should become system message"
+        );
+        assert_eq!(adapted["messages"][0]["content"].as_str(), Some("Be helpful"));
+        // input string → single user message (index 1)
+        assert_eq!(
+            adapted["messages"][1]["role"].as_str(),
+            Some("user"),
+            "string input should become a user message"
+        );
+        assert_eq!(
+            adapted["messages"][1]["content"].as_str(),
+            Some("Hello from Responses")
+        );
+        // max_output_tokens → max_tokens
+        assert_eq!(adapted["max_tokens"].as_i64(), Some(128));
+        assert!(adapted.get("max_output_tokens").is_none());
+        // unsupported reasoning dropped
+        assert!(adapted.get("reasoning").is_none());
+        // model rewritten to upstream
+        assert_eq!(adapted["model"].as_str(), Some("gpt-4o-upstream"));
+        // stream_options injected for streaming
+        assert!(adapted["stream_options"]["include_usage"].as_bool() == Some(true));
+    }
+
+    #[test]
+    fn test_responses_to_chat_adapt_request_array_input() {
+        let body = serde_json::json!({
+            "model": "gpt-4o",
+            "input": [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": "hello"}
+            ]
+        });
+        let dep = Deployment {
+            api_base: "https://api.openai.com/v1".to_string(),
+            api_key: None,
+            upstream_model: "gpt-4o".to_string(),
+            provider_type: ProviderType::OpenAICompatible,
+            input_cost_per_token: None,
+            output_cost_per_token: None,
+            cache_read_input_token_cost: None,
+            cache_creation_input_token_cost: None,
+            raw_params: serde_json::json!({}),
+            model_id: None,
+            model_group: None,
+            custom_llm_provider: None,
+            chat_template_compat: None,
+            fail_count: 0,
+            cooldown_until: None,
+        };
+        let adapted = ResponsesToChatCompletions
+            .adapt_request(body, &dep)
+            .expect("adapt_request");
+        let msgs = adapted["messages"].as_array().expect("messages array");
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0]["role"].as_str(), Some("user"));
+        assert_eq!(msgs[1]["role"].as_str(), Some("assistant"));
+    }
+
+    #[test]
+    fn test_responses_to_chat_adapt_request_rejects_empty_array() {
+        let body = serde_json::json!({"model": "gpt-4o", "input": []});
+        let dep = Deployment {
+            api_base: "https://api.openai.com/v1".to_string(),
+            api_key: None,
+            upstream_model: "gpt-4o".to_string(),
+            provider_type: ProviderType::OpenAICompatible,
+            input_cost_per_token: None,
+            output_cost_per_token: None,
+            cache_read_input_token_cost: None,
+            cache_creation_input_token_cost: None,
+            raw_params: serde_json::json!({}),
+            model_id: None,
+            model_group: None,
+            custom_llm_provider: None,
+            chat_template_compat: None,
+            fail_count: 0,
+            cooldown_until: None,
+        };
+        let err = ResponsesToChatCompletions
+            .adapt_request(body, &dep)
+            .expect_err("empty input should be rejected");
+        assert!(matches!(err, AdapterError::Unsupported(_)));
+    }
+
+    #[test]
+    fn test_responses_to_chat_adapt_response_non_stream() {
+        let upstream = serde_json::json!({
+            "id": "chatcmpl-abc123",
+            "object": "chat.completion",
+            "model": "gpt-4o",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "Hello from the model",
+                    "tool_calls": [{
+                        "id": "call_001",
+                        "type": "function",
+                        "function": {"name": "get_weather", "arguments": "{\"city\":\"NYC\"}"}
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        });
+        let adapted = ResponsesToChatCompletions
+            .adapt_response(upstream)
+            .expect("adapt_response");
+        assert_eq!(adapted["object"].as_str(), Some("response"));
+        assert_eq!(adapted["status"].as_str(), Some("completed"));
+        // text output as output_text block
+        let output = adapted["output"].as_array().expect("output array");
+        let msg = output.iter().find(|o| o["type"] == "message").expect("message");
+        assert_eq!(msg["content"][0]["type"].as_str(), Some("output_text"));
+        assert_eq!(msg["content"][0]["text"].as_str(), Some("Hello from the model"));
+        // tool call → function_call output
+        let fc = output.iter().find(|o| o["type"] == "function_call").expect("function_call");
+        assert_eq!(fc["call_id"].as_str(), Some("call_001"));
+        assert_eq!(fc["name"].as_str(), Some("get_weather"));
+        assert_eq!(fc["arguments"].as_str(), Some("{\"city\":\"NYC\"}"));
+        // usage renamed prompt_tokens → input_tokens
+        assert_eq!(adapted["usage"]["input_tokens"].as_i64(), Some(10));
+        assert_eq!(adapted["usage"]["output_tokens"].as_i64(), Some(5));
+        assert_eq!(adapted["usage"]["total_tokens"].as_i64(), Some(15));
+    }
+
+    #[test]
+    fn test_responses_to_chat_stream_next_text_delta() {
+        let mut stream = ResponsesToChatCompletionsStream::new();
+        // First chunk: role → response.created
+        let first = stream.next(
+            b"data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}",
+        );
+        let out = String::from_utf8(first.expect("created event")).unwrap();
+        assert!(
+            out.contains("event: response.created"),
+            "first chunk should emit response.created: {}",
+            out
+        );
+        // Text delta chunk → output_text.delta
+        let delta = stream.next(
+            b"data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hello\"},\"finish_reason\":null}]}",
+        );
+        let out = String::from_utf8(delta.expect("text delta event")).unwrap();
+        assert!(
+            out.contains("event: response.output_text.delta"),
+            "text delta should emit output_text.delta: {}",
+            out
+        );
+        assert!(out.contains("\"delta\":\"Hello\""));
+        assert!(out.contains("\"content_index\":0"));
+    }
+
+    #[test]
+    fn test_responses_to_chat_stream_finish_completed() {
+        let mut stream = ResponsesToChatCompletionsStream::new();
+        stream.next(
+            b"data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}",
+        );
+        stream.next(
+            b"data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hi\"},\"finish_reason\":null}]}",
+        );
+        // finish_reason + usage chunk
+        stream.next(
+            b"data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2,\"total_tokens\":5}}",
+        );
+        let finished = stream.finish().expect("finish event");
+        let out = String::from_utf8(finished).unwrap();
+        assert!(
+            out.contains("event: response.completed"),
+            "finish should emit response.completed: {}",
+            out
+        );
+        // usage mapped prompt_tokens → input_tokens
+        assert!(out.contains("\"input_tokens\":3"), "got: {}", out);
+        assert!(out.contains("\"output_tokens\":2"), "got: {}", out);
+        assert!(out.contains("data: [DONE]"), "got: {}", out);
+    }
+
+    #[test]
+    fn test_responses_to_chat_stream_tool_call_delta() {
+        let mut stream = ResponsesToChatCompletionsStream::new();
+        stream.next(
+            b"data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}",
+        );
+        // Tool call start chunk
+        stream.next(
+            b"data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_001\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"\"}}]},\"finish_reason\":null}]}",
+        );
+        // Tool call arguments delta
+        let arg_chunk = stream.next(
+            b"data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":null,\"type\":null,\"function\":{\"name\":null,\"arguments\":\"{\\\"city\\\":\\\"NYC\\\"}\"}}]},\"finish_reason\":null}]}",
+        );
+        let out = String::from_utf8(arg_chunk.expect("tool call delta event")).unwrap();
+        assert!(
+            out.contains("event: response.function_call_arguments.delta"),
+            "tool arg delta should emit function_call_arguments.delta: {}",
+            out
+        );
+        assert!(out.contains("\"call_id\":\"call_001\""));
+        // finish() → function_call_arguments.done + response.completed
+        let finished = stream.finish().expect("finish event");
+        let out = String::from_utf8(finished).unwrap();
+        assert!(
+            out.contains("event: response.function_call_arguments.done"),
+            "tool finish should emit done: {}",
+            out
+        );
+        assert!(out.contains("\"name\":\"get_weather\""));
+        assert!(out.contains("\"arguments\":\"{\\\"city\\\":\\\"NYC\\\"}\""));
     }
 
     // ── Legacy tests ──
