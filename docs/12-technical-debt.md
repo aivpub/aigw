@@ -46,7 +46,7 @@
 - **Source**: `docs/plans/2026-07-25-request-id-to-gw-call-id-rename.md` §10
 - **Description**: aigw 未配置 `tower_http::PropagateRequestIdLayer`，调用方无法从响应头拿到 aigw 生成的调用 ID。Stage 85 完成后 DB 有 `call_id`（可前端/日志查），但客户端若想就地用调用 ID 对账需自行从响应 body 取，响应头无回写。
 - **Impact**: 客户端对账需多一跳（查 API/前端），无法响应头直取。不阻塞 Stage 85 核心预期（DB 侧对账链路已打通）。
-- **Resolution**: 后续加 `PropagateRequestIdLayer` 或自定义响应头 `x-gw-call-id` 回写客户端。需评估是否暴露内部 ID 给客户端的安全影响。
+- **Resolution**: 后续加 `PropagateRequestIdLayer` 或自定义响应头 `x-call-id` 回写客户端。需评估是否暴露内部 ID 给客户端的安全影响。
 - **Target Phase**: 视客户端对账需求触发，暂不排期。
 
 ### TD-007: soft_budget 告警通道未实现

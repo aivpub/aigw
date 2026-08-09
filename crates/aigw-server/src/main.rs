@@ -551,12 +551,12 @@ async fn main() -> anyhow::Result<()> {
             HeaderName::from_static("x-request-id"),
             aigw_core::request_id::UuidV7RequestId,
         ))
-        // TD-006: propagate the request id to the response as x-gw-call-id so
+        // TD-006: propagate the request id to the response as x-call-id so
         // clients can reconcile a SpendLog (whose call_id == this RequestId)
         // directly from the response header. Only applied when the request
         // carried a RequestId extension (i.e. all routes under SetRequestIdLayer).
         .layer(tower_http::request_id::PropagateRequestIdLayer::new(
-            HeaderName::from_static("x-gw-call-id"),
+            HeaderName::from_static("x-call-id"),
         ))
         // CORS middleware — allows browser-based frontend to call API
         .layer(middleware::from_fn(cors_layer::add_cors_headers))

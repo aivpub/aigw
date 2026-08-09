@@ -1233,7 +1233,7 @@ pub async fn responses_handler(
             .header(header::CONTENT_TYPE, "application/json");
         // TD-006: write the gateway call id (== SpendLog.call_id) to the response
         // so clients can reconcile directly from the header without a DB lookup.
-        response = response.header("x-gw-call-id", &request_id);
+        response = response.header("x-call-id", &request_id);
         Ok(response
             .body(axum::body::Body::from(
                 serde_json::to_string(&adapted_resp).unwrap(),

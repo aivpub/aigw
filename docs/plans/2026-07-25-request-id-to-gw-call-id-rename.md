@@ -767,7 +767,7 @@ GET /global/spend/logs?request_id=xxx   ← 参数名不变，行为改为搜索
 
 > 无论哪种，`chat.rs`/`v1_messages.rs` 里 `tracing::warn!("mismatch request_id: ...")` 的 message 文本可保留不改——它描述的是 HTTP 出站头 mismatch，属 §2.2 HTTP 层语义，与 DB 字段无关。
 
-**对账缺口提示（非本次改动范围，记录供后续跟进）**：aigw 未用 `PropagateRequestIdLayer` 把 `x-request-id` 回写响应头，客户端无法从响应拿到调用 ID 对账。本次改名后，若要让客户端用 `call_id` 对账，需后续单独加 `PropagateRequestIdLayer`（或自定义响应头 `x-gw-call-id`）。不阻塞本次发布。
+**对账缺口提示（非本次改动范围，记录供后续跟进）**：aigw 未用 `PropagateRequestIdLayer` 把 `x-request-id` 回写响应头，客户端无法从响应拿到调用 ID 对账。本次改名后，若要让客户端用 `call_id` 对账，需后续单独加 `PropagateRequestIdLayer`（或自定义响应头 `x-call-id`）。不阻塞本次发布。
 
 ---
 
