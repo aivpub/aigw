@@ -44,7 +44,11 @@ task bdd-real-mysql
 | `DEPLOYMENT_MODE` | No | `onprem` | `onprem` or `saas` |
 | `OPENAI_API_KEY` | No | — | Default OpenAI API key for proxied requests |
 | `ANTHROPIC_API_KEY` | No | — | Default Anthropic API key for proxied requests |
-| `SERVER_PORT` | No | `4000` | Server bind port |
+| `AIGW_MASTER_KEY` | No | — | Runtime key for decrypting `CREDENTIALS`/encrypted model fields (env > config table `general_settings.master_key`) |
+| `SERVER_PORT` | No | `4000` | Host port mapped to the aigw container (docker-compose.yml only; the binary binds `--bind 0.0.0.0:4000`) |
+| `UI_USERNAME` / `UI_PASSWORD` / `LITELLM_UI_SESSION_DURATION` | No | `admin` / master key / `24h` | `/v2/login` admin login + JWT session lifetime |
+
+> Full variable reference (including `aigw-migrate` and BDD test vars): see `.env.example`.
 
 ### Database Options
 
