@@ -61,14 +61,13 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::compression::CompressionLayer;
-use tower_http::request_id::{MakeRequestId, RequestId, SetRequestIdLayer};
+use tower_http::request_id::{RequestId, SetRequestIdLayer};
 use tower_http::trace::{DefaultOnResponse, TraceLayer};
 use tracing::Level;
 use tracing::Span;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
-use uuid::Uuid;
 
 /// AI Gateway — litellm-compatible LLM proxy in Rust
 #[derive(Parser, Debug)]
@@ -98,19 +97,6 @@ struct Cli {
     /// Bind address
     #[arg(long, default_value = "0.0.0.0:4000")]
     bind: String,
-}
-
-/// Custom UUID v7 request ID generator.
-///
-/// Produces lexicographically sortable request IDs for log correlation.
-#[derive(Clone, Default)]
-struct UuidV7RequestId;
-
-impl MakeRequestId for UuidV7RequestId {
-    fn make_request_id<B>(&mut self, _request: &axum::http::Request<B>) -> Option<RequestId> {
-        let id = Uuid::now_v7().to_string();
-        Some(RequestId::new(id.parse().ok()?))
-    }
 }
 
 /// Custom `MakeSpan` that reads `RequestId` from request extensions (injected by
@@ -554,7 +540,14 @@ async fn main() -> anyhow::Result<()> {
         // Must be OUTSIDE TraceLayer so it runs BEFORE make_span_with reads the extension.
         .layer(SetRequestIdLayer::new(
             HeaderName::from_static("x-request-id"),
-            UuidV7RequestId,
+            aigw_core::request_id::UuidV7RequestId,
+        ))
+        // TD-006: propagate the request id to the response as x-gw-call-id so
+        // clients can reconcile a SpendLog (whose call_id == this RequestId)
+        // directly from the response header. Only applied when the request
+        // carried a RequestId extension (i.e. all routes under SetRequestIdLayer).
+        .layer(tower_http::request_id::PropagateRequestIdLayer::new(
+            HeaderName::from_static("x-gw-call-id"),
         ))
         // CORS middleware — allows browser-based frontend to call API
         .layer(middleware::from_fn(cors_layer::add_cors_headers))

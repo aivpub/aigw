@@ -35,6 +35,7 @@ pub mod otel_tracing;
 pub mod password;
 pub mod provider;
 pub mod rate_limiter;
+pub mod request_id;
 pub mod resolver;
 pub mod router;
 pub mod tenant;

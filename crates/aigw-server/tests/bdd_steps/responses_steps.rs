@@ -23,6 +23,16 @@ async fn send_responses_request(world: &mut TestWorld, alias: &str, body: serde_
             "/v1/responses",
             axum::routing::post(aigw_server::routes::responses::responses_handler),
         )
+        // Mirror main.rs layer order so the x-gw-call-id header (TD-006) is
+        // present: SetRequestIdLayer generates the RequestId extension, and
+        // PropagateRequestIdLayer writes it back to the response header.
+        .layer(tower_http::request_id::PropagateRequestIdLayer::new(
+            axum::http::HeaderName::from_static("x-gw-call-id"),
+        ))
+        .layer(tower_http::request_id::SetRequestIdLayer::new(
+            axum::http::HeaderName::from_static("x-request-id"),
+            aigw_core::request_id::UuidV7RequestId,
+        ))
         .with_state(state);
 
     let token = world
@@ -65,8 +75,8 @@ async fn send_responses_request(world: &mut TestWorld, alias: &str, body: serde_
     };
     world.last_status = Some(status);
     world.last_body = json_body;
+    world.last_headers = Some(resp_headers);
 }
-
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // When
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -181,6 +191,34 @@ async fn then_raw_stream_contains_event(world: &mut TestWorld, event: String) {
         "Expected stream to contain 'event: {}', got:\n{}",
         event,
         raw
+    );
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// TD-006: x-gw-call-id response header
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[then(expr = "响应头包含 x-gw-call-id 且匹配 SpendLog call_id")]
+async fn then_gw_call_id_header_matches(world: &mut TestWorld) {
+    let headers = world
+        .last_headers
+        .as_ref()
+        .expect("no captured response headers");
+    let call_id = headers
+        .get("x-gw-call-id")
+        .and_then(|v| v.to_str().ok())
+        .expect("response missing x-gw-call-id header");
+    assert!(
+        !call_id.is_empty(),
+        "x-gw-call-id header should not be empty"
+    );
+    // The header must equal the SpendLog.call_id (gateway request id = UUID v7)
+    let expected = call_id.to_string();
+    let log = get_latest_spend_log(world).await;
+    assert_eq!(
+        log.call_id, expected,
+        "x-gw-call-id header '{}' must match SpendLog.call_id '{}'",
+        expected, log.call_id
     );
 }
 

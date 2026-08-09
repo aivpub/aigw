@@ -1231,7 +1231,9 @@ pub async fn responses_handler(
         let mut response = axum::response::Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "application/json");
-        response = response.header("x-request-id", &request_id);
+        // TD-006: write the gateway call id (== SpendLog.call_id) to the response
+        // so clients can reconcile directly from the header without a DB lookup.
+        response = response.header("x-gw-call-id", &request_id);
         Ok(response
             .body(axum::body::Body::from(
                 serde_json::to_string(&adapted_resp).unwrap(),

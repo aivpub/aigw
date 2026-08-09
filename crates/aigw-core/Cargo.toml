@@ -24,6 +24,7 @@ sha2 = { workspace = true }
 hex = { workspace = true }
 async-trait = { workspace = true }
 tower = { workspace = true }
+tower-http = { workspace = true }
 crypto_secretbox = "0.1.1"
 base64 = "0.22"
 aes-gcm = "0.11.0"

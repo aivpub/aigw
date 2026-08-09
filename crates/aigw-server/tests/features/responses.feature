@@ -62,6 +62,16 @@ Feature: OpenAI Responses API Passthrough — /v1/responses
     And SpendLog 中最近一条记录的 prompt_tokens 大于 0
     And SpendLog 中最近一条记录的 completion_tokens 大于 0
 
+  # ── TD-006: 客户端从响应头直取 call_id 对账 ──
+
+  Scenario: 响应头 x-gw-call-id 回写网关调用 ID（TD-006）
+    Given mock 上游已启动
+    And 已配置 model "gpt-4o" 指向 mock 上游
+    And 一个普通 key "resp-callid" 已生成
+    When 使用 key "resp-callid" 发送 POST /v1/responses 请求
+    Then 响应状态码为 200
+    And 响应头包含 x-gw-call-id 且匹配 SpendLog call_id
+
   # ── Stage 102: Bridge mode scenarios ──
 
   Scenario: /v1/responses bridge with instructions

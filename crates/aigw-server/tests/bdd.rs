@@ -22,6 +22,9 @@ pub struct TestWorld {
     /// Last HTTP response body as JSON
     #[world(skip)]
     pub last_body: Option<serde_json::Value>,
+    /// Last HTTP response headers (for x-gw-call-id assertions, TD-006)
+    #[world(skip)]
+    pub last_headers: Option<axum::http::HeaderMap>,
     /// Created keys by alias → raw token
     #[world(skip)]
     pub created_keys: std::collections::HashMap<String, String>,
@@ -38,6 +41,7 @@ impl Default for TestWorld {
                 .unwrap_or_else(|_| "sk-master-test".to_string()),
             last_status: None,
             last_body: None,
+            last_headers: None,
             created_keys: std::collections::HashMap::new(),
             created_users: std::collections::HashMap::new(),
         }
