@@ -648,6 +648,16 @@ pub async fn responses_handler(
             let mut failure: Option<(u16, String)> = None;
             let mut upstream_id: Option<String> = None;
 
+            // Stage 102: the bridge adapter converts upstream Chat Completions
+            // SSE deltas → Responses API SSE events. Instantiating the stream
+            // adapter here closes Phase 41 test gap ② — the stream path now
+            // actually executes the ResponsesToChatCompletionsStream conversion
+            // instead of forwarding raw upstream bytes.
+            let mut stream_adapter = adapter
+                .stream_adapter()
+                .expect("ResponsesToChatCompletions must provide a stream adapter");
+            let mut pending_chunk: Vec<u8> = Vec::new();
+
             while let Some(chunk_result) = stream.next().await {
                 match chunk_result {
                     Ok(chunk) => {
@@ -682,15 +692,25 @@ pub async fn responses_handler(
                                 }
                             }
                         }
-                        if tx.send(chunk.to_vec()).is_err() {
-                            break;
+                        // Convert the upstream chunk (Chat SSE) → Responses SSE
+                        // events via the bridge stream adapter.
+                        pending_chunk.extend_from_slice(&chunk);
+                        while let Some(transformed) = stream_adapter.next(&pending_chunk) {
+                            if tx.send(transformed).is_err() {
+                                break;
+                            }
                         }
+                        pending_chunk.clear();
                     }
                     Err(e) => {
                         failure = Some((0, e.to_string()));
                         break;
                     }
                 }
+            }
+            // Flush any final SSE events (response.completed + [DONE])
+            if let Some(final_event) = stream_adapter.finish() {
+                let _ = tx.send(final_event);
             }
 
             let now = chrono::Utc::now();

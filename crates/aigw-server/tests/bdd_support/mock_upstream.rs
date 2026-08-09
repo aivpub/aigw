@@ -427,7 +427,7 @@ async fn responses_handler(
     State(state): State<Arc<MockState>>,
     headers: axum::http::HeaderMap,
     body: String,
-) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
+) -> Result<axum::response::Response, (StatusCode, Json<Value>)> {
     let body_val: Value = serde_json::from_str(&body).unwrap_or_default();
 
     // Record the request
@@ -442,8 +442,65 @@ async fn responses_handler(
         requests.push(RecordedRequest {
             path: "/v1/responses".to_string(),
             headers: hdrs,
-            body: body_val,
+            body: body_val.clone(),
         });
+    }
+
+    // Streaming request → return a real Chat Completions stream so the
+    // gateway's ResponsesToChatCompletionsStream bridge actually converts it.
+    // (Phase 41 test gap ②: the stream path now executes the SSE conversion.)
+    if body_val
+        .get("stream")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        let usage = state
+            .responses
+            .lock()
+            .unwrap()
+            .get("/v1/responses")
+            .cloned()
+            .map(|m| m.body.get("usage").cloned())
+            .flatten()
+            .unwrap_or(serde_json::json!({
+                "prompt_tokens": 12,
+                "completion_tokens": 7,
+                "total_tokens": 19
+            }));
+
+        // Chat Completions SSE frames: role chunk → content delta → final usage
+        let sse = format!(
+            "data: {}\n\ndata: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
+            serde_json::json!({
+                "id": "chatcmpl-stream-mock",
+                "object": "chat.completion.chunk",
+                "created": 1700000000,
+                "model": "gpt-4o",
+                "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": null}]
+            }),
+            serde_json::json!({
+                "id": "chatcmpl-stream-mock",
+                "object": "chat.completion.chunk",
+                "created": 1700000000,
+                "model": "gpt-4o",
+                "choices": [{"index": 0, "delta": {"content": "Hello from mock stream"}, "finish_reason": null}]
+            }),
+            serde_json::json!({
+                "id": "chatcmpl-stream-mock",
+                "object": "chat.completion.chunk",
+                "created": 1700000000,
+                "model": "gpt-4o",
+                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                "usage": usage
+            })
+        );
+        let body_stream = tokio_stream::once(Ok::<_, std::convert::Infallible>(sse));
+        let response = axum::response::Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "text/event-stream")
+            .body(axum::body::Body::from_stream(body_stream))
+            .unwrap();
+        return Ok(response);
     }
 
     // Return default Responses API format response
@@ -472,8 +529,12 @@ async fn responses_handler(
         headers: HashMap::new(),
     });
 
-    Ok((
-        StatusCode::from_u16(mock.status).unwrap_or(StatusCode::OK),
-        Json(mock.body),
-    ))
+    let status = StatusCode::from_u16(mock.status).unwrap_or(StatusCode::OK);
+    let body = serde_json::to_string(&mock.body).unwrap_or_default();
+    let response = axum::response::Response::builder()
+        .status(status)
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(body))
+        .unwrap();
+    Ok(response)
 }

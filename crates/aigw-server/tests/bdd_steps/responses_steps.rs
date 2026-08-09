@@ -169,6 +169,21 @@ async fn then_content_type_sse(world: &mut TestWorld) {
     );
 }
 
+#[then(regex = r#"^响应原始流包含 "(.+)" 事件$"#)]
+async fn then_raw_stream_contains_event(world: &mut TestWorld, event: String) {
+    let body = world.last_body.as_ref().expect("no response body");
+    let raw = body
+        .get("__raw")
+        .and_then(|v| v.as_str())
+        .expect("no __raw streaming body");
+    assert!(
+        raw.contains(&format!("event: {}", event)),
+        "Expected stream to contain 'event: {}', got:\n{}",
+        event,
+        raw
+    );
+}
+
 #[then(regex = r#"^响应 JSON \"(.+)\" 为 \"(.+)\"$"#)]
 async fn then_json_path_eq(world: &mut TestWorld, path: String, expected: String) {
     let body = world.last_body.as_ref().expect("no response body");
