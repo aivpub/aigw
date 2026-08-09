@@ -2614,7 +2614,10 @@ mod tests {
             Some("system"),
             "instructions should become system message"
         );
-        assert_eq!(adapted["messages"][0]["content"].as_str(), Some("Be helpful"));
+        assert_eq!(
+            adapted["messages"][0]["content"].as_str(),
+            Some("Be helpful")
+        );
         // input string → single user message (index 1)
         assert_eq!(
             adapted["messages"][1]["role"].as_str(),
@@ -2725,11 +2728,20 @@ mod tests {
         assert_eq!(adapted["status"].as_str(), Some("completed"));
         // text output as output_text block
         let output = adapted["output"].as_array().expect("output array");
-        let msg = output.iter().find(|o| o["type"] == "message").expect("message");
+        let msg = output
+            .iter()
+            .find(|o| o["type"] == "message")
+            .expect("message");
         assert_eq!(msg["content"][0]["type"].as_str(), Some("output_text"));
-        assert_eq!(msg["content"][0]["text"].as_str(), Some("Hello from the model"));
+        assert_eq!(
+            msg["content"][0]["text"].as_str(),
+            Some("Hello from the model")
+        );
         // tool call → function_call output
-        let fc = output.iter().find(|o| o["type"] == "function_call").expect("function_call");
+        let fc = output
+            .iter()
+            .find(|o| o["type"] == "function_call")
+            .expect("function_call");
         assert_eq!(fc["call_id"].as_str(), Some("call_001"));
         assert_eq!(fc["name"].as_str(), Some("get_weather"));
         assert_eq!(fc["arguments"].as_str(), Some("{\"city\":\"NYC\"}"));
