@@ -257,6 +257,8 @@ pub struct Router {
     pub num_retries: u32,
     /// Per-deployment semaphore registry for `max_parallel_requests`.
     semaphores: MaxParallelRegistry,
+    /// Exact-match response cache (Stage 119). `None` when disabled.
+    cache: Option<Arc<dyn crate::cache::CacheBackend>>,
 }
 
 impl Default for Router {
@@ -278,7 +280,19 @@ impl Router {
             cooldown_time,
             num_retries,
             semaphores: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            cache: None,
         }
+    }
+
+    /// Attach an exact-match response cache backend (Stage 119).
+    pub fn with_cache(mut self, cache: Option<Arc<dyn crate::cache::CacheBackend>>) -> Self {
+        self.cache = cache;
+        self
+    }
+
+    /// The response cache backend (None when disabled).
+    pub fn cache(&self) -> Option<&Arc<dyn crate::cache::CacheBackend>> {
+        self.cache.as_ref()
     }
 
     pub fn from_config(cfg: &RouterConfig) -> Self {
@@ -291,6 +305,9 @@ impl Router {
             cooldown_time: cfg.cooldown_time,
             num_retries: cfg.num_retries,
             semaphores: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            // Exact-match cache defaults ON (memory LRU) — litellm parity.
+            // `with_cache(None)` at boot disables it when config says so.
+            cache: Some(Arc::new(crate::cache::MemoryCache::new(10_000))),
         }
     }
 
@@ -502,9 +519,11 @@ impl Router {
             model_group_alias: std::collections::HashMap::new(),
         };
         let merged = merge_router_overrides(key_settings, team_settings, &global);
-        // Preserve the semaphore registry so max_parallel stays consistent.
+        // Preserve the semaphore registry + cache so per-request routing keeps
+        // the shared max_parallel gates and the exact-match cache.
         let mut r = Router::from_config(&merged);
         r.semaphores = self.semaphores.clone();
+        r.cache = self.cache.clone();
         r
     }
 

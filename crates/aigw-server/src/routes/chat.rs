@@ -159,7 +159,6 @@ pub(crate) fn calc_spend_modal(
 
 /// Extract cache-read tokens from usage JSON (Anthropic + OpenAI formats).
 pub(crate) fn extract_cache_read_tokens(usage: &Value) -> i32 {
-    // Anthropic: usage.cache_read_input_tokens
     if let Some(v) = usage
         .get("cache_read_input_tokens")
         .and_then(|v| v.as_i64())
@@ -190,6 +189,23 @@ pub(crate) fn extract_cache_creation_tokens(usage: &Value) -> i32 {
         .or_else(|| details.and_then(|d| d.get("cache_creation_tokens")))
         .and_then(|v| v.as_i64())
         .unwrap_or(0) as i32
+}
+
+/// Label the deployment set for the cache key provider bucket. Uses the
+/// custom_llm_provider if uniform across candidates, else "multi" (different
+/// providers shouldn't share a cache entry).
+fn deployment_provider_label(deployments: &[aigw_core::deployment::Deployment]) -> String {
+    let mut providers: Vec<&str> = deployments
+        .iter()
+        .filter_map(|d| d.custom_llm_provider.as_deref())
+        .collect();
+    providers.sort_unstable();
+    providers.dedup();
+    if providers.len() == 1 {
+        providers[0].to_string()
+    } else {
+        "multi".to_string()
+    }
 }
 
 /// Look up a model by name in proxy_models, decrypt litellm_params if encrypted,
@@ -982,6 +998,27 @@ pub async fn chat_completions(
         .router
         .from_merged(key_settings.as_ref(), team_settings.as_ref());
 
+    // Stage 119: exact-match response cache. Parse per-request cache control
+    // and consult the cache before hitting upstream. On HIT we short-circuit
+    // with the cached body + `X-Cache-Status: HIT` and a zero-cost SpendLog.
+    let cache_control = aigw_core::cache::CacheControl::parse(&body);
+    let cache_key = if cache_control.use_cache && !cache_control.no_store {
+        effective_router.cache().map(|_backend| {
+            aigw_core::cache::cache_key(
+                &deployment_provider_label(&deployments),
+                "/v1/chat/completions",
+                _model,
+                &auth.token_hash,
+                &aigw_core::cache::canonical_body(&body),
+            )
+        })
+    } else {
+        None
+    };
+    let cache_hit = cache_key
+        .as_ref()
+        .and_then(|k| effective_router.cache()?.get(k));
+
     // Stage 118 §3.5: priority-group fallback — the candidate order is the
     // first-attempt sequence (lowest priority group first). A retryable
     // upstream error triggers the next candidate; the full fallback loop over
@@ -1140,6 +1177,79 @@ pub async fn chat_completions(
     }));
 
     let start_time = chrono::Utc::now();
+
+    // Stage 119: serve a cache HIT without calling upstream. The SpendLog
+    // records `response_cost=0` + `cached=1` (litellm cache_hit behaviour);
+    // prompt/completion tokens come from the cached body's usage.
+    if let Some(cached) = cache_hit {
+        let body_val = cached.body_as_value();
+        let usage = body_val.as_ref().and_then(|b| b.get("usage").cloned());
+        let prompt_tokens = usage
+            .as_ref()
+            .and_then(|u| u.get("prompt_tokens"))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0) as i32;
+        let completion_tokens = usage
+            .as_ref()
+            .and_then(|u| u.get("completion_tokens"))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0) as i32;
+        let now = chrono::Utc::now();
+        let upstream_id = body_val
+            .as_ref()
+            .and_then(|b| b.get("id"))
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let sl = aigw_core::models::SpendLog {
+            call_id: request_id.clone(),
+            request_id: upstream_id,
+            call_type: "completion".to_string(),
+            api_key: auth.token_hash.clone(),
+            spend: 0.0, // cache-hit: zero cost
+            total_tokens: prompt_tokens + completion_tokens,
+            prompt_tokens,
+            completion_tokens,
+            start_time,
+            end_time: now,
+            request_duration_ms: None,
+            completion_start_time: None,
+            model: deployment.upstream_model.clone(),
+            model_id: deployment.model_id.clone(),
+            model_group: deployment.model_group.clone(),
+            custom_llm_provider: deployment.custom_llm_provider.clone(),
+            api_base: Some(deployment.api_base.clone()),
+            user: auth.user_id.clone(),
+            metadata: Some(json!({"cached": 1})),
+            cache_hit: Some("cached".to_string()),
+            cache_key: cache_key.clone(),
+            request_tags: None,
+            team_id: auth.team_id.clone(),
+            organization_id: auth.organization_id.clone(),
+            end_user: end_user.clone(),
+            requester_ip_address: requester_ip.clone(),
+            messages: Some(body.clone()),
+            response: body_val,
+            session_id: session_id.clone(),
+            status: Some("success".to_string()),
+            mcp_namespaced_tool_name: None,
+            agent_id: None,
+            proxy_server_request: None,
+            body_archived: false,
+            parquet_path: None,
+            image_tokens: None,
+        };
+        if let Err(e) = state.db.insert_spend_log(&sl).await {
+            tracing::warn!(%request_id, error = %e, "cache-hit spend_log insert failed");
+        }
+        let mut response = axum::response::Response::builder()
+            .status(cached.status)
+            .header("X-Cache-Status", "HIT")
+            .header(header::CONTENT_TYPE, "application/json");
+        for (name, value) in cached.headers.iter() {
+            response = response.header(name, value);
+        }
+        return Ok(response.body(axum::body::Body::from(cached.body)).unwrap());
+    }
 
     // Inject W3C traceparent into upstream request headers (noop if OTEL disabled)
     if state.otel_active {
@@ -2194,7 +2304,31 @@ pub async fn chat_completions(
             }
         }
 
-        Ok(Json(resp_body).into_response())
+        // Stage 119: store the assembled non-streaming response in the cache
+        // (respecting per-request cache control — skip when no-store or the
+        // cache is disabled). Emit X-Cache-Status: MISS for observability.
+        if let Some(k) = cache_key.as_ref() {
+            if let Some(backend) = effective_router.cache() {
+                backend.put(
+                    k,
+                    aigw_core::cache::CachedResponse {
+                        status: axum::http::StatusCode::OK,
+                        headers: axum::http::HeaderMap::new(),
+                        body: serde_json::to_vec(&resp_body).unwrap_or_default(),
+                    },
+                    std::time::Duration::from_secs(cache_control.ttl),
+                );
+            }
+        }
+        let response = axum::response::Response::builder()
+            .status(axum::http::StatusCode::OK)
+            .header("X-Cache-Status", "MISS")
+            .header(header::CONTENT_TYPE, "application/json");
+        Ok(response
+            .body(axum::body::Body::from(
+                serde_json::to_string(&resp_body).unwrap(),
+            ))
+            .unwrap())
     }
 }
 

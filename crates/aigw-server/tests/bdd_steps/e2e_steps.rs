@@ -224,6 +224,17 @@ async fn when_post_chat_completions_with_model(
             "/chat/completions",
             axum::routing::post(aigw_server::routes::chat::chat_completions),
         )
+        // Mirror main.rs layer order so each request gets a fresh UUID-v7
+        // call_id (RequestId) — without this every request falls back to
+        // call_id="unknown", which collides on the spend_logs.call_id UNIQUE
+        // constraint once the response cache writes a second log (Stage 119).
+        .layer(tower_http::request_id::PropagateRequestIdLayer::new(
+            axum::http::HeaderName::from_static("x-call-id"),
+        ))
+        .layer(tower_http::request_id::SetRequestIdLayer::new(
+            axum::http::HeaderName::from_static("x-request-id"),
+            aigw_core::request_id::UuidV7RequestId,
+        ))
         .with_state(state);
 
     let token = world.created_keys.get(&alias).expect("key not found");

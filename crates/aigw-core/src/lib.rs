@@ -21,6 +21,7 @@ pub mod async_task;
 pub mod auth;
 pub mod body_archive;
 pub mod budget;
+pub mod cache;
 pub mod config;
 pub mod config_loader;
 pub mod crypto;
