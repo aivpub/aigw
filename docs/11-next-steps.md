@@ -5,9 +5,11 @@
 
 ---
 
-## 当前状态：117/117 Stages + Phase 47 规划完成（差距调研 → Stage 117-119）
+## 当前状态：117/117 Stages + Phase 47 规划完成（差距调研 → Stage 117-119，基线已锁）
 
-**2026-08-10（Phase 47 规划 ✅）**: 差距调研 `docs/research/2026-08-09-aigw-gap-vs-industry-leaders.md`（litellm v1.97.0 源码深读 + 国际/国内/Rust 生态 10 篇笔记）确认最大欠账是 **A 类「代码在但运行时未接线」**——RPM/TPM 限流、多级预算 `check_budget_multi`、soft_budget 告警、`max_parallel_requests`、Router 智能路由全部已实现且有 UT 但请求路径零调用点（已核实 `enforce_limits` 仅 test、`check_budget_multi` 仅 `#[cfg(test)]`、`select_instance`/`merge_router_overrides` 仅测试）。其次 **B 类「缓存=0」**（exact-match 缓存为全部竞品标配）。规划 Phase 47 三 Stage：Stage 117 A 类接线核心（限流+多级预算+告警+max_parallel，16h）→ Stage 118 Router 智能路由接线（cooldown/weighted/fallback，14h）→ Stage 119 exact-match 缓存（10h）。ADR-032 Proposed + roadmap v54.0。设计文档：`docs/plans/2026-08-10-phase-47-wiring-cache.md` + `stage-117.md` / `stage-118.md` / `stage-119.md`。
+**2026-08-10（Phase 47 规划 ✅ + BDD 漏洞审计 ✅）**: 差距调研 `docs/research/2026-08-09-aigw-gap-vs-industry-leaders.md`（litellm v1.97.0 源码深读 + 国际/国内/Rust 生态 10 篇笔记）确认最大欠账是 **A 类「代码在但运行时未接线」**——RPM/TPM 限流、多级预算 `check_budget_multi`、soft_budget 告警、`max_parallel_requests`、Router 智能路由全部已实现且有 UT 但请求路径零调用点（已核实 `enforce_limits` 仅 test、`check_budget_multi` 仅 `#[cfg(test)]`、`select_instance`/`merge_router_overrides` 仅测试）。其次 **B 类「缓存=0」**（exact-match 缓存为全部竞品标配）。规划 Phase 47 三 Stage：Stage 117 A 类接线核心（限流+多级预算+告警+max_parallel，16h）→ Stage 118 Router 智能路由接线（cooldown/weighted/fallback，14h）→ Stage 119 exact-match 缓存（10h）。ADR-032 Proposed + roadmap v54.0。设计文档：`docs/plans/2026-08-10-phase-47-wiring-cache.md` + `stage-117.md` / `stage-118.md` / `stage-119.md`（均 ✅ 已落盘）。
+
+**BDD 漏洞审计（484ea70，2026-08-10 12:56）**: multi-agent 全量审计 + real BDD（sqlite/pg/mysql）发现 **0 失败但 4 个静默跳过洞 + 1 个响应头缺口**，已修复：① `models.feature:54` 双空格 typo 使 /model/list 解密字段场景静默跳过；② `end_to_end.feature` 失败场景断言了 model_not_found（client 400 永不写 spend_log）→ 改写为 mock 上游 500 断言真实 failure spend_log；③ `responses.feature:20` 原始转义引号 `{expr}` 永不匹配 cucumber token → 改 `{string}`，流式 SSE 场景现在真正执行（**同时证明流式桥接路径真实运行**）；④ e2e spend_logs then-step 无注册 → 补通用 then-step；⑤ **responses.rs 流式路径缺 TD-006 `x-call-id` 头**（仅非流式有）→ 流式 SSE 现携带同一对账头（stream_request_id copy 防 move-after-use）。**基线锁定**: aigw-core 425 + aigw-server 144 UT、mock BDD **254 场景（241 pass / 13 @skip body_archive / 0 fail）**、fmt + clippy `-D warnings` green、real BDD 三后端 43/43。
 
 **待办**（在途 Phase 47，Stage 117-119）:
 1. **Stage 117（P0）** A 类接线核心 — 4 handler 入口挂 `check_request_limits`（多级预算 + RPM/TPM + soft_budget 告警 + max_parallel Semaphore），16h
@@ -137,8 +139,8 @@ Phase 45:   ████████████████████ 100% (3
 
 | 层 | 当前 |
 |---|------|
-| 后端单元 | ≥ 300 tests（aigw-server 136 含 embeddings 6 UT + openapi 8 + health probe 1；aigw-core 409 等全 workspace ~815） |
-| mock BDD | ≥ 233 scenarios（含 Stage 113 embed 探针 1；16 @skip 未计入） |
+| 后端单元 | ≥ 300 tests（aigw-server 144 含 embeddings 6 UT + openapi 8 + health probe 1；aigw-core 425 等全 workspace ~815） |
+| mock BDD | ≥ 254 scenarios（241 pass / 13 @skip body_archive，2026-08-10 审计后基线；Stage 113 embed 探针 1 已并入） |
 | 前端 BDD | ≥ 342 passed（Stage 114 全量回归；含 3 压缩场景 × 3 viewports + i18n-switcher 9） |
 | real BDD | ≥ 47 SQLite / ≥ 41 PG / ≥ 41 MySQL（含 Stage 100 11 new） |
 
@@ -161,6 +163,11 @@ Phase 45:   ████████████████████ 100% (3
 | ✅ | TD-004 BDD @real_api 键泄漏 | ✅ 已修复（b199000，2026-07-20） |
 | ✅ | Phase 45 Stage 113 后端可靠性加固（TD-005 + TD-010a + TD-003） | ✅ 完成（2026-08-09） |
 | ✅ | Phase 45 Stage 114 前端体验（TD-009a/b 图片压缩 + TD-008a/b i18n 懒加载） | ✅ 完成（2026-08-09） |
-| P1 | Phase 45 Stage 115 多模态精度（TD-011b/c + TD-012b + TD-011a 可选） | ⏳ 待开始（Stage 114 完成后） |
+| ✅ | Phase 45 Stage 115 多模态精度（TD-011b/c + TD-012b + TD-011a 可选） | ✅ 完成（2026-08-09，TD-011a 视频 SKIPPED） |
+| ✅ | Phase 46 Stage 116 静态配置模型接入（config.yaml model_list/router/env + key gates） | ✅ 完成（2026-08-10，ADR-031 Accepted） |
+| ✅ | BDD 漏洞审计（4 静默跳过洞 + 流式 x-call-id 头） | ✅ 完成（2026-08-10，484ea70，mock BDD 254 基线） |
+| P0 | Phase 47 Stage 117 A 类接线核心（限流 + 多级预算 + soft_budget 告警 + max_parallel） | ⏳ 待开始（Phase 47 首 Stage，16h） |
+| P0 | Phase 47 Stage 118 Router 智能路由接线（cooldown/weighted/usage/latency/fallback） | ⏳ 待开始（依赖 Stage 117） |
+| P1 | Phase 47 Stage 119 exact-match 响应缓存（moka LRU + X-Cache-Status + 计费 0 元） | ⏳ 待开始（可并行） |
 | P2 | TD-008c/d 后端错误多语言 + RTL、TD-009e 外链缩略图、TD-011a 视频 token 估算（剩余） | 待处理（视使用量） |
 | P2 | Phase 41 测试缺口（适配器 UT + 流式接线） | ✅ 关闭（2026-08-09） |
