@@ -19,10 +19,7 @@
 
 **顺带修复**: ① BDD chat 步骤缺 request-id layer（所有 mock chat 请求 call_id="unknown" 撞 spend_logs.call_id UNIQUE，缓存写第二条时暴露）→ e2e + cache 步骤补 `SetRequestIdLayer`（UUID-v7）；② alerts.rs 测试 flake（`dispatch_soft_budget_alert` 的 `tokio::spawn` 在同步 `#[test]` 无 reactor panic）→ 改 `#[tokio::test]`。
 
-**待办**（后续收尾，非阻塞）:
-1. **P2** Stage 118 前端 RouterSettings `routing_strategy` 下拉解锁 usage/latency + weight/rpm/tpm 输入（`router-settings/index.tsx`）
-2. **P2** Stage 119 config `cache` 块解析 + boot 注入（当前默认开启 memory LRU，config 可禁用）
-3. **P2** max_parallel 从 key/budget 表字段接线（当前读 deployment raw_params 的 `max_parallel_requests`）
+**收尾（✅ 全部完成）**: ① 前端 RouterSettings 下拉解锁 usage/latency（`9fe6329`，weight/rpm/tpm 输入留后续模型页）；② config `cache` 块解析 + boot 注入（`9fe6329`）；③ max_parallel 从 key/budget 表字段层级接线（`cada57b`，key→team→org-budget→deployment）。
 
 **后续候选**（中期 3-6 月，视人力）:
 4. **M1** guardrails 最小集（regex 提示注入 + PII 脱敏 + Moderation hook，P0，4-5 pw）
@@ -177,6 +174,6 @@ Phase 45:   ████████████████████ 100% (3
 | ✅ | Phase 47 Stage 117 A 类接线核心（限流 + 多级预算 + soft_budget 告警 + max_parallel） | ✅ 完成（2026-08-10，d1000b0） |
 | ✅ | Phase 47 Stage 118 Router 智能路由接线（cooldown/weighted/usage/latency/fallback） | ✅ 完成（2026-08-10，abad4db） |
 | ✅ | Phase 47 Stage 119 exact-match 响应缓存（moka LRU + X-Cache-Status + 计费 0 元） | ✅ 完成（2026-08-10，ad981b2） |
-| P2 | Stage 118 前端 RouterSettings 下拉解锁 + Stage 119 config cache 块 + max_parallel key/budget 表字段 | 后续收尾（非阻塞） |
+| ✅ | Phase 47 收尾：前端 RouterSettings 下拉解锁 + config cache 块 + max_parallel key/budget 表字段 | ✅ 完成（2026-08-10，9fe6329 / cada57b） |
 | P2 | TD-008c/d 后端错误多语言 + RTL、TD-009e 外链缩略图、TD-011a 视频 token 估算（剩余） | 待处理（视使用量） |
 | P2 | Phase 41 测试缺口（适配器 UT + 流式接线） | ✅ 关闭（2026-08-09） |

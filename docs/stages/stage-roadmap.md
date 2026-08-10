@@ -1,7 +1,7 @@
 # aigw — AI Gateway Stagemap
 
 **项目**: aigw (litellm Rust 最小兼容替代)
-**最后更新**: 2026-08-08
+**最后更新**: 2026-08-10
 
 ---
 
@@ -9,7 +9,7 @@
 
 - **当前 Phase**: **Phase 47 ✅ 完成（Stage 117-119，A 类接线 + exact-match 缓存，40h，2026-08-10）**；Phase 46（Stage 116 静态配置模型接入）✅ 完成（16h）。
 - **状态**: **117/117 Stages + Phase 46/47 交付全部完成**。Stage 117-119 ✅（`d1000b0`/`abad4db`/`ad981b2`）：A 类「代码在但运行时未接线」全接线（限流/多级预算/soft_budget 告警/max_parallel/Router 智能路由）+ B 类 exact-match 缓存补齐。**基线**: aigw-core 432 + aigw-server 145+152 UT（合计 861）、mock BDD 246（233 pass / 13 @skip）、real BDD sqlite/pg/mysql 47/47×3、fmt + clippy green。ADR-032 Accepted。
-- **下一里程碑**: **后续收尾**（非阻塞）— Stage 118 前端 RouterSettings 下拉解锁 + Stage 119 config `cache` 块接线 + max_parallel key/budget 表字段接线；中期 M1 guardrails / M2 Redis 分布式层。
+- **下一里程碑**: **Phase 47 全部收尾完成** — 前端 RouterSettings 下拉解锁 ✅ + config `cache` 块 ✅ + max_parallel key/budget 表字段层级接线 ✅；中期 M1 guardrails / M2 Redis 分布式层。
 
 ### 整体进度
 
@@ -272,7 +272,7 @@ Phase 47:   ████████████████████ 100% (3
 
 **验证（Phase 47）**: aigw-core 432 + aigw-server 145+152 UT（合计 861）、mock BDD **246 场景（233 pass / 13 @skip body_archive / 0 fail）**、real BDD sqlite/pg/mysql **47/47 × 3**、fmt + clippy `-D warnings` green。ADR-032 Accepted。顺带修复：BDD chat 步骤补 request-id layer（UUID-v7 call_id，避免 spend_logs.call_id UNIQUE 冲突）、alerts.rs 测试 flake（`tokio::spawn` 需 reactor → `#[tokio::test]`）。
 
-**后续收尾（非阻塞）**: 前端 RouterSettings 下拉解锁 usage/latency + weight 输入（Stage 118 §3.6）；config `cache` 块解析 + boot 注入（Stage 119 §3.5，当前默认开启 memory LRU）；max_parallel 从 key/budget 表字段接线（当前读 deployment raw_params）。
+**后续收尾（✅ 已全部完成）**: 前端 RouterSettings 下拉解锁 usage/latency（`9fe6329`，Stage 118 §3.6）；config `cache` 块解析 + boot 注入（`9fe6329`，Stage 119 §3.5）；max_parallel 从 key/budget 表字段接线（`cada57b`，key→team→org-budget→deployment 层级取最严限制，+4 UT）。
 
 **设计文档**:
 - `docs/plans/2026-08-10-phase-47-wiring-cache.md`（总体规划）
@@ -914,3 +914,4 @@ Phase 47:   ████████████████████ 100% (3
 | v54.0 | 2026-08-10 | **Phase 47 规划（Stage 117-119，A 类接线 + exact-match 缓存，40h）**：基于差距调研（`docs/research/2026-08-09-aigw-gap-vs-industry-leaders.md`，litellm v1.97.0 源码深读 + 国际/国内/Rust 生态 10 篇笔记）确认 aigw 最大欠账是 **A 类「代码在但运行时未接线」**——RPM/TPM 限流、多级预算 `check_budget_multi`、soft_budget 告警、`max_parallel_requests`、Router 智能路由（usage/latency/weighted/cooldown/fallback/merge_overrides）全部已实现且有 UT 但请求路径零调用点（已核实 `enforce_limits` 仅 test、`check_budget_multi` 仅 `#[cfg(test)]`、`select_instance`/`merge_router_overrides` 仅测试）。**B 类「缓存=0」**：exact-match 响应缓存为全部竞品标配（litellm/Portkey/Cloudflare/Higress）。3 Stage 串行：Stage 117 A 类接线核心（4 handler 入口挂 `check_request_limits`：多级预算 + RPM/TPM + soft_budget 告警 webhook + max_parallel Semaphore，16h）；Stage 118 Router 智能路由接线（report_*/cooldown 真实推进 + merge_overrides + weighted + usage/latency 变体 + 错误类型 priority fallback + 前端下拉解锁，14h）；Stage 119 exact-match 缓存（`aigw_core::cache` moka LRU + cache key SHA-256 + 流式组装缓存 + `X-Cache-Status` + cache-hit 计费 0 元 + config 接线，10h）。设计文档：`docs/plans/2026-08-10-phase-47-wiring-cache.md` + `stage-117~119.md`。总进度 120/123（Stage 117-119 待开始）。 |
 | v54.1 | 2026-08-10 | **BDD 漏洞审计（484ea70，总进度 120/123 不变）**：multi-agent 全量审计 + real BDD（sqlite/pg/mysql）确认 **0 失败但 4 个静默跳过洞 + 1 响应头缺口**——① `models.feature:54` 双空格 typo 使 /model/list 解密字段场景静默跳过（对齐注册 step 后真正执行）；② `end_to_end.feature` 失败场景断言 model_not_found（client 400 永不写 spend_log）→ 改写为 mock 上游 500 断言真实 failure spend_log；③ `responses.feature:20` 原始转义引号 `{expr}` 永不匹配 cucumber token → 改 `{string}`，流式 SSE 场景真正执行（**证明流式桥接路径真实运行**）；④ e2e spend_logs then-step 无注册 → 补通用 then-step；⑤ **responses.rs 流式路径缺 TD-006 `x-call-id` 头**（仅非流式有）→ 流式 SSE 现携带同一对账头（stream_request_id copy 防 move-after-use）。**基线锁定**：aigw-core 425 + aigw-server 144 UT、mock BDD **254 场景（241 pass / 13 @skip body_archive / 0 fail）**、fmt + clippy `-D warnings` green、real BDD 三后端 43/43。Phase 47（Stage 117-119）待开始。
 | v55.0 | 2026-08-10 | **Phase 47 完成（Stage 117-119 ✅，总进度 123/123 — ALL STAGES COMPLETE）**：A 类「代码在但运行时未接线」全接线 + B 类 exact-match 缓存补齐。Stage 117（`d1000b0`）：4 handler 入口挂 `check_request_limits`（多级预算 key→user→team→org + RPM/TPM + soft_budget webhook + max_parallel Semaphore）；`LimitError::IntoResponse` 带 `x-ratelimit-limit/remaining` + `Retry-After`；`real/multi_level_budget` 去 @skip 4 场景 + `soft_budget.feature` 新建。Stage 118（`abad4db`）：Router weighted/usage/latency 真实决策 + cooldown 分类计数（429/401/408/404/5xx，400 不计）+ priority fallback + key>team>global `merge_router_overrides`；`router.feature` 新建。Stage 119（`ad981b2`）：`aigw_core::cache`（moka LRU + TTL + SHA-256 key + canonical body）+ `X-Cache-Status` + cache-hit 计费 0 元 + no-store；`cache.feature` 新建。验证：aigw-core 432 + aigw-server 145+152 UT（合计 861）、mock BDD 246（233 pass / 13 @skip / 0 fail）、real BDD sqlite/pg/mysql 47/47×3、fmt + clippy green。ADR-032 Accepted。顺带修复：BDD chat 步骤补 request-id layer（UUID-v7 call_id 防 spend_logs.call_id UNIQUE 冲突）、alerts.rs 测试 flake。后续收尾（非阻塞）：Stage 118 前端下拉解锁、Stage 119 config cache 块、max_parallel key/budget 表字段。
+| v55.1 | 2026-08-10 | **Phase 47 收尾全完成（总进度 123/123 — ALL STAGES COMPLETE）**：补齐剩余三项非阻塞收尾。① 前端 RouterSettings 下拉解锁 usage-based-routing-v2 / latency-based-routing（Stage 118 §3.6，`9fe6329`，原 disabled "coming soon"——二者已是 Stage 118 真实路由决策）；② config `cache` 块解析 + boot 注入（Stage 119 §3.5，`9fe6329`，CacheConfig {enabled,backend,ttl_seconds,max_entries} + Default，main.rs 按 enabled 构建 MemoryCache / 禁用；config.example.yaml 补文档；+2 config UT）；③ max_parallel 从 key/budget 表字段层级接线（`cada57b`，resolve_effective_max_parallel：key→team→org-budget→deployment 取最严限制，master key 只套 deployment 上限，+4 UT）。验证：aigw-core 871 UT、mock BDD 246（233 pass / 13 @skip）、real BDD sqlite/pg/mysql 47/47×3、前端 fe-build/lint/bddgen 全绿、fmt + clippy green。
