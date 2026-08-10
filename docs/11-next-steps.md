@@ -1,20 +1,28 @@
 # aigw -- 下一步行动
 
 **上次更新**: 2026-08-10
-**当前阶段**: **Phase 47 🔄 规划中（Stage 117-119，A 类接线 + exact-match 缓存，40h）**；Phase 46 Stage 116 ✅ 完成（117/117 Stages）
+**当前阶段**: **Phase 47 ✅ 完成（Stage 117-119，A 类接线 + exact-match 缓存，40h）**；全部交付（117-119 ✅）
 
 ---
 
-## 当前状态：117/117 Stages + Phase 47 规划完成（差距调研 → Stage 117-119，基线已锁）
+## 当前状态：Phase 47 全部完成（Stage 117/118/119 ✅）+ BDD 基线锁定
 
-**2026-08-10（Phase 47 规划 ✅ + BDD 漏洞审计 ✅）**: 差距调研 `docs/research/2026-08-09-aigw-gap-vs-industry-leaders.md`（litellm v1.97.0 源码深读 + 国际/国内/Rust 生态 10 篇笔记）确认最大欠账是 **A 类「代码在但运行时未接线」**——RPM/TPM 限流、多级预算 `check_budget_multi`、soft_budget 告警、`max_parallel_requests`、Router 智能路由全部已实现且有 UT 但请求路径零调用点（已核实 `enforce_limits` 仅 test、`check_budget_multi` 仅 `#[cfg(test)]`、`select_instance`/`merge_router_overrides` 仅测试）。其次 **B 类「缓存=0」**（exact-match 缓存为全部竞品标配）。规划 Phase 47 三 Stage：Stage 117 A 类接线核心（限流+多级预算+告警+max_parallel，16h）→ Stage 118 Router 智能路由接线（cooldown/weighted/fallback，14h）→ Stage 119 exact-match 缓存（10h）。ADR-032 Proposed + roadmap v54.0。设计文档：`docs/plans/2026-08-10-phase-47-wiring-cache.md` + `stage-117.md` / `stage-118.md` / `stage-119.md`（均 ✅ 已落盘）。
+**2026-08-10（Phase 47 交付 ✅）**: 差距调研（`docs/research/2026-08-09-aigw-gap-vs-industry-leaders.md`）确认的 **A 类「代码在但运行时未接线」** 全部接线 + **B 类「缓存=0」** 补齐，三 Stage 交付：
 
-**BDD 漏洞审计（484ea70，2026-08-10 12:56）**: multi-agent 全量审计 + real BDD（sqlite/pg/mysql）发现 **0 失败但 4 个静默跳过洞 + 1 个响应头缺口**，已修复：① `models.feature:54` 双空格 typo 使 /model/list 解密字段场景静默跳过；② `end_to_end.feature` 失败场景断言了 model_not_found（client 400 永不写 spend_log）→ 改写为 mock 上游 500 断言真实 failure spend_log；③ `responses.feature:20` 原始转义引号 `{expr}` 永不匹配 cucumber token → 改 `{string}`，流式 SSE 场景现在真正执行（**同时证明流式桥接路径真实运行**）；④ e2e spend_logs then-step 无注册 → 补通用 then-step；⑤ **responses.rs 流式路径缺 TD-006 `x-call-id` 头**（仅非流式有）→ 流式 SSE 现携带同一对账头（stream_request_id copy 防 move-after-use）。**基线锁定**: aigw-core 425 + aigw-server 144 UT、mock BDD **254 场景（241 pass / 13 @skip body_archive / 0 fail）**、fmt + clippy `-D warnings` green、real BDD 三后端 43/43。
+| Stage | Commit | 交付 |
+|-------|--------|------|
+| **117** | `d1000b0` | 4 handler 入口挂 `check_request_limits`（多级预算 key→user→team→org + RPM/TPM + soft_budget webhook + max_parallel Semaphore）；`LimitError::IntoResponse` 带 `x-ratelimit-limit/remaining` + `Retry-After`；`real/multi_level_budget` 去 @skip 4 场景 |
+| **118** | `abad4db` | Router 智能路由真实决策：weighted（weight 加权随机）+ usage（max remaining rpm）+ latency（min EWMA）+ cooldown 分类计数（429/401/408/404/5xx，400 业务错不计）+ priority fallback 顺序 + key>team>global `merge_router_overrides` 接入请求路径 |
+| **119** | `ad981b2` | exact-match 响应缓存：`aigw_core::cache`（moka LRU + 手动 TTL + SHA-256 key + canonical body）+ `X-Cache-Status: HIT/MISS` + cache-hit 计费 0 元（`cached=1`）+ no-store 绕过 + `CacheControl`（use-cache/ttl） |
 
-**待办**（在途 Phase 47，Stage 117-119）:
-1. **Stage 117（P0）** A 类接线核心 — 4 handler 入口挂 `check_request_limits`（多级预算 + RPM/TPM + soft_budget 告警 + max_parallel Semaphore），16h
-2. **Stage 118（P0）** Router 智能路由接线 — report_*/cooldown + merge_overrides + weighted + usage/latency + 错误类型 fallback + 前端下拉解锁，14h
-3. **Stage 119（P1）** exact-match 响应缓存 — `aigw_core::cache` moka LRU + `X-Cache-Status` + cache-hit 计费 0 元，10h
+**基线（Phase 47 收尾）**: aigw-core 432 + aigw-server 145+152 UT（**合计 861**）、mock BDD **246 场景（233 pass / 13 @skip body_archive / 0 fail）**、real BDD sqlite/pg/mysql **47/47 × 3**、fmt + clippy `-D warnings` green。ADR-032 Accepted（Stage 117-119 落地）。roadmap v55.0。
+
+**顺带修复**: ① BDD chat 步骤缺 request-id layer（所有 mock chat 请求 call_id="unknown" 撞 spend_logs.call_id UNIQUE，缓存写第二条时暴露）→ e2e + cache 步骤补 `SetRequestIdLayer`（UUID-v7）；② alerts.rs 测试 flake（`dispatch_soft_budget_alert` 的 `tokio::spawn` 在同步 `#[test]` 无 reactor panic）→ 改 `#[tokio::test]`。
+
+**待办**（后续收尾，非阻塞）:
+1. **P2** Stage 118 前端 RouterSettings `routing_strategy` 下拉解锁 usage/latency + weight/rpm/tpm 输入（`router-settings/index.tsx`）
+2. **P2** Stage 119 config `cache` 块解析 + boot 注入（当前默认开启 memory LRU，config 可禁用）
+3. **P2** max_parallel 从 key/budget 表字段接线（当前读 deployment raw_params 的 `max_parallel_requests`）
 
 **后续候选**（中期 3-6 月，视人力）:
 4. **M1** guardrails 最小集（regex 提示注入 + PII 脱敏 + Moderation hook，P0，4-5 pw）
@@ -139,10 +147,10 @@ Phase 45:   ████████████████████ 100% (3
 
 | 层 | 当前 |
 |---|------|
-| 后端单元 | ≥ 300 tests（aigw-server 144 含 embeddings 6 UT + openapi 8 + health probe 1；aigw-core 425 等全 workspace ~815） |
-| mock BDD | ≥ 254 scenarios（241 pass / 13 @skip body_archive，2026-08-10 审计后基线；Stage 113 embed 探针 1 已并入） |
+| 后端单元 | ≥ 300 tests（aigw-server 145+152 含 embeddings 6 UT + openapi 8 + health probe 1；aigw-core 432 等全 workspace ~861） |
+| mock BDD | ≥ 246 scenarios（233 pass / 13 @skip body_archive，Phase 47 收尾基线；含 rate_limit/soft_budget/router/cache 新场景） |
 | 前端 BDD | ≥ 342 passed（Stage 114 全量回归；含 3 压缩场景 × 3 viewports + i18n-switcher 9） |
-| real BDD | ≥ 47 SQLite / ≥ 41 PG / ≥ 41 MySQL（含 Stage 100 11 new） |
+| real BDD | ≥ 47 SQLite / ≥ 47 PG / ≥ 47 MySQL（Phase 47 三后端全绿） |
 
 ---
 
@@ -166,8 +174,9 @@ Phase 45:   ████████████████████ 100% (3
 | ✅ | Phase 45 Stage 115 多模态精度（TD-011b/c + TD-012b + TD-011a 可选） | ✅ 完成（2026-08-09，TD-011a 视频 SKIPPED） |
 | ✅ | Phase 46 Stage 116 静态配置模型接入（config.yaml model_list/router/env + key gates） | ✅ 完成（2026-08-10，ADR-031 Accepted） |
 | ✅ | BDD 漏洞审计（4 静默跳过洞 + 流式 x-call-id 头） | ✅ 完成（2026-08-10，484ea70，mock BDD 254 基线） |
-| P0 | Phase 47 Stage 117 A 类接线核心（限流 + 多级预算 + soft_budget 告警 + max_parallel） | ⏳ 待开始（Phase 47 首 Stage，16h） |
-| P0 | Phase 47 Stage 118 Router 智能路由接线（cooldown/weighted/usage/latency/fallback） | ⏳ 待开始（依赖 Stage 117） |
-| P1 | Phase 47 Stage 119 exact-match 响应缓存（moka LRU + X-Cache-Status + 计费 0 元） | ⏳ 待开始（可并行） |
+| ✅ | Phase 47 Stage 117 A 类接线核心（限流 + 多级预算 + soft_budget 告警 + max_parallel） | ✅ 完成（2026-08-10，d1000b0） |
+| ✅ | Phase 47 Stage 118 Router 智能路由接线（cooldown/weighted/usage/latency/fallback） | ✅ 完成（2026-08-10，abad4db） |
+| ✅ | Phase 47 Stage 119 exact-match 响应缓存（moka LRU + X-Cache-Status + 计费 0 元） | ✅ 完成（2026-08-10，ad981b2） |
+| P2 | Stage 118 前端 RouterSettings 下拉解锁 + Stage 119 config cache 块 + max_parallel key/budget 表字段 | 后续收尾（非阻塞） |
 | P2 | TD-008c/d 后端错误多语言 + RTL、TD-009e 外链缩略图、TD-011a 视频 token 估算（剩余） | 待处理（视使用量） |
 | P2 | Phase 41 测试缺口（适配器 UT + 流式接线） | ✅ 关闭（2026-08-09） |
