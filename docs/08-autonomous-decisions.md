@@ -594,3 +594,26 @@
   - 验证：aigw-core 425 + aigw-server 144 UT、`task bdd` 254 scenarios（237 passed / 17 skipped，0 failed）、cargo check 无 warning。
   - 剩余候选（后续 Stage）：`litellm_settings` 接线、config 热重载、实例级负载路由（UsageBased/Latency 变体决策）。
   - 设计文档：`docs/stages/stage-116.md`。
+
+## ADR-032: Phase 47 A 类接线 + exact-match 缓存（S1+S2+S3）
+
+- **Date**: 2026-08-10
+- **Status**: Proposed（Phase 47 规划，Stage 117-119 待开始）
+- **Decision**: 差距调研（`docs/research/2026-08-09-aigw-gap-vs-industry-leaders.md`）确认 aigw 最大欠账是 **A 类「代码在但运行时未接线」**——RPM/TPM 限流、多级预算 `check_budget_multi`、soft_budget 告警、`max_parallel_requests`、Router 智能路由全部已实现且有 UT 但请求路径零调用点。本 Phase 三 Stage：
+  - **Stage 117（S1）**：4 handler 入口挂 `check_request_limits`（复用 `enforce_limits`：多级预算 + RPM/TPM）+ soft_budget 告警 webhook + max_parallel Semaphore + 预算 TOCTOU 文档化。
+  - **Stage 118（S2）**：`report_failure/report_success` 接上游返回路径（cooldown 真实推进）+ `merge_router_overrides` key>team>global + weighted 路由 + usage/latency 变体 + 错误类型 priority fallback + 前端下拉解锁。
+  - **Stage 119（S3）**：exact-match 响应缓存（`aigw_core::cache` moka LRU + cache key SHA-256 + 流式组装缓存 + `X-Cache-Status` + cache-hit 计费 0 元）。
+- **Background**: 调研报告确认 A 类欠账是企业采购红线（demo 一测即穿），成本最低（代码已写好）；B 类缓存=0 是全部竞品标配。A 类接线需真实 BDD + 并发/TOCTOU 测试（12 号笔记明确 TOCTOU 注释自己承认并发窗口）。
+- **Key decisions**:
+  - **接线优先于新能力**：先让已写的代码生效（A 类），再补 exact-match 缓存（S3）作为第一个新能力。
+  - **`enforce_limits` 扩展为 `check_request_limits`**：追加 soft_budget 告警分支 + max_parallel 检查，保持 master key 直通。
+  - **max_parallel 用 `tokio::sync::Semaphore` 每 deployment 分桶**：对标 litellm `router.py:2886-2905`；值来自 key/budget 表字段。
+  - **cooldown 计数收敛到 429/401/408/404/5xx**：对标 litellm `cooldown_handlers.py:61`，400 业务错不计。
+  - **fallback 用 priority 分组 + 错误类型触发**：对标 Envoy provider-fallback / agentgateway priority failover；流式已产内容抛原始错误（对标 litellm `MidStreamFallbackError`）。
+  - **缓存 key = SHA-256(provider+endpoint+model+auth+body)**：对标 litellm `Cache.get_cache_key`；流式用 `stream_chunk_builder` 组装后入缓存。
+  - **cache-hit 计费 0 元**：复用 `calc_spend` 三级缓存计费逻辑；`response_cost=0` + `cached=1` 标记。
+  - **Redis 分布式层推迟（中期 M2）**：S3 只做内存 moka 后端 + `CacheBackend` trait 预留 Redis；跨实例一致性留中期。
+- **Consequences**:
+  - Stage 117-119 交付后：A 类全部接线 + exact-match 缓存落地，企业 demo 通过；预算/限流/路由/缓存四维能力真实生效。
+  - 剩余（中期 3-6 月）：guardrails 最小集、Redis 分布式层、MCP 最小透传、审计日志 + RBAC、`gen_ai.*` 可观测语义、SSO 重估。
+  - 设计文档：`docs/plans/2026-08-10-phase-47-wiring-cache.md` + `stage-117.md` / `stage-118.md` / `stage-119.md`。

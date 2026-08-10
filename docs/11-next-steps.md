@@ -1,20 +1,27 @@
 # aigw -- 下一步行动
 
 **上次更新**: 2026-08-10
-**当前阶段**: **Phase 46 Stage 116 ✅ 完成（静态配置模型接入）；117/117 Stages — ALL STAGES + Phase 46 COMPLETE**
+**当前阶段**: **Phase 47 🔄 规划中（Stage 117-119，A 类接线 + exact-match 缓存，40h）**；Phase 46 Stage 116 ✅ 完成（117/117 Stages）
 
 ---
 
-## 当前状态：117/117 Stages + Phase 46 静态配置模型接入完成
+## 当前状态：117/117 Stages + Phase 47 规划完成（差距调研 → Stage 117-119）
 
-**2026-08-10（Phase 46 Stage 116 ✅）**: 静态配置模型接入——`config.yaml` 的 `model_list` / `router_settings` / `environment_variables` 启动时真正生效，并接线三个 `general_settings` 死字段。① 新增 `aigw_core::config_loader`——`seed_models_from_config`（幂等 DB-first：查重跳过已有 + `created_by:"config"` 插入）+ `apply_environment_variables`（dotenvy 语义只填缺失）+ `build_router_config` + `router_settings_seed_json`（10 UT）。② `keys.rs` `generate_key_token_with_len`（clamp 16-64，litellm `custom_key_generate_length`）+ `/key/generate` `disable_custom_api_keys` gate（4 UT）。③ `main.rs` boot 接线——env 注入在 tracing init 前、model_list seed 在 Database::init 后、router_config 替换 `::default()`、deployment_mode config 优先、config 表 seed router_settings。④ RouterStrategy 扩展 `usage-based-routing-v2`/`latency-based-routing` 变体。⑤ BDD ×2（config seed 在 /v1/models 展示 + 幂等）+ 修复 budget_reset next_tick 硬编码 flake + `/v1/models` 空 model_info 补 `mode:"chat"`。验证：aigw-core 425 + aigw-server 144 UT、`task bdd` 254 场景（237 pass / 17 skip / 0 fail）、cargo check 无 warning。ADR-031 Accepted。
+**2026-08-10（Phase 47 规划 ✅）**: 差距调研 `docs/research/2026-08-09-aigw-gap-vs-industry-leaders.md`（litellm v1.97.0 源码深读 + 国际/国内/Rust 生态 10 篇笔记）确认最大欠账是 **A 类「代码在但运行时未接线」**——RPM/TPM 限流、多级预算 `check_budget_multi`、soft_budget 告警、`max_parallel_requests`、Router 智能路由全部已实现且有 UT 但请求路径零调用点（已核实 `enforce_limits` 仅 test、`check_budget_multi` 仅 `#[cfg(test)]`、`select_instance`/`merge_router_overrides` 仅测试）。其次 **B 类「缓存=0」**（exact-match 缓存为全部竞品标配）。规划 Phase 47 三 Stage：Stage 117 A 类接线核心（限流+多级预算+告警+max_parallel，16h）→ Stage 118 Router 智能路由接线（cooldown/weighted/fallback，14h）→ Stage 119 exact-match 缓存（10h）。ADR-032 Proposed + roadmap v54.0。设计文档：`docs/plans/2026-08-10-phase-47-wiring-cache.md` + `stage-117.md` / `stage-118.md` / `stage-119.md`。
 
-**待办**（按使用量触发，非在途 Stage）:
-1. **litellm_settings 接线**（drop_params/request_timeout/set_verbose）— 需对应实现，config.example.yaml 已标注
-2. **config.yaml 热重载 / router_settings 请求时动态应用** — 需 `Arc<Mutex<Router>>` 改造
-3. **实例级负载路由**（UsageBased/Latency 变体实际决策）— RouterStrategy 已声明变体，pick 沿用共享 shuffle
-4. TD-008c/d 后端错误多语言 + RTL、TD-009e 外链缩略图、TD-011a 视频 token 估算 → 视使用量触发
-5. 长期路线 LT-BodyMetrics/LT-BodyCompact/LT-BodyLifecycle 视数据量触发
+**待办**（在途 Phase 47，Stage 117-119）:
+1. **Stage 117（P0）** A 类接线核心 — 4 handler 入口挂 `check_request_limits`（多级预算 + RPM/TPM + soft_budget 告警 + max_parallel Semaphore），16h
+2. **Stage 118（P0）** Router 智能路由接线 — report_*/cooldown + merge_overrides + weighted + usage/latency + 错误类型 fallback + 前端下拉解锁，14h
+3. **Stage 119（P1）** exact-match 响应缓存 — `aigw_core::cache` moka LRU + `X-Cache-Status` + cache-hit 计费 0 元，10h
+
+**后续候选**（中期 3-6 月，视人力）:
+4. **M1** guardrails 最小集（regex 提示注入 + PII 脱敏 + Moderation hook，P0，4-5 pw）
+5. **M2** Redis 分布式层（跨实例限流/预算 counter/共享缓存，P0，4-5 pw）
+6. **M3** MCP 最小透传 + WebSocket（P1，3-4 pw）
+7. **M4** 审计日志 + RBAC 矩阵（P1，5-7 pw）
+8. **M5** `gen_ai.*` 可观测语义 + 指标扩展（P2，2-3 pw）
+
+**按使用量触发**: litellm_settings 接线、config 热重载、TD-008c/d、TD-009e、TD-011a 视频 token 估算、长期路线 LT-*
 
 ---
 
