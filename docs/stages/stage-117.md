@@ -87,14 +87,47 @@ pub async fn check_request_limits(
 | `crates/aigw-server/src/routes/responses.rs` | 修改 | 同上 |
 | `crates/aigw-server/src/routes/embeddings.rs` | 修改 | 同上 |
 
-## 5. TDD
+## 5. 单元测试（TDD — 代码质量）
 
 - **core UT**（8-10）：`check_request_limits` master 直通 / RPM 超限 429 / TPM 超限 / 多级预算逐级拒绝（key→user→team→org）/ soft_budget 放行+告警触发 / max_parallel 排队与 429 / token_estimate 0 只查 RPM+预算 / 竞态快照读。
 - **handler UT**（4）：每 handler 入口 guard 接线（mock identity）。
-- **mock BDD**（4-5）：RPM 超限 429（`x-ratelimit` 头）/ 多级预算拒绝 / soft_budget webhook 告警 / max_parallel 429。
-- **real BDD 三后端**（3-4）：预算/限流跨 SQLite/PG/MySQL 一致。
 
-## 6. 验收标准
+## 6. BDD 场景（功能质量 — 行为验收）
+
+> 概念区分：TDD 管代码质量（单元断言），BDD 管功能质量（HTTP 行为 / 跨 DB 一致 / 端到端）。以下场景是功能验收核心。
+
+### 6.1 `rate_limit.feature` 扩展（mock）
+
+现有 3 场景是**函数级**（直接调 `enforce_limits`），Stage 117 接线后补 **HTTP 级**行为验证：
+
+| # | 场景 | 断言 | step |
+|---|------|------|------|
+| 1 | RPM 超限 → 真实 HTTP 请求返回 429 + `x-ratelimit-limit/remaining/reset` 头 | status=429 + 头存在 | 新增（发送 chat 请求带超限 key） |
+| 2 | TPM 超限 → 429 | status=429 | 新增 |
+| 3 | 未超限正常通过 | 200 | 复用现有 |
+| 4 | master key 全链直通 | 200 | 新增 |
+| 5 | max_parallel：并发 5 请求 → 2 放行 + 3 排队/429 | 2×200 + 3×429 | 新增 |
+
+### 6.2 `real/multi_level_budget.feature` 去 @skip 接线（real BDD 三后端）
+
+> 现有 6 场景全部 `@skip`——正是「已实现但未接线」的测试。Stage 117 接线后必须真正跑起来（SQLite/PG/MySQL 一致）：
+
+| # | 场景 | 断言 |
+|---|------|------|
+| 1 | key 未超但 user 超 → 429 + `entity_type="user"` | 429 + body entity_type |
+| 2 | team 级拒绝 | 429 + entity_type="team" |
+| 3 | org 级拒绝（JOIN budgets 表） | 429 + entity_type="organization" |
+| 4 | 全通过（key/user/team/org 均未超） | 200 |
+| 5 | 完整链路：spend 超限 → budget_reset job → 恢复 200 | 429 → job → 200 |
+
+### 6.3 `soft_budget.feature` 新建（mock）
+
+| # | 场景 | 断言 |
+|---|------|------|
+| 1 | soft_budget 命中（spent > soft < max）→ 放行 + `alerts::AlertDispatcher` webhook 触发 | 200 + dispatch 记录（tracing/alert log） |
+| 2 | 硬预算（spent ≥ max）→ 429 拒绝 | 429 |
+
+## 7. 验收标准
 
 - [ ] `task test` UT 全绿（aigw-core + aigw-server）
 - [ ] `task bdd` mock BDD 全绿（新增 4-5 场景）

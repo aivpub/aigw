@@ -83,13 +83,31 @@ cache:
 | `crates/aigw-server/src/routes/v1_messages.rs` | 修改 | 同上 |
 | `crates/aigw-server/src/routes/spend.rs`（如需要）| 修改 | cached 标记透传 |
 
-## 5. TDD
+## 5. 单元测试（TDD — 代码质量）
 
 - **cache UT**（8-10）：key 构造确定性 / get miss→put→get hit / TTL 过期 / LRU 淘汰 / no-store 绕过 / 缓存 body 保真（headers+body）。
 - **handler UT**（2-4）：非流式 MISS→HIT、流式组装后入缓存、cache-hit 计费 0 元。
-- **mock BDD**（4-5）：`X-Cache-Status: HIT/MISS` / no-store 绕过 / TTL 过期后 MISS / cache-hit 计费 0 元（SpendLog response_cost=0 + cached=1）。
 
-## 6. 验收标准
+## 6. BDD 场景（功能质量 — 行为验收）
+
+### 6.1 `cache.feature` 新建（mock）
+
+| # | 场景 | 断言 | step |
+|---|------|------|------|
+| 1 | 首次请求 MISS → 二次同 body 请求 **HIT** | `X-Cache-Status: HIT` + 响应一致 | 新增（mock 上游捕获请求数） |
+| 2 | **no-store** 绕过缓存 | 每次请求都 MISS + 上游被调 | 新增 |
+| 3 | **TTL 过期**后重新 MISS | 过期后 HIT→MISS | 新增（短 TTL 或手动过期） |
+| 4 | **cache-hit 计费 0 元**：命中请求 SpendLog `response_cost=0` + `cached=1` | spend 断言 | 新增 |
+| 5 | **流式响应**组装后入缓存 → 重放为 SSE | HIT + SSE 完整事件 | 新增 |
+| 6 | config `cache.enabled=false` → 无缓存层 | 恒 MISS + 零开销 | 新增 |
+
+### 6.2 计费一致性（复用 `calc_spend`）
+
+| # | 场景 | 断言 |
+|---|------|------|
+| 7 | 缓存命中请求不产生上游计费（`response_cost=0`）且 `daily_*_spend` 正确 | spend 聚合一致 |
+
+## 7. 验收标准
 
 - [ ] `task test` / `task bdd` / `task bdd-real-*` 全绿
 - [ ] `task fmt` / `task lint` 全绿

@@ -78,14 +78,38 @@
 | `crates/aigw-frontend/src/pages/router-settings/index.tsx` | 修改 | 解锁 usage/latency + weight 输入 |
 | `crates/aigw-frontend/src/i18n/locales/{en,zh-CN}.json` | 修改 | 新增 weight/rpm/tpm label |
 
-## 5. TDD
+## 5. 单元测试（TDD — 代码质量）
 
 - **router UT**（10-12）：weighted 加权随机命中率（statistical）/ 零权重排除 / report_failure 触发 cooldown / cooldown 期间排除 / 429 vs 400 计数差异 / usage 变体选余量最大 / latency 变体选 EWMA 最小 / 无样本回退 / fallback priority 分组切换 / 错误类型触发 / 最多 N 次尝试 / merge_overrides 优先级 key>team>global。
 - **handler UT**（2-4）：fallback 循环 + report_* 调用。
-- **mock BDD**（4-6）：cooldown 排除（失败 N 次后命中被跳过）/ weighted 路由命中 / usage 选择 / fallback 切换 429→下一优先组。
-- **fe-bdd**（2 场景 × 3 viewports）：下拉启用 usage/latency + weight 输入。
 
-## 6. 验收标准
+## 6. BDD 场景（功能质量 — 行为验收）
+
+### 6.1 `router.feature` 新建（mock）— 路由行为端到端
+
+| # | 场景 | 断言 | step |
+|---|------|------|------|
+| 1 | **cooldown 排除**：deployment A 连续失败 N 次（429/5xx）→ 后续请求选中的不是 A | 选中 ≠ A | 新增（mock 上游返回 429） |
+| 2 | **400 不计 cooldown**：A 返回业务 400 → 仍参与路由 | 可选中 A | 新增 |
+| 3 | **weighted 路由**：A/B weight=10/1 → 100 次请求命中比 ≈ 10:1 | 比例（±容差） | 新增（统计断言） |
+| 4 | **usage-based 选择**：A 余量 0 / B 余量大 → 选中 B | 选中 B | 新增 |
+| 5 | **latency 选择**：B EWMA 延迟更低 → 选中 B | 选中 B | 新增 |
+| 6 | **fallback 切换**：主 deployment 429 → 自动切备（priority） | 响应来自备 + 200 | 新增 |
+| 7 | **key>team>global override**：`merge_router_overrides` 优先级 | key 覆盖生效 | 复用 patch 基础 |
+
+### 6.2 `router_settings.feature` 扩展（mock）
+
+| # | 场景 | 断言 |
+|---|------|------|
+| 8 | patch key 设 `routing_strategy=usage-based-routing` → 请求时应用 | 路由按 usage 选 |
+
+### 6.3 前端 fe-bdd（router-settings）
+
+| # | 场景 | 断言 |
+|---|------|------|
+| 9 | RouterSettings 下拉解锁 `usage-based-routing` / `latency-based-routing` + weight 输入 | 选项可选 + 可保存 |
+
+## 7. 验收标准
 
 - [ ] `task test` / `task bdd` / `task fe-bdd` 全绿
 - [ ] `task fmt` / `task lint` 全绿
