@@ -335,6 +335,30 @@ async fn main() -> anyhow::Result<()> {
         .map(|gs| gs.disable_custom_api_keys)
         .unwrap_or(false);
 
+    // Stage 119: apply the `cache` config block to the Router — build the
+    // memory LRU backend (or disable entirely when `enabled=false`). Defaults
+    // to enabled-with-defaults when the block is absent (litellm parity).
+    let cache_config = config
+        .as_ref()
+        .and_then(|c| c.cache.clone())
+        .unwrap_or_default();
+    let cache_backend = if cache_config.enabled {
+        tracing::info!(
+            backend = %cache_config.backend,
+            ttl_seconds = cache_config.ttl_seconds,
+            max_entries = cache_config.max_entries,
+            "exact-match response cache enabled"
+        );
+        Some(
+            std::sync::Arc::new(aigw_core::cache::MemoryCache::new(cache_config.max_entries))
+                as std::sync::Arc<dyn aigw_core::cache::CacheBackend>,
+        )
+    } else {
+        tracing::info!("response cache disabled (config cache.enabled=false)");
+        None
+    };
+    let router = AigwRouter::from_config(&router_config).with_cache(cache_backend);
+
     let state: SharedState = Arc::new(AppState {
         db: (*db_arc).clone(),
         master_key: Some(master_key.clone()),
@@ -343,7 +367,7 @@ async fn main() -> anyhow::Result<()> {
         disable_custom_api_keys,
         metrics: Some(metrics),
         provider_registry,
-        router: AigwRouter::from_config(&router_config),
+        router,
         router_state,
         rate_limiter,
         deployment_mode,

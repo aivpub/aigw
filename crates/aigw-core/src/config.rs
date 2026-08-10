@@ -53,6 +53,52 @@ pub struct AigwConfig {
     /// with budget_duration set (virtual_keys, teams, users, organizations).
     #[serde(rename = "budget_reset", skip_serializing_if = "Option::is_none")]
     pub budget_reset: Option<BudgetResetConfig>,
+
+    /// Exact-match response cache (Stage 119). Absent → enabled with defaults
+    /// (memory LRU, ttl 60s, 10k entries).
+    #[serde(rename = "cache", skip_serializing_if = "Option::is_none")]
+    pub cache: Option<CacheConfig>,
+}
+
+/// Response cache configuration (Stage 119 §3.5).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CacheConfig {
+    /// Master switch. `false` disables the cache layer entirely (zero cost).
+    #[serde(default = "default_cache_enabled")]
+    pub enabled: bool,
+    /// Backend: `memory` now, `redis` reserved (M2 distributed layer).
+    #[serde(default = "default_cache_backend")]
+    pub backend: String,
+    /// Default TTL in seconds for cached responses.
+    #[serde(default = "default_cache_ttl")]
+    pub ttl_seconds: u64,
+    /// LRU capacity for the memory backend.
+    #[serde(default = "default_cache_max_entries")]
+    pub max_entries: usize,
+}
+
+fn default_cache_enabled() -> bool {
+    true
+}
+fn default_cache_backend() -> String {
+    "memory".into()
+}
+fn default_cache_ttl() -> u64 {
+    60
+}
+fn default_cache_max_entries() -> usize {
+    10_000
+}
+
+impl Default for CacheConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_cache_enabled(),
+            backend: default_cache_backend(),
+            ttl_seconds: default_cache_ttl(),
+            max_entries: default_cache_max_entries(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -314,5 +360,31 @@ mod tests {
         let yaml = "general_settings: {}\nmodel_list: []\n";
         let cfg: AigwConfig = serde_yaml::from_str(yaml).unwrap();
         assert!(cfg.general_settings.unwrap().alert_webhook.is_none());
+    }
+
+    #[test]
+    fn cache_config_absent_defaults_to_enabled() {
+        // Stage 119: absent `cache` block → CacheConfig::default() → enabled.
+        let yaml = "model_list: []\n";
+        let cfg: AigwConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(cfg.cache.is_none(), "absent cache block → None");
+        let cc = cfg.cache.clone().unwrap_or_default();
+        assert!(cc.enabled);
+        assert_eq!(cc.backend, "memory");
+        assert_eq!(cc.ttl_seconds, 60);
+        assert_eq!(cc.max_entries, 10_000);
+    }
+
+    #[test]
+    fn cache_config_parsed_from_yaml() {
+        // Stage 119: explicit `cache` block deserializes and overrides defaults.
+        let yaml =
+            "model_list: []\ncache:\n  enabled: false\n  ttl_seconds: 300\n  max_entries: 500\n";
+        let cfg: AigwConfig = serde_yaml::from_str(yaml).unwrap();
+        let cc = cfg.cache.expect("cache block present");
+        assert!(!cc.enabled);
+        assert_eq!(cc.backend, "memory");
+        assert_eq!(cc.ttl_seconds, 300);
+        assert_eq!(cc.max_entries, 500);
     }
 }

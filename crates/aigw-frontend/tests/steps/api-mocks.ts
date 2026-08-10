@@ -419,6 +419,25 @@ export async function defineMockRoutes(route: Route, request: Request) {
     return route.fulfill({ status: 200, json: sampleTeams[0] });
   }
 
+  // Router settings (Stage 118) — global GET/PUT + key/team PATCH
+  if (url.pathname === "/router/settings") {
+    if (route.request().method() === "PUT") {
+      return route.fulfill({ status: 200, json: { message: "Router settings saved" } });
+    }
+    return route.fulfill({
+      status: 200,
+      json: {
+        routing_strategy: "simple-shuffle",
+        num_retries: 0,
+        allowed_fails: 3,
+        cooldown_time: 5,
+      },
+    });
+  }
+  if (url.pathname.endsWith("/router/settings") && route.request().method() === "PATCH") {
+    return route.fulfill({ status: 200, json: { message: "Router settings saved" } });
+  }
+
   // Login (for Stage 26)
   if (url.pathname === "/v2/login") {
     return route.fulfill({ status: 200, json: { user_id: "default_user_id", user_role: "proxy_admin", user_email: null } });

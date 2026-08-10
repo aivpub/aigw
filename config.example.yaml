@@ -90,6 +90,13 @@ router_settings:
   cooldown_time: 30
   num_retries: 2
 
+# Response cache — exact-match cache (Stage 119). Absent → enabled with defaults.
+# cache:
+#   enabled: true
+#   backend: memory        # memory now, redis reserved (M2 distributed layer)
+#   ttl_seconds: 60
+#   max_entries: 10000
+
 # environment_variables:
 #   OPENAI_API_KEY: sk-your-key   # filled only if not already set in env
 

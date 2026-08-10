@@ -87,14 +87,13 @@ function RouterSettingsForm({
                   <SelectItem value="simple-shuffle">
                     Simple Shuffle (random)
                   </SelectItem>
-                  <SelectItem value="least-busy" disabled>
-                    Least Busy (coming soon)
+                  {/* Stage 118: usage/latency strategies are wired in the router
+                      (pick_deployment real decisions) — enabled now. */}
+                  <SelectItem value="usage-based-routing-v2">
+                    Usage-Based (least busy)
                   </SelectItem>
-                  <SelectItem value="usage-based-routing" disabled>
-                    Usage-Based (coming soon)
-                  </SelectItem>
-                  <SelectItem value="latency-based-routing" disabled>
-                    Latency-Based (coming soon)
+                  <SelectItem value="latency-based-routing">
+                    Latency-Based (lowest EWMA)
                   </SelectItem>
                 </SelectContent>
               </Select>
