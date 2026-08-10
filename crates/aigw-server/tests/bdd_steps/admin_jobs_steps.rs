@@ -228,7 +228,7 @@ async fn when_get_jobs(world: &mut TestWorld, step: &Step) {
 fn extract_uri(txt: &str) -> String {
     // Find "/admin/jobs..." substring, substitute {job_id} placeholder.
     let idx = txt.find("/admin").unwrap_or(0);
-    let mut uri = txt[idx..].trim_end_matches('"').trim().to_string();
+    let uri = txt[idx..].trim_end_matches('"').trim().to_string();
     // {job_id} literal in the step text stays as-is; callers that need the
     // real id substitute before calling send. This helper is only for the
     // list endpoint where no {job_id} appears.

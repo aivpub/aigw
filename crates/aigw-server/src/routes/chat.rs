@@ -2139,6 +2139,7 @@ pub async fn models_list(
     // model_info keyed by model_name — only the master path (proxy_models rows)
     // has it; non-master keys carry model-name strings only.
     let mut model_infos: Vec<Option<serde_json::Value>> = Vec::new();
+    // Stage 116: empty model_info rows get mode:"chat" annotated below.
 
     if auth.is_master_key {
         // Master key sees all models registered in proxy_models table

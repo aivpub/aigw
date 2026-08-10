@@ -51,7 +51,7 @@ Feature: 模型管理 CRUD
 
   Scenario: /model/list 解密 litellm_params 嵌套加密字段
     Given 管理员已认证
-    And 已存在一个模型其 litellm_params 包含加密的 api_base  api_key
+    And 已存在一个模型其 litellm_params 包含加密的 api_base 和 api_key
     When 通过解密路由发送 GET /model/list
     Then 响应状态码为 200
     And 响应中首个模型的 api_base 已解密为 "https://decrypted-api.example.com"

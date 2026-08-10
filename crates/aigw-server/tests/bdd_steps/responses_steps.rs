@@ -165,16 +165,17 @@ async fn then_json_array_len_gt_min(world: &mut TestWorld, field: String, min: u
     );
 }
 
-#[then(expr = "响应 Content-Type 包含 \"text/event-stream\"")]
-async fn then_content_type_sse(world: &mut TestWorld) {
+#[then(expr = "响应 Content-Type 包含 {string}")]
+async fn then_content_type_sse(world: &mut TestWorld, expected_ct: String) {
     let body = world.last_body.as_ref().expect("no response body");
     let ct = body
         .get("__content_type")
         .and_then(|v| v.as_str())
         .unwrap_or("");
     assert!(
-        ct.contains("text/event-stream"),
-        "Expected Content-Type to contain 'text/event-stream', got '{}'",
+        ct.contains(&expected_ct),
+        "Expected Content-Type to contain '{}', got '{}'",
+        expected_ct,
         ct
     );
 }

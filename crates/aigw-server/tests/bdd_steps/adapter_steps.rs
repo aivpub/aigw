@@ -252,7 +252,7 @@ async fn then_claude_role_is(world: &mut TestWorld, expected: String) {
 
 // ── New BDD steps for reasoning_content / usage details field preservation ──
 
-use aigw_core::models::{AssistantMessage, ChatContent, Choice, TokenDetails, Usage};
+use aigw_core::models::{AssistantMessage, Choice, TokenDetails, Usage};
 
 #[given(expr = "一个包含 reasoning_content 的 OpenAI 响应")]
 async fn given_openai_with_reasoning(world: &mut TestWorld) {

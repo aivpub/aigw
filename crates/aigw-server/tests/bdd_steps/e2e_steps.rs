@@ -583,3 +583,37 @@ async fn then_spend_logs_image_tokens_source(world: &mut TestWorld, expected: St
         expected, source
     );
 }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Then — Stage 116 coverage gap: spend_logs write-on-success/failure
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Assert that a spend_log row exists for the given model whose status starts
+/// with the expected kind (e.g. "success" / "failure"). Mirrors the health
+/// probe assertion but for the generic /chat/completions path — fills the
+/// mock-BDD coverage hole where end_to_end.feature:34,40 used to skip because
+/// no step matched.
+#[then(expr = "spend_logs 表中存在 model={string} 且 status 包含 {string} 的记录")]
+async fn then_spend_logs_model_status(
+    world: &mut TestWorld,
+    model_name: String,
+    status_kind: String,
+) {
+    let state = world.ensure_state().await;
+    let logs = state
+        .db
+        .query_spend_logs(None, Some(200))
+        .await
+        .expect("query spend logs");
+    let matching: Vec<_> = logs.iter().filter(|l| l.model == model_name).collect();
+    assert!(
+        !matching.is_empty(),
+        "Expected a spend_log for model='{model_name}', found none. models seen: {:?}",
+        logs.iter().map(|l| &l.model).collect::<Vec<_>>()
+    );
+    let st = matching[0].status.clone().unwrap_or_default();
+    assert!(
+        st.starts_with(&status_kind),
+        "expected status starting with '{status_kind}', got '{st}' for model {model_name}"
+    );
+}

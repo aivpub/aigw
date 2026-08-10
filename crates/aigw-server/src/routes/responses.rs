@@ -592,6 +592,9 @@ pub async fn responses_handler(
         let stream_metrics = state.metrics.clone();
         let stream_auth_user = auth.user_id.clone();
         let stream_model = deployment.upstream_model.clone();
+        // Owned copy of the call id for the SSE response header (the closure
+        // below moves `request_id` into the spend-log task).
+        let stream_request_id = request_id.clone();
 
         // Phase 1: placeholder INSERT
         {
@@ -943,11 +946,14 @@ pub async fn responses_handler(
             .map(|data: Vec<u8>| Ok::<_, Infallible>(data));
 
         let body = axum::body::Body::from_stream(sse_stream);
+        // TD-006: streaming responses must carry the same x-call-id reconciliation
+        // header as the non-streaming path (== SpendLog.call_id).
         let response = axum::response::Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "text/event-stream")
             .header(header::CACHE_CONTROL, "no-cache")
             .header(header::CONNECTION, "keep-alive")
+            .header("x-call-id", &stream_request_id)
             .body(body)
             .unwrap();
         Ok(response)

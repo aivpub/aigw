@@ -31,13 +31,16 @@ Feature: 端到端调用链路（mock）
     And 一个普通 key "e2e-spend-user" 已生成
     When 使用 key "e2e-spend-user" 发送 POST /chat/completions 请求用 model "spend-log-model"
     Then 响应状态码为 200
-    And spend_logs 表中存在 model="spend-log-model" 且 status="success" 的记录
+    And spend_logs 表中存在 model="spend-log-model" 且 status 包含 "success" 的记录
 
   Scenario: 用量记录写入 spend_logs（失败）
-    Given 一个普通 key "e2e-spend-fail-user" 已生成
-    When 使用 key "e2e-spend-fail-user" 发送 POST /chat/completions 请求用 model "nonexistent-model-xyz"
-    Then 响应状态码为 400
-    And spend_logs 表中存在 model="nonexistent-model-xyz" 且 status 包含 "failure" 的记录
+    Given mock 上游已启动
+    And 已配置 model "spend-fail-model" 指向 mock 上游
+    And mock 上游 "/v1/chat/completions" 返回状态码 500
+    And 一个普通 key "e2e-spend-fail-user" 已生成
+    When 使用 key "e2e-spend-fail-user" 发送 POST /chat/completions 请求用 model "spend-fail-model"
+    Then 响应状态码为 500 或 502
+    And spend_logs 表中存在 model="spend-fail-model" 且 status 包含 "failure" 的记录
 
   Scenario: Mock 上游请求转发路径正确
     Given mock 上游已启动
