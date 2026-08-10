@@ -21,7 +21,6 @@
 //! ```
 
 use axum::http::StatusCode;
-use axum::Json;
 use serde_json::json;
 
 use crate::budget::BudgetEnforcer;
@@ -47,21 +46,38 @@ pub enum LimitError {
         limit: f64,
     },
     /// The key has exceeded its RPM or TPM limit.
-    RateLimited { message: String },
+    RateLimited {
+        message: String,
+        /// Effective RPM limit (0 = unlimited) — emitted as `x-ratelimit-limit`.
+        rpm_limit: i64,
+        /// Remaining RPM budget after this check — `x-ratelimit-remaining`.
+        rpm_remaining: i64,
+    },
     /// A database error occurred during budget check.
     Internal(String),
 }
 
 impl axum::response::IntoResponse for LimitError {
     fn into_response(self) -> axum::response::Response {
-        let (status, error_body) = match self {
+        // Build the JSON error body first, then attach rate-limit headers
+        // for the 429 variants so clients can observe the bucket state.
+        let status = match self {
+            LimitError::BudgetExceeded { .. } | LimitError::RateLimited { .. } => {
+                StatusCode::TOO_MANY_REQUESTS
+            }
+            LimitError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+
+        let mut builder = axum::response::Response::builder()
+            .status(status)
+            .header("content-type", "application/json");
+        match self {
             LimitError::BudgetExceeded {
                 entity_type,
                 spent,
                 limit,
-            } => (
-                StatusCode::TOO_MANY_REQUESTS,
-                json!({
+            } => {
+                let body = json!({
                     "error": {
                         "message": format!("{} budget exceeded: spent {:.4}, limit {:.4}", entity_type, spent, limit),
                         "type": "budget_exceeded",
@@ -71,33 +87,55 @@ impl axum::response::IntoResponse for LimitError {
                         "spent": spent,
                         "limit": limit,
                     }
-                }),
-            ),
-            LimitError::RateLimited { message } => (
-                StatusCode::TOO_MANY_REQUESTS,
-                json!({
+                });
+                builder
+                    .body(axum::body::Body::from(
+                        serde_json::to_string(&body).unwrap(),
+                    ))
+                    .unwrap()
+            }
+            LimitError::RateLimited {
+                message,
+                rpm_limit,
+                rpm_remaining,
+            } => {
+                let body = json!({
                     "error": {
                         "message": message,
                         "type": "rate_limited",
                         "param": null,
                         "code": 429,
                     }
-                }),
-            ),
-            LimitError::Internal(message) => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                json!({
+                });
+                // x-ratelimit-limit only when a limit is actually enforced.
+                if rpm_limit > 0 {
+                    builder = builder
+                        .header("x-ratelimit-limit", rpm_limit.to_string())
+                        .header("x-ratelimit-remaining", rpm_remaining.to_string());
+                }
+                builder = builder.header("Retry-After", "1");
+                builder
+                    .body(axum::body::Body::from(
+                        serde_json::to_string(&body).unwrap(),
+                    ))
+                    .unwrap()
+            }
+            LimitError::Internal(message) => {
+                let body = json!({
                     "error": {
                         "message": message,
                         "type": "internal_error",
                         "param": null,
                         "code": 500,
                     }
-                }),
-            ),
-        };
-
-        (status, Json(error_body)).into_response()
+                });
+                builder
+                    .body(axum::body::Body::from(
+                        serde_json::to_string(&body).unwrap(),
+                    ))
+                    .unwrap()
+            }
+        }
     }
 }
 
@@ -169,12 +207,54 @@ pub async fn enforce_limits(
         let tpm = k.tpm_limit_i64();
 
         rate_limiter
-            .check(&key.token_hash, rpm, tpm, token_estimate)
+            .check_with_headers(
+                &key.token_hash,
+                rpm,
+                tpm,
+                token_estimate,
+                std::time::Instant::now(),
+            )
             .await
-            .map_err(|msg| LimitError::RateLimited { message: msg })?;
+            .map_err(|e| match e {
+                crate::rate_limiter::RateLimitError::RateLimited { message }
+                | crate::rate_limiter::RateLimitError::TpmLimited { message } => {
+                    LimitError::RateLimited {
+                        message,
+                        rpm_limit: rpm.unwrap_or(0).max(0),
+                        rpm_remaining: 0,
+                    }
+                }
+            })?;
     }
 
     Ok(())
+}
+
+/// Combined request entry guard (Stage 117 §3.1).
+///
+/// Runs the full enforcement chain on every LLM handler entry:
+///
+/// 1. **Multi-level budget** — `BudgetEnforcer::check_budget_multi`
+///    (key → user → team → org) with soft_budget webhook alerting.
+/// 2. **RPM/TPM rate limits** — `enforce_limits` (token-bucket pre-check).
+///
+/// On failure the returned `LimitError` implements `IntoResponse`, emitting
+/// the 429/500 body **and** `x-ratelimit-*` headers so handlers can forward
+/// the full response to the client without dropping them.
+///
+/// # Note on TOCTOU
+///
+/// Budget check reads `entity.spend` before the request runs and spend is
+/// incremented asynchronously after completion — a ~ms race window where two
+/// concurrent requests can both pass check and cumulatively exceed budget.
+/// This is the documented litellm-equivalent trade-off (see `budget.rs`).
+pub async fn check_request_limits(
+    db: &Database,
+    rate_limiter: &RateLimiter,
+    key: &KeyIdentity,
+    token_estimate: u32,
+) -> Result<(), LimitError> {
+    enforce_limits(db, rate_limiter, key, token_estimate).await
 }
 
 #[cfg(test)]
@@ -214,9 +294,20 @@ mod tests {
         use axum::response::IntoResponse;
         let err = LimitError::RateLimited {
             message: "RPM limit exceeded".to_string(),
+            rpm_limit: 10,
+            rpm_remaining: 0,
         };
         let resp = err.into_response();
         assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        // Rate-limit headers must be present for a 429.
+        let headers = resp.headers();
+        assert_eq!(
+            headers
+                .get("x-ratelimit-limit")
+                .and_then(|v| v.to_str().ok()),
+            Some("10")
+        );
+        assert!(headers.contains_key("Retry-After"));
     }
 
     #[tokio::test]
@@ -243,6 +334,8 @@ mod tests {
     async fn test_limit_error_display() {
         let err = LimitError::RateLimited {
             message: "test".to_string(),
+            rpm_limit: 0,
+            rpm_remaining: 0,
         };
         let debug = format!("{:?}", err);
         assert!(debug.contains("RateLimited"));

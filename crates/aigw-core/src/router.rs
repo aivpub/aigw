@@ -226,6 +226,21 @@ impl std::str::FromStr for RouterStrategy {
     }
 }
 
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// max_parallel — per-deployment semaphore registry
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Per-deployment concurrency gate (Stage 117 §3.4).
+///
+/// Holds one `Arc<Semaphore>` per `(api_base, upstream_model)` bucket so that
+/// concurrent requests to the same upstream are capped at the deployment's
+/// `max_parallel_requests`. `None`/`<=0` means unlimited (no semaphore).
+///
+/// Held inside the [`Router`] (already in `AppState`) so handlers reach it
+/// via `state.router` without adding a new AppState field everywhere.
+pub type MaxParallelRegistry =
+    Arc<tokio::sync::Mutex<std::collections::HashMap<String, Arc<tokio::sync::Semaphore>>>>;
+
 /// Router — picks deployments and tracks failure/cooldown state.
 #[derive(Debug, Clone)]
 pub struct Router {
@@ -233,6 +248,8 @@ pub struct Router {
     pub allowed_fails: u32,
     pub cooldown_time: f64,
     pub num_retries: u32,
+    /// Per-deployment semaphore registry for `max_parallel_requests`.
+    semaphores: MaxParallelRegistry,
 }
 
 impl Default for Router {
@@ -253,6 +270,7 @@ impl Router {
             allowed_fails,
             cooldown_time,
             num_retries,
+            semaphores: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         }
     }
 
@@ -265,7 +283,39 @@ impl Router {
             allowed_fails: cfg.allowed_fails,
             cooldown_time: cfg.cooldown_time,
             num_retries: cfg.num_retries,
+            semaphores: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         }
+    }
+
+    /// Acquire a permit for the given deployment bucket. Returns `None` when
+    /// `max_parallel <= 0` (unlimited) or the bucket already has a permit.
+    /// The caller must `drop` the returned guard (or call `release`) when the
+    /// upstream call completes.
+    pub async fn acquire_max_parallel(
+        &self,
+        api_base: &str,
+        upstream_model: &str,
+        max_parallel: i32,
+    ) -> Option<tokio::sync::OwnedSemaphorePermit> {
+        if max_parallel <= 0 {
+            return None;
+        }
+        let key = format!("{}|{}", api_base.trim_end_matches('/'), upstream_model);
+        // Clone the Arc out of the map so the semaphore outlives the lock guard.
+        let semaphore = {
+            let mut map = self.semaphores.lock().await;
+            match map.get(&key) {
+                Some(existing) if existing.available_permits() <= max_parallel as usize => {
+                    existing.clone()
+                }
+                _ => {
+                    let fresh = Arc::new(tokio::sync::Semaphore::new(max_parallel as usize));
+                    map.insert(key, fresh.clone());
+                    fresh
+                }
+            }
+        };
+        semaphore.acquire_owned().await.ok()
     }
 
     /// Pick one deployment index from the candidates.
@@ -622,5 +672,58 @@ mod merge_tests {
         assert_eq!(merged.routing_strategy, "usage-based-routing");
         assert_eq!(merged.num_retries, 1);
         assert_eq!(merged.allowed_fails, 3); // global default
+    }
+
+    // ── Stage 117: max_parallel semaphore registry ──
+
+    #[tokio::test]
+    async fn test_acquire_max_parallel_caps_concurrency() {
+        let router = Router::new(RouterStrategy::SimpleShuffle, 3, 5.0, 0);
+        let p1 = router
+            .acquire_max_parallel("https://a.example/v1", "gpt-4", 2)
+            .await
+            .expect("first permit");
+        let p2 = router
+            .acquire_max_parallel("https://a.example/v1", "gpt-4", 2)
+            .await
+            .expect("second permit");
+        // Third concurrent request blocks — use try_acquire_owned via a short
+        // acquire with a distinct bucket to prove the registry caps at 2.
+        let blocked = tokio::time::timeout(
+            std::time::Duration::from_millis(150),
+            router.acquire_max_parallel("https://a.example/v1", "gpt-4", 2),
+        )
+        .await;
+        assert!(blocked.is_err(), "third concurrent request should time out");
+        drop(p1);
+        drop(p2);
+        // After releasing, a new request acquires immediately.
+        let p3 = router
+            .acquire_max_parallel("https://a.example/v1", "gpt-4", 2)
+            .await;
+        assert!(p3.is_some(), "permit available after release");
+    }
+
+    #[tokio::test]
+    async fn test_acquire_max_parallel_unlimited_returns_none() {
+        let router = Router::new(RouterStrategy::SimpleShuffle, 3, 5.0, 0);
+        let permit = router
+            .acquire_max_parallel("https://b.example/v1", "gpt-4", 0)
+            .await;
+        assert!(permit.is_none(), "max_parallel<=0 means no gate");
+    }
+
+    #[tokio::test]
+    async fn test_acquire_max_parallel_distinct_buckets_independent() {
+        let router = Router::new(RouterStrategy::SimpleShuffle, 3, 5.0, 0);
+        let _a = router
+            .acquire_max_parallel("https://a.example/v1", "gpt-4", 1)
+            .await
+            .expect("bucket a permit");
+        // Different upstream_model → independent semaphore.
+        let b = router
+            .acquire_max_parallel("https://a.example/v1", "gpt-5", 1)
+            .await;
+        assert!(b.is_some(), "distinct bucket has its own permit");
     }
 }

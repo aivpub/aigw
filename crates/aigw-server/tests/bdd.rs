@@ -141,7 +141,17 @@ async fn main() {
                     .chain(scenario.tags.iter())
                     .any(|t| t == "real_api")
             } else {
-                true
+                // In mock mode, skip features that require a real upstream DB
+                // (@needs_upstream_db) — their steps no-op with skip_pass but
+                // assert real rejection semantics (e.g. multi_level_budget 429)
+                // that a sqlite::memory: DB cannot reproduce.
+                let tags: Vec<&str> = feature
+                    .tags
+                    .iter()
+                    .chain(scenario.tags.iter())
+                    .map(|t| t.as_str())
+                    .collect();
+                !tags.contains(&"needs_upstream_db")
             }
         })
         .await;

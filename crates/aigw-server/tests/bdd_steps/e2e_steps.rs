@@ -164,6 +164,47 @@ async fn when_post_chat_completions(world: &mut TestWorld, alias: String) {
     when_post_chat_completions_with_model(world, alias, "gpt-4-mock".to_string()).await;
 }
 
+/// Stage 117: master-key chat request — proves the guard's master-key bypass
+/// (no budget/rate-limit enforcement on the admin key).
+#[when(expr = "使用 master-key 发送 POST \\/chat\\/completions 请求用 model {string}")]
+async fn when_master_key_chat_completions(world: &mut TestWorld, model: String) {
+    let state = world.ensure_state().await;
+    use axum::Router;
+    use tower::util::ServiceExt;
+
+    let app = Router::new()
+        .route(
+            "/chat/completions",
+            axum::routing::post(aigw_server::routes::chat::chat_completions),
+        )
+        .with_state(state);
+
+    let body = serde_json::json!({
+        "model": model,
+        "messages": [{"role": "user", "content": "hi"}]
+    })
+    .to_string();
+
+    let req = axum::http::Request::builder()
+        .method(Method::POST)
+        .uri("/chat/completions")
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", world.master_key))
+        .body(axum::body::Body::from(body))
+        .unwrap();
+
+    let response = app.oneshot(req).await.unwrap();
+    let status = response.status().as_u16();
+    let resp_headers = response.headers().clone();
+    let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap_or_default();
+    let json_body: Option<serde_json::Value> = serde_json::from_slice(&body_bytes).ok();
+    world.last_status = Some(status);
+    world.last_body = json_body;
+    world.last_headers = Some(resp_headers);
+}
+
 #[when(expr = "使用 key {string} 发送 POST \\/chat\\/completions 请求用 model {string}")]
 async fn when_post_chat_completions_model(world: &mut TestWorld, alias: String, model: String) {
     when_post_chat_completions_with_model(world, alias, model).await;
@@ -202,12 +243,14 @@ async fn when_post_chat_completions_with_model(
 
     let response = app.oneshot(req).await.unwrap();
     let status = response.status().as_u16();
+    let resp_headers = response.headers().clone();
     let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
         .unwrap_or_default();
     let json_body: Option<serde_json::Value> = serde_json::from_slice(&body_bytes).ok();
     world.last_status = Some(status);
     world.last_body = json_body;
+    world.last_headers = Some(resp_headers);
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -258,12 +301,14 @@ async fn when_post_chat_completions_with_image(
 
     let response = app.oneshot(req).await.unwrap();
     let status = response.status().as_u16();
+    let resp_headers = response.headers().clone();
     let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
         .unwrap_or_default();
     let json_body: Option<serde_json::Value> = serde_json::from_slice(&body_bytes).ok();
     world.last_status = Some(status);
     world.last_body = json_body;
+    world.last_headers = Some(resp_headers);
 }
 
 /// Send a /chat/completions request whose user message carries N identical
@@ -324,12 +369,14 @@ async fn when_post_chat_completions_with_images(
 
     let response = app.oneshot(req).await.unwrap();
     let status = response.status().as_u16();
+    let resp_headers = response.headers().clone();
     let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
         .unwrap_or_default();
     let json_body: Option<serde_json::Value> = serde_json::from_slice(&body_bytes).ok();
     world.last_status = Some(status);
     world.last_body = json_body;
+    world.last_headers = Some(resp_headers);
 }
 
 /// Send a streaming /chat/completions request with a single image part.
@@ -376,12 +423,14 @@ async fn when_post_chat_completions_streaming_image(
 
     let response = app.oneshot(req).await.unwrap();
     let status = response.status().as_u16();
+    let resp_headers = response.headers().clone();
     let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
         .unwrap_or_default();
     let json_body: Option<serde_json::Value> = serde_json::from_slice(&body_bytes).ok();
     world.last_status = Some(status);
     world.last_body = json_body;
+    world.last_headers = Some(resp_headers);
 }
 
 /// Build a minimal PNG header (8-byte sig + IHDR) of given size as a data URL.

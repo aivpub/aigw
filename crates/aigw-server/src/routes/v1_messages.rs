@@ -184,18 +184,6 @@ pub async fn messages_handler(
                 )
             })?;
 
-            // Budget check
-            if let Some(max_budget) = key.max_budget_f64() {
-                if key.spend >= max_budget {
-                    return Err(anthropic_error(
-                        StatusCode::TOO_MANY_REQUESTS,
-                        "budget_exceeded",
-                        "Budget exceeded for this API key",
-                        &request_id,
-                    ));
-                }
-            }
-
             let user_id = key.user_id.clone();
             let team_id = key.team_id.clone();
             let org_id = key.organization_id.clone();
@@ -292,6 +280,34 @@ pub async fn messages_handler(
                 &request_id,
             )
         })?;
+
+    // Stage 117: full multi-level guard — budget (key→user→team→org)
+    // + RPM/TPM + soft_budget alerting. token_estimate = max_tokens (required
+    // for Anthropic), so both RPM and TPM are enforced.
+    let token_estimate = body_val
+        .get("max_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0)
+        .min(u32::MAX as u64) as u32;
+    let identity = aigw_core::middleware::KeyIdentity {
+        token_hash: auth_token_hash.clone(),
+        key_alias: None,
+        user_id: auth_user_id.clone(),
+        team_id: auth_team_id.clone(),
+        organization_id: auth_org_id.clone(),
+        is_master_key: false,
+        user_role: None,
+    };
+    let limit_result = aigw_core::middleware::rate_limit::check_request_limits(
+        &state.db,
+        &state.rate_limiter,
+        &identity,
+        token_estimate,
+    )
+    .await;
+    if let Err(e) = limit_result {
+        return Ok(e.into_response());
+    }
 
     let is_stream = body_val
         .get("stream")

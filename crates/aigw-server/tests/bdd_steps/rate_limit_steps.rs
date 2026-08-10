@@ -119,6 +119,88 @@ async fn given_key_tpm_limit(world: &mut TestWorld, alias: String, tpm_limit: u3
     world.created_keys.insert(alias.clone(), alias);
 }
 
+/// Stage 117: update the RPM limit of an already-existing key (one that was
+/// created via a mock/BDD step with a hashed token). Unlike `key ... 的
+/// rpm_limit=` (which inserts a key whose token is the raw alias — only usable
+/// by the function-level `enforce_limits` steps), this step updates the row in
+/// place so the HTTP-level guard path can exercise RPM enforcement end-to-end.
+/// The alias is matched WITHOUT surrounding quotes (regex captures the bare
+/// token) so it aligns with the `一个普通 key ... 已生成` steps.
+#[given(regex = r#"^更新 key "(.+)" 的 rpm_limit=(\d+)$"#)]
+async fn given_update_key_rpm_limit(world: &mut TestWorld, alias: String, rpm_limit: u32) {
+    let state = world.ensure_state().await;
+    let raw = world
+        .created_keys
+        .get(&alias)
+        .cloned()
+        .unwrap_or_else(|| format!("sk-{}", alias));
+    let token_hash = aigw_core::crypto::hash_token(&raw);
+    let key = state
+        .db
+        .get_key_by_token(&token_hash)
+        .await
+        .expect("lookup");
+    if let Some(mut k) = key {
+        k.rpm_limit = Some(rpm_limit.to_string());
+        state
+            .db
+            .update_key(&token_hash, &k)
+            .await
+            .expect("update key rpm");
+    } else {
+        // No existing row (shouldn't happen with a prior 已生成 step) — create
+        // one with a hashed token so the HTTP guard path authenticates.
+        let mut k = make_virtual_key(&alias, Some(rpm_limit.to_string()), None);
+        k.token = token_hash;
+        state.db.insert_key(&k).await.expect("insert key");
+        world.created_keys.insert(alias.clone(), raw);
+    }
+}
+
+/// Stage 117: set spend/soft_budget/max_budget on an already-hashed key so the
+/// HTTP-level guard path exercises the soft/hard budget branches of
+/// `check_budget_multi`. Alias matched WITHOUT quotes (aligns with the
+/// `一个普通 key ... 已生成` steps).
+#[given(regex = r#"^key "(.+)" 的 spend=(\d+) soft_budget=(\d+) max_budget=(\d+)$"#)]
+async fn given_key_budget_limits(
+    world: &mut TestWorld,
+    alias: String,
+    spend: u32,
+    soft_budget: u32,
+    max_budget: u32,
+) {
+    let state = world.ensure_state().await;
+    let raw = world
+        .created_keys
+        .get(&alias)
+        .cloned()
+        .unwrap_or_else(|| format!("sk-{}", alias));
+    let token_hash = aigw_core::crypto::hash_token(&raw);
+    let key = state
+        .db
+        .get_key_by_token(&token_hash)
+        .await
+        .expect("lookup");
+    if let Some(mut k) = key {
+        k.spend = spend as f64;
+        k.soft_budget = Some(soft_budget.to_string());
+        k.max_budget = Some(max_budget.to_string());
+        state
+            .db
+            .update_key(&token_hash, &k)
+            .await
+            .expect("update key budget");
+    } else {
+        let mut k = make_virtual_key(&alias, None, None);
+        k.token = token_hash;
+        k.spend = spend as f64;
+        k.soft_budget = Some(soft_budget.to_string());
+        k.max_budget = Some(max_budget.to_string());
+        state.db.insert_key(&k).await.expect("insert key");
+        world.created_keys.insert(alias.clone(), raw);
+    }
+}
+
 #[given(regex = r"^过去 1 分钟内已使用 key (.+) 发送 (\d+) 个请求$")]
 async fn given_key_already_used_rpm(world: &mut TestWorld, alias: String, count: u32) {
     let state = world.ensure_state().await;
@@ -179,5 +261,17 @@ async fn then_ok_no_limit(world: &mut TestWorld) {
         Some(200),
         "Expected status 200 (no limit), got {:?}",
         world.last_status
+    );
+}
+
+#[then(regex = r"^响应头包含 x-ratelimit-limit$")]
+async fn then_headers_contain_ratelimit_limit(world: &mut TestWorld) {
+    let headers = world
+        .last_headers
+        .as_ref()
+        .expect("no captured response headers");
+    assert!(
+        headers.contains_key("x-ratelimit-limit"),
+        "response missing x-ratelimit-limit header"
     );
 }

@@ -26,6 +26,7 @@ use aigw_core::models::{DailySpendKind, DailySpendLog, SpendLog};
 use axum::{
     extract::State,
     http::{self, header, StatusCode},
+    response::IntoResponse,
     Json,
 };
 use serde_json::{json, Value};
@@ -198,19 +199,23 @@ pub async fn responses_handler(
             }
             // None → allow all models
 
-            if let Some(max_budget) = key.max_budget_f64() {
-                if key.spend >= max_budget {
-                    return Err((
-                        StatusCode::TOO_MANY_REQUESTS,
-                        Json(json!({
-                            "error": {
-                                "message": "Budget exceeded for this API key",
-                                "type": "budget_exceeded",
-                                "code": null
-                            }
-                        })),
-                    ));
-                }
+            // Stage 117: full multi-level guard — budget (key→user→team→org)
+            // + RPM/TPM + soft_budget alerting. token_estimate from
+            // max_output_tokens when present, else 0.
+            let token_estimate = body
+                .get("max_output_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0)
+                .min(u32::MAX as u64) as u32;
+            let limit_result = aigw_core::middleware::rate_limit::check_request_limits(
+                &state.db,
+                &state.rate_limiter,
+                &auth,
+                token_estimate,
+            )
+            .await;
+            if let Err(e) = limit_result {
+                return Ok(e.into_response());
             }
         }
     }

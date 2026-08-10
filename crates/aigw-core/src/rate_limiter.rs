@@ -51,6 +51,16 @@ impl TokenBucket {
         self.last_refill = now;
     }
 
+    /// Number of tokens currently available (for `x-ratelimit-remaining`).
+    fn remaining(&self) -> f64 {
+        let mut t = self.tokens;
+        // Refill lazily to report an accurate remaining value.
+        let now = Instant::now();
+        let elapsed = now.duration_since(self.last_refill).as_secs_f64();
+        t = (t + elapsed * self.refill_rate).min(self.max_tokens);
+        t
+    }
+
     fn try_consume(&mut self, count: f64) -> bool {
         self.refill();
         if self.tokens >= count {
@@ -58,6 +68,36 @@ impl TokenBucket {
             true
         } else {
             false
+        }
+    }
+}
+
+/// Result of a rate-limit check — used to emit `x-ratelimit-*` response headers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RateLimitInfo {
+    /// Effective RPM limit applied to this key (0 = no limit)
+    pub rpm_limit: i64,
+    /// Remaining requests in the RPM bucket after this check
+    pub rpm_remaining: i64,
+    /// Effective TPM limit applied to this key (0 = no limit)
+    pub tpm_limit: i64,
+}
+
+/// Errors from the rate-limit guard (HTTP-level).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RateLimitError {
+    /// RPM bucket exhausted.
+    RateLimited { message: String },
+    /// A TPM budget is exhausted for this request's estimated tokens.
+    TpmLimited { message: String },
+}
+
+impl std::fmt::Display for RateLimitError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RateLimitError::RateLimited { message } | RateLimitError::TpmLimited { message } => {
+                write!(f, "{message}")
+            }
         }
     }
 }
@@ -132,6 +172,63 @@ impl RateLimiter {
         }
 
         Ok(())
+    }
+
+    /// Rate-limit check that also reports the remaining budget for
+    /// `x-ratelimit-*` response headers. Unlike [`RateLimiter::check`], this
+    /// returns a structured [`RateLimitInfo`] on success and a typed
+    /// [`RateLimitError`] on denial, so the caller can emit
+    /// `x-ratelimit-limit` / `x-ratelimit-remaining` / `Retry-After`.
+    ///
+    /// The `_now` parameter is unused (token buckets self-refill on access);
+    /// it exists to keep the signature future-proof for a time-injectable
+    /// clock in tests.
+    pub async fn check_with_headers(
+        &self,
+        key_hash: &str,
+        rpm_limit: Option<i64>,
+        tpm_limit: Option<i64>,
+        token_count: u32,
+        _now: std::time::Instant,
+    ) -> Result<RateLimitInfo, RateLimitError> {
+        let mut rpm_remaining = 0i64;
+        let mut tpm_limit_out = 0i64;
+
+        // RPM check
+        if let Some(rpm) = rpm_limit {
+            if rpm > 0 {
+                let mut buckets = self.rpm_buckets.lock().await;
+                let bucket = buckets
+                    .entry(key_hash.to_string())
+                    .or_insert_with(|| TokenBucket::new(rpm as f64));
+                if !bucket.try_consume(1.0) {
+                    let msg = format!("RPM limit exceeded: {rpm} requests per minute");
+                    return Err(RateLimitError::RateLimited { message: msg });
+                }
+                rpm_remaining = bucket.remaining().max(0.0) as i64;
+            }
+        }
+
+        // TPM check
+        if let Some(tpm) = tpm_limit {
+            if tpm > 0 && token_count > 0 {
+                let mut buckets = self.tpm_buckets.lock().await;
+                let bucket = buckets
+                    .entry(key_hash.to_string())
+                    .or_insert_with(|| TokenBucket::new(tpm as f64));
+                if !bucket.try_consume(token_count as f64) {
+                    let msg = format!("TPM limit exceeded: {tpm} tokens per minute");
+                    return Err(RateLimitError::TpmLimited { message: msg });
+                }
+                tpm_limit_out = tpm;
+            }
+        }
+
+        Ok(RateLimitInfo {
+            rpm_limit: rpm_limit.unwrap_or(0).max(0),
+            rpm_remaining,
+            tpm_limit: tpm_limit_out,
+        })
     }
 
     /// Record token usage for a completed request.
@@ -248,5 +345,65 @@ mod tests {
             assert!(bucket.try_consume(1.0));
         }
         assert!(!bucket.try_consume(1.0));
+    }
+
+    // ── Stage 117: check_with_headers — x-ratelimit reporting ──
+
+    #[tokio::test]
+    async fn test_check_with_headers_reports_remaining() {
+        let limiter = RateLimiter::new();
+        let now = std::time::Instant::now();
+        let info = limiter
+            .check_with_headers("h-remaining", Some(10), None, 0, now)
+            .await
+            .expect("within limit");
+        assert_eq!(info.rpm_limit, 10);
+        assert_eq!(info.rpm_remaining, 9);
+        assert_eq!(info.tpm_limit, 0);
+    }
+
+    #[tokio::test]
+    async fn test_check_with_headers_rpm_denied() {
+        let limiter = RateLimiter::new();
+        let now = std::time::Instant::now();
+        // Exhaust the RPM bucket.
+        for _ in 0..2 {
+            limiter
+                .check_with_headers("h-deny", Some(2), None, 0, now)
+                .await
+                .unwrap();
+        }
+        let err = limiter
+            .check_with_headers("h-deny", Some(2), None, 0, now)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, RateLimitError::RateLimited { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_check_with_headers_tpm_denied() {
+        let limiter = RateLimiter::new();
+        let now = std::time::Instant::now();
+        assert!(limiter
+            .check_with_headers("h-tpm", None, Some(100), 60, now)
+            .await
+            .is_ok());
+        let err = limiter
+            .check_with_headers("h-tpm", None, Some(100), 60, now)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, RateLimitError::TpmLimited { .. }));
+    }
+
+    #[tokio::test]
+    async fn test_check_with_headers_no_limits() {
+        let limiter = RateLimiter::new();
+        let now = std::time::Instant::now();
+        let info = limiter
+            .check_with_headers("h-none", None, None, 0, now)
+            .await
+            .expect("no limits always pass");
+        assert_eq!(info.rpm_limit, 0);
+        assert_eq!(info.tpm_limit, 0);
     }
 }

@@ -920,20 +920,27 @@ pub async fn chat_completions(
             }
             // None → allow all models
 
-            // Check budget
-            if let Some(max_budget) = key.max_budget_f64() {
-                if key.spend >= max_budget {
-                    return Err((
-                        StatusCode::TOO_MANY_REQUESTS,
-                        Json(json!({
-                            "error": {
-                                "message": "Budget exceeded for this API key",
-                                "type": "budget_exceeded",
-                                "code": null
-                            }
-                        })),
-                    ));
-                }
+            // Stage 117: full multi-level guard — budget (key→user→team→org)
+            // + RPM/TPM + soft_budget alerting + max_parallel. The old
+            // single-level `key.spend >= max_budget` check is subsumed by
+            // `check_budget_multi` (which also fires the soft_budget webhook).
+            // token_estimate = max_tokens when present, else 0 (RPM + budget only).
+            let token_estimate = body
+                .get("max_tokens")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0)
+                .min(u32::MAX as u64) as u32;
+            let limit_result = aigw_core::middleware::rate_limit::check_request_limits(
+                &state.db,
+                &state.rate_limiter,
+                &auth,
+                token_estimate,
+            )
+            .await;
+            if let Err(e) = limit_result {
+                // Forward the full response (status + x-ratelimit headers) so
+                // the 429 body and bucket headers both reach the client.
+                return Ok(e.into_response());
             }
         }
     }
@@ -1045,6 +1052,26 @@ pub async fn chat_completions(
     // 5. Build and send upstream request (with retry support)
     drop(_adapt_enter);
     let client = state.router.build_retry_client();
+
+    // Stage 117 §3.4: max_parallel gate — hold a semaphore permit for the
+    // upstream call so concurrent requests to the same deployment are capped
+    // at its `max_parallel_requests`. Permit releases when `permit` drops.
+    // The deployment's max_parallel comes from the proxy_models litellm_params
+    // (key/budget-level max_parallel is a Stage 117 documented follow-up).
+    let deployment_max_parallel = deployment
+        .raw_params
+        .get("max_parallel_requests")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0)
+        .min(i32::MAX as i64) as i32;
+    let _max_parallel_permit = state
+        .router
+        .acquire_max_parallel(
+            &deployment.api_base,
+            &deployment.upstream_model,
+            deployment_max_parallel,
+        )
+        .await;
 
     let mut upstream_req = client.post(&upstream_url).json(&upstream_body_val);
 
@@ -3330,5 +3357,83 @@ mod tests {
         let usage = json!({"prompt_tokens": 100, "completion_tokens": 50});
         assert_eq!(extract_cache_read_tokens(&usage), 0);
         assert_eq!(extract_cache_creation_tokens(&usage), 0);
+    }
+
+    // ── Stage 117: handler guard wiring (chat) ──
+
+    /// Insert a VirtualKey with a specific RPM limit and return the raw token.
+    async fn insert_key_with_rpm(db: &Database, alias: &str, rpm: i64) -> String {
+        let raw = format!("sk-{}", alias);
+        let mut key = make_key(json!(["gpt-4-mock"]), None);
+        key.token = aigw_core::crypto::hash_token(&raw);
+        key.key_alias = Some(alias.to_string());
+        key.rpm_limit = Some(rpm.to_string());
+        key.max_budget = None;
+        db.insert_key(&key).await.expect("insert key");
+        raw
+    }
+
+    #[tokio::test]
+    async fn test_chat_guard_returns_429_when_rpm_exhausted() {
+        let db = Database::init("sqlite::memory:").await.unwrap();
+        let raw = insert_key_with_rpm(&db, "guard-rpm", 2).await;
+        let state = Arc::new(AppState {
+            resolver: ModelResolver::new(db.clone(), None, "onprem"),
+            router: AigwRouter::default(),
+            db,
+            master_key: Some("sk-master-guard".to_string()),
+            aigw_master_key: None,
+            key_generate_length: DEFAULT_KEY_TOKEN_LEN,
+            disable_custom_api_keys: false,
+            provider_registry: ProviderRegistry::new(),
+            router_state: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            rate_limiter: Arc::new(RateLimiter::new()),
+            deployment_mode: "onprem".to_string(),
+            started_at: std::time::Instant::now(),
+            daily_spend_queue: None,
+            otel_active: false,
+            body_archiver: None,
+            metrics: None,
+        });
+        let app = Router::new()
+            .route(
+                "/v1/chat/completions",
+                axum::routing::post(chat_completions),
+            )
+            .with_state(state);
+
+        let send = |body: Value| {
+            let app = app.clone();
+            let raw = raw.clone();
+            async move {
+                let req = Request::builder()
+                    .method(Method::POST)
+                    .uri("/v1/chat/completions")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, format!("Bearer {}", raw))
+                    .body(Body::from(body.to_string()))
+                    .unwrap();
+                app.oneshot(req).await.unwrap()
+            }
+        };
+
+        // First request passes the RPM pre-check (2 allowed).
+        let r1 = send(json!({"model": "gpt-4-mock", "messages": [{"role":"user","content":"hi"}]}))
+            .await;
+        assert_ne!(r1.status(), StatusCode::TOO_MANY_REQUESTS);
+        // Second also passes.
+        let r2 = send(json!({"model": "gpt-4-mock", "messages": [{"role":"user","content":"hi"}]}))
+            .await;
+        assert_ne!(r2.status(), StatusCode::TOO_MANY_REQUESTS);
+        // Third → 429 (RPM exhausted).
+        let r3 = send(json!({"model": "gpt-4-mock", "messages": [{"role":"user","content":"hi"}]}))
+            .await;
+        assert_eq!(r3.status(), StatusCode::TOO_MANY_REQUESTS);
+        let headers = r3.headers();
+        assert!(
+            headers.contains_key("x-ratelimit-limit"),
+            "429 response must carry x-ratelimit-limit"
+        );
+        assert!(headers.contains_key("Retry-After"));
     }
 }

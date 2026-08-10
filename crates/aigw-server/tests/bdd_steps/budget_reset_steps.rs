@@ -8,7 +8,7 @@ use crate::TestWorld;
 use cucumber::{given, then, when};
 use std::time::Duration;
 
-use super::real_api_steps::{base_url, client, real_api_enabled, set_skip_pass};
+use super::real_api_steps::{base_url, client, real_api_enabled, real_model, set_skip_pass};
 use super::real_db_seed;
 
 /// The test DB URL for real BDD scenarios (set by bdd.rs harness).
@@ -678,12 +678,19 @@ async fn given_user_and_key_with_user_budget(
          user_id, team_id, max_budget, budget_duration, budget_reset_at,
          soft_budget_cooldown, created_at, updated_at)
         VALUES ('{}', '{}', '{}', 0.0,
-                '[]', '{{}}', '{{}}', '{{}}', '{{}}',
+                '{}', '{{}}', '{{}}', '{{}}', '{{}}',
                 '[]', '[]', '[]', '[]',
                 '{{}}', '{{}}',
                 '{}', NULL, '{}', NULL, NULL,
                 'false', {}, {})"#,
-        hash, key_alias, key_alias, user_id, key_max_budget, now, now,
+        hash,
+        key_alias,
+        key_alias,
+        serde_json::json!([real_model()]).to_string(),
+        user_id,
+        key_max_budget,
+        now,
+        now,
     );
     pool.execute_raw(&sql).await.expect("insert key");
 
@@ -737,12 +744,19 @@ async fn given_team_and_key_with_team_budget(
          user_id, team_id, max_budget, budget_duration, budget_reset_at,
          soft_budget_cooldown, created_at, updated_at)
         VALUES ('{}', '{}', '{}', 0.0,
-                '[]', '{{}}', '{{}}', '{{}}', '{{}}',
+                '{}', '{{}}', '{{}}', '{{}}', '{{}}',
                 '[]', '[]', '[]', '[]',
                 '{{}}', '{{}}',
                 NULL, '{}', '{}', NULL, NULL,
                 'false', {}, {})"#,
-        hash, key_alias, key_alias, team_id, 100.0, now, now,
+        hash,
+        key_alias,
+        key_alias,
+        serde_json::json!([real_model()]).to_string(),
+        team_id,
+        100.0,
+        now,
+        now,
     );
     pool.execute_raw(&sql).await.expect("insert key");
 
@@ -795,6 +809,9 @@ async fn given_all_pass_scenario(
         .await
         .expect("connect");
     let now = pool.time_literal("2026-07-20T00:00:00");
+    // models=['gpt-4'] so the key's model allow-list admits the default real
+    // test model (resolve_key_model_list would otherwise return Some([]) and
+    // deny every model before the budget guard is reached — Stage 117 de-@skip).
     let sql = format!(
         r#"INSERT INTO virtual_keys
         (token, key_alias, key_name, spend, models, aliases, config, permissions, metadata,
@@ -803,12 +820,20 @@ async fn given_all_pass_scenario(
          user_id, team_id, max_budget, budget_duration, budget_reset_at,
          soft_budget_cooldown, created_at, updated_at)
         VALUES ('{}', '{}', '{}', 0.0,
-                '[]', '{{}}', '{{}}', '{{}}', '{{}}',
+                '{}', '{{}}', '{{}}', '{{}}', '{{}}',
                 '[]', '[]', '[]', '[]',
                 '{{}}', '{{}}',
                 '{}', '{}', '{}', NULL, NULL,
                 'false', {}, {})"#,
-        hash, key_alias, key_alias, user_id, team_id, key_max_budget, now, now,
+        hash,
+        key_alias,
+        key_alias,
+        serde_json::json!([real_model()]).to_string(),
+        user_id,
+        team_id,
+        key_max_budget,
+        now,
+        now,
     );
     pool.execute_raw(&sql).await.expect("insert key");
 
@@ -885,12 +910,20 @@ async fn given_team_and_key_linked_to_org(
          user_id, team_id, organization_id, max_budget, budget_duration, budget_reset_at,
          soft_budget_cooldown, created_at, updated_at)
         VALUES ('{}', '{}', '{}', 0.0,
-                '[]', '{{}}', '{{}}', '{{}}', '{{}}',
+                '{}', '{{}}', '{{}}', '{{}}', '{{}}',
                 '[]', '[]', '[]', '[]',
                 '{{}}', '{{}}',
                 NULL, '{}', '{}', '{}', NULL, NULL,
                 'false', {}, {})"#,
-        hash, key_alias, key_alias, team_id, org_id, 100.0, now, now,
+        hash,
+        key_alias,
+        key_alias,
+        serde_json::json!([real_model()]).to_string(),
+        team_id,
+        org_id,
+        100.0,
+        now,
+        now,
     );
     pool.execute_raw(&sql).await.expect("insert key");
 
@@ -974,8 +1007,11 @@ async fn when_send_chat_with_key(world: &mut TestWorld, alias: String, _cost: f6
     }
     let token = get_or_fetch_key(world, &alias).await;
     let url = format!("{}/v1/chat/completions", base_url());
+    // Use the real test model so the seeded keys' allow-list (set to
+    // real_model()) actually admits it — resolves `model_not_allowed` 403s
+    // that predated the Stage 117 de-@skip.
     let body = serde_json::json!({
-        "model": "gpt-4",
+        "model": real_model(),
         "messages": [{"role": "user", "content": "hello"}],
         "max_tokens": 10,
     });

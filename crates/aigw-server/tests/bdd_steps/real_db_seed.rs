@@ -282,6 +282,15 @@ pub(crate) async fn ensure_team(
     };
     let now = pool.time_literal("2026-07-20T00:00:00");
 
+    // PG uses BOOLEAN for `blocked` / `allow_team_guardrail_config`; SQLite and
+    // MySQL accept 0/1. Emit a dialect-correct literal (pg → FALSE/TRUE).
+    let is_pg = db_url.starts_with("postgres");
+    let (blocked_lit, guardrail_lit) = if is_pg {
+        ("FALSE", "FALSE")
+    } else {
+        ("0", "0")
+    };
+
     let sql = format!(
         r#"INSERT INTO teams
         (team_id, team_alias, organization_id, object_permission_id, admins, members,
@@ -292,9 +301,18 @@ pub(crate) async fn ensure_team(
          default_team_member_models, budget_limits, model_id, allow_team_guardrail_config)
         VALUES ('{}', 'team-{}', {}, NULL, '[]', '[]', '{{}}', '{{}}', {}, {}, {}, '[]',
                 NULL, NULL, NULL, NULL, NULL,
-                0, {}, {}, '{{}}', '{{}}',
-                NULL, '[]', '[]', '[]', '[]', NULL, NULL, 0)"#,
-        team_id, team_id, org_val, max_budget_val, soft_budget_val, spend, now, now,
+                {}, {}, {}, '{{}}', '{{}}',
+                NULL, '[]', '[]', '[]', '[]', NULL, NULL, {})"#,
+        team_id,
+        team_id,
+        org_val,
+        max_budget_val,
+        soft_budget_val,
+        spend,
+        blocked_lit,
+        now,
+        now,
+        guardrail_lit,
     );
     pool.execute_raw(&sql).await?;
     Ok(())
