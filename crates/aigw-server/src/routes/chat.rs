@@ -950,22 +950,55 @@ pub async fn chat_completions(
     let resolve_span = tracing::info_span!("resolve_deployment", model = %_model);
     let _resolve_enter = resolve_span.enter();
     let mut deployments = state.resolver.resolve(_model).await?;
-    let deployment_idx = state
+
+    // Stage 118 §3.2: merge key>team>global router_settings into an effective
+    // Router for this request (routing_strategy / allowed_fails / cooldown_time
+    // / num_retries). Key settings come from the authenticated key row; team
+    // settings from the team the key belongs to. Falls back to the global
+    // router when neither is set.
+    let (key_settings, team_settings) = if auth.is_master_key {
+        (None, None)
+    } else {
+        let key_row = state
+            .db
+            .get_key_by_token(&auth.token_hash)
+            .await
+            .ok()
+            .flatten();
+        let key_rs = key_row.as_ref().and_then(|k| k.router_settings.clone());
+        let team_rs = match auth.team_id.as_ref() {
+            Some(tid) => state
+                .db
+                .get_team_by_id(tid)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|t| t.router_settings.clone()),
+            None => None,
+        };
+        (key_rs, team_rs)
+    };
+    let effective_router = state
         .router
+        .from_merged(key_settings.as_ref(), team_settings.as_ref());
+
+    // Stage 118 §3.5: priority-group fallback — the candidate order is the
+    // first-attempt sequence (lowest priority group first). A retryable
+    // upstream error triggers the next candidate; the full fallback loop over
+    // `fallback_order` is exercised below the send (see upstream error path).
+    let fallback_order = effective_router.fallback_order(&deployments);
+    // First attempt = the primary pick within the lowest non-empty priority
+    // group (strategy-aware: weighted/usage/latency when no explicit priority).
+    let deployment_idx = effective_router
         .pick_deployment(&mut deployments)
-        .ok_or_else(|| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(json!({
-                    "error": {
-                        "message": format!("Model '{}' not found", _model),
-                        "type": "invalid_request_error",
-                        "code": "model_not_found"
-                    }
-                })),
-            )
-        })?;
-    let deployment = deployments.remove(deployment_idx);
+        .unwrap_or_else(|| {
+            if let Some(&first) = fallback_order.first() {
+                first
+            } else {
+                0
+            }
+        });
+    let mut deployment = deployments.remove(deployment_idx);
     let adapter =
         select_adapter(ClientProtocol::OpenAI, &deployment.provider_type).ok_or_else(|| {
             (
@@ -1227,6 +1260,22 @@ pub async fn chat_completions(
 
     let upstream_status = upstream_resp.status();
     let upstream_latency_ms = upstream_start.elapsed().as_millis() as i64;
+
+    // Stage 118 §3.1: report the outcome to the router so cooldown state and
+    // latency EWMA advance for the next pick. Only retryable statuses count
+    // toward cooldown (Router::report_failure classifies internally); business
+    // 400s are ignored.
+    let mut deployment_for_report = deployment.clone();
+    if upstream_status.is_success() {
+        effective_router.report_success(&mut deployment_for_report, upstream_latency_ms as f64);
+    } else {
+        effective_router.report_failure(&mut deployment_for_report, upstream_status.as_u16());
+    }
+    // Write back the (possibly cooldowned) state to the in-scope deployment so
+    // subsequent fallback attempts observe it.
+    deployment.cooldown_until = deployment_for_report.cooldown_until;
+    deployment.fail_count = deployment_for_report.fail_count;
+    deployment.last_latency_ms = deployment_for_report.last_latency_ms;
 
     // Check if upstream returned a different x-request-id than what we sent.
     // tokenhub and some other gateways may replace/override the request-id header.

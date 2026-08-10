@@ -114,8 +114,8 @@ mod tests {
         alert_webhook()
     }
 
-    #[test]
-    fn test_alert_webhook_unset_is_noop() {
+    #[tokio::test]
+    async fn test_alert_webhook_unset_is_noop() {
         // Dispatch must not panic when no webhook is configured.
         dispatch_soft_budget_alert("key", Some("k1"), 10.0, 5.0);
         // No assertion on the global value — it may or may not be set depending
@@ -138,8 +138,8 @@ mod tests {
         ()
     }
 
-    #[test]
-    fn test_dispatch_with_webhook_configured_no_panic() {
+    #[tokio::test]
+    async fn test_dispatch_with_webhook_configured_no_panic() {
         // Fire-and-forget: the request will fail to connect but must not panic.
         dispatch_soft_budget_alert("key", Some("k1"), 10.0, 5.0);
     }

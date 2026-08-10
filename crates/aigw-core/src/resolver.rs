@@ -88,8 +88,13 @@ impl ModelResolver {
                     custom_llm_provider: None,
                     chat_template_compat: None,
                     modal_pricing: None,
+                    weight: None,
+                    rpm: None,
+                    tpm: None,
+                    priority: None,
                     fail_count: 0,
                     cooldown_until: None,
+                    last_latency_ms: 0.0,
                 }]);
             }
         }
@@ -284,6 +289,12 @@ impl ModelResolver {
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
             let modal_pricing = extract_modal_pricing(&m.model_info);
+            // Stage 118: weighted/usage/latency/priority routing fields from
+            // litellm_params (weight/rpm/tpm/priority).
+            let weight = merged.get("weight").and_then(|v| v.as_i64());
+            let rpm = merged.get("rpm").and_then(|v| v.as_i64());
+            let tpm = merged.get("tpm").and_then(|v| v.as_i64());
+            let priority = merged.get("priority").and_then(|v| v.as_i64());
 
             Ok(Deployment {
                 api_base,
@@ -300,8 +311,13 @@ impl ModelResolver {
                 custom_llm_provider: custom_llm_provider.clone(),
                 chat_template_compat,
                 modal_pricing,
+                weight,
+                rpm,
+                tpm,
+                priority,
                 fail_count: 0,
                 cooldown_until: None,
+                last_latency_ms: 0.0,
             })
         } else {
             tracing::warn!(%model_name, "resolve: NO credential reference, using litellm_params directly");
@@ -346,6 +362,11 @@ impl ModelResolver {
             };
 
             tracing::warn!(%model_name, %api_base, ?api_key, %upstream_model, "resolve: DIRECT PARAMS RESOLVED");
+            // Stage 118: weighted/usage/latency/priority routing fields.
+            let weight = params_json.get("weight").and_then(|v| v.as_i64());
+            let rpm = params_json.get("rpm").and_then(|v| v.as_i64());
+            let tpm = params_json.get("tpm").and_then(|v| v.as_i64());
+            let priority = params_json.get("priority").and_then(|v| v.as_i64());
             Ok(Deployment {
                 api_base,
                 api_key,
@@ -361,8 +382,13 @@ impl ModelResolver {
                 custom_llm_provider,
                 chat_template_compat,
                 modal_pricing,
+                weight,
+                rpm,
+                tpm,
+                priority,
                 fail_count: 0,
                 cooldown_until: None,
+                last_latency_ms: 0.0,
             })
         }
     }

@@ -117,8 +117,13 @@ async fn given_anthropic_deployment(_world: &mut TestWorld, model: String) {
             custom_llm_provider: Some("anthropic".into()),
             chat_template_compat: None,
             modal_pricing: None,
+            weight: None,
+            rpm: None,
+            tpm: None,
+            priority: None,
             fail_count: 0,
             cooldown_until: None,
+            last_latency_ms: 0.0,
         });
     });
 }
@@ -258,8 +263,13 @@ async fn when_roundtrip_image_via_adapter(_world: &mut TestWorld) {
                 custom_llm_provider: Some("openai".into()),
                 chat_template_compat: None,
                 modal_pricing: None,
+                weight: None,
+                rpm: None,
+                tpm: None,
+                priority: None,
                 fail_count: 0,
                 cooldown_until: None,
+                last_latency_ms: 0.0,
             },
         );
         state.adapted = result.ok();

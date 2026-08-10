@@ -2459,8 +2459,13 @@ mod tests {
             custom_llm_provider: Some("openai".into()),
             chat_template_compat: None,
             modal_pricing: None,
+            weight: None,
+            rpm: None,
+            tpm: None,
+            priority: None,
             fail_count: 0,
             cooldown_until: None,
+            last_latency_ms: 0.0,
         }
     }
 
@@ -2604,8 +2609,13 @@ mod tests {
             custom_llm_provider: None,
             chat_template_compat: None,
             modal_pricing: None,
+            weight: None,
+            rpm: None,
+            tpm: None,
+            priority: None,
             fail_count: 0,
             cooldown_until: None,
+            last_latency_ms: 0.0,
         };
         let adapted = ResponsesToChatCompletions
             .adapt_request(body, &dep)
@@ -2665,8 +2675,13 @@ mod tests {
             custom_llm_provider: None,
             chat_template_compat: None,
             modal_pricing: None,
+            weight: None,
+            rpm: None,
+            tpm: None,
+            priority: None,
             fail_count: 0,
             cooldown_until: None,
+            last_latency_ms: 0.0,
         };
         let adapted = ResponsesToChatCompletions
             .adapt_request(body, &dep)
@@ -2695,8 +2710,13 @@ mod tests {
             custom_llm_provider: None,
             chat_template_compat: None,
             modal_pricing: None,
+            weight: None,
+            rpm: None,
+            tpm: None,
+            priority: None,
             fail_count: 0,
             cooldown_until: None,
+            last_latency_ms: 0.0,
         };
         let err = ResponsesToChatCompletions
             .adapt_request(body, &dep)
@@ -3354,8 +3374,13 @@ mod tests {
             custom_llm_provider: None,
             chat_template_compat: Some("loose".to_string()),
             modal_pricing: None,
+            weight: None,
+            rpm: None,
+            tpm: None,
+            priority: None,
             fail_count: 0,
             cooldown_until: None,
+            last_latency_ms: 0.0,
         };
         let body = json!({
             "model": "claude-sonnet", "max_tokens": 1024,
@@ -3405,8 +3430,13 @@ mod tests {
             custom_llm_provider: None,
             chat_template_compat: None,
             modal_pricing: None,
+            weight: None,
+            rpm: None,
+            tpm: None,
+            priority: None,
             fail_count: 0,
             cooldown_until: None,
+            last_latency_ms: 0.0,
         };
 
         assert_eq!(
@@ -3441,8 +3471,13 @@ mod tests {
             custom_llm_provider: None,
             chat_template_compat: Some("loose".to_string()),
             modal_pricing: None,
+            weight: None,
+            rpm: None,
+            tpm: None,
+            priority: None,
             fail_count: 0,
             cooldown_until: None,
+            last_latency_ms: 0.0,
         };
         assert_eq!(
             resolve_chat_template_compat(&deployment),
@@ -3471,8 +3506,13 @@ mod tests {
             custom_llm_provider: Some("anthropic".into()),
             chat_template_compat: None,
             modal_pricing: None,
+            weight: None,
+            rpm: None,
+            tpm: None,
+            priority: None,
             fail_count: 0,
             cooldown_until: None,
+            last_latency_ms: 0.0,
         }
     }
 

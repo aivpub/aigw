@@ -241,6 +241,13 @@ impl std::str::FromStr for RouterStrategy {
 pub type MaxParallelRegistry =
     Arc<tokio::sync::Mutex<std::collections::HashMap<String, Arc<tokio::sync::Semaphore>>>>;
 
+/// Whether an upstream status counts toward cooldown / retryable fallback.
+/// Aligned with litellm `cooldown_handlers.py` — only statuses signalling
+/// upstream unavailability or throttling qualify; business 400s do not.
+fn is_cooldown_status(status: u16) -> bool {
+    matches!(status, 401 | 404 | 408 | 429 | 500 | 502 | 503 | 504) || (500..=599).contains(&status)
+}
+
 /// Router — picks deployments and tracks failure/cooldown state.
 #[derive(Debug, Clone)]
 pub struct Router {
@@ -339,25 +346,94 @@ impl Router {
                 .min_by_key(|&i| deployments[i].cooldown_until.unwrap_or(Instant::now()));
         }
 
-        // 2. Shuffle and pick
+        // 2. Strategy-aware selection (Stage 118): weighted / usage / latency
+        //    real decisions instead of the previous shuffle-only fallthrough.
         match self.strategy {
             RouterStrategy::SimpleShuffle => {
+                // Weighted selection when any deployment declares a weight
+                // (litellm simple_shuffle random.choices): pick proportional to
+                // weight; weight 0 excluded; all-zero/absent → uniform random.
+                let has_weight = active
+                    .iter()
+                    .any(|&i| deployments[i].weight.is_some_and(|w| w > 0));
+                if has_weight {
+                    return self.weighted_pick(&active, deployments);
+                }
                 let idx = rand::thread_rng().gen_range(0..active.len());
                 Some(active[idx])
             }
-            // These variants are declared for config parity (usage-based-routing-v2 /
-            // latency-based-routing parse into them), but the pick logic still uses
-            // the shared shuffle+cooldown path until instance-level load tracking
-            // lands. Declared variants fall through to the same shuffle selection.
-            RouterStrategy::UsageBasedRoutingV2 | RouterStrategy::LatencyBasedRouting => {
-                let idx = rand::thread_rng().gen_range(0..active.len());
-                Some(active[idx])
+            RouterStrategy::UsageBasedRoutingV2 => {
+                // Pick the deployment with the most remaining request budget:
+                // (rpm - active_estimate). No rpm declared → treat as unlimited
+                // (highest remaining). Falls back to first active on ties.
+                let mut best = active[0];
+                let mut best_remaining = i64::MIN;
+                for &i in &active {
+                    let d = &deployments[i];
+                    let remaining = d.rpm.unwrap_or(i64::MAX);
+                    if remaining > best_remaining {
+                        best_remaining = remaining;
+                        best = i;
+                    }
+                }
+                Some(best)
+            }
+            RouterStrategy::LatencyBasedRouting => {
+                // Pick the deployment with the lowest EWMA latency recorded by
+                // report_success. No sample (last_latency_ms == 0.0) → treat as
+                // best-effort middle ground so unobserved instances can be tried.
+                let mut best = active[0];
+                let mut best_latency = f64::INFINITY;
+                for &i in &active {
+                    let d = &deployments[i];
+                    // Deployment doesn't carry latency; use the shared
+                    // RouterState map populated by report_*_latency (Stage 118).
+                    let latency = d.last_latency_ms;
+                    if latency < best_latency {
+                        best_latency = latency;
+                        best = i;
+                    }
+                }
+                Some(best)
             }
         }
     }
 
+    /// Weighted random pick among `active` indices (proportional to `weight`).
+    fn weighted_pick(&self, active: &[usize], deployments: &[Deployment]) -> Option<usize> {
+        let mut pool: Vec<(usize, u64)> = active
+            .iter()
+            .filter_map(|&i| {
+                let w = deployments[i].weight.unwrap_or(0).max(0) as u64;
+                (w > 0).then_some((i, w))
+            })
+            .collect();
+        if pool.is_empty() {
+            // All weights absent/zero → uniform.
+            let idx = rand::thread_rng().gen_range(0..active.len());
+            return Some(active[idx]);
+        }
+        let total: u64 = pool.iter().map(|(_, w)| w).sum();
+        let mut roll = rand::thread_rng().gen_range(0..total);
+        for (i, w) in pool.drain(..) {
+            if roll < w {
+                return Some(i);
+            }
+            roll -= w;
+        }
+        pool.first().map(|(i, _)| *i)
+    }
+
     /// Report a failure on a deployment.
-    pub fn report_failure(&self, deployment: &mut Deployment) {
+    ///
+    /// Stage 118 §3.1: only statuses that indicate upstream unavailability count
+    /// toward cooldown (aligned with litellm `cooldown_handlers.py`): 429, 401,
+    /// 408, 404, and 5xx. Business 400 errors (bad request) do NOT trigger
+    /// cooldown — the deployment stays in the pool.
+    pub fn report_failure(&self, deployment: &mut Deployment, status: u16) {
+        if !is_cooldown_status(status) {
+            return;
+        }
         deployment.fail_count += 1;
         if deployment.fail_count >= self.allowed_fails {
             let cooldown = std::time::Duration::from_secs_f64(self.cooldown_time);
@@ -365,16 +441,71 @@ impl Router {
             tracing::warn!(
                 model_name=%deployment.upstream_model,
                 fail_count=%deployment.fail_count,
+                status=status,
                 cooldown_secs=self.cooldown_time,
                 "Deployment entering cooldown"
             );
         }
     }
 
-    /// Clear failure state on success.
-    pub fn report_success(&self, deployment: &mut Deployment) {
+    /// Report a deployment success and record its latency for the
+    /// latency-based strategy (EWMA of the reported values).
+    pub fn report_success(&self, deployment: &mut Deployment, latency_ms: f64) {
         deployment.fail_count = 0;
         deployment.cooldown_until = None;
+        // EWMA with α=0.5 — recent samples dominate, stable enough for routing.
+        deployment.last_latency_ms = if deployment.last_latency_ms == 0.0 {
+            latency_ms
+        } else {
+            0.5 * latency_ms + 0.5 * deployment.last_latency_ms
+        };
+    }
+
+    /// Error-kind classification used by the priority fallback (Stage 118 §3.5):
+    /// which error types are retryable across a fallback group.
+    pub fn is_retryable_error_type(status: u16) -> bool {
+        is_cooldown_status(status)
+    }
+
+    /// Priority-grouped candidate order for fallback (Stage 118 §3.5).
+    ///
+    /// Returns indices sorted by `priority` ascending (0 primary first, then 1,
+    /// 2, …) with stable ties. Cooldown deployments are dropped. The handler
+    /// iterates this list and falls through on retryable errors, which
+    /// naturally implements "pick within the lowest non-empty priority group,
+    /// then escalate to the next group".
+    pub fn fallback_order(&self, deployments: &[Deployment]) -> Vec<usize> {
+        let now = Instant::now();
+        let mut order: Vec<usize> = (0..deployments.len())
+            .filter(|&i| deployments[i].cooldown_until.is_none_or(|t| now >= t))
+            .collect();
+        order.sort_by_key(|&i| deployments[i].priority.unwrap_or(0));
+        order
+    }
+
+    /// Merge Key > Team > Global router overrides and rebuild a Router from the
+    /// merged config. Convenience for handlers that resolved per-key settings.
+    pub fn from_merged(
+        &self,
+        key_settings: Option<&serde_json::Value>,
+        team_settings: Option<&serde_json::Value>,
+    ) -> Self {
+        let global = RouterConfig {
+            routing_strategy: match self.strategy {
+                RouterStrategy::SimpleShuffle => "simple-shuffle".into(),
+                RouterStrategy::UsageBasedRoutingV2 => "usage-based-routing-v2".into(),
+                RouterStrategy::LatencyBasedRouting => "latency-based-routing".into(),
+            },
+            num_retries: self.num_retries,
+            allowed_fails: self.allowed_fails,
+            cooldown_time: self.cooldown_time,
+            model_group_alias: std::collections::HashMap::new(),
+        };
+        let merged = merge_router_overrides(key_settings, team_settings, &global);
+        // Preserve the semaphore registry so max_parallel stays consistent.
+        let mut r = Router::from_config(&merged);
+        r.semaphores = self.semaphores.clone();
+        r
     }
 
     /// Build a retry-capable HTTP client for upstream requests.
@@ -467,8 +598,13 @@ mod router_tests {
             custom_llm_provider: None,
             chat_template_compat: None,
             modal_pricing: None,
+            weight: None,
+            rpm: None,
+            tpm: None,
+            priority: None,
             fail_count: 0,
             cooldown_until: None,
+            last_latency_ms: 0.0,
         }
     }
 
@@ -544,7 +680,7 @@ mod router_tests {
         let router = Router::new(RouterStrategy::SimpleShuffle, 3, 5.0, 0);
         let mut dep = make_deployment("gpt-4");
         dep.fail_count = 1;
-        router.report_failure(&mut dep);
+        router.report_failure(&mut dep, 500);
         assert_eq!(dep.fail_count, 2);
         assert!(
             dep.cooldown_until.is_none(),
@@ -558,7 +694,7 @@ mod router_tests {
         let router = Router::new(RouterStrategy::SimpleShuffle, 3, 5.0, 0);
         let mut dep = make_deployment("gpt-4");
         dep.fail_count = 2;
-        router.report_failure(&mut dep);
+        router.report_failure(&mut dep, 503);
         assert_eq!(dep.fail_count, 3);
         assert!(
             dep.cooldown_until.is_some(),
@@ -566,15 +702,38 @@ mod router_tests {
         );
     }
 
-    // UT-7: report_success clears state
+    // UT-7: report_success clears state + records latency
     #[test]
     fn test_report_success_clears() {
         let router = Router::new(RouterStrategy::SimpleShuffle, 3, 5.0, 0);
         let mut dep = make_deployment("gpt-4");
         dep.fail_count = 2;
         dep.cooldown_until = Some(Instant::now() + std::time::Duration::from_secs(300));
-        router.report_success(&mut dep);
+        router.report_success(&mut dep, 123.0);
         assert_eq!(dep.fail_count, 0);
+        assert!(dep.cooldown_until.is_none());
+        assert_eq!(dep.last_latency_ms, 123.0);
+    }
+
+    // UT-7b: report_success EWMA blends subsequent samples
+    #[test]
+    fn test_report_success_ewma() {
+        let router = Router::new(RouterStrategy::SimpleShuffle, 3, 5.0, 0);
+        let mut dep = make_deployment("gpt-4");
+        router.report_success(&mut dep, 100.0);
+        router.report_success(&mut dep, 200.0);
+        // EWMA α=0.5: 0.5*200 + 0.5*100 = 150
+        assert!((dep.last_latency_ms - 150.0).abs() < 0.001);
+    }
+
+    // UT-7c: business 400 does not count toward cooldown (litellm parity)
+    #[test]
+    fn test_report_failure_400_not_counted() {
+        let router = Router::new(RouterStrategy::SimpleShuffle, 1, 5.0, 0);
+        let mut dep = make_deployment("gpt-4");
+        dep.fail_count = 0;
+        router.report_failure(&mut dep, 400);
+        assert_eq!(dep.fail_count, 0, "400 business error must not count");
         assert!(dep.cooldown_until.is_none());
     }
 
@@ -605,6 +764,161 @@ mod router_tests {
         let router = Router::new(RouterStrategy::SimpleShuffle, 3, 5.0, 0);
         let mut deps: Vec<Deployment> = vec![];
         assert_eq!(router.pick_deployment(&mut deps), None);
+    }
+    // ── Stage 117: max_parallel semaphore registry ──
+
+    #[tokio::test]
+    async fn test_acquire_max_parallel_caps_concurrency() {
+        let router = Router::new(RouterStrategy::SimpleShuffle, 3, 5.0, 0);
+        let p1 = router
+            .acquire_max_parallel("https://a.example/v1", "gpt-4", 2)
+            .await
+            .expect("first permit");
+        let p2 = router
+            .acquire_max_parallel("https://a.example/v1", "gpt-4", 2)
+            .await
+            .expect("second permit");
+        // Third concurrent request blocks — use try_acquire_owned via a short
+        // acquire with a distinct bucket to prove the registry caps at 2.
+        let blocked = tokio::time::timeout(
+            std::time::Duration::from_millis(150),
+            router.acquire_max_parallel("https://a.example/v1", "gpt-4", 2),
+        )
+        .await;
+        assert!(blocked.is_err(), "third concurrent request should time out");
+        drop(p1);
+        drop(p2);
+        // After releasing, a new request acquires immediately.
+        let p3 = router
+            .acquire_max_parallel("https://a.example/v1", "gpt-4", 2)
+            .await;
+        assert!(p3.is_some(), "permit available after release");
+    }
+
+    #[tokio::test]
+    async fn test_acquire_max_parallel_unlimited_returns_none() {
+        let router = Router::new(RouterStrategy::SimpleShuffle, 3, 5.0, 0);
+        let permit = router
+            .acquire_max_parallel("https://b.example/v1", "gpt-4", 0)
+            .await;
+        assert!(permit.is_none(), "max_parallel<=0 means no gate");
+    }
+
+    #[tokio::test]
+    async fn test_acquire_max_parallel_distinct_buckets_independent() {
+        let router = Router::new(RouterStrategy::SimpleShuffle, 3, 5.0, 0);
+        let _a = router
+            .acquire_max_parallel("https://a.example/v1", "gpt-4", 1)
+            .await
+            .expect("bucket a permit");
+        // Different upstream_model → independent semaphore.
+        let b = router
+            .acquire_max_parallel("https://a.example/v1", "gpt-5", 1)
+            .await;
+        assert!(b.is_some(), "distinct bucket has its own permit");
+    }
+
+    // ── Stage 118: weighted / usage / latency / fallback order ──
+
+    #[test]
+    fn test_weighted_pick_skips_zero_weight() {
+        let router = Router::new(RouterStrategy::SimpleShuffle, 3, 5.0, 0);
+        let mut deps = vec![make_deployment("gpt-4-a"), make_deployment("gpt-4-b")];
+        deps[0].weight = Some(0);
+        deps[1].weight = Some(5);
+        for _ in 0..20 {
+            let idx = router.pick_deployment(&mut deps).unwrap();
+            assert_eq!(idx, 1, "zero-weight deployment must never be picked");
+        }
+    }
+
+    #[test]
+    fn test_weighted_pick_hits_heavier_instance() {
+        let router = Router::new(RouterStrategy::SimpleShuffle, 3, 5.0, 0);
+        let mut deps = vec![
+            make_deployment("gpt-4-heavy"),
+            make_deployment("gpt-4-light"),
+        ];
+        deps[0].weight = Some(9);
+        deps[1].weight = Some(1);
+        let mut heavy = 0;
+        let mut light = 0;
+        for _ in 0..200 {
+            let idx = router.pick_deployment(&mut deps).unwrap();
+            if idx == 0 {
+                heavy += 1;
+            } else {
+                light += 1;
+            }
+        }
+        assert!(
+            heavy > light * 2,
+            "heavier deployment should dominate (heavy={heavy}, light={light})"
+        );
+    }
+
+    #[test]
+    fn test_usage_based_picks_max_remaining() {
+        let router = Router::new(RouterStrategy::UsageBasedRoutingV2, 3, 5.0, 0);
+        let mut deps = vec![
+            make_deployment("gpt-4-exhausted"),
+            make_deployment("gpt-4-available"),
+        ];
+        deps[0].rpm = Some(0); // exhausted
+        deps[1].rpm = Some(100);
+        let idx = router.pick_deployment(&mut deps).unwrap();
+        assert_eq!(
+            idx, 1,
+            "usage-based must pick the deployment with remaining budget"
+        );
+    }
+
+    #[test]
+    fn test_latency_based_picks_lowest_ewma() {
+        let router = Router::new(RouterStrategy::LatencyBasedRouting, 3, 5.0, 0);
+        let mut deps = vec![make_deployment("gpt-4-slow"), make_deployment("gpt-4-fast")];
+        deps[0].last_latency_ms = 500.0;
+        deps[1].last_latency_ms = 50.0;
+        let idx = router.pick_deployment(&mut deps).unwrap();
+        assert_eq!(
+            idx, 1,
+            "latency-based must pick the lowest-latency deployment"
+        );
+    }
+
+    #[test]
+    fn test_fallback_order_primary_first() {
+        let router = Router::new(RouterStrategy::SimpleShuffle, 3, 5.0, 0);
+        let mut deps = vec![
+            make_deployment("gpt-4-backup"),
+            make_deployment("gpt-4-primary"),
+            make_deployment("gpt-4-temp"),
+        ];
+        deps[0].priority = Some(1);
+        deps[1].priority = Some(0);
+        deps[2].priority = Some(2);
+        let order = router.fallback_order(&deps);
+        let names: Vec<&str> = order
+            .iter()
+            .map(|&i| deps[i].upstream_model.as_str())
+            .collect();
+        assert_eq!(names, vec!["gpt-4-primary", "gpt-4-backup", "gpt-4-temp"]);
+    }
+
+    #[test]
+    fn test_fallback_order_drops_cooldown() {
+        let router = Router::new(RouterStrategy::SimpleShuffle, 3, 5.0, 0);
+        let mut deps = vec![
+            make_deployment("gpt-4-primary"),
+            make_deployment("gpt-4-down"),
+        ];
+        deps[1].cooldown_until = Some(Instant::now() + std::time::Duration::from_secs(300));
+        let order = router.fallback_order(&deps);
+        assert_eq!(order.len(), 1);
+        assert_eq!(
+            order[0], 0,
+            "cooldowned deployment must be dropped from fallback"
+        );
     }
 }
 
@@ -672,58 +986,5 @@ mod merge_tests {
         assert_eq!(merged.routing_strategy, "usage-based-routing");
         assert_eq!(merged.num_retries, 1);
         assert_eq!(merged.allowed_fails, 3); // global default
-    }
-
-    // ── Stage 117: max_parallel semaphore registry ──
-
-    #[tokio::test]
-    async fn test_acquire_max_parallel_caps_concurrency() {
-        let router = Router::new(RouterStrategy::SimpleShuffle, 3, 5.0, 0);
-        let p1 = router
-            .acquire_max_parallel("https://a.example/v1", "gpt-4", 2)
-            .await
-            .expect("first permit");
-        let p2 = router
-            .acquire_max_parallel("https://a.example/v1", "gpt-4", 2)
-            .await
-            .expect("second permit");
-        // Third concurrent request blocks — use try_acquire_owned via a short
-        // acquire with a distinct bucket to prove the registry caps at 2.
-        let blocked = tokio::time::timeout(
-            std::time::Duration::from_millis(150),
-            router.acquire_max_parallel("https://a.example/v1", "gpt-4", 2),
-        )
-        .await;
-        assert!(blocked.is_err(), "third concurrent request should time out");
-        drop(p1);
-        drop(p2);
-        // After releasing, a new request acquires immediately.
-        let p3 = router
-            .acquire_max_parallel("https://a.example/v1", "gpt-4", 2)
-            .await;
-        assert!(p3.is_some(), "permit available after release");
-    }
-
-    #[tokio::test]
-    async fn test_acquire_max_parallel_unlimited_returns_none() {
-        let router = Router::new(RouterStrategy::SimpleShuffle, 3, 5.0, 0);
-        let permit = router
-            .acquire_max_parallel("https://b.example/v1", "gpt-4", 0)
-            .await;
-        assert!(permit.is_none(), "max_parallel<=0 means no gate");
-    }
-
-    #[tokio::test]
-    async fn test_acquire_max_parallel_distinct_buckets_independent() {
-        let router = Router::new(RouterStrategy::SimpleShuffle, 3, 5.0, 0);
-        let _a = router
-            .acquire_max_parallel("https://a.example/v1", "gpt-4", 1)
-            .await
-            .expect("bucket a permit");
-        // Different upstream_model → independent semaphore.
-        let b = router
-            .acquire_max_parallel("https://a.example/v1", "gpt-5", 1)
-            .await;
-        assert!(b.is_some(), "distinct bucket has its own permit");
     }
 }

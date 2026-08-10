@@ -806,8 +806,13 @@ mod tests {
             custom_llm_provider: Some("openai".into()),
             chat_template_compat: None,
             modal_pricing: None,
+            weight: None,
+            rpm: None,
+            tpm: None,
+            priority: None,
             fail_count: 0,
             cooldown_until: None,
+            last_latency_ms: 0.0,
         };
         let (probe_path, body, is_embed) =
             build_probe_spec(&embed_deployment, &serde_json::json!({"mode": "embed"}));
@@ -839,8 +844,13 @@ mod tests {
             custom_llm_provider: Some("openai".into()),
             chat_template_compat: None,
             modal_pricing: None,
+            weight: None,
+            rpm: None,
+            tpm: None,
+            priority: None,
             fail_count: 0,
             cooldown_until: None,
+            last_latency_ms: 0.0,
         };
         let (probe_path, body, is_embed) =
             build_probe_spec(&chat_deployment, &serde_json::json!({}));

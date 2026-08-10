@@ -49,11 +49,25 @@ pub struct Deployment {
     /// embeddings image $0.45 / audio $6.50 / video $12.00). None when the
     /// deployment is single-modal (falls back to input_cost_per_token).
     pub modal_pricing: Option<crate::models::ModalPricing>,
+    /// litellm_params.weight — weighted-routing selection weight (Stage 118 §3.3).
+    /// Absent → uniform random. 0 → excluded from weighted selection.
+    pub weight: Option<i64>,
+    /// litellm_params.rpm — per-deployment request-per-minute cap, used by the
+    /// weighted router and usage-based variant (Stage 118 §3.3/§3.4).
+    pub rpm: Option<i64>,
+    /// litellm_params.tpm — per-deployment token-per-minute cap.
+    pub tpm: Option<i64>,
+    /// litellm_params.priority — fallback group (0 primary, 1+ backup tiers).
+    /// The router picks within the lowest non-empty priority group (Stage 118 §3.5).
+    pub priority: Option<i64>,
     /// Runtime cooldown tracking — not persisted, managed by Router.
     /// Number of consecutive failures for this deployment.
     pub fail_count: u32,
     /// If Some(instant), this deployment is in cooldown until that time.
     pub cooldown_until: Option<std::time::Instant>,
+    /// EWMA of recent upstream latency (ms), recorded by `Router::report_success`
+    /// for the latency-based routing strategy (Stage 118 §3.4). 0.0 = no sample.
+    pub last_latency_ms: f64,
 }
 
 /// Upstream provider type.
@@ -162,8 +176,13 @@ mod tests {
             custom_llm_provider: Some("openai".to_string()),
             chat_template_compat: None,
             modal_pricing: None,
+            weight: None,
+            rpm: None,
+            tpm: None,
+            priority: None,
             fail_count: 0,
             cooldown_until: None,
+            last_latency_ms: 0.0,
         };
 
         assert_eq!(d.api_base, "https://api.openai.com/v1");
