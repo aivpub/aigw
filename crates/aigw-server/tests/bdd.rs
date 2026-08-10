@@ -2,6 +2,7 @@
 //!
 //! Run with: cargo test --test bdd -p aigw-server
 
+use aigw_server::routes::keys::DEFAULT_KEY_TOKEN_LEN;
 use cucumber::World as _;
 use std::sync::Arc;
 
@@ -62,6 +63,8 @@ impl TestWorld {
                     db,
                     master_key: Some(mk.clone()),
                     aigw_master_key: None,
+                    key_generate_length: DEFAULT_KEY_TOKEN_LEN,
+                    disable_custom_api_keys: false,
                     provider_registry: aigw_core::provider::ProviderRegistry::new(),
                     router_state: aigw_core::router::RouterState::default(),
                     rate_limiter: Arc::new(aigw_core::rate_limiter::RateLimiter::new()),

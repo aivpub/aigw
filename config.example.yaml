@@ -7,7 +7,11 @@
 #   master_key: ${MASTER_KEY:-sk-master-change-me}
 #   database_url: sqlite:/app/data/aigw.db
 #   deployment_mode: onprem
+#   # /key/generate token payload length (litellm custom_key_generate_length).
+#   # Default 22; clamped to 16-64. Wired (Stage 116).
 #   custom_key_generate_length: 8
+#   # When true, only the master key may create keys via /key/generate.
+#   # Wired (Stage 116).
 #   disable_custom_api_keys: false
 #   # Alert webhook: soft_budget exceedance is POSTed here (JSON, fire-and-forget)
 #   # in addition to the warning log. Any HTTP endpoint (Slack/Feishu/webhook).
@@ -39,9 +43,12 @@
 #   enabled: true
 
 model_list:
-  # model_list is parsed but NOT auto-seeded into proxy_models at boot: models
-  # must be created via the admin API (/model/new) or aigw-migrate, then they
-  # are resolved from the DB. This block documents the litellm-compatible shape.
+  # model_list is seeded into proxy_models at boot (idempotent, DB-first):
+  # a model with the same model_name as an existing DB row is left untouched,
+  # anything new is inserted (created_by="config"). Models resolve from the DB,
+  # so the admin API (/model/new) and aigw-migrate remain the source of truth
+  # for anything already present. `api_key` may reference ${ENV_VAR} — resolved
+  # from `environment_variables` (or shell env) before seeding.
   - model_name: gpt-4o
     litellm_params:
       model: gpt-4o
@@ -64,17 +71,27 @@ model_list:
       rpm: 1000
       tpm: 100000
 
-# Router settings — NOTE: the `router_settings` / `litellm_settings` /
-# `environment_variables` blocks below are parsed for litellm compatibility but
-# are NOT wired into the running router today. The router uses
-# `RouterConfig::default()` (routing_strategy=simple-shuffle, allowed_fails=3,
-# cooldown=30s, num_retries=0) and runtime overrides live in the DB
-# `/router/settings` endpoint instead of this file.
+# Router settings — loaded into the Router at boot (Stage 116): the mapped
+# RouterConfig replaces the hardcoded default (routing_strategy / allowed_fails /
+# num_retries / cooldown_time), and the initial value is persisted to the config
+# table so GET /router/settings returns it before any PUT. NOTE: `cooldown_secs`
+# and `disable_cooldowns` in the file are ignored by the serde schema (the field
+# is `cooldown_time`); the router picks by `routing_strategy`
+# (usage-based-routing-v2 / latency-based-routing / simple-shuffle).
+#
+# `litellm_settings` (drop_params / request_timeout / set_verbose) and
+# `environment_variables` are parsed for litellm compatibility; only
+# `environment_variables` is wired (fills missing env vars at boot — dotenvy
+# semantics). drop_params/request_timeout/set_verbose have no corresponding
+# implementation in aigw yet — documented, not dead-wired.
 router_settings:
   routing_strategy: usage-based-routing-v2
   allowed_fails: 3
-  cooldown_secs: 30
-  disable_cooldowns: false
+  cooldown_time: 30
+  num_retries: 2
+
+# environment_variables:
+#   OPENAI_API_KEY: sk-your-key   # filled only if not already set in env
 
 litellm_settings:
   drop_params: true

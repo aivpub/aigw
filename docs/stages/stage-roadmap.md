@@ -7,9 +7,9 @@
 
 ## 当前状态
 
-- **当前 Phase**: **Phase 45 ✅ 完成（Stage 113-115 技术债清理，28h，2026-08-09）——ALL STAGES + Phase 45 COMPLETE**。
-- **状态**: **116/116 Stages** + **Phase 45 全交付**（Stage 113 ✅ TD-005/003/010a；Stage 114 ✅ TD-009a/b + TD-008a/b；Stage 115 ✅ TD-011b/c + TD-012b）。技术债清理收官，无在途 Stage。
-- **下一里程碑**: 无（全部 Stage 完成）；剩余按使用量触发（TD-008c/d、TD-009e、TD-011a、长期路线 LT-*）
+- **当前 Phase**: **Phase 46（Stage 116 静态配置模型接入）✅ 完成（16h，2026-08-10）**。
+- **状态**: **117/117 Stages** + **Phase 46 交付**（Stage 116 ✅ config_loader seed/env/router + keys 长度/gate + main.rs 接线）。静态配置路径接通，无在途 Stage。
+- **下一里程碑**: 无（全部 Stage 完成）；剩余候选按使用量触发（litellm_settings 接线、config 热重载、实例级负载路由、TD-008c/d、TD-009e、TD-011a、长期路线 LT-*）
 
 ### 整体进度
 
@@ -53,6 +53,7 @@ Phase 42:   ████████████████████ 100% (3
 Phase 43:   ████████████████████ 100% (3/3 Stages) ✅ Image Token Usage Tracking (Stage 106-108)
 Phase 44:   ████████████████████ 100% (3/3 Stages) ✅ OpenAI Embeddings API 代理 (Stage 110-112)
 Phase 45:   ████████████████████ 100% (3/3 Stages) ✅ 技术债清理 (Stage 113-115 全部完成)
+Phase 46:   ████████████████████ 100% (1/1 Stage)  ✅ 静态配置模型接入 (Stage 116)
 ```
 
 ---
@@ -884,3 +885,4 @@ Phase 45:   ████████████████████ 100% (3
 | v51.0 | 2026-08-09 | **Phase 45 Stage 114 完成（总进度 118/118）**
 | v52.0 | 2026-08-09 | **Phase 45 Stage 115 完成 + Phase 45 收官（总进度 119/119 — ALL STAGES + Phase 45 COMPLETE）**：多模态精度三项落地。① TD-011c Anthropic downsizing——`estimate_anthropic` 迭代缩放保比例到 ≤1568（⌈x/28⌉ 向上取整 overshoot 修正为迭代法），4 UT。② TD-012b 多模态按模态计费——`ModalPricing{image,audio,video}`（USD/1M）+ `Deployment.modal_pricing` + resolver `extract_modal_pricing` + `calc_spend_modal` 纯函数（modal ÷1e6 vs scalar per-token 单位校准）+ 4 UT + resolver 2 UT；**embeddings.rs 接线留待真实 per-modal input 流量**。③ TD-011b HEIC/AVIF 前端转码——`compressImage` 检测 heic/avif → Safari 解码转 JPEG；无法解码浏览器 toast（解码失败返回 null 使 caller 可区分，修 compressImage 原返回原图 bug）；E2E 验证 Chromium reject 路径。**TD-011a 视频输入 SKIPPED**（设计可选 + 无真实流量，记录剩余）。验证：aigw-core 415 + aigw-server 140 UT、fmt + lint green、playground.feature 57/57（含 HEIC 场景 × 3 viewports）。ADR-030 Accepted + TD-011b/c/012b Resolved。**Phase 45 技术债清理全收官**（Stage 113-115；TD-003/005/008a/b/009a/b/010a/011b/c/012a/b 全 Resolved）。 |
 ：前端体验四项技术债落地。① TD-009a Playground 图片压缩——`src/lib/image.ts` `compressImage`（canvas 2048px + JPEG 0.8，取「原图 vs 压缩」较小者保真，小图原样 PNG）+ 上传/粘贴统一走压缩；E2E 2400x2400 照片压缩后 <2MB。② TD-009b 请求体超限防御——handleSend 预检 `∑ dataUrlBytes > 24MiB` → toast + 拒绝（`window.__AIGW_MAX_IMAGE_BODY__` 测试 override）。③ TD-008a i18n 懒加载——en 同步 eager + 检测语言 eager（zh-CN 首访首帧中文）+ 另一语言动态 `import()` 独立 chunk（zh-CN 25kB lazy）；修复 en-US 归一化（防 Unknown dynamic import）。④ TD-008b 翻译 TS 类型——`scripts/fe-i18n-types` 生成 `resources.d.ts`（增广 i18next CustomTypeOptions，不翻转全局 strict）；暴露并修复 5 个缺失 key + 1 拼写错误（dashboard.spend→spendLogs）。验证：3 新 BDD 场景 × 3 viewports = 9/9、i18n-switcher 9/9、全量 fe-bdd 342 pass、fe-build 分包、fe-lint + tsc 通过。ADR-029 Accepted + TD-008a/b + TD-009a/b Resolved。 |：后端可靠性加固三项落地。① TD-005 Engine panic 容错 + 优雅关闭——`guarded()`（futures `catch_unwind` + `AssertUnwindSafe`）包裹三 loop 单次迭代（panic → log + 30s backoff + continue）+ `Engine::run_with_cancel(CancellationToken)`（in-flight step 先完成再退出，`run()` 兼容包装保留）+ main.rs axum 优雅关闭后 cancel；3 新 UT（`test_run_with_cancel_returns_on_cancel` / `test_tick_loop_panic_keeps_task_alive` / `test_guarded_recovers_panic`）。**实现偏差**：std catch_unwind 无法 await async → futures 组合子；tokio-util 不加 sync feature（不存在）；exec 取消检查放迭代后。② TD-010a health embedding 探测——`run_and_save_health_check` 增 `model_info` 参数（设计初稿读 `raw_params["model_info"]` 会静默失效，resolver raw_params 只含 litellm_params）+ `build_probe_spec` 分支 embed 走 `{api_base}/embeddings` body `input:["ping"]`；1 UT + 1 BDD。③ TD-003 `scripts/bdd-coverage` + `task bdd-coverage`——解析 mock+real feature（`发送 METHOD /path` + `并查询 /path`）对照内嵌路由表；实测 63%（55/87），**门禁 60% 回归基线**（admin-CRUD/login/key-deleted/model-groups/system-info 无 mock-BDD step，预置缺口列 NOT covered）。验证：aigw-core 409 + aigw-server 136 UT、mock BDD 233 场景（仅 pre-existing budget_reset flake）、bdd-coverage PASS、fmt + lint green。ADR-028 Accepted + TD-003/005/010a/012a Resolved。 |
+| v53.0 | 2026-08-10 | **Phase 46 规划 + Stage 116 完成（总进度 120/120 — ALL STAGES + Phase 46 COMPLETE）**：静态配置模型接入——`config.yaml` 的 `model_list` / `router_settings` / `environment_variables` 启动时真正生效（此前解析后丢弃/零消费），并接线三个 `general_settings` 死字段。新增 `aigw_core::config_loader`（`seed_models_from_config` 幂等 DB-first / `apply_environment_variables` dotenvy 语义 / `build_router_config` 映射 + `router_settings_seed_json`）+ 10 UT；`keys.rs` `generate_key_token_with_len`（clamp 16-64）+ `/key/generate` disable_custom_api_keys gate + 4 UT；`main.rs` boot 接线（env 注入在 tracing init 前、model_list seed 在 Database::init 后、router_config 替换 `::default()`、deployment_mode config 优先、config 表 seed router_settings）；RouterStrategy 扩展 usage/latency 变体。BDD ×2（config seed 展示 + 幂等）+ 修复 budget_reset next_tick 硬编码 flake；`/v1/models` 空 model_info 补 `mode:"chat"`。验证：aigw-core 425 + aigw-server 144 UT、`task bdd` 254 场景（237 pass / 17 skip / 0 fail）、cargo check 无 warning。ADR-031 Accepted。设计文档：`stage-116.md`。 |

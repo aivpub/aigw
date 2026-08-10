@@ -44,6 +44,12 @@ pub struct AppState {
     pub db: Database,
     pub master_key: Option<String>,
     pub aigw_master_key: Option<String>, // for decrypting litellm_params at runtime
+    /// litellm `general_settings.custom_key_generate_length` — payload length
+    /// for `/key/generate` tokens. Default 22.
+    pub key_generate_length: usize,
+    /// litellm `general_settings.disable_custom_api_keys` — when true, only the
+    /// master key may create new keys.
+    pub disable_custom_api_keys: bool,
     /// Prometheus metrics recorder (global registry, initialized at startup, None in tests)
     #[allow(dead_code)]
     pub metrics: Option<Arc<MetricsRecorder>>,
@@ -80,6 +86,8 @@ impl AppState {
             db,
             master_key,
             aigw_master_key,
+            key_generate_length: DEFAULT_KEY_TOKEN_LEN,
+            disable_custom_api_keys: false,
             metrics: None,
             provider_registry: ProviderRegistry::new(),
             router_state: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
@@ -202,15 +210,38 @@ async fn validate_key_budget(
     Ok(())
 }
 
-/// Generate a litellm-compatible key token: sk- + 22 base64url chars
+/// Generate a litellm-compatible key token: `sk-` + base64url chars.
+///
+/// Default length is 22 chars (litellm's default). `custom_key_generate_length`
+/// from `general_settings` can override via `generate_key_token_with_len`.
 pub fn generate_key_token() -> String {
-    let mut buf = [0u8; 16];
+    generate_key_token_with_len(DEFAULT_KEY_TOKEN_LEN)
+}
+
+/// Default number of base64url chars after `sk-` in a generated key token.
+pub const DEFAULT_KEY_TOKEN_LEN: usize = 22;
+
+/// Generate a key token with a configurable payload length (litellm
+/// `custom_key_generate_length`). The length is clamped to a sane range so a
+/// misconfigured value cannot produce degenerate tokens.
+pub fn generate_key_token_with_len(len: usize) -> String {
+    let n = len.clamp(MIN_KEY_TOKEN_LEN, MAX_KEY_TOKEN_LEN);
+    // 3 bytes encode to exactly 4 base64url chars; round up so we always have
+    // enough bytes to slice `n` chars.
+    let byte_count = (n * 3).div_ceil(4);
+    let mut buf = vec![0u8; byte_count];
     for b in &mut buf {
         *b = fastrand::u8(..);
     }
     let encoded = base64url_encode(&buf);
-    format!("sk-{}", &encoded[..22])
+    format!("sk-{}", &encoded[..n])
 }
+
+/// Minimum generated payload length (16 chars) — prevents absurdly short keys.
+pub const MIN_KEY_TOKEN_LEN: usize = 16;
+/// Maximum generated payload length (64 chars) — prevents runaway memory from a
+/// config typo (e.g. `custom_key_generate_length: 1000000`).
+pub const MAX_KEY_TOKEN_LEN: usize = 64;
 
 /// URL-safe base64 encode (no padding)
 fn base64url_encode(data: &[u8]) -> String {
@@ -359,6 +390,17 @@ pub async fn generate_key(
     SpendAuth(auth): SpendAuth,
     Json(mut req): Json<GenerateKeyRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    // Custom api keys can be disabled via general_settings.disable_custom_api_keys
+    // (litellm semantics): only the master key may mint keys when enabled.
+    if state.disable_custom_api_keys && !auth.is_master_key {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(
+                json!({"error": {"message": "Custom API keys are disabled", "type": "forbidden"}}),
+            ),
+        ));
+    }
+
     // Admin can assign keys to anyone; non-admin gets their own user_id forced
     if !is_admin(&auth) {
         // Non-admin: if user_id is set and different from auth user_id, reject
@@ -378,7 +420,10 @@ pub async fn generate_key(
         }
     }
 
-    let raw_token = req.key.clone().unwrap_or_else(generate_key_token);
+    let raw_token = req
+        .key
+        .clone()
+        .unwrap_or_else(|| generate_key_token_with_len(state.key_generate_length));
     let hash = hash_token(&raw_token);
 
     // Check if key already exists
@@ -1040,6 +1085,8 @@ mod tests {
             db,
             master_key: Some("sk-master-test".to_string()),
             aigw_master_key: None,
+            key_generate_length: DEFAULT_KEY_TOKEN_LEN,
+            disable_custom_api_keys: false,
             provider_registry: ProviderRegistry::new(),
             router_state: RouterState::default(),
             rate_limiter: Arc::new(RateLimiter::new()),
@@ -1072,6 +1119,241 @@ mod tests {
             .unwrap();
         let response = app.oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_key_generate_honors_custom_length() {
+        // Build a state with a custom key_generate_length and verify the minted
+        // token carries `sk-` + that many base64url chars.
+        let db = Database::init("sqlite::memory:")
+            .await
+            .expect("init sqlite");
+        let state = Arc::new(AppState {
+            resolver: ModelResolver::new(db.clone(), None, "onprem"),
+            router: AigwRouter::default(),
+            db,
+            master_key: Some("sk-master-test".to_string()),
+            aigw_master_key: None,
+            key_generate_length: 32,
+            disable_custom_api_keys: false,
+            provider_registry: ProviderRegistry::new(),
+            router_state: RouterState::default(),
+            rate_limiter: Arc::new(RateLimiter::new()),
+            deployment_mode: "onprem".to_string(),
+            started_at: std::time::Instant::now(),
+            daily_spend_queue: None,
+            metrics: None,
+            otel_active: false,
+            body_archiver: None,
+        });
+        let app = Router::new()
+            .route("/key/generate", axum::routing::post(generate_key))
+            .with_state(state);
+        let body = json!({"key_alias": "custom-len-key"});
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/key/generate")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::AUTHORIZATION, "Bearer sk-master-test")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let resp: Value = serde_json::from_slice(&bytes).unwrap();
+        let key = resp.get("key").and_then(|v| v.as_str()).unwrap();
+        assert!(key.starts_with("sk-"));
+        // payload = 32 chars, token = "sk-" + 32
+        assert_eq!(key.len(), 3 + 32);
+    }
+
+    #[tokio::test]
+    async fn test_generate_key_token_with_len_clamps() {
+        // Clamped to [MIN, MAX] so a config typo cannot produce degenerate keys.
+        let too_short = generate_key_token_with_len(2);
+        assert_eq!(too_short.len(), 3 + MIN_KEY_TOKEN_LEN);
+        let too_long = generate_key_token_with_len(10_000);
+        assert_eq!(too_long.len(), 3 + MAX_KEY_TOKEN_LEN);
+        let default = generate_key_token_with_len(DEFAULT_KEY_TOKEN_LEN);
+        assert_eq!(default.len(), 3 + DEFAULT_KEY_TOKEN_LEN);
+        let _ = generate_key_token(); // smoke: default wrapper still works
+    }
+
+    #[tokio::test]
+    async fn test_key_generate_disabled_custom_keys_rejects_non_master() {
+        let db = Database::init("sqlite::memory:")
+            .await
+            .expect("init sqlite");
+        let state = Arc::new(AppState {
+            resolver: ModelResolver::new(db.clone(), None, "onprem"),
+            router: AigwRouter::default(),
+            db,
+            master_key: Some("sk-master-test".to_string()),
+            aigw_master_key: None,
+            key_generate_length: DEFAULT_KEY_TOKEN_LEN,
+            disable_custom_api_keys: true,
+            provider_registry: ProviderRegistry::new(),
+            router_state: RouterState::default(),
+            rate_limiter: Arc::new(RateLimiter::new()),
+            deployment_mode: "onprem".to_string(),
+            started_at: std::time::Instant::now(),
+            daily_spend_queue: None,
+            metrics: None,
+            otel_active: false,
+            body_archiver: None,
+        });
+        let app = Router::new()
+            .route("/key/generate", axum::routing::post(generate_key))
+            .with_state(state.clone());
+        // A non-master user key (role "user") tries to mint a key -> forbidden.
+        // Seed a user + session key via the same path the BDD steps use.
+        let user_id = "non-master-user";
+        let hashed = aigw_core::password::hash_password("pw").expect("hash");
+        let session_token = generate_key_token();
+        let session_hash = hash_token(&session_token);
+        let user = aigw_core::models::User {
+            user_id: user_id.to_string(),
+            user_alias: None,
+            team_id: None,
+            sso_user_id: None,
+            organization_id: None,
+            object_permission_id: None,
+            password: Some(hashed),
+            teams: serde_json::json!([]),
+            user_role: Some("user".to_string()),
+            max_budget: None,
+            spend: 0.0,
+            user_email: Some("user@example.com".to_string()),
+            models: serde_json::json!([]),
+            metadata: serde_json::json!({}),
+            max_parallel_requests: None,
+            tpm_limit: None,
+            rpm_limit: None,
+            budget_duration: None,
+            budget_reset_at: None,
+            allowed_cache_controls: serde_json::json!([]),
+            policies: serde_json::json!([]),
+            model_spend: serde_json::json!({}),
+            model_max_budget: serde_json::json!({}),
+            virtual_keys_count: None,
+            created_at: Some(chrono::Utc::now()),
+            updated_at: Some(chrono::Utc::now()),
+        };
+        state.db.insert_user(&user).await.expect("insert user");
+        let session_key = aigw_core::models::VirtualKey {
+            token: session_hash.clone(),
+            key_name: None,
+            key_alias: Some("non-master-session".to_string()),
+            soft_budget_cooldown: String::new(),
+            spend: 0.0,
+            expires: None,
+            models: serde_json::json!([]),
+            aliases: serde_json::json!({}),
+            config: serde_json::json!({}),
+            router_settings: None,
+            user_id: Some(user_id.to_string()),
+            team_id: None,
+            agent_id: None,
+            project_id: None,
+            permissions: serde_json::json!({}),
+            max_parallel_requests: None,
+            metadata: serde_json::json!({}),
+            blocked: None,
+            tpm_limit: None,
+            rpm_limit: None,
+            max_budget: None,
+            soft_budget: None,
+            budget_duration: None,
+            budget_reset_at: None,
+            allowed_cache_controls: serde_json::json!([]),
+            allowed_routes: serde_json::json!([]),
+            policies: serde_json::json!([]),
+            access_group_ids: serde_json::json!([]),
+            model_spend: serde_json::json!({}),
+            model_max_budget: serde_json::json!({}),
+            budget_id: None,
+            organization_id: None,
+            object_permission_id: None,
+            created_at: Some(chrono::Utc::now()),
+            created_by: None,
+            updated_at: Some(chrono::Utc::now()),
+            updated_by: None,
+            last_active: None,
+            rotation_count: None,
+            auto_rotate: None,
+            rotation_interval: None,
+            last_rotation_at: None,
+            key_rotation_at: None,
+            budget_limits: None,
+            user_email: None,
+            user_alias: None,
+        };
+        state
+            .db
+            .insert_key(&session_key)
+            .await
+            .expect("insert session key");
+        // JWT cookie so the SpendAuth middleware resolves a non-master identity.
+        let claims = aigw_core::auth::JwtClaims {
+            user_id: user_id.to_string(),
+            key: session_token,
+            user_email: Some("user@example.com".to_string()),
+            user_role: "user".to_string(),
+            login_method: "username_password".to_string(),
+        };
+        let jwt = aigw_core::auth::encode_jwt(&claims, "sk-master-test").expect("jwt");
+        let cookie = format!("token={}; HttpOnly; SameSite=Lax; Path=/", jwt);
+
+        let body = json!({"key_alias": "non-master-key"});
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/key/generate")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::COOKIE, cookie)
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_key_generate_disabled_custom_keys_allows_master() {
+        let db = Database::init("sqlite::memory:")
+            .await
+            .expect("init sqlite");
+        let state = Arc::new(AppState {
+            resolver: ModelResolver::new(db.clone(), None, "onprem"),
+            router: AigwRouter::default(),
+            db,
+            master_key: Some("sk-master-test".to_string()),
+            aigw_master_key: None,
+            key_generate_length: DEFAULT_KEY_TOKEN_LEN,
+            disable_custom_api_keys: true,
+            provider_registry: ProviderRegistry::new(),
+            router_state: RouterState::default(),
+            rate_limiter: Arc::new(RateLimiter::new()),
+            deployment_mode: "onprem".to_string(),
+            started_at: std::time::Instant::now(),
+            daily_spend_queue: None,
+            metrics: None,
+            otel_active: false,
+            body_archiver: None,
+        });
+        let app = Router::new()
+            .route("/key/generate", axum::routing::post(generate_key))
+            .with_state(state);
+        let body = json!({"key_alias": "master-key"});
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/key/generate")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::AUTHORIZATION, "Bearer sk-master-test")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
     }
 
     #[tokio::test]

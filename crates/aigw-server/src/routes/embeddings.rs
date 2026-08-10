@@ -739,6 +739,7 @@ fn merge_path_model(mut body: Value, model_path: Option<String>) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::routes::keys::DEFAULT_KEY_TOKEN_LEN;
     use axum::Router;
     use std::sync::Arc;
     use tower::util::ServiceExt;
@@ -753,6 +754,8 @@ mod tests {
             db,
             master_key: Some(mk.clone()),
             aigw_master_key: None,
+            key_generate_length: DEFAULT_KEY_TOKEN_LEN,
+            disable_custom_api_keys: false,
             provider_registry: aigw_core::provider::ProviderRegistry::new(),
             router_state: aigw_core::router::RouterState::default(),
             rate_limiter: Arc::new(aigw_core::rate_limiter::RateLimiter::new()),

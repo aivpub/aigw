@@ -199,11 +199,15 @@ impl Default for RouterConfig {
     }
 }
 
-/// Router strategy enum.
-#[derive(Debug, Clone)]
+/// Routing strategy enum — the two variants map from the config string via
+/// `FromStr`. Unknown strings fall back to `SimpleShuffle`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RouterStrategy {
     SimpleShuffle,
-    // Future: LeastBusy, UsageBasedRouting, LatencyBased
+    /// Select the deployment with the fewest active requests.
+    UsageBasedRoutingV2,
+    /// Select the deployment with the lowest latency.
+    LatencyBasedRouting,
 }
 
 impl std::str::FromStr for RouterStrategy {
@@ -212,6 +216,8 @@ impl std::str::FromStr for RouterStrategy {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "simple-shuffle" => Ok(Self::SimpleShuffle),
+            "usage-based-routing-v2" | "usage-based-routing" => Ok(Self::UsageBasedRoutingV2),
+            "latency-based-routing" => Ok(Self::LatencyBasedRouting),
             other => {
                 tracing::warn!(strategy=%other, "unknown routing strategy, fallback to simple-shuffle");
                 Ok(Self::SimpleShuffle)
@@ -286,6 +292,14 @@ impl Router {
         // 2. Shuffle and pick
         match self.strategy {
             RouterStrategy::SimpleShuffle => {
+                let idx = rand::thread_rng().gen_range(0..active.len());
+                Some(active[idx])
+            }
+            // These variants are declared for config parity (usage-based-routing-v2 /
+            // latency-based-routing parse into them), but the pick logic still uses
+            // the shared shuffle+cooldown path until instance-level load tracking
+            // lands. Declared variants fall through to the same shuffle selection.
+            RouterStrategy::UsageBasedRoutingV2 | RouterStrategy::LatencyBasedRouting => {
                 let idx = rand::thread_rng().gen_range(0..active.len());
                 Some(active[idx])
             }

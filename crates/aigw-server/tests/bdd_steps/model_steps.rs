@@ -1,5 +1,6 @@
 //! Step bindings for models.feature
 
+use aigw_server::routes::keys::DEFAULT_KEY_TOKEN_LEN;
 use axum::http::Method;
 use axum::Router;
 use cucumber::gherkin::Step;
@@ -479,6 +480,8 @@ async fn ensure_decrypt_state() -> aigw_server::routes::keys::SharedState {
             db,
             master_key: Some("sk-decrypt-test".to_string()),
             aigw_master_key: Some(DECRYPT_MASTER_KEY.to_string()),
+            key_generate_length: DEFAULT_KEY_TOKEN_LEN,
+            disable_custom_api_keys: false,
             provider_registry: aigw_core::provider::ProviderRegistry::new(),
             router_state: aigw_core::router::RouterState::default(),
             rate_limiter: Arc::new(aigw_core::rate_limiter::RateLimiter::new()),
@@ -577,4 +580,37 @@ async fn when_get_model_list_with_decrypt(world: &mut TestWorld) {
     let (s, b) = make_request(&router, Method::GET, "/model/list", Some(&mk), None).await;
     world.last_status = Some(s);
     world.last_body = b;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Stage 116: config.yaml model_list seed（静态配置模型接入）
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Seed a model via `aigw_core::config_loader::seed_models_from_config` — the
+/// exact boot path main.rs uses for `config.yaml model_list`. Reuses the shared
+/// test DB so `GET /v1/models` / `/model/list` see the seeded rows.
+#[given(expr = "通过 config_loader 从 model_list seed 模型 {string}")]
+async fn given_seed_model_from_config(world: &mut TestWorld, name: String) {
+    let state = world.ensure_state().await;
+    let entry = aigw_core::config::ModelEntry {
+        model_name: name.clone(),
+        litellm_params: aigw_core::config::ModelParams {
+            model: format!("openai/{}", name),
+            api_base: Some("https://api.openai.com/v1".to_string()),
+            api_key: None,
+            rpm: None,
+            tpm: None,
+            max_parallel_requests: None,
+            input_cost_per_token: None,
+            output_cost_per_token: None,
+            tpm_limit: None,
+            rpm_limit: None,
+        },
+    };
+    let stats = aigw_core::config_loader::seed_models_from_config(&state.db, &[entry])
+        .await
+        .expect("seed models from config");
+    // Second call in the idempotency scenario re-seeds the same name; the
+    // assertion happens via the model-count step.
+    let _ = stats;
 }

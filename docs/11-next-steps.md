@@ -1,20 +1,20 @@
 # aigw -- 下一步行动
 
-**上次更新**: 2026-08-09
-**当前阶段**: **Phase 45 全部完成（Stage 113-115 ✅ — 技术债清理收官）；ALL STAGES + Phase 45 COMPLETE**
+**上次更新**: 2026-08-10
+**当前阶段**: **Phase 46 Stage 116 ✅ 完成（静态配置模型接入）；117/117 Stages — ALL STAGES + Phase 46 COMPLETE**
 
 ---
 
-## 当前状态：116/116 Stages + Phase 45 技术债清理全部完成
+## 当前状态：117/117 Stages + Phase 46 静态配置模型接入完成
 
-**2026-08-09（Phase 45 Stage 115 ✅ — 收官）**: 多模态精度三项落地。① TD-011c Anthropic downsizing——`estimate_anthropic` 迭代缩放保比例到 ≤1568 target（⌈x/28⌉ 向上取整 overshoot 修正），4 UT。② TD-012b 多模态按模态计费——`ModalPricing{image,audio,video}` + `Deployment.modal_pricing` + resolver 提取 + `calc_spend_modal` 纯函数（modal/1M vs scalar per-token 单位校准）+ 6 UT；**embeddings.rs 接线留待真实 per-modal input 流量**（TD 描述「等真实负载再评估」）。③ TD-011b HEIC/AVIF 前端转码——`compressImage` 检测 heic/avif → Safari 解码转 JPEG，无法解码浏览器 toast（失败返回 null 使 caller 可区分）；E2E 验证 Chromium reject 路径。**TD-011a 视频输入 SKIPPED**（设计标记可选 + 无真实流量，记录剩余）。验证：aigw-core 415 + aigw-server 140 UT、fmt + lint green、playground.feature 57/57（含 HEIC 场景 × 3 viewports）。ADR-030 Accepted + TD-011b/c/012b Resolved。
+**2026-08-10（Phase 46 Stage 116 ✅）**: 静态配置模型接入——`config.yaml` 的 `model_list` / `router_settings` / `environment_variables` 启动时真正生效，并接线三个 `general_settings` 死字段。① 新增 `aigw_core::config_loader`——`seed_models_from_config`（幂等 DB-first：查重跳过已有 + `created_by:"config"` 插入）+ `apply_environment_variables`（dotenvy 语义只填缺失）+ `build_router_config` + `router_settings_seed_json`（10 UT）。② `keys.rs` `generate_key_token_with_len`（clamp 16-64，litellm `custom_key_generate_length`）+ `/key/generate` `disable_custom_api_keys` gate（4 UT）。③ `main.rs` boot 接线——env 注入在 tracing init 前、model_list seed 在 Database::init 后、router_config 替换 `::default()`、deployment_mode config 优先、config 表 seed router_settings。④ RouterStrategy 扩展 `usage-based-routing-v2`/`latency-based-routing` 变体。⑤ BDD ×2（config seed 在 /v1/models 展示 + 幂等）+ 修复 budget_reset next_tick 硬编码 flake + `/v1/models` 空 model_info 补 `mode:"chat"`。验证：aigw-core 425 + aigw-server 144 UT、`task bdd` 254 场景（237 pass / 17 skip / 0 fail）、cargo check 无 warning。ADR-031 Accepted。
 
-**2026-08-09（Phase 45 Stage 114 ✅）**: 前端体验四项技术债落地。① TD-009a Playground 图片压缩——`src/lib/image.ts` `compressImage`（canvas 2048px + JPEG 0.8，取「原图 vs 压缩」较小者保真，小图原样 PNG）+ 上传/粘贴统一走压缩；E2E 2400x2400 照片压缩后 <2MB。② TD-009b 请求体超限防御——handleSend 预检 `∑ dataUrlBytes > 24MiB` → toast + 拒绝（`window.__AIGW_MAX_IMAGE_BODY__` 测试 override 解决 sessionStorage 配额限制）。③ TD-008a i18n 懒加载——en 同步 eager + 检测语言 eager（zh-CN 首访首帧中文）+ 另一语言动态 `import()` 独立 chunk（zh-CN 25kB lazy）；修复 en-US 归一化（防 Unknown dynamic import）。④ TD-008b 翻译 TS 类型——`scripts/fe-i18n-types` 生成 `resources.d.ts`（增广 i18next CustomTypeOptions，不翻转全局 strict）；暴露并修复 5 个缺失 key + 1 拼写错误。验证：3 新 BDD 场景 × 3 viewports = 9/9、i18n-switcher 9/9、全量 fe-bdd 342 pass、fe-build 分包、fe-lint + tsc 通过。ADR-029 Accepted + TD-008a/b + TD-009a/b Resolved。
-
-**待办**（Phase 45 技术债清理，Stage 113-114 ✅ → 115 ⏳）:
-1. **Phase 45 Stage 115**（P1, 10h）：多模态精度 — TD-011b HEIC/AVIF 前端转码（方案变更）；TD-011c Anthropic downsizing；TD-012b 多模态 embedding 按模态计费；TD-011a 视频输入（可选）
-2. TD-008c/d 后端错误多语言 + RTL、TD-009e 外链缩略图、TD-011a 视频 token 估算（剩余部分）→ 视使用量触发
-3. 长期路线 LT-BodyMetrics/LT-BodyCompact/LT-BodyLifecycle 视数据量触发
+**待办**（按使用量触发，非在途 Stage）:
+1. **litellm_settings 接线**（drop_params/request_timeout/set_verbose）— 需对应实现，config.example.yaml 已标注
+2. **config.yaml 热重载 / router_settings 请求时动态应用** — 需 `Arc<Mutex<Router>>` 改造
+3. **实例级负载路由**（UsageBased/Latency 变体实际决策）— RouterStrategy 已声明变体，pick 沿用共享 shuffle
+4. TD-008c/d 后端错误多语言 + RTL、TD-009e 外链缩略图、TD-011a 视频 token 估算 → 视使用量触发
+5. 长期路线 LT-BodyMetrics/LT-BodyCompact/LT-BodyLifecycle 视数据量触发
 
 ---
 

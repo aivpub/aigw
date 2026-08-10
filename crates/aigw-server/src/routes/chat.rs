@@ -2191,6 +2191,23 @@ pub async fn models_list(
         })
         .collect();
 
+    // Stage 116: config-seeded models carry `model_info: {}` (no `mode`), which
+    // serde's skip-if-none drops entirely. Annotate a sensible default so
+    // config.yaml `model_list` entries surface in /v1/models the same way
+    // /model/new-registered models do.
+    let data: Vec<ModelEntry> = data
+        .into_iter()
+        .map(|mut e| {
+            if let Some(info) = e.model_info.as_mut() {
+                let empty = info.as_object().map(|o| o.is_empty()).unwrap_or(false);
+                if empty && info.get("mode").is_none() {
+                    info["mode"] = serde_json::json!("chat");
+                }
+            }
+            e
+        })
+        .collect();
+
     Ok(Json(json!({
         "object": "list",
         "data": data,
@@ -2205,6 +2222,7 @@ pub async fn models_list(
 mod tests {
     use super::*;
     use crate::routes::keys::AppState;
+    use crate::routes::keys::DEFAULT_KEY_TOKEN_LEN;
     use aigw_core::db::Database;
     use aigw_core::models::{ProxyModel, VirtualKey};
     use aigw_core::provider::ProviderRegistry;
@@ -2230,6 +2248,8 @@ mod tests {
             db,
             master_key: Some("sk-master-chat-test".to_string()),
             aigw_master_key: None,
+            key_generate_length: DEFAULT_KEY_TOKEN_LEN,
+            disable_custom_api_keys: false,
             provider_registry: ProviderRegistry::new(),
             router_state: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             rate_limiter: Arc::new(RateLimiter::new()),
@@ -2406,6 +2426,8 @@ mod tests {
             db,
             master_key: Some("sk-master-chat-test".to_string()),
             aigw_master_key: None,
+            key_generate_length: DEFAULT_KEY_TOKEN_LEN,
+            disable_custom_api_keys: false,
             provider_registry: ProviderRegistry::new(),
             router_state: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             rate_limiter: Arc::new(RateLimiter::new()),
@@ -2551,6 +2573,8 @@ mod tests {
             db,
             master_key: None,
             aigw_master_key: None,
+            key_generate_length: DEFAULT_KEY_TOKEN_LEN,
+            disable_custom_api_keys: false,
             provider_registry: ProviderRegistry::new(),
             router_state: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             rate_limiter: Arc::new(RateLimiter::new()),
@@ -2612,6 +2636,8 @@ mod tests {
             db,
             master_key: Some("sk-master-models".to_string()),
             aigw_master_key: None,
+            key_generate_length: DEFAULT_KEY_TOKEN_LEN,
+            disable_custom_api_keys: false,
             provider_registry: ProviderRegistry::new(),
             router_state: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             rate_limiter: Arc::new(RateLimiter::new()),
@@ -2717,6 +2743,8 @@ mod tests {
             db,
             master_key: None,
             aigw_master_key: None,
+            key_generate_length: DEFAULT_KEY_TOKEN_LEN,
+            disable_custom_api_keys: false,
             provider_registry: ProviderRegistry::new(),
             router_state: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             rate_limiter: Arc::new(RateLimiter::new()),
@@ -2766,6 +2794,8 @@ mod tests {
             db,
             master_key: Some("sk-master-test".to_string()),
             aigw_master_key: None,
+            key_generate_length: DEFAULT_KEY_TOKEN_LEN,
+            disable_custom_api_keys: false,
             provider_registry: ProviderRegistry::new(),
             router_state: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             rate_limiter: Arc::new(RateLimiter::new()),
@@ -3051,6 +3081,8 @@ mod tests {
             db: db.clone(),
             master_key: Some("sk-master-test".to_string()),
             aigw_master_key: None,
+            key_generate_length: DEFAULT_KEY_TOKEN_LEN,
+            disable_custom_api_keys: false,
             provider_registry: ProviderRegistry::new(),
             router_state: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             rate_limiter: Arc::new(RateLimiter::new()),

@@ -47,12 +47,12 @@ use aigw_core::engine::{Engine, EngineConfig};
 use aigw_core::provider::ProviderRegistry;
 use aigw_core::rate_limiter::RateLimiter;
 use aigw_core::resolver::ModelResolver;
-use aigw_core::router::{Router as AigwRouter, RouterConfig, RouterState};
+use aigw_core::router::{Router as AigwRouter, RouterState};
 use axum::extract::DefaultBodyLimit;
 use axum::http::HeaderName;
 use axum::{middleware, routing::get, Router};
 use clap::Parser;
-use routes::keys::{self, AppState, SharedState};
+use routes::keys::{self, AppState, SharedState, DEFAULT_KEY_TOKEN_LEN};
 use routes::{
     budget, chat, cors_layer, credentials, docs, embeddings, health, jobs, login, models, org,
     responses, router_settings, spend, team, user, v1_messages,
@@ -149,6 +149,22 @@ async fn main() -> anyhow::Result<()> {
         Err(_) => None,
     };
 
+    // Apply `config.environment_variables` before any consumer reads env vars
+    // (EnvFilter/RUST_LOG at init, ProviderRegistry::default_with_env, chat.rs
+    // fallback). Matches dotenvy semantics: only fills vars that are unset, so
+    // shell env always wins over the file.
+    if let Some(cfg) = config.as_ref() {
+        if let Some(env_vars) = cfg.environment_variables.as_ref() {
+            let set = aigw_core::config_loader::apply_environment_variables(env_vars);
+            if !set.is_empty() {
+                tracing::info!(
+                    injected = ?set,
+                    "Applied environment_variables from config.yaml (missing vars only)"
+                );
+            }
+        }
+    }
+
     // Extract OTEL config before initing subscriber
     let otel_config = config
         .as_ref()
@@ -171,10 +187,20 @@ async fn main() -> anyhow::Result<()> {
         .with(otel_layer)
         .init();
 
+    // Determine deployment mode: config.yaml `general_settings.deployment_mode`
+    // wins over the CLI/env default (litellm behavior — the mounted file is the
+    // deployment contract). Falls back to the clap value ("onprem").
+    let deployment_mode = config
+        .as_ref()
+        .and_then(|c| c.general_settings.as_ref())
+        .and_then(|gs| gs.deployment_mode.clone())
+        .filter(|m| !m.is_empty())
+        .unwrap_or_else(|| cli.deployment_mode.clone());
+
     tracing::info!(
         "aigw {} starting (mode: {}, bind: {}, otel: {})",
         VERSION_INFO,
-        cli.deployment_mode,
+        deployment_mode,
         cli.bind,
         if otel_active { "enabled" } else { "disabled" }
     );
@@ -275,7 +301,7 @@ async fn main() -> anyhow::Result<()> {
     let resolver = ModelResolver::new(
         (*db_arc).clone(),
         aigw_master_key.clone(),
-        cli.deployment_mode.clone(),
+        deployment_mode.clone(),
     );
 
     // Build body_archiver from parsed config (or default if not configured)
@@ -292,22 +318,75 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|c| c.budget_reset.clone())
         .unwrap_or_default();
 
+    // Resolve router config + key-generation settings from config.yaml
+    // general_settings / router_settings (Stage 116 static config support).
+    let router_settings = config.as_ref().and_then(|c| c.router_settings.clone());
+    let router_config = aigw_core::config_loader::build_router_config(&router_settings);
+    let key_generate_length = config
+        .as_ref()
+        .and_then(|c| c.general_settings.as_ref())
+        .and_then(|gs| gs.custom_key_generate_length)
+        .filter(|l| *l > 0)
+        .map(|l| l as usize)
+        .unwrap_or(DEFAULT_KEY_TOKEN_LEN);
+    let disable_custom_api_keys = config
+        .as_ref()
+        .and_then(|c| c.general_settings.as_ref())
+        .map(|gs| gs.disable_custom_api_keys)
+        .unwrap_or(false);
+
     let state: SharedState = Arc::new(AppState {
         db: (*db_arc).clone(),
         master_key: Some(master_key.clone()),
         aigw_master_key,
+        key_generate_length,
+        disable_custom_api_keys,
         metrics: Some(metrics),
         provider_registry,
-        router: AigwRouter::from_config(&RouterConfig::default()),
+        router: AigwRouter::from_config(&router_config),
         router_state,
         rate_limiter,
-        deployment_mode: cli.deployment_mode.clone(),
+        deployment_mode,
         started_at: std::time::Instant::now(),
         daily_spend_queue: Some(daily_spend_queue),
         resolver,
         otel_active,
         body_archiver: body_archiver_arc.clone(),
     });
+
+    // Seed `config.model_list` into proxy_models (idempotent; DB-first — rows
+    // that already exist are left untouched) and persist the initial
+    // `router_settings` row so GET /router/settings returns it before any PUT.
+    match aigw_core::config_loader::seed_models_from_config(
+        &db_arc,
+        &config
+            .as_ref()
+            .map(|c| c.model_list.clone())
+            .unwrap_or_default(),
+    )
+    .await
+    {
+        Ok(stats) => {
+            if stats.inserted > 0 || stats.skipped > 0 {
+                tracing::info!(
+                    inserted = stats.inserted,
+                    skipped = stats.skipped,
+                    "Seeded model_list from config.yaml into proxy_models"
+                );
+            }
+        }
+        Err(e) => tracing::warn!("Failed to seed model_list from config.yaml: {}", e),
+    }
+    let router_settings_json =
+        aigw_core::config_loader::router_settings_seed_json(&router_settings);
+    if router_settings_json != serde_json::json!({}) {
+        if let Err(e) = db_arc
+            .upsert_config("router_settings", &router_settings_json.to_string())
+            .await
+        {
+            tracing::warn!("Failed to persist router_settings seed: {}", e);
+        }
+    }
 
     // Start async job engine with body_archive and budget_reset workers
     // TD-005: the engine is given a CancellationToken so SIGTERM/Ctrl+C cancels

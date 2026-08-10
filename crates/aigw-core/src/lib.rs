@@ -22,6 +22,7 @@ pub mod auth;
 pub mod body_archive;
 pub mod budget;
 pub mod config;
+pub mod config_loader;
 pub mod crypto;
 pub mod daily_spend_queue;
 pub mod db;
@@ -44,7 +45,14 @@ pub mod tenant;
 // Re-export commonly used types
 pub use async_task::{AsyncTask, JobLogEntry, NewStep, StepOutput};
 pub use auth::{decode_jwt, encode_jwt, JwtClaims};
-pub use config::{AigwConfig, BudgetResetConfig, GeneralSettings, ModelInfo, RouterSettings};
+pub use config::{
+    AigwConfig, BudgetResetConfig, GeneralSettings, ModelEntry, ModelInfo, ModelParams,
+    RouterSettings,
+};
+pub use config_loader::{
+    apply_environment_variables, build_router_config, router_settings_seed_json,
+    seed_models_from_config, SeedStats,
+};
 pub use crypto::{
     decode_base64_type15, decrypt_json_fields, decrypt_litellm_value, encrypt_litellm_value,
     hash_token, rotate_json_fields,

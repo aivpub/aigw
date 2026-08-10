@@ -1413,7 +1413,7 @@ pub async fn messages_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::routes::keys::AppState;
+    use crate::routes::keys::{AppState, DEFAULT_KEY_TOKEN_LEN};
     use aigw_core::db::Database;
     use aigw_core::provider::ProviderRegistry;
     use aigw_core::rate_limiter::RateLimiter;
@@ -1433,6 +1433,8 @@ mod tests {
             db,
             master_key: Some("sk-master-v1msg".to_string()),
             aigw_master_key: None,
+            key_generate_length: DEFAULT_KEY_TOKEN_LEN,
+            disable_custom_api_keys: false,
             provider_registry: ProviderRegistry::new(),
             router_state: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             rate_limiter: Arc::new(RateLimiter::new()),

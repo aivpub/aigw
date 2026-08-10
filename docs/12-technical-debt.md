@@ -137,6 +137,23 @@
 - **Resolution**: 视使用量触发。
 - **Target Phase**: 无固定排期（health 探测候选 Phase 46）。
 
+### TD-013: config.yaml 剩余未接线配置块（litellm_settings / 热重载 / 实例级负载路由）
+
+- **Date**: 2026-08-10
+- **Priority**: P3
+- **Source**: Phase 46 Stage 116（ADR-031）——静态配置模型接入后收尾盘点
+- **Description**: Stage 116 接通 `model_list` / `router_settings` / `environment_variables` / `custom_key_generate_length` / `disable_custom_api_keys` / `deployment_mode`，以下 config 能力仍解析但未接线：
+
+| Sub-ID | 条目 | 优先级 | 描述 |
+|--------|------|--------|------|
+| TD-013a | `litellm_settings`（drop_params / request_timeout / set_verbose）无对应实现 | P3 | 解析为 `serde_json::Value` 但零消费。drop_params 需 chat handler 过滤上游拒绝参数、request_timeout 需 HTTP client 超时、set_verbose 需日志级别联动——均需对应实现。触发：litellm config 迁移用户反馈缺失字段不生效。 |
+| TD-013b | config.yaml 热重载 / `/router/settings` 请求时动态应用 | P3 | `PUT /router/settings` 只写 config 表（best-effort 日志"restart recommended"），Router 是 Clone 非 `Arc<Mutex<Router>>`，请求时不会读 config 表合并。触发：生产运维要求不改代码改路由配置即生效。 |
+| TD-013c | RouterStrategy 实例级负载路由未实现 | P3 | `FromStr` 已声明 `usage-based-routing-v2` / `latency-based-routing` 变体，`pick_deployment` 沿用共享 shuffle+cooldown 路径。触发：多实例部署需真实负载感知选择。 |
+
+- **Impact**: 非阻塞。静态配置主路径已通（config 驱动模型/环境/路由基础生效）；上述为 litellm 深度兼容与运维能力增强。
+- **Resolution**: 视使用量 / 运维诉求触发（TD-013b 需 `Arc<Mutex<Router>>` 改造）。
+- **Target Phase**: 无固定排期。
+
 ## Resolved Items
 
 ### TD-002: @real_api step bindings implemented (Resolved 2026-07-05)

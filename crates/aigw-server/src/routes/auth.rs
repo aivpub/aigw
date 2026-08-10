@@ -131,6 +131,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::routes::keys::DEFAULT_KEY_TOKEN_LEN;
     use aigw_core::db::Database;
     use aigw_core::models::VirtualKey;
     use aigw_core::provider::ProviderRegistry;
@@ -149,6 +150,8 @@ mod tests {
             db,
             master_key,
             aigw_master_key: None,
+            key_generate_length: DEFAULT_KEY_TOKEN_LEN,
+            disable_custom_api_keys: false,
             provider_registry: ProviderRegistry::new(),
             router_state: RouterState::default(),
             rate_limiter: Arc::new(RateLimiter::new()),

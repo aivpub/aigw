@@ -358,6 +358,7 @@ pub async fn login_check(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::routes::keys::DEFAULT_KEY_TOKEN_LEN;
     use aigw_core::db::Database;
     use aigw_core::provider::ProviderRegistry;
     use aigw_core::rate_limiter::RateLimiter;
@@ -383,6 +384,8 @@ mod tests {
             db,
             master_key: Some("sk-master-test".to_string()),
             aigw_master_key: None,
+            key_generate_length: DEFAULT_KEY_TOKEN_LEN,
+            disable_custom_api_keys: false,
             provider_registry: ProviderRegistry::new(),
             router_state: RouterState::default(),
             rate_limiter: Arc::new(RateLimiter::new()),

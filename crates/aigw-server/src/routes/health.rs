@@ -699,6 +699,7 @@ pub async fn health_metrics(
 mod tests {
     use super::*;
     use crate::routes::keys::AppState;
+    use crate::routes::keys::DEFAULT_KEY_TOKEN_LEN;
     use aigw_core::router::Router as AigwRouter;
     use axum::{
         body::Body,
@@ -766,6 +767,8 @@ mod tests {
             db,
             master_key: None,
             aigw_master_key: None,
+            key_generate_length: DEFAULT_KEY_TOKEN_LEN,
+            disable_custom_api_keys: false,
             provider_registry: Default::default(),
             router_state: std::sync::Arc::new(tokio::sync::Mutex::new(
                 std::collections::HashMap::new(),
@@ -887,6 +890,8 @@ mod tests {
             db,
             master_key: None,
             aigw_master_key: None,
+            key_generate_length: DEFAULT_KEY_TOKEN_LEN,
+            disable_custom_api_keys: false,
             provider_registry: Default::default(),
             router_state: std::sync::Arc::new(tokio::sync::Mutex::new(
                 std::collections::HashMap::new(),

@@ -9,6 +9,7 @@ use std::sync::{Arc, OnceLock};
 
 use super::common::make_request;
 use crate::TestWorld;
+use aigw_server::routes::keys::DEFAULT_KEY_TOKEN_LEN;
 
 /// Global shared state for model access BDD tests
 static GLOBAL_STATE: OnceLock<aigw_server::routes::keys::SharedState> = OnceLock::new();
@@ -27,6 +28,8 @@ async fn ensure_global_state() -> aigw_server::routes::keys::SharedState {
             db,
             master_key: Some("sk-master-test".to_string()),
             aigw_master_key: None,
+            key_generate_length: DEFAULT_KEY_TOKEN_LEN,
+            disable_custom_api_keys: false,
             provider_registry: aigw_core::provider::ProviderRegistry::new(),
             router_state: aigw_core::router::RouterState::default(),
             rate_limiter: Arc::new(aigw_core::rate_limiter::RateLimiter::new()),

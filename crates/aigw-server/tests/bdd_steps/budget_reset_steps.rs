@@ -377,12 +377,15 @@ async fn then_total_steps_gt(world: &mut TestWorld, min_steps: i64) {
 #[when(expr = "发送 GET admin budget-reset stats")]
 async fn when_get_budget_reset_stats(world: &mut TestWorld) {
     if !real_api_enabled() {
+        // Dynamic future timestamp — a hardcoded date goes stale and breaks the
+        // "next_tick_at 在未来" assertion as wall-clock advances.
+        let next_tick = (chrono::Utc::now() + Duration::from_secs(60)).to_rfc3339();
         set_skip_pass(
             world,
             200,
             serde_json::json!({
                 "tick_interval_sec": 60,
-                "next_tick_at": "2026-08-08T01:23:45Z",
+                "next_tick_at": next_tick,
                 "counts": { "key": { "ready": 1, "total": 1 } },
                 "ready_total": 1,
                 "preview": [ { "entity_type": "key", "alias": "stats-key" } ],

@@ -1376,6 +1376,7 @@ pub async fn global_spend_keys_rankings(
 mod tests {
     use super::*;
     use crate::routes::keys::AppState;
+    use crate::routes::keys::DEFAULT_KEY_TOKEN_LEN;
     use aigw_core::db::Database;
     use aigw_core::models::SpendLog;
     use aigw_core::provider::ProviderRegistry;
@@ -1400,6 +1401,8 @@ mod tests {
             db,
             master_key: Some("sk-master-test-123".to_string()),
             aigw_master_key: None,
+            key_generate_length: DEFAULT_KEY_TOKEN_LEN,
+            disable_custom_api_keys: false,
             provider_registry: ProviderRegistry::new(),
             router_state: RouterState::default(),
             rate_limiter: Arc::new(RateLimiter::new()),
@@ -1582,6 +1585,8 @@ mod tests {
             db,
             master_key: Some("sk-master-test-123".to_string()),
             aigw_master_key: None,
+            key_generate_length: DEFAULT_KEY_TOKEN_LEN,
+            disable_custom_api_keys: false,
             provider_registry: ProviderRegistry::new(),
             router_state: RouterState::default(),
             rate_limiter: Arc::new(RateLimiter::new()),
@@ -1637,6 +1642,8 @@ mod tests {
             db,
             master_key: Some("sk-master-test-123".to_string()),
             aigw_master_key: None,
+            key_generate_length: DEFAULT_KEY_TOKEN_LEN,
+            disable_custom_api_keys: false,
             provider_registry: ProviderRegistry::new(),
             router_state: RouterState::default(),
             rate_limiter: Arc::new(RateLimiter::new()),
@@ -1844,6 +1851,8 @@ mod tests {
             db,
             master_key: Some("sk-master-test-123".to_string()),
             aigw_master_key: None,
+            key_generate_length: DEFAULT_KEY_TOKEN_LEN,
+            disable_custom_api_keys: false,
             provider_registry: ProviderRegistry::new(),
             router_state: RouterState::default(),
             rate_limiter: Arc::new(RateLimiter::new()),
@@ -1941,6 +1950,8 @@ mod tests {
             db: db.clone(),
             master_key: Some("sk-master-test-123".to_string()),
             aigw_master_key: None,
+            key_generate_length: DEFAULT_KEY_TOKEN_LEN,
+            disable_custom_api_keys: false,
             provider_registry: ProviderRegistry::new(),
             router_state: RouterState::default(),
             rate_limiter: Arc::new(RateLimiter::new()),
@@ -2105,6 +2116,8 @@ mod tests {
             db,
             master_key: Some("sk-master-test-123".to_string()),
             aigw_master_key: None,
+            key_generate_length: DEFAULT_KEY_TOKEN_LEN,
+            disable_custom_api_keys: false,
             provider_registry: ProviderRegistry::new(),
             router_state: RouterState::default(),
             rate_limiter: Arc::new(RateLimiter::new()),
@@ -2224,6 +2237,8 @@ mod tests {
             db,
             master_key: Some("sk-master-test-123".to_string()),
             aigw_master_key: None,
+            key_generate_length: DEFAULT_KEY_TOKEN_LEN,
+            disable_custom_api_keys: false,
             provider_registry: ProviderRegistry::new(),
             router_state: RouterState::default(),
             rate_limiter: Arc::new(RateLimiter::new()),
@@ -2319,6 +2334,8 @@ mod tests {
             db,
             master_key: Some("sk-master-test-123".to_string()),
             aigw_master_key: None,
+            key_generate_length: DEFAULT_KEY_TOKEN_LEN,
+            disable_custom_api_keys: false,
             provider_registry: ProviderRegistry::new(),
             router_state: RouterState::default(),
             rate_limiter: Arc::new(RateLimiter::new()),

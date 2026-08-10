@@ -572,3 +572,25 @@
   - 验证：aigw-core 415（image_tokens 23 + resolver 12）+ aigw-server 140（calc_spend_modal 4）、fmt + lint green、playground.feature 57/57（含 HEIC 场景 × 3 viewports）。
   - **Phase 45 全交付（Stage 113-115）**：TD-003/005/008a/b/009a/b/010a/011b/c/012a/b 全部 Resolved；技术债清理收官。
   - 设计文档：`docs/stages/stage-115.md` + `docs/stages/stage-115-review-log.md`。
+
+## ADR-031: 静态配置模型接入（Phase 46，Stage 116）
+
+- **Date**: 2026-08-10
+- **Status**: Accepted（Phase 46 Stage 116 完成 ✅）
+- **Decision**: 让 `config.yaml` 的 `model_list` / `router_settings` / `environment_variables` 在启动时真正生效，并接线三个解析后零消费的 `general_settings` 字段。核心决策：
+  (1) **model_list seed 幂等（DB-first）**——`get_model_by_name` 查重，存在跳过、不存在 `insert_model`（`created_by: "config"`）；DB 永远是已存在模型的事实源，config 只补缺。
+  (2) **environment_variables 只填补缺失**——`std::env::var_os(name).is_none()` 才 `set_var`，同 dotenvy 语义，shell env 永远优先于 YAML。
+  (3) **router_settings 启动生效 + config 表 seed**——`build_router_config` 映射到 `RouterConfig` 替换 `::default()`，并持久化初始 `router_settings` 行供 `GET /router/settings`。
+  (4) **custom_key_generate_length / disable_custom_api_keys 接线**——`generate_key_token_with_len`（clamp 16-64）+ `/key/generate` 非 master 创建 gate。
+  (5) **RouterStrategy 声明式扩展**——`FromStr` 新增 `usage-based-routing-v2` / `latency-based-routing`，`pick_deployment` 沿用共享 shuffle+cooldown 路径（实例级负载跟踪留待后续）。
+- **Background**: 2026-08-09 env/config 清单审计发现 `config.yaml` 多个块被解析但从未接线（`model_list`/`router_settings`/`environment_variables` 死配置，`custom_key_generate_length`/`disable_custom_api_keys`/`deployment_mode` 零消费）。litellm 核心部署范式是挂载 `config.yaml` 即上线，aigw 静态配置路径断裂。
+- **Key decisions**:
+  - **不做 config 热重载 / 请求时动态 router 应用**：需 `Arc<Mutex<Router>>` 改造，超出启动生效范围；`/router/settings` 的 DB 值继续依赖重启生效（现状不变）。
+  - **`/v1/models` 空 model_info 补 `mode:"chat"`**：config-seeded 模型 `model_info: {}` 会被 serde skip 吞掉，补标注使其与 `/model/new` 注册模型在列表页一致。
+  - **`litellm_settings` 不接线**：drop_params/request_timeout/set_verbose 无对应实现，标注为未接线（不 dead-wire）。
+  - **`router_settings_seed_json` 复用 `RouterSettings` 序列化**：seed 行与文件字段一致（routing_strategy/allowed_fails/num_retries/cooldown_time/fallbacks）。
+- **Consequences**:
+  - Stage 116 交付：`aigw_core::config_loader`（seed/env/router 三原语 + 10 UT）、`keys.rs` 长度+gate（4 UT）、`main.rs` boot 接线、BDD ×2 + 修复 budget_reset next_tick flake。
+  - 验证：aigw-core 425 + aigw-server 144 UT、`task bdd` 254 scenarios（237 passed / 17 skipped，0 failed）、cargo check 无 warning。
+  - 剩余候选（后续 Stage）：`litellm_settings` 接线、config 热重载、实例级负载路由（UsageBased/Latency 变体决策）。
+  - 设计文档：`docs/stages/stage-116.md`。

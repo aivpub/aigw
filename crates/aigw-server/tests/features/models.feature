@@ -93,3 +93,18 @@ Feature: 模型管理 CRUD
     Then 响应状态码为 200
     And SpendLog 中最近一条记录的 call_type 为 "embedding"
 
+  # ── Stage 116: config.yaml model_list seed（静态配置模型接入）──
+
+  Scenario: config.yaml model_list seed 到 proxy_models 并在 /v1/models 展示
+    Given 通过 config_loader 从 model_list seed 模型 "seed-from-config"
+    When 发送 GET /v1/models 请求
+    Then 响应状态码为 200
+    And /v1/models 中模型 "seed-from-config" 的 model_info.mode 为 "chat"
+
+  Scenario: config.yaml model_list seed 幂等且不覆盖已有模型
+    Given 通过 config_loader 从 model_list seed 模型 "seed-idem-config"
+    And 通过 config_loader 从 model_list seed 模型 "seed-idem-config"
+    When 发送 GET /model/list
+    Then 响应状态码为 200
+    And 响应中的 data 包含 1 个模型
+
