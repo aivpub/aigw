@@ -208,6 +208,75 @@ fn deployment_provider_label(deployments: &[aigw_core::deployment::Deployment]) 
     }
 }
 
+/// Resolve the effective `max_parallel_requests` for a request by walking the
+/// entity hierarchy key → team → org budget → deployment, taking the most
+/// restrictive (lowest non-zero) cap. 0 / None everywhere → unlimited.
+///
+/// Master keys bypass entity caps but still honor the deployment-level cap.
+async fn resolve_effective_max_parallel(
+    state: &SharedState,
+    auth: &KeyIdentity,
+    deployment: &aigw_core::deployment::Deployment,
+) -> i32 {
+    // Deployment-level cap always applies (admin proxy to a rate-capped
+    // upstream should still be gated).
+    let deployment_cap = deployment
+        .raw_params
+        .get("max_parallel_requests")
+        .and_then(|v| v.as_i64())
+        .map(|x| x.min(i32::MAX as i64) as i32)
+        .filter(|&c| c > 0);
+
+    if auth.is_master_key {
+        return deployment_cap.unwrap_or(0);
+    }
+
+    let mut caps: Vec<i32> = Vec::new();
+    if let Some(k) = state
+        .db
+        .get_key_by_token(&auth.token_hash)
+        .await
+        .ok()
+        .flatten()
+    {
+        if let Some(v) = k.max_parallel_requests_i32() {
+            caps.push(v);
+        }
+        // Team-level cap (key.team_id).
+        if let Some(tid) = k.team_id.as_ref() {
+            if let Some(team) = state.db.get_team_by_id(tid).await.ok().flatten() {
+                if let Some(v) = team.max_parallel_requests_i32() {
+                    caps.push(v);
+                }
+                // Org-level cap via team.organization_id → budgets table.
+                if let Some(oid) = team.organization_id.as_ref() {
+                    if let Some(org) = state.db.get_organization_by_id(oid).await.ok().flatten() {
+                        // organization.budget_id is a plain String column.
+                        if !org.budget_id.is_empty() {
+                            if let Some(b) = state
+                                .db
+                                .get_budget_by_id(&org.budget_id)
+                                .await
+                                .ok()
+                                .flatten()
+                            {
+                                if let Some(v) = b.max_parallel_requests_i32() {
+                                    caps.push(v);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if let Some(v) = deployment_cap {
+        caps.push(v);
+    }
+    // Most restrictive wins; None → 0 (unlimited).
+    caps.into_iter().filter(|&c| c > 0).min().unwrap_or(0)
+}
+
 /// Look up a model by name in proxy_models, decrypt litellm_params if encrypted,
 /// and resolve credential references. Falls back to env vars if model not found.
 #[allow(dead_code)]
@@ -1125,23 +1194,16 @@ pub async fn chat_completions(
 
     // Stage 117 §3.4: max_parallel gate — hold a semaphore permit for the
     // upstream call so concurrent requests to the same deployment are capped
-    // at its `max_parallel_requests`. Permit releases when `permit` drops.
-    // The deployment's max_parallel comes from the proxy_models litellm_params
-    // (key/budget-level max_parallel is a Stage 117 documented follow-up).
-    let deployment_max_parallel = deployment
-        .raw_params
-        .get("max_parallel_requests")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(0)
-        .min(i32::MAX as i64) as i32;
-    let _max_parallel_permit = state
-        .router
-        .acquire_max_parallel(
-            &deployment.api_base,
-            &deployment.upstream_model,
-            deployment_max_parallel,
-        )
-        .await;
+    // at the effective `max_parallel_requests` (key → team → org budget →
+    // deployment, most restrictive wins; 0 = unlimited). Permit releases when
+    // `permit` drops (end of the upstream call scope).
+    let _max_parallel_permit = {
+        let mp = resolve_effective_max_parallel(&state, &auth, &deployment).await;
+        state
+            .router
+            .acquire_max_parallel(&deployment.api_base, &deployment.upstream_model, mp)
+            .await
+    };
 
     let mut upstream_req = client.post(&upstream_url).json(&upstream_body_val);
 
@@ -3618,5 +3680,120 @@ mod tests {
             "429 response must carry x-ratelimit-limit"
         );
         assert!(headers.contains_key("Retry-After"));
+    }
+
+    // ── Stage 117 follow-up: resolve_effective_max_parallel (key→team→budget→deployment) ──
+
+    /// Insert a VirtualKey with a max_parallel cap and return the raw token.
+    async fn insert_key_with_max_parallel(db: &Database, alias: &str, max_parallel: i32) -> String {
+        let raw = format!("sk-{}", alias);
+        let mut key = make_key(json!(["gpt-4-mock"]), None);
+        key.token = aigw_core::crypto::hash_token(&raw);
+        key.key_alias = Some(alias.to_string());
+        key.max_parallel_requests = Some(max_parallel.to_string());
+        db.insert_key(&key).await.expect("insert key");
+        raw
+    }
+
+    /// Build a Deployment whose raw_params carries a max_parallel_requests cap.
+    fn deployment_with_max_parallel(cap: i32) -> aigw_core::deployment::Deployment {
+        let mut d = aigw_core::deployment::Deployment {
+            api_base: "https://a.example/v1".into(),
+            api_key: Some("sk-x".into()),
+            upstream_model: "gpt-4".into(),
+            provider_type: aigw_core::deployment::ProviderType::OpenAICompatible,
+            input_cost_per_token: None,
+            output_cost_per_token: None,
+            cache_read_input_token_cost: None,
+            cache_creation_input_token_cost: None,
+            raw_params: json!({"max_parallel_requests": cap}),
+            model_id: None,
+            model_group: None,
+            custom_llm_provider: Some("openai".into()),
+            chat_template_compat: None,
+            modal_pricing: None,
+            weight: None,
+            rpm: None,
+            tpm: None,
+            priority: None,
+            fail_count: 0,
+            cooldown_until: None,
+            last_latency_ms: 0.0,
+        };
+        if cap <= 0 {
+            d.raw_params = json!({});
+        }
+        d
+    }
+
+    fn identity_for(raw: &str) -> KeyIdentity {
+        KeyIdentity {
+            token_hash: aigw_core::crypto::hash_token(raw),
+            key_alias: None,
+            user_id: None,
+            team_id: None,
+            organization_id: None,
+            is_master_key: false,
+            user_role: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_max_parallel_key_cap_most_restrictive() {
+        let db = Database::init("sqlite::memory:").await.unwrap();
+        let state = make_test_state(db.clone());
+        let raw = insert_key_with_max_parallel(&db, "mp-key", 3).await;
+        // Deployment cap 10, key cap 3 → key (more restrictive) wins.
+        let dep = deployment_with_max_parallel(10);
+        let mp = resolve_effective_max_parallel(&state, &identity_for(&raw), &dep).await;
+        assert_eq!(mp, 3);
+    }
+
+    #[tokio::test]
+    async fn test_max_parallel_deployment_only_when_no_key_cap() {
+        let db = Database::init("sqlite::memory:").await.unwrap();
+        let state = make_test_state(db.clone());
+        let raw = "sk-mp-none";
+        let token_hash = aigw_core::crypto::hash_token(raw);
+        let mut key = make_key(json!(["gpt-4-mock"]), None);
+        key.token = token_hash;
+        db.insert_key(&key).await.expect("insert key");
+        // No key cap → deployment cap applies.
+        let dep = deployment_with_max_parallel(7);
+        let mp = resolve_effective_max_parallel(&state, &identity_for(raw), &dep).await;
+        assert_eq!(mp, 7);
+    }
+
+    #[tokio::test]
+    async fn test_max_parallel_unlimited_when_no_caps() {
+        let db = Database::init("sqlite::memory:").await.unwrap();
+        let state = make_test_state(db.clone());
+        let raw = "sk-mp-unlimited";
+        let token_hash = aigw_core::crypto::hash_token(raw);
+        let mut key = make_key(json!(["gpt-4-mock"]), None);
+        key.token = token_hash;
+        db.insert_key(&key).await.expect("insert key");
+        // No caps anywhere → unlimited (0).
+        let dep = deployment_with_max_parallel(0);
+        let mp = resolve_effective_max_parallel(&state, &identity_for(raw), &dep).await;
+        assert_eq!(mp, 0);
+    }
+
+    #[tokio::test]
+    async fn test_max_parallel_master_key_honors_deployment_only() {
+        let db = Database::init("sqlite::memory:").await.unwrap();
+        let state = make_test_state(db.clone());
+        let raw = "sk-mp-master";
+        let token_hash = aigw_core::crypto::hash_token(raw);
+        let mut key = make_key(json!(["gpt-4-mock"]), None);
+        key.token = token_hash;
+        key.max_parallel_requests = Some("2".to_string());
+        db.insert_key(&key).await.expect("insert key");
+        let dep = deployment_with_max_parallel(9);
+        let mut identity = identity_for(raw);
+        identity.is_master_key = true;
+        // Master key ignores the key-level cap (2), applies deployment cap (9).
+        let mp = resolve_effective_max_parallel(&state, &identity, &dep).await;
+        assert_eq!(mp, 9);
     }
 }
