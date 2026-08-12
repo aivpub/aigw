@@ -644,6 +644,13 @@ impl StreamAdapter for AnthropicToOpenAIStream {
                 // Process tool_calls BEFORE text content — DeepSeek thinking models
                 // emit reasoning_content (text) and tool_calls in the same chunk;
                 // tool_calls must take priority to create the correct block type.
+                //
+                // Stage 120: tool_calls 分支必须在同一 chunk 内 emit `content_block_start`
+                // 与 `input_json_delta` 两个事件.早期 early-return 会丢掉与 id 同帧的
+                // arguments 首帧(tokenhub GLM-5.2 首帧 `id + "{\""` 触发 bug),导致下游
+                // Claude Code 累积后的 partial JSON 缺开头 `{"` → `Invalid tool parameters`.
+                // 修复:累积到 local buffer,循环结束统一返回.
+                let mut tool_out: Vec<u8> = Vec::new();
                 if let Some(ref tool_calls) = choice.delta.tool_calls {
                     for tc in tool_calls {
                         if let Some(ref id) = tc.id {
@@ -655,7 +662,7 @@ impl StreamAdapter for AnthropicToOpenAIStream {
                                 });
                                 let idx = self.current_block_index;
                                 self.current_block_index += 1;
-                                return self.emit_event(&ClaudeStreamEvent {
+                                if let Some(ev) = self.emit_event(&ClaudeStreamEvent {
                                     event_type: "content_block_start".to_string(),
                                     index: Some(idx),
                                     delta: None,
@@ -674,11 +681,13 @@ impl StreamAdapter for AnthropicToOpenAIStream {
                                     }),
                                     message: None,
                                     usage: None,
-                                });
+                                }) {
+                                    tool_out.extend_from_slice(&ev);
+                                }
                             }
                         }
                         if !tc.function.arguments.is_empty() {
-                            return self.emit_event(&ClaudeStreamEvent {
+                            if let Some(ev) = self.emit_event(&ClaudeStreamEvent {
                                 event_type: "content_block_delta".to_string(),
                                 index: Some(self.current_block_index - 1),
                                 delta: Some(ClaudeDelta {
@@ -689,7 +698,9 @@ impl StreamAdapter for AnthropicToOpenAIStream {
                                 content_block: None,
                                 message: None,
                                 usage: None,
-                            });
+                            }) {
+                                tool_out.extend_from_slice(&ev);
+                            }
                         }
                     }
                 }
@@ -701,7 +712,7 @@ impl StreamAdapter for AnthropicToOpenAIStream {
                         "length" => Some("max_tokens".to_string()),
                         s => Some(s.to_string()),
                     };
-                    return self.emit_event(&ClaudeStreamEvent {
+                    if let Some(ev) = self.emit_event(&ClaudeStreamEvent {
                         event_type: "message_delta".to_string(),
                         index: None,
                         delta: Some(ClaudeDelta {
@@ -712,7 +723,13 @@ impl StreamAdapter for AnthropicToOpenAIStream {
                         content_block: None,
                         message: None,
                         usage: None,
-                    });
+                    }) {
+                        tool_out.extend_from_slice(&ev);
+                    }
+                }
+
+                if !tool_out.is_empty() {
+                    return Some(tool_out);
                 }
             }
         }
@@ -1780,7 +1797,12 @@ impl StreamAdapter for OpenAIToAnthropicStream {
                 }
 
                 // Tool calls processed BEFORE text — same reasoning as AnthropicToOpenAIStream
+                // Tool calls processed BEFORE text — same reasoning as AnthropicToOpenAIStream
                 // (DeepSeek thinking models emit both in the same chunk)
+                //
+                // Stage 120: 对称修复.同一 chunk 内 emit `content_block_start`
+                // 与 `input_json_delta` 两个事件,避免首帧 arguments 丢帧.
+                let mut tool_out: Vec<u8> = Vec::new();
                 if let Some(ref tool_calls) = choice.delta.tool_calls {
                     for tc in tool_calls {
                         if let Some(ref id) = tc.id {
@@ -1792,7 +1814,7 @@ impl StreamAdapter for OpenAIToAnthropicStream {
                                 });
                                 let idx = self.current_block_index;
                                 self.current_block_index += 1;
-                                return self.emit_event(&ClaudeStreamEvent {
+                                if let Some(ev) = self.emit_event(&ClaudeStreamEvent {
                                     event_type: "content_block_start".to_string(),
                                     index: Some(idx),
                                     delta: None,
@@ -1811,11 +1833,13 @@ impl StreamAdapter for OpenAIToAnthropicStream {
                                     }),
                                     message: None,
                                     usage: None,
-                                });
+                                }) {
+                                    tool_out.extend_from_slice(&ev);
+                                }
                             }
                         }
                         if !tc.function.arguments.is_empty() {
-                            return self.emit_event(&ClaudeStreamEvent {
+                            if let Some(ev) = self.emit_event(&ClaudeStreamEvent {
                                 event_type: "content_block_delta".to_string(),
                                 index: Some((self.current_block_index - 1).max(0)),
                                 delta: Some(ClaudeDelta {
@@ -1826,9 +1850,14 @@ impl StreamAdapter for OpenAIToAnthropicStream {
                                 content_block: None,
                                 message: None,
                                 usage: None,
-                            });
+                            }) {
+                                tool_out.extend_from_slice(&ev);
+                            }
                         }
                     }
+                }
+                if !tool_out.is_empty() {
+                    return Some(tool_out);
                 }
 
                 // Text content
@@ -3741,6 +3770,130 @@ mod tests {
         assert!(r1.is_some(), "first finish should return events");
         let r2 = stream.finish();
         assert!(r2.is_none(), "second finish should be idempotent (None)");
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // Stage 120: GLM5 首帧 tool_use id + arguments 同帧丢帧回归
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    /// Stage 120 — AnthropicToOpenAIStream: 首帧同时含 tool_call id 和 arguments="{\""
+    /// (tokenhub GLM-5.2 逐 token 增量模式的实际表现).
+    /// 修复前: emit content_block_start 后 early-return, 丢弃 arguments="{\"".
+    /// 修复后: 同帧必须返回 content_block_start + input_json_delta 两个事件.
+    #[test]
+    fn test_stage120_glm5_first_chunk_id_and_args() {
+        let mut stream = AnthropicToOpenAIStream::new();
+        // 先送 assistant role 头, 触发 message_start
+        let _ = stream.next(
+            b"data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"glm-5\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"}}]}"
+        );
+        // 首帧: id + arguments="{\"" 同帧(GLM-5.2 tokenhub 行为)
+        let result = stream.next(
+            b"data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"glm-5\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_glm5\",\"type\":\"function\",\"function\":{\"name\":\"Bash\",\"arguments\":\"{\\\"\"}}]}}]}"
+        );
+        assert!(
+            result.is_some(),
+            "first tool_call chunk must produce SSE output"
+        );
+        let buf = result.unwrap();
+        let s = String::from_utf8_lossy(&buf);
+        assert!(
+            s.contains("event: content_block_start"),
+            "expected content_block_start, got: {}",
+            s
+        );
+        assert!(
+            s.contains("\"type\":\"tool_use\""),
+            "expected tool_use block, got: {}",
+            s
+        );
+        assert!(s.contains("call_glm5"), "expected tool_call id, got: {}", s);
+        assert!(
+            s.contains("event: content_block_delta"),
+            "expected content_block_delta with input_json_delta in same chunk, got: {}",
+            s
+        );
+        assert!(
+            s.contains("\"type\":\"input_json_delta\""),
+            "expected input_json_delta, got: {}",
+            s
+        );
+        assert!(
+            s.contains("\"partial_json\":\"{\\\"\""),
+            "expected partial_json '{{\"' NOT dropped, got: {}",
+            s
+        );
+    }
+
+    /// Stage 120 — OpenAIToAnthropicStream: 对称场景.
+    /// 修复前同一 early-return bug; 修复后同帧必须 emit content_block_start + input_json_delta.
+    #[test]
+    fn test_stage120_glm5_reverse_first_chunk_id_and_args() {
+        let mut stream = OpenAIToAnthropicStream::new();
+        // Start
+        let _ = stream.next(
+            b"data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"glm-5\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"}}]}"
+        );
+        // First tool_call chunk with id + non-empty arguments
+        let result = stream.next(
+            b"data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"glm-5\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_r\",\"type\":\"function\",\"function\":{\"name\":\"Bash\",\"arguments\":\"{\\\"\"}}]}}]}"
+        );
+        assert!(
+            result.is_some(),
+            "reverse first chunk must produce SSE output"
+        );
+        let buf = result.unwrap();
+        let s = String::from_utf8_lossy(&buf);
+        assert!(
+            s.contains("event: content_block_start"),
+            "expected content_block_start, got: {}",
+            s
+        );
+        assert!(s.contains("call_r"), "expected id call_r, got: {}", s);
+        assert!(
+            s.contains("event: content_block_delta"),
+            "expected content_block_delta same chunk, got: {}",
+            s
+        );
+        assert!(
+            s.contains("\"partial_json\":\"{\\\"\""),
+            "expected partial_json '{{\"' NOT dropped, got: {}",
+            s
+        );
+    }
+
+    /// Stage 120 — 后续多个纯 arguments 增量帧顺序透传, 无遗漏.
+    /// 覆盖 GLM-5.2 后续逐 token 增量场景, 确认修复不影响后续帧语义.
+    #[test]
+    fn test_stage120_multiple_arg_frags_accumulate() {
+        let mut stream = AnthropicToOpenAIStream::new();
+        let _ = stream.next(
+            b"data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"glm-5\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"}}]}"
+        );
+        // 首帧带 id, 空 arguments (MAAS 行为), 只 emit content_block_start
+        let _ = stream.next(
+            b"data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"glm-5\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_a\",\"type\":\"function\",\"function\":{\"name\":\"Bash\",\"arguments\":\"\"}}]}}]}"
+        );
+        // 后续三个纯 arguments 增量帧 — 每帧独立 emit
+        let r1 = stream.next(
+            b"data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"glm-5\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"\"}}]}}]}"
+        );
+        let r2 = stream.next(
+            b"data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"glm-5\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"cmd\"}}]}}]}"
+        );
+        let r3 = stream.next(
+            b"data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"glm-5\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\":\\\"ls\\\"}\"}}]}}]}"
+        );
+        for (i, r) in [&r1, &r2, &r3].iter().enumerate() {
+            assert!(r.is_some(), "arg frag {} must emit event", i);
+            let s = String::from_utf8_lossy(r.as_ref().unwrap());
+            assert!(
+                s.contains("\"type\":\"input_json_delta\""),
+                "arg frag {} expected input_json_delta, got: {}",
+                i,
+                s
+            );
+        }
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

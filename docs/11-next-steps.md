@@ -1,7 +1,21 @@
 # aigw -- 下一步行动
 
-**上次更新**: 2026-08-10
-**当前阶段**: **Phase 47 ✅ 完成（Stage 117-119，A 类接线 + exact-match 缓存，40h）**；全部交付（117-119 ✅）
+**上次更新**: 2026-08-12
+**当前阶段**: **Phase 48 ✅ Stage 120（GLM5 首帧 tool_use 丢帧修复）**；Phase 47 全部交付
+
+---
+
+## 当前状态：Phase 48 Stage 120 ✅（流式 tool_use 精度修复）
+
+**2026-08-12（Stage 120 ✅）**: 修复 aigw 转发 GLM5（tokenhub 上游）到 Claude Code 出现 `Invalid tool parameters` / `__unparsedToolInput` 的问题。根因**订正**：不是 `partial_json` 累积语义差异（Anthropic 官方规范里 partial_json 就是纯增量碎片），而是 `AnthropicToOpenAIStream::next` 与 `OpenAIToAnthropicStream::next` 的 tool_calls 分支 early-return **丢掉与首帧 `id` 同帧的 `arguments="{\""`**。
+
+| Stage | 交付 |
+|-------|------|
+| **120** | `crates/aigw-core/src/adapter.rs`：`AnthropicToOpenAIStream::next` + `OpenAIToAnthropicStream::next` tool_calls 分支重构（early-return → local buffer 累积后统一返回,共 ~60 行);3 个新 UT（`test_stage120_glm5_first_chunk_id_and_args` / `test_stage120_glm5_reverse_first_chunk_id_and_args` / `test_stage120_multiple_arg_frags_accumulate`）；`docs/16-glm-stream-delta-analysis.md` 五/六节订正；`docs/stages/stage-120.md` |
+
+**基线（Stage 120 后）**: aigw-core UT 458（+3 Stage 120 = 455 → 458）、mock BDD 246 场景（233 pass / 13 @skip / 0 fail）保持、`task fmt` + `task lint` 全绿。
+
+**收益**: tokenhub GLM-5.2（逐 token 增量首帧 `id + "{\""`)、MAAS GLM-5（词组增量首帧空 arguments）、DeepSeek/OpenAI 全上游流式 tool_use 首帧不再丢帧;下游 Claude Code 累积得到的 partial JSON 完整合法。
 
 ---
 
