@@ -67,6 +67,10 @@ pub struct UpdateModelBody {
     pub litellm_params: Option<Value>,
     #[serde(default)]
     pub model_info: Option<Value>,
+    /// Stage 121: independent enable/disable switch. When omitted, existing
+    /// value is preserved (so callers that update only pricing don't toggle).
+    #[serde(default)]
+    pub enabled: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -79,6 +83,8 @@ pub struct ModelResponse {
     pub created_by: Option<String>,
     pub updated_at: String,
     pub updated_by: Option<String>,
+    /// Stage 121: independent enable/disable switch, exposed to admin UI.
+    pub enabled: bool,
 }
 
 impl ModelResponse {
@@ -97,6 +103,7 @@ impl ModelResponse {
             created_by: m.created_by,
             updated_at: m.updated_at,
             updated_by: m.updated_by,
+            enabled: m.enabled,
         }
     }
 
@@ -163,6 +170,7 @@ pub async fn model_new(
         created_by: None,
         updated_at: now,
         updated_by: None,
+        enabled: true,
     };
 
     state.db.insert_model(&model).await.map_err(|e| {
@@ -293,8 +301,14 @@ pub async fn model_update(
     }
     if let Some(ref info) = body.model_info {
         // Deep-merge model_info: only update fields explicitly provided so
-        // that "mode" (active/inactive) is preserved when editing pricing.
+        // that existing business-category fields (e.g. "mode": "embed") are
+        // preserved when editing pricing. Note: `enabled` is now a separate
+        // top-level column (Stage 121) — not part of model_info anymore.
         merge_json(&mut model.model_info, info);
+    }
+    if let Some(enabled) = body.enabled {
+        // Stage 121: independent enable/disable switch.
+        model.enabled = enabled;
     }
     model.updated_at = chrono::Utc::now().to_rfc3339();
 

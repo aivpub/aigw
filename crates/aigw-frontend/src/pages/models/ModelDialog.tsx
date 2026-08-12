@@ -26,9 +26,9 @@ import { Plus } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import type { ModelItem } from "./types";
 
-function isActive(info: Record<string, unknown>): boolean {
-  const mode = info.mode;
-  return mode !== "inactive" && mode !== "disabled";
+function isActive(model: ModelItem): boolean {
+  // Stage 121: independent `enabled` field is the source of truth.
+  return model.enabled !== false;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -121,7 +121,7 @@ function populateForm(model: ModelItem): ModelFormData {
     cache_create_price_per_million:
       rawCacheCreate != null ? String(rawCacheCreate * 1_000_000) : "",
     chat_template_compat: (info.chat_template_compat as string) || "",
-    status: isActive(info) ? "active" : "inactive",
+    status: isActive(model) ? "active" : "inactive",
   };
 }
 

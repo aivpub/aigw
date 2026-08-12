@@ -34,6 +34,7 @@ async fn given_model_in_db(world: &mut TestWorld, name: String) {
         created_by: Some("test".to_string()),
         updated_at: chrono::Utc::now().to_rfc3339(),
         updated_by: Some("test".to_string()),
+        enabled: true,
     };
     state.db.insert_model(&model).await.expect("insert model");
 }

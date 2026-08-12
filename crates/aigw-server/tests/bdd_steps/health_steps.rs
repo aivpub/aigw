@@ -101,6 +101,7 @@ async fn given_openai_model_points_to_health_mock(world: &mut TestWorld, name: S
         created_by: Some("test".to_string()),
         updated_at: chrono::Utc::now().to_rfc3339(),
         updated_by: Some("test".to_string()),
+        enabled: true,
     };
     state.db.insert_model(&model).await.expect("insert model");
     world
@@ -135,6 +136,7 @@ async fn given_anthropic_model_points_to_health_mock(world: &mut TestWorld, name
         created_by: Some("test".to_string()),
         updated_at: chrono::Utc::now().to_rfc3339(),
         updated_by: Some("test".to_string()),
+        enabled: true,
     };
     state.db.insert_model(&model).await.expect("insert model");
     world
@@ -183,6 +185,7 @@ async fn given_embed_model_points_to_health_mock(world: &mut TestWorld, name: St
         created_by: Some("test".to_string()),
         updated_at: chrono::Utc::now().to_rfc3339(),
         updated_by: Some("test".to_string()),
+        enabled: true,
     };
     state.db.insert_model(&model).await.expect("insert model");
     world
@@ -477,6 +480,7 @@ async fn given_model_with_health_check(world: &mut TestWorld, model_name: String
         created_by: Some("test".to_string()),
         updated_at: chrono::Utc::now().to_rfc3339(),
         updated_by: Some("test".to_string()),
+        enabled: true,
     };
     state.db.insert_model(&model).await.expect("insert model");
     // Insert health_check row

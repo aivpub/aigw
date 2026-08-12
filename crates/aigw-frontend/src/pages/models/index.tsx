@@ -64,9 +64,11 @@ function extractModelType(params: Record<string, unknown>): string {
   return "—";
 }
 
-function isActive(info: Record<string, unknown>): boolean {
-  const mode = info.mode;
-  return mode !== "inactive" && mode !== "disabled";
+function isActive(model: ModelItem): boolean {
+  // Stage 121: independent `enabled` field is the source of truth.
+  // `model_info.mode` is business category ("embed"/"image"), not on/off.
+  // Legacy rows may still have `mode: "inactive"` — ignored here.
+  return model.enabled !== false;
 }
 
 function renderJsonValue(value: unknown): ReactNode {
@@ -504,7 +506,7 @@ export function ModelsPage() {
                             </TableRow>
                           ))
                         : filteredModels.map((model) => {
-                            const active = isActive(model.model_info);
+                            const active = isActive(model);
                             const provider = extractProvider(
                               model.litellm_params,
                             );
@@ -548,12 +550,7 @@ export function ModelsPage() {
                                           try {
                                             await apiPut("/model/update", {
                                               model_id: model.model_id,
-                                              model_info: {
-                                                ...model.model_info,
-                                                mode: checked
-                                                  ? undefined
-                                                  : "inactive",
-                                              },
+                                              enabled: checked,
                                             });
                                             queryClient.invalidateQueries({
                                               queryKey: ["proxy-models"],
@@ -777,7 +774,7 @@ export function ModelsPage() {
                         </Card>
                       ))
                     : filteredModels.map((model) => {
-                        const active = isActive(model.model_info);
+                        const active = isActive(model);
                         const provider = extractProvider(model.litellm_params);
                         const upstream = extractModelType(model.litellm_params);
                         const cost = extractCost(model.model_info);

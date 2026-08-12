@@ -1,11 +1,25 @@
 # aigw -- 下一步行动
 
-**上次更新**: 2026-08-12
-**当前阶段**: **Phase 48 ✅ Stage 120（GLM5 首帧 tool_use 丢帧修复）**；Phase 47 全部交付
+**上次更新**: 2026-08-13
+**当前阶段**: **Phase 49 ✅ Stage 121（上游模型停用功能接线）**；Phase 48 ✅ Stage 120（GLM5 流式 tool_use 首帧修复）；Phase 47 全部交付
 
 ---
 
-## 当前状态：Phase 48 Stage 120 ✅（流式 tool_use 精度修复）
+## 当前状态：Phase 49 Stage 121 ✅（上游模型停用功能接线）
+
+**2026-08-13（Stage 121 ✅）**: 修复"上游模型停用功能完全无效"缺陷。前端 Switch 之前只写 `model_info.mode="inactive"` 到 DB，后端**零处消费**该字段（DB SQL 只过 model_name / Resolver 不看 mode / Deployment 结构无 disabled 字段 / Router 只按 cooldown 过滤）。同一 `model_info.mode` 还兼载业务类别 "embed"/"image"，语义污染。**方案 B 落地**：独立 `enabled: bool` 列。
+
+| Stage | 交付 |
+|-------|------|
+| **121** | Migration 026 三端 `ALTER TABLE proxy_models/deleted_models ADD COLUMN enabled` (BOOLEAN/INTEGER/TINYINT DEFAULT TRUE)；`ProxyModel` + `DeletedModel` + `UpdateModelRequest` + `ModelResponse` 加 `enabled` 字段；3 端 SQL 全部加 `enabled` 列，`LIST_MODELS_BY_NAME` 追加 `AND enabled=TRUE`；`ModelResolver::resolve` 加 `.filter(|m| m.enabled)` 防御式兜底；`/model/update` 读 `body.enabled`；前端 `ModelItem` 加 `enabled`、`isActive` 迁到 `model.enabled`、Switch onChange 调 `{enabled}` 而非 `{model_info.mode}`；+3 UT（resolver 跳过 disabled + 同 name 两 row 只返 enabled + db 层 list_models_by_name 过滤） |
+
+**基线（Stage 121 后）**: aigw-core UT **458**（Stage 120 → 455 + Stage 121 → 458）、mock BDD 246 保持基线、`task test/fmt/lint/build/fe-lint` 全绿。设计文档：`docs/stages/stage-121.md`；根因调研：`docs/research/2026-08-13-model-disable-audit.md`。
+
+**边界（不做的事）**: 不清理历史 `model_info.mode` 里的 "inactive"/"disabled" 值（`isActive` 现只看 enabled，历史值惰性容忍）；不引入 `status enum` 状态机（方案 C，长期路线）。
+
+---
+
+## Phase 48 Stage 120 ✅（流式 tool_use 精度修复）
 
 **2026-08-12（Stage 120 ✅）**: 修复 aigw 转发 GLM5（tokenhub 上游）到 Claude Code 出现 `Invalid tool parameters` / `__unparsedToolInput` 的问题。根因**订正**：不是 `partial_json` 累积语义差异（Anthropic 官方规范里 partial_json 就是纯增量碎片），而是 `AnthropicToOpenAIStream::next` 与 `OpenAIToAnthropicStream::next` 的 tool_calls 分支 early-return **丢掉与首帧 `id` 同帧的 `arguments="{\""`**。
 

@@ -49,6 +49,11 @@ impl ModelResolver {
             )
         })?;
 
+        // Stage 121: defense-in-depth filter — DB already restricts to
+        // enabled=TRUE, but if a future backend forgets the WHERE clause
+        // or a stale/mock row surfaces, we skip disabled rows here too.
+        let models: Vec<_> = models.into_iter().filter(|m| m.enabled).collect();
+
         if !models.is_empty() {
             let mut deployments = Vec::new();
             for m in models {
@@ -482,6 +487,7 @@ mod tests {
             created_by: None,
             updated_at: chrono::Utc::now().to_rfc3339(),
             updated_by: None,
+            enabled: true,
         };
         db.insert_model(&model).await.expect("insert model");
     }
@@ -719,5 +725,87 @@ mod tests {
         let resolver = make_resolver(db, None).await;
         let deployments = resolver.resolve("gpt-4").await.unwrap();
         assert!(deployments[0].modal_pricing.is_none());
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // Stage 121: enabled=false must be filtered out at resolve time
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    /// Helper: insert a model with an explicit `enabled` flag.
+    async fn insert_model_with_enabled(
+        db: &Database,
+        model_name: &str,
+        litellm_params: Value,
+        enabled: bool,
+    ) {
+        let model = ProxyModel {
+            model_id: uuid::Uuid::new_v4().to_string(),
+            model_name: model_name.to_string(),
+            litellm_params,
+            model_info: json!({}),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            created_by: None,
+            updated_at: chrono::Utc::now().to_rfc3339(),
+            updated_by: None,
+            enabled,
+        };
+        db.insert_model(&model).await.expect("insert model");
+    }
+
+    /// Stage 121 — a lone disabled model must be treated as if it didn't exist.
+    /// The resolver should fall through to env-var fallback (which is absent in
+    /// this test) and return BAD_REQUEST "model_not_found".
+    #[tokio::test]
+    async fn test_stage121_resolve_skips_disabled_model() {
+        let db = Database::init("sqlite::memory:").await.unwrap();
+        insert_model_with_enabled(
+            &db,
+            "gpt-4-disabled",
+            json!({"model": "gpt-4", "api_base": "https://api.openai.com/v1", "api_key": "sk-x", "custom_llm_provider": "openai"}),
+            false,
+        )
+        .await;
+
+        let resolver = make_resolver(db, None).await;
+        let result = resolver.resolve("gpt-4-disabled").await;
+        assert!(result.is_err(), "disabled model must not resolve");
+        let (status, body) = result.unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(
+            body["error"]["code"].as_str(),
+            Some("model_not_found"),
+            "expected model_not_found, got: {:?}",
+            body.0
+        );
+    }
+
+    /// Stage 121 — when the same model_name has two rows (one enabled, one
+    /// disabled), the resolver must return exactly the enabled one.
+    #[tokio::test]
+    async fn test_stage121_resolve_returns_enabled_only() {
+        let db = Database::init("sqlite::memory:").await.unwrap();
+        insert_model_with_enabled(
+            &db,
+            "gpt-4",
+            json!({"model": "gpt-4", "api_base": "https://api.openai.com/v1", "api_key": "sk-enabled", "custom_llm_provider": "openai"}),
+            true,
+        )
+        .await;
+        insert_model_with_enabled(
+            &db,
+            "gpt-4",
+            json!({"model": "gpt-4", "api_base": "https://api.disabled.example.com", "api_key": "sk-disabled", "custom_llm_provider": "openai"}),
+            false,
+        )
+        .await;
+
+        let resolver = make_resolver(db, None).await;
+        let deployments = resolver.resolve("gpt-4").await.unwrap();
+        assert_eq!(deployments.len(), 1, "only 1 enabled deployment expected");
+        assert_eq!(
+            deployments[0].api_key.as_deref(),
+            Some("sk-enabled"),
+            "enabled row should win"
+        );
     }
 }

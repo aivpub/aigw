@@ -4411,42 +4411,42 @@ pub trait ProxyModelStore {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 const INSERT_MODEL_SQLITE: &str = r#"
-INSERT INTO proxy_models (model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO proxy_models (model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, enabled)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 "#;
 
 const GET_MODEL_SQLITE: &str = r#"
-SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by
+SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, enabled
 FROM proxy_models WHERE model_id = ?
 "#;
 
 const GET_MODEL_BY_NAME_SQLITE: &str = r#"
-SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by
+SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, enabled
 FROM proxy_models WHERE model_name = ?
 "#;
 
 const LIST_MODELS_BY_NAME_SQLITE: &str = r#"
-SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by
-FROM proxy_models WHERE model_name = ?
+SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, enabled
+FROM proxy_models WHERE model_name = ? AND enabled = 1
 "#;
 
 const LIST_MODELS_SQLITE: &str = r#"
-SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by
+SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, enabled
 FROM proxy_models ORDER BY model_name
 "#;
 
 const UPDATE_MODEL_SQLITE: &str = r#"
-UPDATE proxy_models SET model_name = ?, litellm_params = ?, model_info = ?, updated_at = ?, updated_by = ?
+UPDATE proxy_models SET model_name = ?, litellm_params = ?, model_info = ?, updated_at = ?, updated_by = ?, enabled = ?
 WHERE model_id = ?
 "#;
 
 const INSERT_DELETED_MODEL_SQLITE: &str = r#"
-INSERT INTO deleted_models (model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO deleted_models (model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, enabled)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 "#;
 
 const LIST_DELETED_MODELS_SQLITE: &str = r#"
-SELECT id, model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, deleted_at
+SELECT id, model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, deleted_at, enabled
 FROM deleted_models ORDER BY deleted_at DESC
 "#;
 
@@ -4462,6 +4462,7 @@ impl ProxyModelStore for SqlitePool {
             .bind(&m.created_by)
             .bind(&m.updated_at)
             .bind(&m.updated_by)
+            .bind(m.enabled)
             .execute(self)
             .await?;
         Ok(())
@@ -4505,6 +4506,7 @@ impl ProxyModelStore for SqlitePool {
             .bind(&m.model_info)
             .bind(&m.updated_at)
             .bind(&m.updated_by)
+            .bind(m.enabled)
             .bind(&m.model_id)
             .execute(self)
             .await?;
@@ -4524,6 +4526,7 @@ impl ProxyModelStore for SqlitePool {
                 .bind(&model.created_by)
                 .bind(&model.updated_at)
                 .bind(&model.updated_by)
+                .bind(model.enabled)
                 .execute(self)
                 .await?;
         }
@@ -4547,6 +4550,7 @@ impl ProxyModelStore for SqlitePool {
             .bind(&m.created_by)
             .bind(&m.updated_at)
             .bind(&m.updated_by)
+            .bind(m.enabled)
             .execute(self)
             .await?;
         sqlx::query("DELETE FROM proxy_models WHERE model_id = ?")
@@ -4564,7 +4568,7 @@ impl ProxyModelStore for SqlitePool {
     }
 
     async fn list_models_paged(&self, limit: i64, offset: i64) -> Result<Vec<ProxyModel>> {
-        sqlx::query_as("SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by FROM proxy_models ORDER BY model_name LIMIT ? OFFSET ?")
+        sqlx::query_as("SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, enabled FROM proxy_models ORDER BY model_name LIMIT ? OFFSET ?")
                     .bind(limit).bind(offset)
             .fetch_all(self).await.map_err(DbError::from)
     }
@@ -4582,7 +4586,7 @@ impl ProxyModelStore for SqlitePool {
         limit: i64,
         offset: i64,
     ) -> Result<Vec<DeletedModel>> {
-        sqlx::query_as("SELECT id, model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, deleted_at FROM deleted_models ORDER BY deleted_at DESC LIMIT ? OFFSET ?")
+        sqlx::query_as("SELECT id, model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, deleted_at, enabled FROM deleted_models ORDER BY deleted_at DESC LIMIT ? OFFSET ?")
                     .bind(limit).bind(offset)
             .fetch_all(self).await.map_err(DbError::from)
     }
@@ -4604,38 +4608,39 @@ impl ProxyModelStore for SqlitePool {
 impl ProxyModelStore for MySqlPool {
     async fn insert_model(&self, m: &ProxyModel) -> Result<()> {
         sqlx::query(
-            "INSERT INTO proxy_models (model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+            "INSERT INTO proxy_models (model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
         .bind(&m.model_id).bind(&m.model_name).bind(&m.litellm_params).bind(&m.model_info)
         .bind(&m.created_at).bind(&m.created_by).bind(&m.updated_at).bind(&m.updated_by)
+        .bind(m.enabled)
         .execute(self).await?;
         Ok(())
     }
 
     async fn get_model_by_id(&self, model_id: &str) -> Result<Option<ProxyModel>> {
-        sqlx::query_as("SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by FROM proxy_models WHERE model_id = ?")
+        sqlx::query_as("SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, enabled FROM proxy_models WHERE model_id = ?")
             .bind(model_id).fetch_optional(self).await.map_err(DbError::from)
     }
 
     async fn get_model_by_name(&self, model_name: &str) -> Result<Option<ProxyModel>> {
-        sqlx::query_as("SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by FROM proxy_models WHERE model_name = ?")
+        sqlx::query_as("SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, enabled FROM proxy_models WHERE model_name = ?")
             .bind(model_name).fetch_optional(self).await.map_err(DbError::from)
     }
 
     async fn list_models_by_name(&self, model_name: &str) -> Result<Vec<ProxyModel>> {
-        sqlx::query_as("SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by FROM proxy_models WHERE model_name = ?")
+        sqlx::query_as("SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, enabled FROM proxy_models WHERE model_name = ? AND enabled = 1")
             .bind(model_name).fetch_all(self).await.map_err(DbError::from)
     }
 
     async fn list_models(&self) -> Result<Vec<ProxyModel>> {
-        sqlx::query_as("SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by FROM proxy_models ORDER BY model_name")
+        sqlx::query_as("SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, enabled FROM proxy_models ORDER BY model_name")
             .fetch_all(self).await.map_err(DbError::from)
     }
 
     async fn update_model(&self, m: &ProxyModel) -> Result<()> {
-        sqlx::query("UPDATE proxy_models SET model_name = ?, litellm_params = ?, model_info = ?, updated_at = ?, updated_by = ? WHERE model_id = ?")
+        sqlx::query("UPDATE proxy_models SET model_name = ?, litellm_params = ?, model_info = ?, updated_at = ?, updated_by = ?, enabled = ? WHERE model_id = ?")
             .bind(&m.model_name).bind(&m.litellm_params).bind(&m.model_info)
-            .bind(&m.updated_at).bind(&m.updated_by).bind(&m.model_id)
+            .bind(&m.updated_at).bind(&m.updated_by).bind(m.enabled).bind(&m.model_id)
             .execute(self).await?;
         Ok(())
     }
@@ -4644,9 +4649,10 @@ impl ProxyModelStore for MySqlPool {
         // tombstone-then-delete: archive first, then remove from source
         let m = self.get_model_by_id(model_id).await?;
         if let Some(model) = m {
-            sqlx::query("INSERT INTO deleted_models (model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+            sqlx::query("INSERT INTO deleted_models (model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
                 .bind(&model.model_id).bind(&model.model_name).bind(&model.litellm_params).bind(&model.model_info)
                 .bind(&model.created_at).bind(&model.created_by).bind(&model.updated_at).bind(&model.updated_by)
+                .bind(model.enabled)
                 .execute(self).await?;
         }
         sqlx::query("DELETE FROM proxy_models WHERE model_id = ?")
@@ -4658,9 +4664,10 @@ impl ProxyModelStore for MySqlPool {
 
     async fn archive_and_delete_model(&self, m: &ProxyModel) -> Result<()> {
         // tombstone-then-delete with already-decrypted model data
-        sqlx::query("INSERT INTO deleted_models (model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+        sqlx::query("INSERT INTO deleted_models (model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
             .bind(&m.model_id).bind(&m.model_name).bind(&m.litellm_params).bind(&m.model_info)
             .bind(&m.created_at).bind(&m.created_by).bind(&m.updated_at).bind(&m.updated_by)
+            .bind(m.enabled)
             .execute(self).await?;
         sqlx::query("DELETE FROM proxy_models WHERE model_id = ?")
             .bind(&m.model_id)
@@ -4670,12 +4677,12 @@ impl ProxyModelStore for MySqlPool {
     }
 
     async fn list_deleted_models(&self) -> Result<Vec<DeletedModel>> {
-        sqlx::query_as("SELECT id, model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, deleted_at FROM deleted_models ORDER BY deleted_at DESC")
+        sqlx::query_as("SELECT id, model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, deleted_at, enabled FROM deleted_models ORDER BY deleted_at DESC")
             .fetch_all(self).await.map_err(DbError::from)
     }
 
     async fn list_models_paged(&self, limit: i64, offset: i64) -> Result<Vec<ProxyModel>> {
-        sqlx::query_as("SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by FROM proxy_models ORDER BY model_name LIMIT ? OFFSET ?")
+        sqlx::query_as("SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, enabled FROM proxy_models ORDER BY model_name LIMIT ? OFFSET ?")
                     .bind(limit).bind(offset)
             .fetch_all(self).await.map_err(DbError::from)
     }
@@ -4693,7 +4700,7 @@ impl ProxyModelStore for MySqlPool {
         limit: i64,
         offset: i64,
     ) -> Result<Vec<DeletedModel>> {
-        sqlx::query_as("SELECT id, model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, deleted_at FROM deleted_models ORDER BY deleted_at DESC LIMIT ? OFFSET ?")
+        sqlx::query_as("SELECT id, model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, deleted_at, enabled FROM deleted_models ORDER BY deleted_at DESC LIMIT ? OFFSET ?")
                     .bind(limit).bind(offset)
             .fetch_all(self).await.map_err(DbError::from)
     }
@@ -4715,38 +4722,39 @@ impl ProxyModelStore for MySqlPool {
 impl ProxyModelStore for PgPool {
     async fn insert_model(&self, m: &ProxyModel) -> Result<()> {
         sqlx::query(
-            "INSERT INTO proxy_models (model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)"
+            "INSERT INTO proxy_models (model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, enabled) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)"
         )
         .bind(&m.model_id).bind(&m.model_name).bind(&m.litellm_params).bind(&m.model_info)
         .bind(&m.created_at).bind(&m.created_by).bind(&m.updated_at).bind(&m.updated_by)
+        .bind(m.enabled)
         .execute(self).await?;
         Ok(())
     }
 
     async fn get_model_by_id(&self, model_id: &str) -> Result<Option<ProxyModel>> {
-        sqlx::query_as("SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by FROM proxy_models WHERE model_id = $1")
+        sqlx::query_as("SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, enabled FROM proxy_models WHERE model_id = $1")
             .bind(model_id).fetch_optional(self).await.map_err(DbError::from)
     }
 
     async fn get_model_by_name(&self, model_name: &str) -> Result<Option<ProxyModel>> {
-        sqlx::query_as("SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by FROM proxy_models WHERE model_name = $1")
+        sqlx::query_as("SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, enabled FROM proxy_models WHERE model_name = $1")
             .bind(model_name).fetch_optional(self).await.map_err(DbError::from)
     }
 
     async fn list_models_by_name(&self, model_name: &str) -> Result<Vec<ProxyModel>> {
-        sqlx::query_as("SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by FROM proxy_models WHERE model_name = $1")
+        sqlx::query_as("SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, enabled FROM proxy_models WHERE model_name = $1 AND enabled = TRUE")
             .bind(model_name).fetch_all(self).await.map_err(DbError::from)
     }
 
     async fn list_models(&self) -> Result<Vec<ProxyModel>> {
-        sqlx::query_as("SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by FROM proxy_models ORDER BY model_name")
+        sqlx::query_as("SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, enabled FROM proxy_models ORDER BY model_name")
             .fetch_all(self).await.map_err(DbError::from)
     }
 
     async fn update_model(&self, m: &ProxyModel) -> Result<()> {
-        sqlx::query("UPDATE proxy_models SET model_name = $1, litellm_params = $2, model_info = $3, updated_at = $4, updated_by = $5 WHERE model_id = $6")
+        sqlx::query("UPDATE proxy_models SET model_name = $1, litellm_params = $2, model_info = $3, updated_at = $4, updated_by = $5, enabled = $6 WHERE model_id = $7")
             .bind(&m.model_name).bind(&m.litellm_params).bind(&m.model_info)
-            .bind(&m.updated_at).bind(&m.updated_by).bind(&m.model_id)
+            .bind(&m.updated_at).bind(&m.updated_by).bind(m.enabled).bind(&m.model_id)
             .execute(self).await?;
         Ok(())
     }
@@ -4755,9 +4763,10 @@ impl ProxyModelStore for PgPool {
         // tombstone-then-delete: archive first, then remove from source
         let m = self.get_model_by_id(model_id).await?;
         if let Some(model) = m {
-            sqlx::query("INSERT INTO deleted_models (model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)")
+            sqlx::query("INSERT INTO deleted_models (model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, enabled) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)")
                 .bind(&model.model_id).bind(&model.model_name).bind(&model.litellm_params).bind(&model.model_info)
                 .bind(&model.created_at).bind(&model.created_by).bind(&model.updated_at).bind(&model.updated_by)
+                .bind(model.enabled)
                 .execute(self).await?;
         }
         sqlx::query("DELETE FROM proxy_models WHERE model_id = $1")
@@ -4769,9 +4778,10 @@ impl ProxyModelStore for PgPool {
 
     async fn archive_and_delete_model(&self, m: &ProxyModel) -> Result<()> {
         // tombstone-then-delete with already-decrypted model data
-        sqlx::query("INSERT INTO deleted_models (model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)")
+        sqlx::query("INSERT INTO deleted_models (model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, enabled) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)")
             .bind(&m.model_id).bind(&m.model_name).bind(&m.litellm_params).bind(&m.model_info)
             .bind(&m.created_at).bind(&m.created_by).bind(&m.updated_at).bind(&m.updated_by)
+            .bind(m.enabled)
             .execute(self).await?;
         sqlx::query("DELETE FROM proxy_models WHERE model_id = $1")
             .bind(&m.model_id)
@@ -4781,12 +4791,12 @@ impl ProxyModelStore for PgPool {
     }
 
     async fn list_deleted_models(&self) -> Result<Vec<DeletedModel>> {
-        sqlx::query_as("SELECT id, model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, deleted_at FROM deleted_models ORDER BY deleted_at DESC")
+        sqlx::query_as("SELECT id, model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, deleted_at, enabled FROM deleted_models ORDER BY deleted_at DESC")
             .fetch_all(self).await.map_err(DbError::from)
     }
 
     async fn list_models_paged(&self, limit: i64, offset: i64) -> Result<Vec<ProxyModel>> {
-        sqlx::query_as("SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by FROM proxy_models ORDER BY model_name LIMIT $1 OFFSET $2")
+        sqlx::query_as("SELECT model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, enabled FROM proxy_models ORDER BY model_name LIMIT $1 OFFSET $2")
                     .bind(limit).bind(offset)
             .fetch_all(self).await.map_err(DbError::from)
     }
@@ -4804,7 +4814,7 @@ impl ProxyModelStore for PgPool {
         limit: i64,
         offset: i64,
     ) -> Result<Vec<DeletedModel>> {
-        sqlx::query_as("SELECT id, model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, deleted_at FROM deleted_models ORDER BY deleted_at DESC LIMIT $1 OFFSET $2")
+        sqlx::query_as("SELECT id, model_id, model_name, litellm_params, model_info, created_at, created_by, updated_at, updated_by, deleted_at, enabled FROM deleted_models ORDER BY deleted_at DESC LIMIT $1 OFFSET $2")
                     .bind(limit).bind(offset)
             .fetch_all(self).await.map_err(DbError::from)
     }
@@ -8496,6 +8506,7 @@ mod tests {
             created_by: None,
             updated_at: now,
             updated_by: None,
+            enabled: true,
         }
     }
 
@@ -8554,6 +8565,32 @@ mod tests {
         db.delete_model(&m.model_id).await.expect("delete");
 
         assert!(db.get_model_by_id(&m.model_id).await.unwrap().is_none());
+    }
+
+    /// Stage 121 — list_models_by_name must skip enabled=false rows so
+    /// disabled deployments are never routable, even if callers forget
+    /// to check the flag downstream.
+    #[tokio::test]
+    async fn test_stage121_list_models_by_name_filters_disabled() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let mut enabled_row = make_test_model("shared-name");
+        enabled_row.litellm_params = serde_json::json!({"model": "gpt-4", "tag": "on"});
+        enabled_row.enabled = true;
+        let mut disabled_row = make_test_model("shared-name");
+        disabled_row.litellm_params = serde_json::json!({"model": "gpt-4", "tag": "off"});
+        disabled_row.enabled = false;
+        db.insert_model(&enabled_row).await.expect("insert enabled");
+        db.insert_model(&disabled_row)
+            .await
+            .expect("insert disabled");
+
+        let rows = db
+            .list_models_by_name("shared-name")
+            .await
+            .expect("list_models_by_name");
+        assert_eq!(rows.len(), 1, "expected exactly the enabled row");
+        assert!(rows[0].enabled);
+        assert_eq!(rows[0].litellm_params["tag"], "on");
     }
 
     // ━━━━ get_master_key_from_db tests ━━━━
@@ -9530,6 +9567,7 @@ mod tests {
             created_by: None,
             updated_at: "2026-01-01".to_string(),
             updated_by: None,
+            enabled: true,
         }
     }
 

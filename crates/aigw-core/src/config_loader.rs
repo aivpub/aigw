@@ -81,6 +81,7 @@ pub async fn seed_models_from_config(
             created_by: Some("config".to_string()),
             updated_at: now,
             updated_by: Some("config".to_string()),
+            enabled: true,
         };
         match db.insert_model(&model).await {
             Ok(()) => stats.inserted += 1,
@@ -264,6 +265,7 @@ mod tests {
             created_by: Some("api".to_string()),
             updated_at: now,
             updated_by: Some("api".to_string()),
+            enabled: true,
         };
         db.insert_model(&existing).await.expect("pre-insert");
 

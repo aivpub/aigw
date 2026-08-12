@@ -783,6 +783,15 @@ pub struct ProxyModel {
     pub created_by: Option<String>,
     pub updated_at: String,
     pub updated_by: Option<String>,
+    /// Stage 121: independent enable/disable switch, separate from
+    /// `model_info.mode` (which carries business category like "embed"/"image").
+    /// When false, the model is skipped by resolver + router.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// Request body for /model/new (litellm-compatible)
@@ -804,6 +813,9 @@ pub struct UpdateModelRequest {
     pub litellm_params: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub model_info: Option<serde_json::Value>,
+    /// Stage 121: independent enable/disable switch.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
 }
 
 /// Request body for /model/delete
@@ -922,6 +934,9 @@ pub struct DeletedModel {
     pub updated_at: String,
     pub updated_by: Option<String>,
     pub deleted_at: DateTime<Utc>,
+    /// Stage 121: mirrors proxy_models.enabled at the moment of deletion.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

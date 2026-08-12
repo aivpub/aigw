@@ -7,9 +7,9 @@
 
 ## 当前状态
 
-- **当前 Phase**: **Phase 47 ✅ 完成（Stage 117-119，A 类接线 + exact-match 缓存，40h，2026-08-10）**；Phase 46（Stage 116 静态配置模型接入）✅ 完成（16h）。
-- **状态**: **117/117 Stages + Phase 46/47 交付全部完成**。Stage 117-119 ✅（`d1000b0`/`abad4db`/`ad981b2`）：A 类「代码在但运行时未接线」全接线（限流/多级预算/soft_budget 告警/max_parallel/Router 智能路由）+ B 类 exact-match 缓存补齐。**基线**: aigw-core 432 + aigw-server 145+152 UT（合计 861）、mock BDD 246（233 pass / 13 @skip）、real BDD sqlite/pg/mysql 47/47×3、fmt + clippy green。ADR-032 Accepted。
-- **下一里程碑**: **Phase 47 全部收尾完成** — 前端 RouterSettings 下拉解锁 ✅ + config `cache` 块 ✅ + max_parallel key/budget 表字段层级接线 ✅；中期 M1 guardrails / M2 Redis 分布式层。
+- **当前 Phase**: **Phase 49 ✅ 完成（Stage 121，上游模型停用功能接线，2026-08-13）**；Phase 48 ✅（Stage 120，GLM5 流式 tool_use 首帧修复，2026-08-12）；Phase 47 ✅（Stage 117-119，A 类接线 + exact-match 缓存，2026-08-10）。
+- **状态**: **125/125 Stages 交付完成**。Stage 121 ✅（`enabled: bool` 列 + resolver filter + 前后端接线）：修复"上游模型停用功能完全无效"缺陷——前端 Switch 之前只写 `model_info.mode="inactive"` 但后端零处消费。方案 B 落地：migration 026 三端 ADD COLUMN + resolver 过滤 + `/model/update` 接受 `enabled` 参数 + ModelResponse 透出 + 前端切换到 `model.enabled`。**基线**: aigw-core 458 UT（+3 Stage 121）、mock BDD 246 保持、fmt + clippy `-D warnings` green。
+- **下一里程碑**: 中期 M1 guardrails / M2 Redis 分布式层。
 
 ### 整体进度
 
@@ -55,6 +55,8 @@ Phase 44:   ████████████████████ 100% (3
 Phase 45:   ████████████████████ 100% (3/3 Stages) ✅ 技术债清理 (Stage 113-115 全部完成)
 Phase 46:   ████████████████████ 100% (1/1 Stage)  ✅ 静态配置模型接入 (Stage 116)
 Phase 47:   ████████████████████ 100% (3/3 Stages) ✅ A 类接线 + exact-match 缓存 (Stage 117-119)
+Phase 48:   ████████████████████ 100% (1/1 Stage)  ✅ GLM5 流式 tool_use 首帧修复 (Stage 120)
+Phase 49:   ████████████████████ 100% (1/1 Stage)  ✅ 上游模型停用功能接线 (Stage 121)
 ```
 
 ---
@@ -277,6 +279,40 @@ Phase 47:   ████████████████████ 100% (3
 **设计文档**:
 - `docs/plans/2026-08-10-phase-47-wiring-cache.md`（总体规划）
 - `docs/stages/stage-117.md` / `stage-118.md` / `stage-119.md`
+
+---
+
+### Phase 48：GLM5 流式 tool_use 首帧丢帧修复（S1）✅（2026-08-12 交付，1 Stage）
+
+**背景**: 用户反馈 aigw 转发 GLM5（tokenhub 上游）到 Claude Code 反复出现 `Invalid tool parameters` / `__unparsedToolInput` 错误。前期文档（`docs/16-glm-stream-delta-analysis.md` 首版，2026-07-15）错误地把根因归为 `partial_json` 累积语义差异——本次交叉 Anthropic 官方 SDK 文档确认 `partial_json` **本身就是纯增量碎片**（客户端负责累积），aigw 直接透传语义正确。真正 bug：`AnthropicToOpenAIStream::next` + `OpenAIToAnthropicStream::next` 首个带 `id` 的 chunk 若同时携带 `arguments`（tokenhub GLM-5.2 首帧就是 `id + "{\""`），代码 emit `content_block_start` 后 `return`，**丢掉首帧 arguments**——下游 Claude Code 累积得到的 partial JSON 永远缺开头 `{"`。
+
+| Stage | 状态 | 目标 | 类型 | 预估 |
+|-------|------|------|------|------|
+| Stage 120 | ✅ 完成（`332fa08`） | **首帧丢帧修复** — `AnthropicToOpenAIStream::next` + `OpenAIToAnthropicStream::next` tool_calls 分支：early-return → 本地 buffer 累积 SSE frame，循环末尾统一返回；同 chunk `content_block_start` + `input_json_delta` 两帧一起发出；订正 `docs/16-glm-stream-delta-analysis.md` 五/六节根因。**TDD**: 3 UT（首帧同时含 id+args 正/反向对称 + 后续多个纯 args 增量帧顺序透传，先 fail 后 pass） | 后端+测试 | 4-6h |
+
+**Phase 48 合计**: 4-6h，1 Stage（进度 1/1 — 完成 ✅）。
+
+**验证（Phase 48）**: aigw-core 455 UT（+3 Stage 120）、mock BDD 246 保持基线、real BDD sqlite/pg/mysql 通过（4 例失败均为上游 tokenhub 402 免费额度耗尽外部依赖）、前端 fe-lint pass、fmt + clippy `-D warnings` green。
+
+**设计文档**: `docs/stages/stage-120.md`；根因订正：`docs/16-glm-stream-delta-analysis.md` §五/六（2026-08-12 版）。
+
+---
+
+### Phase 49：上游模型停用功能接线（S1）✅（2026-08-13 交付，1 Stage）
+
+**背景**: 用户反馈"上游模型停用功能完全无效"。调研确认（`docs/research/2026-08-13-model-disable-audit.md`）：前端 UI Switch 有开关，切「停用」时 `PUT /model/update {model_info.mode:"inactive"}`——但**后端零处消费**该字段，SQL 只按 model_name 过滤，`ModelResolver.resolve` 不看 mode，Deployment 结构无 disabled 字段，Router 只按 cooldown 过滤。同一 `model_info.mode` 还兼载业务类别（"embed"/"image"），语义污染。方案 B（推荐）落地：独立 `enabled: bool` 列 + 3 端 SQL 加过滤 + resolver 兜底 filter + `/model/update` 接受 `enabled` 参数 + 前端切换到 `model.enabled`。
+
+| Stage | 状态 | 目标 | 类型 | 预估 |
+|-------|------|------|------|------|
+| Stage 121 | ✅ 完成 | **停用功能接线** — Migration 026 三端 `ALTER TABLE proxy_models/deleted_models ADD COLUMN enabled` (BOOLEAN/INTEGER/TINYINT DEFAULT TRUE)；`ProxyModel` + `DeletedModel` + `UpdateModelRequest` + `ModelResponse` 加 `enabled` 字段；3 端 SQL（SQLite const + PG/MySQL inline）全部加 `enabled` 列，`LIST_MODELS_BY_NAME` 追加 `AND enabled=TRUE`；`ModelResolver::resolve` 加 `.filter(|m| m.enabled)` 防御式兜底；`/model/update` 读 `body.enabled`；前端 `types.ts.ModelItem` 加 `enabled`、`isActive` 从 `model_info.mode` 迁到 `model.enabled`、Switch onChange 调 `{enabled}` 而非 `{model_info.mode}`。**TDD**: 3 UT（resolver 跳过 disabled + 同 name 两 row 只返 enabled + db 层 list_models_by_name 过滤，先 fail 后 pass） | 全栈+测试 | 6-10h |
+
+**Phase 49 合计**: 6-10h，1 Stage（进度 1/1 — 完成 ✅）。
+
+**验证（Phase 49）**: aigw-core 458 UT（+3 Stage 121）、mock BDD 246 保持基线、`task test/fmt/lint/build/fe-lint` 全绿。
+
+**不做的事**：不清理历史 `model_info.mode` 里的 "inactive"/"disabled" 值（`isActive` 现只看 enabled，历史值惰性容忍）；不引入 `status enum` 状态机（方案 C，长期路线）。
+
+**设计文档**: `docs/stages/stage-121.md`；根因调研：`docs/research/2026-08-13-model-disable-audit.md`。
 
 ---
 
@@ -915,3 +951,5 @@ Phase 47:   ████████████████████ 100% (3
 | v54.1 | 2026-08-10 | **BDD 漏洞审计（484ea70，总进度 120/123 不变）**：multi-agent 全量审计 + real BDD（sqlite/pg/mysql）确认 **0 失败但 4 个静默跳过洞 + 1 响应头缺口**——① `models.feature:54` 双空格 typo 使 /model/list 解密字段场景静默跳过（对齐注册 step 后真正执行）；② `end_to_end.feature` 失败场景断言 model_not_found（client 400 永不写 spend_log）→ 改写为 mock 上游 500 断言真实 failure spend_log；③ `responses.feature:20` 原始转义引号 `{expr}` 永不匹配 cucumber token → 改 `{string}`，流式 SSE 场景真正执行（**证明流式桥接路径真实运行**）；④ e2e spend_logs then-step 无注册 → 补通用 then-step；⑤ **responses.rs 流式路径缺 TD-006 `x-call-id` 头**（仅非流式有）→ 流式 SSE 现携带同一对账头（stream_request_id copy 防 move-after-use）。**基线锁定**：aigw-core 425 + aigw-server 144 UT、mock BDD **254 场景（241 pass / 13 @skip body_archive / 0 fail）**、fmt + clippy `-D warnings` green、real BDD 三后端 43/43。Phase 47（Stage 117-119）待开始。
 | v55.0 | 2026-08-10 | **Phase 47 完成（Stage 117-119 ✅，总进度 123/123 — ALL STAGES COMPLETE）**：A 类「代码在但运行时未接线」全接线 + B 类 exact-match 缓存补齐。Stage 117（`d1000b0`）：4 handler 入口挂 `check_request_limits`（多级预算 key→user→team→org + RPM/TPM + soft_budget webhook + max_parallel Semaphore）；`LimitError::IntoResponse` 带 `x-ratelimit-limit/remaining` + `Retry-After`；`real/multi_level_budget` 去 @skip 4 场景 + `soft_budget.feature` 新建。Stage 118（`abad4db`）：Router weighted/usage/latency 真实决策 + cooldown 分类计数（429/401/408/404/5xx，400 不计）+ priority fallback + key>team>global `merge_router_overrides`；`router.feature` 新建。Stage 119（`ad981b2`）：`aigw_core::cache`（moka LRU + TTL + SHA-256 key + canonical body）+ `X-Cache-Status` + cache-hit 计费 0 元 + no-store；`cache.feature` 新建。验证：aigw-core 432 + aigw-server 145+152 UT（合计 861）、mock BDD 246（233 pass / 13 @skip / 0 fail）、real BDD sqlite/pg/mysql 47/47×3、fmt + clippy green。ADR-032 Accepted。顺带修复：BDD chat 步骤补 request-id layer（UUID-v7 call_id 防 spend_logs.call_id UNIQUE 冲突）、alerts.rs 测试 flake。后续收尾（非阻塞）：Stage 118 前端下拉解锁、Stage 119 config cache 块、max_parallel key/budget 表字段。
 | v55.1 | 2026-08-10 | **Phase 47 收尾全完成（总进度 123/123 — ALL STAGES COMPLETE）**：补齐剩余三项非阻塞收尾。① 前端 RouterSettings 下拉解锁 usage-based-routing-v2 / latency-based-routing（Stage 118 §3.6，`9fe6329`，原 disabled "coming soon"——二者已是 Stage 118 真实路由决策）；② config `cache` 块解析 + boot 注入（Stage 119 §3.5，`9fe6329`，CacheConfig {enabled,backend,ttl_seconds,max_entries} + Default，main.rs 按 enabled 构建 MemoryCache / 禁用；config.example.yaml 补文档；+2 config UT）；③ max_parallel 从 key/budget 表字段层级接线（`cada57b`，resolve_effective_max_parallel：key→team→org-budget→deployment 取最严限制，master key 只套 deployment 上限，+4 UT）。验证：aigw-core 871 UT、mock BDD 246（233 pass / 13 @skip）、real BDD sqlite/pg/mysql 47/47×3、前端 fe-build/lint/bddgen 全绿、fmt + clippy green。
+| v56.0 | 2026-08-12 | **Phase 48 完成（Stage 120，总进度 124/124）**：GLM5 流式 tool_use 首帧丢帧修复（`332fa08`）。用户反馈 aigw 转发 GLM5 到 Claude Code 反复 `Invalid tool parameters`。调研订正——前期把根因归为 `partial_json` 累积语义差异是错的：Anthropic 官方规范里 `partial_json` **本身就是纯增量碎片**（SDK 文档明确"客户端负责累积"）。真正 bug：`AnthropicToOpenAIStream::next` + `OpenAIToAnthropicStream::next` 首个带 `id` 的 chunk 若同时携带 `arguments`（tokenhub GLM-5.2 首帧就是 `id + "{\""`），代码 emit `content_block_start` 后 `return`，丢掉首帧 arguments。修复：tool_calls 分支 early-return → 本地 buffer 累积 SSE frame，循环末尾统一返回；同 chunk `content_block_start` + `input_json_delta` 两帧一起发出。+3 UT（正/反向对称 + 后续多个纯 args 增量顺序透传）。订正 `docs/16-glm-stream-delta-analysis.md` 五/六节根因。验证：aigw-core 455 UT、mock BDD 246、real BDD sqlite/pg/mysql pass（4 失败均上游 tokenhub 402 免费额度耗尽外部依赖）、fe-lint pass、fmt + clippy green。 |
+| v57.0 | 2026-08-13 | **Phase 49 完成（Stage 121，总进度 125/125）**：上游模型停用功能接线。用户反馈"上游模型停用完全无效"。调研（`docs/research/2026-08-13-model-disable-audit.md`）确认——前端 Switch 只写 `model_info.mode="inactive"` 到 DB，后端**零处消费**该字段（DB SQL 只过 model_name / Resolver 不看 mode / Deployment 结构无 disabled 字段 / Router 只按 cooldown 过滤 / `/model/update` handler 仅 merge_json 存下来注释还标"保留"）。同一 `model_info.mode` 还兼载业务类别 "embed"/"image"，语义污染。方案 B 落地：Migration 026 三端 `ALTER TABLE proxy_models/deleted_models ADD COLUMN enabled` (BOOLEAN/INTEGER/TINYINT DEFAULT TRUE)；`ProxyModel` + `DeletedModel` + `UpdateModelRequest` + `ModelResponse` 加 `enabled` 字段；3 端 SQL（SQLite const + PG/MySQL inline）全部加 `enabled` 列，`LIST_MODELS_BY_NAME` 追加 `AND enabled=TRUE`；`ModelResolver::resolve` 加 `.filter(|m| m.enabled)` 防御式兜底；`/model/update` 读 `body.enabled`；前端 `ModelItem` 加 `enabled`、`isActive` 从 `mode` 迁到 `model.enabled`、Switch onChange 调 `{enabled}`。+3 UT（resolver 跳过 disabled + 同 name 两 row 只返 enabled + db 层 list_models_by_name 过滤）。验证：aigw-core 458 UT、mock BDD 246 保持、fmt + clippy + fe-lint + build green。设计文档：`docs/stages/stage-121.md`。 |

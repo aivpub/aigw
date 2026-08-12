@@ -7,6 +7,8 @@ export interface ModelItem {
   created_by: string | null;
   updated_at: string;
   updated_by: string | null;
+  /** Stage 121: independent enable/disable switch. */
+  enabled: boolean;
 }
 
 export interface ModelListResponse {

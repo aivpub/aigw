@@ -2690,6 +2690,7 @@ mod tests {
             created_by: None,
             updated_at: chrono::Utc::now().to_rfc3339(),
             updated_by: None,
+            enabled: true,
         };
         db.insert_model(&model).await.expect("insert model");
 
@@ -2900,6 +2901,7 @@ mod tests {
             created_by: None,
             updated_at: chrono::Utc::now().to_rfc3339(),
             updated_by: None,
+            enabled: true,
         };
         db.insert_model(&model).await.expect("insert model");
 
@@ -3345,6 +3347,7 @@ mod tests {
             created_by: None,
             updated_at: chrono::Utc::now().to_rfc3339(),
             updated_by: None,
+            enabled: true,
         };
         db.insert_model(&model).await.expect("insert model");
 
