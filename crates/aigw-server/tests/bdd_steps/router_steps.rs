@@ -81,7 +81,7 @@ async fn given_update_key_router_settings(
 
 // ━━━━ Then ━━━━
 
-async fn recorded_upstream_models(world: &TestWorld) -> Vec<String> {
+async fn recorded_upstream_models(_world: &TestWorld) -> Vec<String> {
     let mu = mock_upstream();
     let guard = mu.lock().await;
     guard

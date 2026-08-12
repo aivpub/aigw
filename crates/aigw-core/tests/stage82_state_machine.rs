@@ -344,7 +344,7 @@ general_settings:
 #[tokio::test]
 async fn test_job_failed_when_all_steps_fail() {
     let db = Database::init("sqlite::memory:").await.expect("db init");
-    let (job_id, step_ids) = make_job(&db, 2).await;
+    let (job_id, _step_ids) = make_job(&db, 2).await;
     let (task, _finalize_counter) = MockTask::new("mock", false /* execute fails */);
 
     // Each step must reach 'failed'. claim_next_step bumps retry_count;

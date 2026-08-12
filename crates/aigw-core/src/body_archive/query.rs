@@ -222,6 +222,7 @@ pub async fn query_parquet_with_cache(
     let mut builder = ParquetRecordBatchStreamBuilder::new_with_metadata(reader, arrow_meta);
 
     let total_row_groups = metadata.row_groups().len();
+    #[cfg(debug_assertions)]
     let mut pruned = 0usize;
     let mut passing_indices: Vec<usize> = Vec::with_capacity(total_row_groups);
 
@@ -278,7 +279,10 @@ pub async fn query_parquet_with_cache(
                     if sbbf.check(&key) {
                         passing_indices.push(rg_idx);
                     } else {
-                        pruned += 1;
+                        #[cfg(debug_assertions)]
+                        {
+                            pruned += 1;
+                        }
                     }
                 }
                 None => {

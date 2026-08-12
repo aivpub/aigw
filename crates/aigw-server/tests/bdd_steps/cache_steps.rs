@@ -1,6 +1,6 @@
 //! Step bindings for cache.feature — Stage 119 exact-match response cache
 
-use cucumber::{given, then, when};
+use cucumber::{then, when};
 use serde_json::json;
 
 use crate::TestWorld;

@@ -28,10 +28,6 @@ async fn fresh_aigw_db(dir: &tempfile::TempDir, name: &str) -> String {
 /// Connect via SourcePool and seed spend_logs rows with explicit start_time.
 async fn seed_spend_log(url: &str, call_id: &str, start_time: &str, model: &str, body: &str) {
     let pool = SourcePool::connect(url).await.unwrap();
-    let sql = "INSERT INTO spend_logs \
-        (call_id, call_type, api_key, spend, total_tokens, prompt_tokens, \
-         completion_tokens, start_time, end_time, model, messages, response) \
-        VALUES (?, 'chat', 'sk-seed', 0.0, 10, 5, 5, ?, ?, ?, ?, ?)";
     pool.execute_raw(&format!(
         // SQLite binds via execute_raw can't take params, so build literal.
         "INSERT INTO spend_logs \
@@ -62,12 +58,7 @@ async fn read_spend_log_bodies(url: &str, call_id: &str) -> (Option<String>, Opt
         )
         .await
         .unwrap();
-    // Fall back: query_scalar_string with a WHERE.
-    let sql = format!(
-        "SELECT messages, response FROM spend_logs WHERE call_id = '{}'",
-        call_id
-    );
-    // query_scalar_string returns one column only; run twice.
+    // Fall back: query_scalar_string returns one column only; run twice.
     let messages = pool
         .query_scalar_string(&format!(
             "SELECT messages FROM spend_logs WHERE call_id = '{}'",
