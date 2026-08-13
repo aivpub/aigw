@@ -12,8 +12,12 @@ Given("I am on the Router Settings page", async ({ page }) => {
 });
 
 When("I open the routing strategy dropdown", async ({ page }) => {
-  // Radix Select trigger for the routing strategy field.
-  await page.locator('button[aria-haspopup="listbox"]').first().click();
+  // Radix Select trigger renders as role="combobox" (ARIA 1.2). Older versions
+  // of @radix-ui/react-select emitted `aria-haspopup="listbox"` on a plain
+  // <button>; the current version drops that attribute, so a
+  // `button[aria-haspopup="listbox"]` selector never matches. Query by the
+  // accessible role + label instead — resilient to future ARIA changes.
+  await page.getByRole("combobox", { name: "Strategy" }).first().click();
 });
 
 Then("I should see {string} as an enabled option", async ({ page }, label: string) => {
