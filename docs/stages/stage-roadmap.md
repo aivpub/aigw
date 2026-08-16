@@ -1,7 +1,7 @@
 # aigw — AI Gateway Stagemap
 
 **项目**: aigw (litellm Rust 最小兼容替代)
-**最后更新**: 2026-08-10
+**最后更新**: 2026-08-16
 
 ---
 
@@ -614,33 +614,33 @@ Phase 49:   ████████████████████ 100% (1
 
 ---
 
-### Phase 21：协议兼容性修复 — System Message Normalization + Tool Results
+### Phase 21：协议兼容性修复 — System Message Normalization + Tool Results ✅ 已完成（2026-07-16）
 
 **背景**: Claude Code 实际使用中发现 2 个协议兼容性 bug：(1) 多 tool_result 仅保留第一个，并行工具调用上下文丢失；(2) Anthropic→OpenAI 多 system 消息未归一化，Qwen 系列上游 400 拒收。
 
 | Stage | 状态 | 目标 | 类型 | 预估 |
 |-------|------|------|------|------|
-| Stage 59 | ⏳ 待开始 | **Multi tool_result Discard 修复** — `claude_message_to_openai` 返回值改为 `Vec<ChatMessage>`；tool_result 迭代全部生成多条 `role="tool"` 消息。TDD: 5 UT | 后端+测试 | 4h |
-| Stage 60 | ⏳ 待开始 | **System Message Normalization（全栈）** — `ChatTemplateCompat` 枚举 + 嗅探 + 折叠算法；Deployment 增 `chat_template_compat`；前端 ModelDialog 增下拉。TDD: 8 UT + 3 BDD × 3 viewports | 后端+前端+测试 | 8h |
+| Stage 59 | ✅ 完成 | **Multi tool_result Discard 修复** — `claude_message_to_openai` 返回值改为 `Vec<ChatMessage>`；tool_result 迭代全部生成多条 `role="tool"` 消息，text/image parts 单独发 user 消息保留。TDD: 5 UT（单/双/三 tool_result、mixed、empty 边界） | 后端+测试 | 4h | 2026-07-16（`49a5f1c`） |
+| Stage 60 | ✅ 完成 | **System Message Normalization（全栈）** — `ChatTemplateCompat` 枚举（Auto/Strict/Loose）+ resolve/sniff + `<system-reminder>` 折叠算法；Deployment 增 `chat_template_compat`；前端 ModelDialog 增下拉。TDD: 8 UT（real body/multi-system/tail/adjacent/no-user fallback/loose/sniff/override） | 后端+前端+测试 | 8h | 2026-07-16（`f385bc0`） |
 
 **依赖关系**: 都修改 `adapter.rs` 但不同函数，可并行。
 
-**Phase 21 合计**: 12h。设计文档: `docs/plans/2026-07-16-phase-21-23-roadmap.md`
+**Phase 21 合计**: 12h，✅ 完成（2026-07-16）。设计文档: `docs/plans/2026-07-16-phase-21-23-roadmap.md`
 
 ---
 
-### Phase 22：Anthropic 原生上游适配（LT-Native）
+### Phase 22：Anthropic 原生上游适配（LT-Native）✅ 已完成（2026-07-16）
 
 **背景**: `select_adapter` 对 `ProviderType::AnthropicNative` 返回 `None → 400`。需补全 `AnthropicPassthrough`（Anthropic→Anthropic 直通）和 `OpenAIToAnthropic`（OpenAI→Anthropic 转换）。
 
 | Stage | 状态 | 目标 | 类型 | 预估 |
 |-------|------|------|------|------|
-| Stage 61 | ⏳ 待开始 | **AnthropicPassthrough + OpenAIToAnthropic** — 两个新 struct 实现 `MessageAdapter` + `StreamAdapter`；`AnthropicPassthroughStream` 透传，`OpenAIToAnthropicStream`（OpenAI SSE→Anthropic event 方向）。TDD: 10 UT | 后端+测试 | 8h |
-| Stage 62 | ⏳ 待开始 | **select_adapter 扩展 + Handler 对接 + 全量回归** — 加两个 arm；MockUpstream 扩展 Anthropic 原生端点；BDD 新增 4 scenarios（直通+转换 × 流式/非流式）。门禁: 93→97 BDD | 后端+测试 | 6h |
+| Stage 61 | ✅ 完成 | **AnthropicPassthrough + OpenAIToAnthropic** — 两个新 struct 实现 `MessageAdapter` + `StreamAdapter`；`AnthropicPassthroughStream` 透传，`OpenAIToAnthropicStream`（OpenAI SSE→Anthropic event 方向）。TDD: 10 UT | 后端+测试 | 8h | 2026-07-16（`b892fc4`） |
+| Stage 62 | ✅ 完成 | **select_adapter 扩展 + Handler 对接 + 全量回归** — 加两个 arm 覆盖 2×2 矩阵；v1_messages/chat handler 动态上游 URL path + Anthropic 头注入（x-api-key + anthropic-version）；MockUpstream 扩展 Anthropic 原生端点；BDD 新增 4 scenarios（适配器选择+直通）。门禁: 93→97 BDD ✅ | 后端+测试 | 6h | 2026-07-16（`b892fc4`） |
 
 **依赖关系**: 61 → 62 串行。
 
-**Phase 22 合计**: 14h。设计文档: `docs/plans/2026-07-16-phase-21-23-roadmap.md`
+**Phase 22 合计**: 14h，✅ 完成（2026-07-16）。设计文档: `docs/plans/2026-07-16-phase-21-23-roadmap.md`
 
 ---
 
@@ -953,3 +953,4 @@ Phase 49:   ████████████████████ 100% (1
 | v55.1 | 2026-08-10 | **Phase 47 收尾全完成（总进度 123/123 — ALL STAGES COMPLETE）**：补齐剩余三项非阻塞收尾。① 前端 RouterSettings 下拉解锁 usage-based-routing-v2 / latency-based-routing（Stage 118 §3.6，`9fe6329`，原 disabled "coming soon"——二者已是 Stage 118 真实路由决策）；② config `cache` 块解析 + boot 注入（Stage 119 §3.5，`9fe6329`，CacheConfig {enabled,backend,ttl_seconds,max_entries} + Default，main.rs 按 enabled 构建 MemoryCache / 禁用；config.example.yaml 补文档；+2 config UT）；③ max_parallel 从 key/budget 表字段层级接线（`cada57b`，resolve_effective_max_parallel：key→team→org-budget→deployment 取最严限制，master key 只套 deployment 上限，+4 UT）。验证：aigw-core 871 UT、mock BDD 246（233 pass / 13 @skip）、real BDD sqlite/pg/mysql 47/47×3、前端 fe-build/lint/bddgen 全绿、fmt + clippy green。
 | v56.0 | 2026-08-12 | **Phase 48 完成（Stage 120，总进度 124/124）**：GLM5 流式 tool_use 首帧丢帧修复（`332fa08`）。用户反馈 aigw 转发 GLM5 到 Claude Code 反复 `Invalid tool parameters`。调研订正——前期把根因归为 `partial_json` 累积语义差异是错的：Anthropic 官方规范里 `partial_json` **本身就是纯增量碎片**（SDK 文档明确"客户端负责累积"）。真正 bug：`AnthropicToOpenAIStream::next` + `OpenAIToAnthropicStream::next` 首个带 `id` 的 chunk 若同时携带 `arguments`（tokenhub GLM-5.2 首帧就是 `id + "{\""`），代码 emit `content_block_start` 后 `return`，丢掉首帧 arguments。修复：tool_calls 分支 early-return → 本地 buffer 累积 SSE frame，循环末尾统一返回；同 chunk `content_block_start` + `input_json_delta` 两帧一起发出。+3 UT（正/反向对称 + 后续多个纯 args 增量顺序透传）。订正 `docs/16-glm-stream-delta-analysis.md` 五/六节根因。验证：aigw-core 455 UT、mock BDD 246、real BDD sqlite/pg/mysql pass（4 失败均上游 tokenhub 402 免费额度耗尽外部依赖）、fe-lint pass、fmt + clippy green。 |
 | v57.0 | 2026-08-13 | **Phase 49 完成（Stage 121，总进度 125/125）**：上游模型停用功能接线。用户反馈"上游模型停用完全无效"。调研（`docs/research/2026-08-13-model-disable-audit.md`）确认——前端 Switch 只写 `model_info.mode="inactive"` 到 DB，后端**零处消费**该字段（DB SQL 只过 model_name / Resolver 不看 mode / Deployment 结构无 disabled 字段 / Router 只按 cooldown 过滤 / `/model/update` handler 仅 merge_json 存下来注释还标"保留"）。同一 `model_info.mode` 还兼载业务类别 "embed"/"image"，语义污染。方案 B 落地：Migration 026 三端 `ALTER TABLE proxy_models/deleted_models ADD COLUMN enabled` (BOOLEAN/INTEGER/TINYINT DEFAULT TRUE)；`ProxyModel` + `DeletedModel` + `UpdateModelRequest` + `ModelResponse` 加 `enabled` 字段；3 端 SQL（SQLite const + PG/MySQL inline）全部加 `enabled` 列，`LIST_MODELS_BY_NAME` 追加 `AND enabled=TRUE`；`ModelResolver::resolve` 加 `.filter(|m| m.enabled)` 防御式兜底；`/model/update` 读 `body.enabled`；前端 `ModelItem` 加 `enabled`、`isActive` 从 `mode` 迁到 `model.enabled`、Switch onChange 调 `{enabled}`。+3 UT（resolver 跳过 disabled + 同 name 两 row 只返 enabled + db 层 list_models_by_name 过滤）。验证：aigw-core 458 UT、mock BDD 246 保持、fmt + clippy + fe-lint + build green。设计文档：`docs/stages/stage-121.md`。 |
+| v57.1 | 2026-08-16 | **文档写回修正（总进度 125/125 不变）**：Phase 21（Stage 59-60）与 Phase 22（Stage 61-62）明细表此前仍标 `⏳ 待开始`，git log 取证确认 4 个 Stage 代码早已落在 main（`49a5f1c` Stage 59 multi tool_result 修复 + `f385bc0` Stage 60 System Message Normalization + `b892fc4` Stage 61-62 AnthropicPassthrough/OpenAIToAnthropic，均 2026-07-16 交付；adapter.rs 中 `ChatTemplateCompat`/`AnthropicPassthrough` 现存）。本次仅修正状态为 ✅ 并补 commit 哈希与完成日期，无代码变更，顶部 "125/125" 计数原本即正确。 |
