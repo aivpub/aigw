@@ -6,8 +6,10 @@ use axum::Router;
 use cucumber::gherkin::Step;
 use cucumber::{given, then, when};
 use std::sync::Arc;
+use tower::util::ServiceExt;
 
 use super::common::make_request;
+use super::e2e_steps;
 use crate::TestWorld;
 
 /// Build a router with only model routes
@@ -46,6 +48,38 @@ async fn create_model(router: &Router, mk: &str, name: &str) -> (u16, Option<ser
     make_request(router, Method::POST, "/model/new", Some(mk), Some(&body)).await
 }
 
+/// Stage 121 — create a model pointing at the mock upstream (so an enabled
+/// model returns 200 and a disabled one is blocked before reaching upstream).
+async fn create_mock_model(world: &mut TestWorld, name: &str) {
+    let state = world.ensure_state().await;
+    let mu = e2e_steps::mock_upstream().lock().await;
+    let mock_base = mu
+        .as_ref()
+        .expect("mock upstream not started; add Given mock 上游已启动")
+        .url()
+        .to_string();
+    drop(mu);
+
+    let model = aigw_core::models::ProxyModel {
+        model_id: uuid::Uuid::new_v4().to_string(),
+        model_name: name.to_string(),
+        litellm_params: serde_json::json!({
+            "model": format!("openai/{}", name),
+            "api_base": format!("{mock_base}/v1"),
+        }),
+        model_info: serde_json::json!({}),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        created_by: Some("test".to_string()),
+        updated_at: chrono::Utc::now().to_rfc3339(),
+        updated_by: Some("test".to_string()),
+        enabled: true,
+    };
+    state.db.insert_model(&model).await.expect("insert model");
+    world
+        .created_keys
+        .insert(format!("model:{}", name), model.model_id);
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Given
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -63,6 +97,13 @@ async fn existing_model(world: &mut TestWorld, name: String) {
                 .insert(format!("model:{}", name), id.to_string());
         }
     }
+}
+
+/// Stage 121 — a model pointing at the mock upstream, stored for enable/disable
+/// toggling and forward checks.
+#[given(expr = "已存在指向 mock 上游的模型 {string}")]
+async fn existing_mock_model(world: &mut TestWorld, name: String) {
+    create_mock_model(world, &name).await;
 }
 
 #[given(expr = "已存在 {int} 个模型")]
@@ -367,6 +408,88 @@ async fn when_put_model_update(world: &mut TestWorld, new_name: String) {
     world.last_body = b;
 }
 
+/// Stage 121 — disable (enabled=false) or enable (enabled=true) a model via
+/// PUT /model/update. The model must have been created through a prior
+/// `已存在模型 "name"` step so its model_id is stored under `model:{name}`.
+async fn when_set_model_enabled(world: &mut TestWorld, model_name: &str, enabled: bool) {
+    let state = world.ensure_state().await;
+    let router = build_model_router(state);
+    let model_id = world
+        .created_keys
+        .get(&format!("model:{}", model_name))
+        .expect("model not stored; create it with 已存在模型 first")
+        .clone();
+    let body = serde_json::json!({
+        "model_id": model_id,
+        "enabled": enabled,
+    })
+    .to_string();
+    let (s, b) = make_request(
+        &router,
+        Method::PUT,
+        "/model/update",
+        Some(&world.master_key.clone()),
+        Some(&body),
+    )
+    .await;
+    world.last_status = Some(s);
+    world.last_body = b;
+}
+
+#[when(expr = "发送 PUT \\/model\\/update 请求停用模型 {string}")]
+async fn when_disable_model(world: &mut TestWorld, model_name: String) {
+    when_set_model_enabled(world, &model_name, false).await;
+}
+
+#[when(expr = "发送 PUT \\/model\\/update 请求启用模型 {string}")]
+async fn when_enable_model(world: &mut TestWorld, model_name: String) {
+    when_set_model_enabled(world, &model_name, true).await;
+}
+
+/// Stage 121 — POST /chat/completions to a model. The test-world runs with
+/// deployment_mode="test", so the env-var fallback is disabled and a disabled
+/// model yields 400 model_not_found (no upstream forward). Distinct text from
+/// e2e_steps's identical chat step to avoid a cucumber ambiguity (the feature
+/// files share the whole step registry).
+#[when(
+    expr = "使用 key {string} 发送 POST \\/chat\\/completions 请求用 model {string} 且模型已停用"
+)]
+async fn when_chat_completions_disabled_model(world: &mut TestWorld, alias: String, model: String) {
+    let state = world.ensure_state().await;
+    let app = Router::new()
+        .route(
+            "/chat/completions",
+            axum::routing::post(aigw_server::routes::chat::chat_completions),
+        )
+        .layer(tower_http::request_id::SetRequestIdLayer::new(
+            axum::http::HeaderName::from_static("x-request-id"),
+            aigw_core::request_id::UuidV7RequestId,
+        ))
+        .with_state(state);
+
+    let token = world.created_keys.get(&alias).expect("key not found");
+    let body = serde_json::json!({
+        "model": model,
+        "messages": [{"role": "user", "content": "hi"}]
+    })
+    .to_string();
+
+    let req = axum::http::Request::builder()
+        .method(Method::POST)
+        .uri("/chat/completions")
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", token))
+        .body(axum::body::Body::from(body))
+        .unwrap();
+
+    let response = app.oneshot(req).await.unwrap();
+    world.last_status = Some(response.status().as_u16());
+    let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap_or_default();
+    world.last_body = serde_json::from_slice(&body_bytes).ok();
+}
+
 #[when(expr = "发送 DELETE \\/model\\/delete 请求删除该模型")]
 async fn when_delete_model(world: &mut TestWorld) {
     let state = world.ensure_state().await;
@@ -435,6 +558,71 @@ async fn then_data_has_n_models(world: &mut TestWorld, expected: usize) {
         "Expected {} models in data, got {}",
         expected,
         data.len()
+    );
+}
+
+/// Stage 121 — the /model/update response (a ModelResponse) echoes the
+/// current `enabled` state back to the caller.
+#[then(regex = "^响应中的 enabled 字段为 (true|false)$")]
+async fn then_response_enabled_is(world: &mut TestWorld, expected: String) {
+    let body = world.last_body.as_ref().expect("no response body");
+    let actual = body
+        .get("enabled")
+        .and_then(|v| v.as_bool())
+        .expect("no enabled field in response");
+    let expected_bool = expected == "true";
+    assert_eq!(
+        actual, expected_bool,
+        "Expected response.enabled={}, got {}",
+        expected, actual
+    );
+}
+
+/// Stage 121 — find a model in the /model/list `data` array and assert its
+/// `enabled` field equals the expected boolean.
+#[then(regex = r#"^/model/list 中模型 "(.+)" 的 enabled 字段为 (true|false)$"#)]
+async fn then_list_model_enabled_is(world: &mut TestWorld, model_name: String, expected: String) {
+    let body = world.last_body.as_ref().expect("no response body");
+    let data = body
+        .get("data")
+        .and_then(|v| v.as_array())
+        .expect("no data array in /model/list response");
+    let entry = data
+        .iter()
+        .find(|m| m.get("model_name").and_then(|v| v.as_str()) == Some(model_name.as_str()))
+        .unwrap_or_else(|| panic!("model '{}' not in /model/list: {}", model_name, body));
+    let actual = entry
+        .get("enabled")
+        .and_then(|v| v.as_bool())
+        .expect("no enabled field in model entry");
+    let expected_bool = expected == "true";
+    assert_eq!(
+        actual, expected_bool,
+        "Expected /model/list {} enabled={}, got {}",
+        model_name, expected, actual
+    );
+}
+
+/// Stage 121 — a 400 error from the resolve step carries `error.code =
+/// "model_not_found"` (the "disabled ⇒ not forwarded" assertion).
+#[then(expr = "响应错误 code 为 {string}")]
+async fn then_error_code_is(world: &mut TestWorld, expected: String) {
+    let body = world.last_body.as_ref().expect("no response body");
+    let actual = body
+        .get("error")
+        .and_then(|e| e.get("code"))
+        .and_then(|v| v.as_str())
+        .unwrap_or_else(|| {
+            panic!(
+                "Expected error.code '{}', response has no error.code: {}",
+                expected,
+                serde_json::to_string_pretty(body).unwrap_or_default()
+            )
+        });
+    assert_eq!(
+        actual, expected,
+        "Expected error.code '{}', got '{}'",
+        expected, actual
     );
 }
 

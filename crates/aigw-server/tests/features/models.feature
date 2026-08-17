@@ -108,3 +108,32 @@ Feature: 模型管理 CRUD
     Then 响应状态码为 200
     And 响应中的 data 包含 1 个模型
 
+  # ── Stage 121: 上游模型启用/停用（enabled 独立字段）──
+
+  Scenario: 停用模型后请求不再转发到该模型
+    Given 已存在模型 "disable-model-e2e"
+    And 一个普通 key "disable-e2e-key" 已生成
+    When 发送 PUT /model/update 请求停用模型 "disable-model-e2e"
+    Then 响应状态码为 200
+    And 响应中的 enabled 字段为 false
+    When 使用 key "disable-e2e-key" 发送 POST /chat/completions 请求用 model "disable-model-e2e" 且模型已停用
+    Then 响应状态码为 400
+    And 响应错误 code 为 "model_not_found"
+
+  Scenario: 停用的模型仍可在管理列表可见（可重新启用）
+    Given 已存在模型 "disable-model-vis"
+    When 发送 PUT /model/update 请求停用模型 "disable-model-vis"
+    And 发送 GET /model/list
+    Then 响应状态码为 200
+    And /model/list 中模型 "disable-model-vis" 的 enabled 字段为 false
+
+  Scenario: 重新启用模型后恢复转发
+    Given mock 上游已启动
+    And 已存在指向 mock 上游的模型 "reenable-model-e2e"
+    And 一个普通 key "reenable-e2e-key" 已生成
+    When 发送 PUT /model/update 请求停用模型 "reenable-model-e2e"
+    And 发送 PUT /model/update 请求启用模型 "reenable-model-e2e"
+    Then 响应状态码为 200
+    When 使用 key "reenable-e2e-key" 发送 POST /chat/completions 请求用 model "reenable-model-e2e" 且模型已停用
+    Then 响应状态码为 200
+
