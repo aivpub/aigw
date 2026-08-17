@@ -154,6 +154,23 @@
 - **Resolution**: 视使用量 / 运维诉求触发（TD-013b 需 `Arc<Mutex<Router>>` 改造）。
 - **Target Phase**: 无固定排期。
 
+### TD-014: 上游模型停用能力收尾项（Stage 121 后续）
+
+- **Date**: 2026-08-17
+- **Priority**: P2
+- **Source**: Stage 121 交付后三路 subagent 核实 + 补 BDD（禁用→不转发）后的收尾盘点
+- **Description**: Stage 121 修复了"停用完全无效"（独立 `enabled` 列 + SQL/Resolver/Router 三层过滤已生效），但禁用能力仍有三处收尾缺口：
+
+| Sub-ID | 条目 | 优先级 | 描述 |
+|--------|------|--------|------|
+| TD-014a | 禁用→不转发无 `@real_api` 三端覆盖 | P2 | 本次补的 3 个 BDD 场景（`models.feature`：停用→chat 断言 400 `model_not_found` / 管理列表仍可见 / 重新启用→200）只在 mock 进程内验证（`TestWorld.ensure_state` sqlite::memory: + mock 上游 + deployment_mode="test"）。real BDD（`bdd.rs:137`）过滤器只跑 `@real_api` 标签场景，models.feature 无该标签 → **三端真实 DB 上的禁用→不转发无端到端覆盖**。触发：SQL `AND enabled` 或 resolver filter 回归且仅影响真实 DB 方言。 |
+| TD-014b | env 回退兜底仍会转发禁用模型名 | P2 | `resolver.rs:66-105`：禁用模型 → `list_models_by_name` 返回空 → 若 `deployment_mode != "test"`（默认 `"onprem"`）且环境设了 `OPENAI_API_KEY`，`resolve()` 返回 env 上游 Deployment（而非 `model_not_found`），请求到禁用模型名仍被转发到 env 兜底上游（非禁用行的 api_base）。与"未注册模型名"行为一致，是预存行为非 Stage 121 回归；BDD 测试用 `deployment_mode="test"` 隔离了此路径。触发：部署同时配置 `OPENAI_API_KEY`。缓解：不设该 env / 视 env 兜底为 catch-all。 |
+| TD-014c | config.yaml `model_list` 无法表达 `enabled:false` | P3 | `config::ModelEntry` 无 `enabled` 字段，`seed_models_from_config`（`config_loader.rs:84`）硬编码 `enabled: true`——静态配置模型无法声明停用，`config.yaml` 写 `enabled: false` 会被静默忽略。触发：运维想用静态配置声明某模型默认停用。 |
+
+- **Impact**: 禁用能力主链路已生效（写路径 `/model/update` 省略保留、新建默认 true、迁移 026 历史行默认启用；读路径 chat/v1_messages/embeddings/responses 全走过滤后的 resolver）；缺口均为覆盖/边界/配置语义，无主路径正确性风险。
+- **Resolution**: TD-014a 新增 `@real_api` 标签场景走真实 server+DB+真实上游（复用 `real_api_steps.rs` 模式）；TD-014b 记录为已知限制（文档注释已注明"env fallback is intended catch-all"）；TD-014c 给 `ModelEntry` 加 `enabled` 字段并让 config_loader 使用。
+- **Target Phase**: 无固定排期（视真实三端覆盖诉求 / 静态配置停用诉求触发）。
+
 ## Resolved Items
 
 ### TD-002: @real_api step bindings implemented (Resolved 2026-07-05)
