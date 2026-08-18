@@ -617,3 +617,44 @@
   - Stage 117-119 交付后：A 类全部接线 + exact-match 缓存落地，企业 demo 通过；预算/限流/路由/缓存四维能力真实生效。
   - 剩余（中期 3-6 月）：guardrails 最小集、Redis 分布式层、MCP 最小透传、审计日志 + RBAC、`gen_ai.*` 可观测语义、SSO 重估。
   - 设计文档：`docs/plans/2026-08-10-phase-47-wiring-cache.md` + `stage-117.md` / `stage-118.md` / `stage-119.md`。
+
+## ADR-033: 代理服务管理（Phase 50）— proxies 表 + 出口/质量检测
+
+- **Date**: 2026-08-18
+- **Status**: Accepted
+- **Decision**: 系统配置新增代理服务管理，参考 sub2api `proxies` 表 + 探测服务。本 Phase 两 Stage 交付：
+  - **Stage 122（CRUD）**：Migration 027 ×3 建 `proxies` 表 + `/admin/proxies/*` CRUD + in-use 守卫（credentials JSON 扫描 proxy_id，被引用禁止删除 409）+ proxy_url 加密/redact。
+  - **Stage 123（检测）**：出口探测（经代理 GET ip-api/ipify → IP/国家/延迟）+ 质量检测（openai/anthrop/**claude_oauth**/gemini/grok 目标，白名单状态码判 pass、429 warn、**CF challenge 识别**）+ 计分/等级（100 − warn×10 − fail×22 − challenge×30）+ 创建异步探测 + `probe_result` 快照。
+- **Background**: sub2api 代理管理已生产验证（proxies 表 + `admin_proxy.go` + `proxy_probe_service.go`），是 OAuth 反代底座。生产实测请求被 Cloudflare 拦截是高频故障，故质量检测纳入 CF challenge 识别（参考 sub2api `cmd/sub-check`）。
+- **Key decisions**:
+  - **整串 `proxy_url` 加密落库，不拆细字段**（用户决策）：reqwest 原生消费 `scheme://user:pass@host:port`；AESCM `v2:gcm:` 复用现有 crypto.rs；密码随串加密优于 sub2api 明文存 password。
+  - **检测快照收单 JSON 字段 `probe_result`**：延迟/出口/分数/等级/逐项全在 JSON；`status` 顶层列仅用于过滤；admin 列表量小内存解析足够，不做 JSON 列跨方言排序。
+  - **质量检测加 `claude_oauth` 目标**：探测 `claude.ai/api/organizations`（OAuth step-1 最敏感路径），CF 签名命中（just a moment/cf-ray/cf-mitigated/challenges.cloudflare.com/attention required/HTML 非 JSON）→ challenge。
+  - **reqwest 加 `socks` feature**：代理客户端独立构造（带代理+超时），不混入网关 `build_retry_client`。
+  - **不做过期回退**（fallback_mode/backup_proxy_id/expiry_warn_days）——登记长期路线。
+- **Consequences**:
+  - Phase 51 OAuth 凭证绑定 `proxies.id`；cookie→token 交换 / 反代出口 / claude_oauth 质量目标全部复用代理客户端。
+  - 前端 Settings 新增 Proxies 页（Stage 124）；Stage 125 收尾（real BDD + roadmap 回写）。
+  - 设计文档：`docs/plans/2026-08-18-claude-oauth-reverse-proxy.md` + `docs/stages/stage-122.md` / `stage-123.md / `stage-124.md` / `stage-125.md`。
+
+## ADR-034: Claude OAuth 订阅反代（Phase 51）— 凭证交换 + 三层自愈 + 最小化 billing 注入
+
+- **Date**: 2026-08-18
+- **Status**: Accepted
+- **Decision**: 凭证管理支持 `sk-ant-sid***` cookie 换 access/refresh token，模型解析到 OAuth 凭证时经代理出口以 Bearer 打到 Anthropic `/v1/messages`，默认注入 billing header。五 Stage 交付：
+  - **Stage 126（凭证+交换）**：credentials 表 `credential_values` 扩展 OAuth 结构化字段（access/refresh/session_key 加密落库 + proxy_id/inject_prompt/org_uuid 明文）；`POST /credential/oauth/exchange` 3 步交换（PKCE S256，经绑定代理）。
+  - **Stage 127（Token 生命周期）**：内存缓存 → 临期刷新 → cookie 自愈 → needs_reauth 告警；管线 401 强制刷新重试。
+  - **Stage 128（反代管线）**：resolver OAuth 识别 + 统一上游 /v1/messages + billing 块注入（默认最小化）+ CC 伪装头 + 代理出口 + chat/responses 转换 + count_tokens + embeddings 400。
+  - **Stage 129（前端）** / **Stage 130（收尾+安全审计）**。
+- **Background**: Anthropic OAuth 凭证仅授权 Claude Code 使用，无 billing attribution 块打 /v1/messages 会被 429 拒（身份 gate 实测，`docs/research` 引 sub2api `docs/claude-oauth-identity-gate.md`）。access_token 8h、refresh_token 30 天轮换、cookie 可被 Anthropic 单方面吊销。
+- **Key decisions**:
+  - **最小化 billing 块默认注入**（用户决策）：`system[0]` = `x-anthropic-billing-header: cc_version={ver}.{fp}; cc_entrypoint=cli;`（指纹 SHA256(SALT+chars[4,7,20]+version)[:3]，SALT `59cf53e54c78`，字节对齐 sub2api/Parrot）；0 token 成本、服务端剥离；凭证可配置 `inject_prompt` 追加为额外 block。
+  - **三层 token 自愈**（用户决策）：access(8h)+refresh(30 天轮换)+cookie 三者都存；请求临期优先 refresh 刷新，refresh 失效自动回退存储 cookie 重走 3 步，cookie 也失效 → needs_reauth + alert_webhook 告警。进程内锁 + 内存缓存（单实例足够；分布式锁推迟 M2 Redis）。
+  - **全协议统一反代**（用户决策）：任何入站协议（messages/chat/responses/count_tokens）只要解析到 OAuth 凭证就统一走反代管线；非 OAuth 部署原样不动；embeddings → 400（Anthropic 无 embedding 端点）。
+  - **凭证存 `credentials` 表（零新表）**：proxy_models 经现有 `litellm_credential_name` 引用，resolver 判定 `type=="anthropic_oauth"`。
+  - **TLS 指纹模拟推迟**（用户决策）：HTTP 层伪装（UA/Stainless 头/billing）已够初步可用；uTLS/rquest ClientHello 伪装登记长期路线。
+  - **安全**：cookie/token 加密落库 + 响应/日志 redact；安全审计为 Stage 130 专项验收。
+- **Consequences**:
+  - 配置 OAuth 凭证的模型可被 Claude Code + OpenAI 格式客户端共用订阅号；仅 cookie 被 Anthropic 吊销时需人工（告警通知 + 前端 Re-auth）。
+  - 完整伪装链（tool 混淆/dateline/1h TTL/metadata.user_id/完整三块）登记长期路线。
+  - 设计文档：`docs/plans/2026-08-18-claude-oauth-reverse-proxy.md` + `docs/stages/stage-126.md` ~ `stage-130.md`。
