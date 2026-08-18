@@ -36,6 +36,7 @@ pub mod middleware;
 pub mod models;
 pub mod otel_tracing;
 pub mod password;
+pub mod probe;
 pub mod provider;
 pub mod rate_limiter;
 pub mod request_id;
@@ -72,4 +73,8 @@ pub use models::{
 };
 pub use otel_tracing::{extract_traceparent, inject_traceparent, OtelConfig};
 pub use password::{hash_password, verify_password};
+pub use probe::{
+    build_proxy_client, grade_for_score, probe_exit, run_full_probe, run_quality_check,
+    ProxyExitInfo, QualityItem, QualityResult,
+};
 pub use router::{merge_router_overrides, Router, RouterConfig, RouterStrategy};

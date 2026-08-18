@@ -621,7 +621,7 @@ async fn main() -> anyhow::Result<()> {
             "/admin/budget-reset/stats",
             get(jobs::budget_reset_stats_handler),
         )
-        // Proxy service management endpoints (Phase 50, Stage 122)
+        // Proxy service management endpoints (Phase 50, Stage 122/123)
         .route(
             "/admin/proxies",
             get(proxies::list_proxies).post(proxies::create_proxy),
@@ -636,6 +636,18 @@ async fn main() -> anyhow::Result<()> {
             get(proxies::get_proxy)
                 .put(proxies::update_proxy)
                 .delete(proxies::delete_proxy),
+        )
+        .route(
+            "/admin/proxies/{id}/test",
+            axum::routing::post(proxies::test_proxy),
+        )
+        .route(
+            "/admin/proxies/{id}/quality",
+            axum::routing::post(proxies::quality_proxy),
+        )
+        .route(
+            "/admin/proxies/{id}/toggle",
+            axum::routing::post(proxies::toggle_proxy),
         )
         // Login/Logout endpoints (litellm-compatible /v2/login/*)
         .route("/v2/login", axum::routing::post(login::login))

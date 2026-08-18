@@ -63,3 +63,18 @@ Feature: 代理服务管理 CRUD — /admin/proxies/*（Stage 122）
     When 发送 POST /admin/proxies/batch-delete 请求删除两个代理
     Then 响应状态码为 200
     And 批量删除结果中包含 2 个已删除 id
+
+  # ── Stage 123: 出口/质量检测 / toggle ──
+
+  Scenario: toggle 代理 active ↔ inactive
+    Given 数据库已初始化且已配置 master key
+    And 已创建代理 "toggle-proxy"
+    When 发送 POST /admin/proxies/{id}/toggle 请求
+    Then 响应状态码为 200
+    And 响应包含 status 字段值为 "inactive"
+
+  Scenario: 出口检测写 probe_result 快照（指向不可达出口则返回错误，不写快照）
+    Given 数据库已初始化且已配置 master key
+    And 已创建代理 "exit-proxy"
+    When 发送 POST /admin/proxies/{id}/test 请求
+    Then 响应状态码为 200 或 500 且返回 JSON

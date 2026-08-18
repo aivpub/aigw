@@ -7,9 +7,9 @@
 
 ## 当前状态
 
-- **当前 Phase**: **Phase 50 实施中（Stage 122 ✅ 完成，Stage 123-125 待实施）**。Phase 51（Stage 126-130，Claude OAuth 订阅反代）规划完成待实施。
-- **状态**: **126/134 Stages 交付（Stage 122 ✅ 代理服务管理后端 CRUD）**。Stage 122 完成（2026-08-18）：Migration 027 ×3 建 `proxies` 表 + `Proxy` model + `ProxyStore` ×3 方言 + `/admin/proxies/*` 路由（CRUD + batch-delete + in-use 守卫 409）+ proxy_url 加密/redact + 创建异步探测预留。验证：aigw-core 468 + aigw-server 152 UT、mock BDD **257（244 pass / 13 skip）**、fmt + clippy green。详见 `docs/stages/stage-122.md`。
-- **下一里程碑**: Phase 50 Stage 123（出口+质量检测，含 CF challenge）→ Stage 124（前端 ProxiesPage）→ Stage 125（收尾 real BDD）;Phase 51 强依赖 Phase 50;中期 M1 guardrails / M2 Redis 分布式层。
+- **当前 Phase**: **Phase 50 实施中（Stage 122-123 ✅ 完成，Stage 124-125 待实施）**。Phase 51（Stage 126-130，Claude OAuth 订阅反代）规划完成待实施。
+- **状态**: **127/134 Stages 交付（Stage 122 ✅ 后端 CRUD + Stage 123 ✅ 出口/质量检测）**。Stage 122（2026-08-18）：proxies 表 + CRUD + in-use 守卫 + proxy_url 加密。Stage 123（2026-08-18）：`aigw_core::probe` 出口/质量检测引擎（含 claude_oauth CF challenge）+ `/test` `/quality` `/toggle` 端点 + 创建/更新异步自动探测 + reqwest socks feature。验证：aigw-core 475 + aigw-server 154 UT、mock BDD **259（246 pass / 13 skip）**、fmt + clippy green。详见 `docs/stages/stage-122.md` / `stage-123.md`。
+- **下一里程碑**: Phase 50 Stage 124（前端 ProxiesPage）→ Stage 125（收尾 real BDD + batch-*）;Phase 51 强依赖 Phase 50;中期 M1 guardrails / M2 Redis 分布式层。
 
 ### 整体进度
 
@@ -70,7 +70,7 @@ Phase 49:   ████████████████████ 100% (1
 | Stage | 状态 | 目标 | 类型 | 预估 |
 |-------|------|------|------|------|
 | 122 | ✅ 完成（2026-08-18） | **后端 CRUD** — Migration 027 ×3 建 `proxies` 表（整串 proxy_url 加密落库）+ `Proxy` model + db store ×3 方言 + `/admin/proxies/*` 路由 + in-use 守卫（credentials JSON 扫描 proxy_id）+ proxy_url 加密/redact + 创建异步探测预留。TDD: 5 core UT + 3 handler UT + proxies.feature | 后端+测试 | 10h |
-| Stage 123 | ⏳ 待开始 | **出口+质量检测** — 出口探测（经代理 GET ip-api/ipify）+ 质量目标（openai/anthropic/**claude_oauth(CF challenge 检测)**/gemini/grok）+ 计分/等级（100−warn×10−fail×22−challenge×30）+ 创建/更新异步自动探测 + probe_result 快照 + reqwest `socks` feature + /test /quality /batch-* /toggle。TDD: 5 core UT + 2 handler UT + proxies.feature 扩展 | 后端+测试 | 12h |
+| 123 | ✅ 完成（2026-08-18） | **出口+质量检测** — 出口探测（经代理 GET ip-api/ipify）+ 质量目标（openai/anthropic/**claude_oauth(CF challenge 检测)**/gemini/grok）+ 计分/等级（100−warn×10−fail×22−challenge×30）+ 创建/更新异步自动探测 + probe_result 快照 + reqwest `socks` feature + /test /quality /toggle。TDD: 5 core UT + 2 handler UT + proxies.feature 扩展 | 后端+测试 | 12h |
 | Stage 124 | ⏳ 待开始 | **前端** — ProxiesPage（Settings 分组 /dash/proxies）：表格（出口 IP·国家/延迟/分数等级/状态/到期）+ 创建/编辑对话框 + Test/Quality 按钮 + 逐项展开 + 批量操作 + toggle + i18n 全量。TDD: 8 BDD × 3 viewports | 前端+测试 | 10h |
 | Stage 125 | ⏳ 待开始 | **收尾** — real BDD 三后端 proxies CRUD + in-use + 快照 + ADR-033 + roadmap/next-steps 回写 | 全栈+文档 | 4h |
 

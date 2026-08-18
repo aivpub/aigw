@@ -1,4 +1,4 @@
-//! Proxy service management endpoints — /admin/proxies/* (Phase 50, Stage 122)
+//! Proxy service management endpoints — /admin/proxies/* (Phase 50, Stage 122/123)
 //!
 //! Endpoints:
 //! - GET    /admin/proxies          — list (paged, status/search/sort filters)
@@ -8,10 +8,12 @@
 //! - PUT    /admin/proxies/{id}     — update (whole-url re-encrypt)
 //! - DELETE /admin/proxies/{id}     — delete (in-use guard → 409)
 //! - POST   /admin/proxies/batch-delete — batch delete (in-use skipped)
+//! - POST   /admin/proxies/{id}/test     — exit probe (IP + latency), writes snapshot
+//! - POST   /admin/proxies/{id}/quality  — quality check (score + grade + items)
+//! - POST   /admin/proxies/{id}/toggle   — active ↔ inactive
 //!
-//! Stage 123 wires POST /{id}/test, /{id}/quality, /batch-test, /batch-quality,
-//! /{id}/toggle — this stage leaves a `tokio::spawn` async-probe placeholder on
-//! create/update.
+//! Create/update trigger an async probe (`spawn_async_probe`) via the real
+//! probe engine (`aigw_core::probe`) so the request path never blocks.
 
 use aigw_core::crypto::{decrypt_proxy_url, encrypt_proxy_url, redact_proxy_url};
 use aigw_core::models::{CreateProxyRequest, Proxy, UpdateProxyRequest};
@@ -139,13 +141,38 @@ fn build_persisted_proxy(
 
 /// Trigger a background exit+quality probe after create/update.
 ///
-/// Stage 122: placeholder — Stage 123 replaces the body with the real probe
-/// engine and writes the snapshot into `proxies.probe_result`. Keep the spawn
-/// so the request path is never blocked by probing.
+/// Stage 123: real probe engine — runs exit + quality via the proxy client and
+/// writes the snapshot into `proxies.probe_result`. Never blocks the request
+/// path (tokio::spawn). Failure is silent (logged) — the existing snapshot (or
+/// `{}`) stays in place.
 fn spawn_async_probe(db: aigw_core::db::Database, id: i64) {
     tokio::spawn(async move {
-        // Stage 123: run proxy probe + quality check, then update probe_result.
-        let _ = db.get_proxy_by_id(id).await;
+        let Some(proxy) = db.get_proxy_by_id(id).await.ok().flatten() else {
+            return;
+        };
+        // `proxy_url` is encrypted — decrypt with the configured master key
+        // (read from the config table at probe time; one cheap row).
+        let mk = match db.get_master_key_from_db().await {
+            Ok(Some(k)) => k,
+            _ => return,
+        };
+        let Ok(plain_url) = decrypt_proxy_url(&proxy.proxy_url, &mk) else {
+            return;
+        };
+        match aigw_core::probe::run_full_probe(&plain_url, std::time::Duration::from_secs(10)).await
+        {
+            Ok(snapshot) => {
+                let mut updated = proxy.clone();
+                updated.probe_result = snapshot;
+                updated.updated_at = chrono::Utc::now().to_rfc3339();
+                if let Err(e) = db.update_proxy(&updated).await {
+                    tracing::warn!("Failed to persist probe_result for proxy {}: {}", id, e);
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Async probe for proxy {} failed: {}", id, e);
+            }
+        }
     });
 }
 
@@ -443,6 +470,197 @@ pub async fn batch_delete_proxies(
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Stage 123: exit + quality probe endpoints
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Build a proxy client for a proxy id (decrypt + redact resolved URL), or a
+/// 404/500/400 error. `proxy_url` is decrypted from the ciphertext.
+async fn proxy_client(
+    state: &SharedState,
+    id: i64,
+) -> Result<reqwest::Client, (StatusCode, Json<Value>)> {
+    let plain = plain_proxy_url(state, id).await?;
+    aigw_core::probe::build_proxy_client(&plain, std::time::Duration::from_secs(10)).map_err(
+        |e| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": {"message": format!("Invalid proxy_url: {}", e), "type": "invalid_request_error"}})),
+            )
+        },
+    )
+}
+
+/// Resolve the plaintext proxy URL for a proxy id, or a 404/500 error.
+async fn plain_proxy_url(
+    state: &SharedState,
+    id: i64,
+) -> Result<String, (StatusCode, Json<Value>)> {
+    let proxy = state.db.get_proxy_by_id(id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
+        )
+    })?;
+    let proxy = proxy.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": {"message": "proxy not found"}})),
+        )
+    })?;
+    let mk = state.aigw_master_key.as_deref().ok_or_else(|| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {"message": "AIGW_MASTER_KEY not configured — cannot decrypt proxy_url"}})),
+        )
+    })?;
+    decrypt_proxy_url(&proxy.proxy_url, mk).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {"message": format!("Failed to decrypt proxy_url: {}", e)}})),
+        )
+    })
+}
+
+/// Persist a probe snapshot into `proxies.probe_result` for a proxy id.
+async fn persist_snapshot(
+    state: &SharedState,
+    id: i64,
+    snapshot: Value,
+) -> Result<(), (StatusCode, Json<Value>)> {
+    let mut proxy = state
+        .db
+        .get_proxy_by_id(id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": {"message": "proxy not found"}})),
+            )
+        })?;
+    proxy.probe_result = snapshot;
+    proxy.updated_at = chrono::Utc::now().to_rfc3339();
+    state.db.update_proxy(&proxy).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
+        )
+    })
+}
+
+/// POST /admin/proxies/{id}/test — exit probe (IP + latency), writes snapshot.
+pub async fn test_proxy(
+    State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
+    Path(id): Path<i64>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    require_admin(&auth)?;
+    let client = proxy_client(&state, id).await?;
+    let exit = aigw_core::probe::probe_exit(&client).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {"message": format!("Exit probe failed: {}", e)}})),
+        )
+    })?;
+    let snapshot = json!({
+        "latency_ms": exit.latency_ms,
+        "exit_ip": exit.ip,
+        "country": exit.country,
+        "country_code": exit.country_code,
+        "region": exit.region,
+        "city": exit.city,
+        "last_check_at": chrono::Utc::now().to_rfc3339(),
+    });
+    persist_snapshot(&state, id, snapshot.clone()).await?;
+    let resp = json!({
+        "id": id,
+        "probe_result": snapshot,
+    });
+    Ok(Json(resp))
+}
+
+/// POST /admin/proxies/{id}/quality — quality check (score + grade + items).
+pub async fn quality_proxy(
+    State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
+    Path(id): Path<i64>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    require_admin(&auth)?;
+    let client = proxy_client(&state, id).await?;
+    let exit = aigw_core::probe::probe_exit(&client).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {"message": format!("Exit probe failed: {}", e)}})),
+        )
+    })?;
+    let quality = aigw_core::probe::run_quality_check(&client, &exit)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": {"message": format!("Quality check: {}", e)}})),
+            )
+        })?;
+    let snapshot = json!({
+        "latency_ms": quality.base_latency_ms,
+        "exit_ip": quality.exit_ip,
+        "country": quality.country,
+        "country_code": quality.country_code,
+        "score": quality.score,
+        "grade": quality.grade,
+        "overall_status": quality.overall_status,
+        "items": quality.items,
+        "last_check_at": quality.last_check_at,
+    });
+    persist_snapshot(&state, id, snapshot.clone()).await?;
+    Ok(Json(json!({ "id": id, "probe_result": snapshot })))
+}
+
+/// POST /admin/proxies/{id}/toggle — active ↔ inactive.
+pub async fn toggle_proxy(
+    State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
+    Path(id): Path<i64>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    require_admin(&auth)?;
+    let mut proxy = state
+        .db
+        .get_proxy_by_id(id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": {"message": "proxy not found"}})),
+            )
+        })?;
+    proxy.status = if proxy.status == "inactive" {
+        "active".to_string()
+    } else {
+        "inactive".to_string()
+    };
+    proxy.updated_at = chrono::Utc::now().to_rfc3339();
+    state.db.update_proxy(&proxy).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
+        )
+    })?;
+    let resp = ProxyResponse::from_proxy(proxy, state.aigw_master_key.as_deref());
+    Ok(Json(serde_json::to_value(resp).unwrap_or(json!({}))))
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Tests
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -489,6 +707,9 @@ mod tests {
                 "/admin/proxies/{id}",
                 get(get_proxy).put(update_proxy).delete(delete_proxy),
             )
+            .route("/admin/proxies/{id}/test", post(test_proxy))
+            .route("/admin/proxies/{id}/quality", post(quality_proxy))
+            .route("/admin/proxies/{id}/toggle", post(toggle_proxy))
             .with_state(state)
     }
 
@@ -666,5 +887,85 @@ mod tests {
 
         let (s, _) = send(&app, axum::http::Method::GET, "/admin/proxies", &raw, None).await;
         assert_eq!(s, 403);
+    }
+
+    /// Stage 123 UT-1: toggle flips status active → inactive and back.
+    #[tokio::test]
+    async fn test_proxy_toggle_status() {
+        let state = test_state().await;
+        let app = build_proxy_router(state);
+        let mk = "sk-master-test";
+        let id = create_proxy_helper(&app, mk, "toggle-proxy").await;
+
+        // active → inactive
+        let (s, body) = send(
+            &app,
+            axum::http::Method::POST,
+            &format!("/admin/proxies/{}/toggle", id),
+            mk,
+            None,
+        )
+        .await;
+        assert_eq!(s, 200);
+        assert_eq!(body["status"], "inactive");
+
+        // inactive → active
+        let (s, body) = send(
+            &app,
+            axum::http::Method::POST,
+            &format!("/admin/proxies/{}/toggle", id),
+            mk,
+            None,
+        )
+        .await;
+        assert_eq!(s, 200);
+        assert_eq!(body["status"], "active");
+    }
+
+    /// Stage 123 UT-2: test/quality return 400 for an invalid proxy_url
+    /// (unreachable build — build_proxy_client rejects malformed URLs).
+    #[tokio::test]
+    async fn test_proxy_test_and_quality_endpoints_require_valid_url() {
+        let state = test_state().await;
+        let app = build_proxy_router(state.clone());
+        let mk = "sk-master-test";
+        // Create a proxy with a malformed URL so build_proxy_client fails → 400.
+        let (s, _) = send(
+            &app,
+            axum::http::Method::POST,
+            "/admin/proxies",
+            mk,
+            Some(serde_json::json!({
+                "name": "bad-url",
+                "proxy_url": "not-a-url",
+            })),
+        )
+        .await;
+        assert_eq!(s, 200);
+        let id = create_proxy_helper(&app, mk, "bad-url-valid").await;
+        // Overwrite the created proxy's url with an invalid one.
+        let mut p = state.db.get_proxy_by_id(id).await.unwrap().unwrap();
+        p.proxy_url = aigw_core::crypto::encrypt_proxy_url("://", mk).unwrap();
+        state.db.update_proxy(&p).await.unwrap();
+
+        let (s, _) = send(
+            &app,
+            axum::http::Method::POST,
+            &format!("/admin/proxies/{}/test", id),
+            mk,
+            None,
+        )
+        .await;
+        assert_eq!(s, 400);
+
+        let (s, _) = send(
+            &app,
+            axum::http::Method::POST,
+            &format!("/admin/proxies/{}/quality", id),
+            mk,
+            None,
+        )
+        .await;
+        assert_eq!(s, 400);
     }
 }

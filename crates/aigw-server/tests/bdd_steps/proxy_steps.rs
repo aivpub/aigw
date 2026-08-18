@@ -1,4 +1,4 @@
-//! Step bindings for proxies.feature — Stage 122 /admin/proxies/* CRUD
+//! Step bindings for proxies.feature — Stage 122/123 /admin/proxies/* CRUD + probe
 //!
 //! Uses the shared in-memory SQLite test DB (world.ensure_state()) and a
 //! dedicated router with the proxy endpoints. Requires AIGW_MASTER_KEY set in
@@ -32,6 +32,18 @@ fn build_proxy_router(state: aigw_server::routes::keys::SharedState) -> Router {
             axum::routing::get(aigw_server::routes::proxies::get_proxy)
                 .put(aigw_server::routes::proxies::update_proxy)
                 .delete(aigw_server::routes::proxies::delete_proxy),
+        )
+        .route(
+            "/admin/proxies/{id}/test",
+            axum::routing::post(aigw_server::routes::proxies::test_proxy),
+        )
+        .route(
+            "/admin/proxies/{id}/quality",
+            axum::routing::post(aigw_server::routes::proxies::quality_proxy),
+        )
+        .route(
+            "/admin/proxies/{id}/toggle",
+            axum::routing::post(aigw_server::routes::proxies::toggle_proxy),
         )
         .with_state(state)
 }
@@ -372,6 +384,38 @@ async fn when_batch_delete(world: &mut TestWorld) {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Stage 123 when steps — toggle / test
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[when(expr = "发送 POST \\/admin\\/proxies\\/\\{id\\}\\/toggle 请求")]
+async fn when_toggle_proxy(world: &mut TestWorld) {
+    let id = latest_proxy_id(world);
+    let uri = format!("/admin/proxies/{}/toggle", id);
+    send_request(
+        world,
+        Method::POST,
+        &uri,
+        Some(&world.master_key.clone()),
+        None,
+    )
+    .await;
+}
+
+#[when(expr = "发送 POST \\/admin\\/proxies\\/\\{id\\}\\/test 请求")]
+async fn when_test_proxy(world: &mut TestWorld) {
+    let id = latest_proxy_id(world);
+    let uri = format!("/admin/proxies/{}/test", id);
+    send_request(
+        world,
+        Method::POST,
+        &uri,
+        Some(&world.master_key.clone()),
+        None,
+    )
+    .await;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Then
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -443,4 +487,29 @@ async fn then_batch_deleted_count(world: &mut TestWorld, expected: usize) {
         .and_then(|v| v.as_array())
         .expect("deleted_ids array");
     assert_eq!(deleted.len(), expected);
+}
+
+#[then(expr = "响应 probe_result 包含 exit_ip 字段")]
+async fn then_probe_has_exit_ip(world: &mut TestWorld) {
+    let body = world.last_body.as_ref().expect("no response body");
+    let pr = body
+        .get("probe_result")
+        .unwrap_or_else(|| panic!("no probe_result in response: {}", body));
+    let exit_ip = pr
+        .get("exit_ip")
+        .and_then(|v| v.as_str())
+        .unwrap_or_else(|| panic!("probe_result missing exit_ip: {}", body));
+    assert!(!exit_ip.is_empty());
+}
+
+#[then(expr = "响应状态码为 200 或 500 且返回 JSON")]
+async fn then_status_200_or_500(world: &mut TestWorld) {
+    match world.last_status {
+        Some(200) | Some(500) => {}
+        other => panic!("expected status 200 or 500, got {:?}", other),
+    }
+    assert!(
+        world.last_body.is_some(),
+        "expected JSON body for probe response"
+    );
 }
