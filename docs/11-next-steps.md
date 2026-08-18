@@ -1,27 +1,29 @@
 # aigw -- 下一步行动
 
 **上次更新**: 2026-08-18
-**当前阶段**: **Phase 50/51 规划完成（待实施）**：代理服务管理（Stage 122-125）+ Claude OAuth 订阅反代（Stage 126-130）
+**当前阶段**: **Phase 50 实施中（Stage 122 ✅ 完成，Stage 123-125 待实施）** + Phase 51 规划完成（Stage 126-130）
 
 ---
 
-## 当前状态：Phase 50/51 规划完成（待实施）
+## 当前状态：Phase 50 Stage 122 ✅ 完成
 
-**2026-08-18（规划态，仅文档不实施）**: 完成两 Phase 规划——代理服务管理 + Claude OAuth 订阅反代，参考 `~/works/play/sub2api` 生产实现。用户确认 8 项决策（最小化 billing 块默认注入 / 三层 token 自愈 / 全协议统一反代 / 凭证存 credentials 表 / TLS 指纹推迟 / proxies 表整串 proxy_url / probe_result 单 JSON / 质量检测加 CF challenge 项）。
+**2026-08-18（Stage 122 ✅）**: 代理服务管理后端 CRUD 交付——Migration 027 ×3 建 `proxies` 表（整串 proxy_url AES-GCM `v2:gcm:` 加密落库）+ `Proxy` model + `ProxyStore` trait ×3 方言（create/get/list 分页过滤/count/list_active/update/delete + in-use 守卫 `proxy_in_use_by_credentials`/`credentials_referencing_proxy`）+ `/admin/proxies/*` 路由（CRUD + batch-delete + 409 PROXY_IN_USE）+ proxy_url 解密 redact（`scheme://user:***@host:port`）+ `spawn_async_probe` 异步探测预留（Stage 123 接线）。TDD：5 core UT（crypto 加密/redact + db CRUD/filters/in-use/idempotent）+ 3 handler UT（create 掩码/delete 409/403）+ **proxies.feature 8 BDD 场景**。
 
-| Phase | Stage | 主题 | 预估 |
-|-------|-------|------|------|
-| **50** | 122 | proxies 表 + CRUD + in-use 守卫 + proxy_url 加密 | 10h |
-| **50** | 123 | 出口探测 + 质量检测（含 claude_oauth CF challenge）+ 计分/等级 | 12h |
-| **50** | 124 | ProxiesPage 前端 | 10h |
-| **50** | 125 | 收尾：real BDD + ADR-033 + roadmap 回写 | 4h |
-| **51** | 126 | 凭证扩展 + Cookie→Token 3 步交换（PKCE） | 12h |
-| **51** | 127 | Token 生命周期 + 三层自愈（缓存→刷新→cookie→告警） | 10h |
-| **51** | 128 | 反代管线（billing 注入 + 全协议转换 + 代理出口） | 14h |
-| **51** | 129 | CredentialsTab OAuth 入口前端 | 8h |
-| **51** | 130 | 收尾：real BDD + 安全审计 + ADR-034 | 6h |
+**基线更新**: aigw-core **468 UT**、aigw-server **152 UT**、mock BDD **257 场景（244 pass / 13 skip body_archive / 0 fail）**、`task test`/`task fmt`/`task lint`/`task build` 全绿。设计文档：`docs/stages/stage-122.md`（§6 实现记录）。
 
-**依赖**: Phase 51 强依赖 Phase 50（凭证绑代理 + 交换走代理出口 + 反代代理出口）。
+| Phase | Stage | 主题 | 预估 | 状态 |
+|-------|-------|------|------|------|
+| **50** | 122 | proxies 表 + CRUD + in-use 守卫 + proxy_url 加密 | 10h | ✅ 完成 |
+| **50** | 123 | 出口探测 + 质量检测（含 claude_oauth CF challenge）+ 计分/等级 | 12h | ⏳ 下一步 |
+| **50** | 124 | ProxiesPage 前端 | 10h | ⏳ |
+| **50** | 125 | 收尾：real BDD + ADR-033 + roadmap 回写 | 4h | ⏳ |
+| **51** | 126 | 凭证扩展 + Cookie→Token 3 步交换（PKCE） | 12h | ⏳ |
+| **51** | 127 | Token 生命周期 + 三层自愈（缓存→刷新→cookie→告警） | 10h | ⏳ |
+| **51** | 128 | 反代管线（billing 注入 + 全协议转换 + 代理出口） | 14h | ⏳ |
+| **51** | 129 | CredentialsTab OAuth 入口前端 | 8h | ⏳ |
+| **51** | 130 | 收尾：real BDD + 安全审计 + ADR-034 | 6h | ⏳ |
+
+**依赖**: Stage 123 依赖 122（探测写 probe_result）→ 124 → 125;Phase 51 强依赖 Phase 50（凭证绑代理 + 交换走代理出口 + 反代代理出口）。
 
 **规划文档**:
 - `docs/plans/2026-08-18-claude-oauth-reverse-proxy.md`（总体规划）
@@ -233,7 +235,8 @@ Phase 45:   ████████████████████ 100% (3
 | ✅ | Phase 47 Stage 118 Router 智能路由接线（cooldown/weighted/usage/latency/fallback） | ✅ 完成（2026-08-10，abad4db） |
 | ✅ | Phase 47 Stage 119 exact-match 响应缓存（moka LRU + X-Cache-Status + 计费 0 元） | ✅ 完成（2026-08-10，ad981b2） |
 | ✅ | Phase 47 收尾：前端 RouterSettings 下拉解锁 + config cache 块 + max_parallel key/budget 表字段 | ✅ 完成（2026-08-10，9fe6329 / cada57b） |
-| ⏳ | **Phase 50 Stage 122-125 代理服务管理**（proxies 表 + 出口/质量检测 + 前端 + 收尾） | ⏳ 规划完成，待实施 |
-| ⏳ | **Phase 51 Stage 126-130 Claude OAuth 订阅反代**（凭证交换 + 三层自愈 + 反代管线 + 前端 + 收尾） | ⏳ 规划完成，待实施（依赖 Phase 50） |
+| ✅ | **Phase 50 Stage 122 代理服务管理后端 CRUD**（proxies 表 + in-use 守卫 + proxy_url 加密） | ✅ 完成（2026-08-18） |
+| ⏳ | **Phase 50 Stage 123-125**（出口+质量检测 / ProxiesPage 前端 / real BDD 收尾） | ⏳ 待实施 |
+| ⏳ | **Phase 51 Stage 126-130 Claude OAuth 订阅反代**（凭证交换 + 三层自愈 + 反代管线 + 前端 + 收尾） | ⏳ 待实施（依赖 Phase 50） |
 | P2 | TD-008c/d 后端错误多语言 + RTL、TD-009e 外链缩略图、TD-011a 视频 token 估算（剩余） | 待处理（视使用量） |
 | P2 | Phase 41 测试缺口（适配器 UT + 流式接线） | ✅ 关闭（2026-08-09） |

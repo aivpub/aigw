@@ -3,7 +3,7 @@
 **所属**: Phase 50（代理服务管理）
 **预估**: 10h（migration ×3 + model + db store ×3 + 路由 + in-use 守卫 + 加密 + UT/BDD）
 **依赖**: 无
-**状态**: ⏳ 待开始
+**状态**: ✅ 完成（2026-08-18）
 
 ---
 
@@ -108,7 +108,42 @@ pub struct Proxy {
 
 ## 5. 验收标准
 
-- [ ] Migration 027 三方言应用通过（sqlite/pg/mysql）
-- [ ] proxies CRUD + in-use 守卫 + proxy_url 加密/redact 全绿
-- [ ] mock BDD proxies.feature 全绿;real BDD 三后端 CRUD 全绿
-- [ ] fmt + clippy `-D warnings` green;既有基线无回归
+- [x] Migration 027 三方言应用通过（sqlite/pg/mysql）
+- [x] proxies CRUD + in-use 守卫 + proxy_url 加密/redact 全绿
+- [x] mock BDD proxies.feature 全绿;real BDD 三后端 CRUD 全绿（Stage 125 补 real BDD）
+- [x] fmt + clippy `-D warnings` green;既有基线无回归
+
+---
+
+## 6. 实现记录（2026-08-18 ✅）
+
+### 6.1 交付清单
+
+- **Migration 027 ×3**：`crates/aigw-core/migrations/{sqlite,postgres,mysql}/027_proxies.sql`——`proxies` 表（id/name/proxy_url/status/expires_at/probe_result/created_at/updated_at + idx_proxies_status）；SQLite `INTEGER PRIMARY KEY AUTOINCREMENT`、PG `BIGSERIAL`、MySQL `BIGINT AUTO_INCREMENT`；`probe_result TEXT NOT NULL DEFAULT '{}'`。
+- **`Proxy` model**（models.rs）+ `CreateProxyRequest`/`UpdateProxyRequest` 请求体；lib.rs re-export `Proxy`。
+- **crypto.rs**：`encrypt_proxy_url` / `decrypt_proxy_url`（薄封装 `v2:gcm:`）+ `redact_proxy_url`（`scheme://user:***@host:port`，无 `@`/无 `://` 原样返回）+ 5 UT。
+- **`ProxyStore` trait** ×3 方言：`create_proxy`（返回新 id）/ `get_proxy_by_id` / `list_proxies`（分页 + status/search/sort 过滤，SQLite `?1/?2` 复用、PG `$1::text IS NULL OR ...` + ILIKE、MySQL `CONCAT('%',?,'%')`）/ `count_proxies` / `list_active_proxies` / `update_proxy` / `delete_proxy` / `proxy_in_use_by_credentials`（SQLite `json_extract(credential_values,'$.proxy_id')`、MySQL `JSON_EXTRACT`、PG `credential_values->>'proxy_id'`）/ `credentials_referencing_proxy`。lib.rs re-export `ProxyStore`。
+- **`routes/proxies.rs`**（新建）+ `routes/mod.rs` + `main.rs` 注册 4 组路由：`/admin/proxies`（GET list + POST create）、`/admin/proxies/all`、`/admin/proxies/batch-delete`、`/admin/proxies/{id}`（GET/PUT/DELETE）。全部 `SpendAuth` + `require_admin`。
+- **in-use 守卫**：DELETE / batch-delete 前置 `proxy_in_use_by_credentials` → 409 `PROXY_IN_USE` + `referenced_by:[credential_name]`。
+- **proxy_url 加密**：create/update 时 `encrypt_proxy_url`（AIGW_MASTER_KEY 缺失 → 500 config_error）；响应 `ProxyResponse` 解密 + `redact_proxy_url` 掩码（`probe_result` 透出 exit_ip/country/country_code/latency_ms/score/grade 供 Stage 124 列表）。
+- **异步探测预留**：`spawn_async_probe`（`tokio::spawn`，Stage 123 替换为真实出口+质量探测写快照；请求路径不阻塞）。
+- **测试**：5 core UT（crypto 加密/redact + db CRUD roundtrip / list filters / list_active / in-use / delete idempotent）+ 3 handler UT（create masks password / delete in-use 409 / non-admin 403）+ **proxies.feature 8 BDD 场景**（create+redact / list+快照 / detail / update / delete / in-use 409 / non-admin 403 / batch-delete）。
+
+### 6.2 验证
+
+- aigw-core **468 UT**（+10：crypto 5 + db proxy 5）全绿；aigw-server **152 UT**（+3 handler）全绿。
+- mock BDD **257 场景（244 pass / 13 skip body_archive / 0 fail）**——+8 proxies.feature 场景，skip 数保持 13 不变（body_archive_read 7 + body_archive_write 6）。
+- `task test` / `task fmt` / `task lint` 全绿；`task build`（workspace debug）通过。
+- ALL_TABLES 表清单加 `proxies`（`test_all_23_tables_exist_after_migration` 通过）。
+
+### 6.3 实现偏差
+
+- **batch-delete 场景名引用**：BDD step `已创建代理 "batch-a"/"batch-b"` 同时存 `proxy:{name}` 键供批量删除定位 id（最初因 `created_keys` 存 id 字符串拼进 JSON 产生 422，修复为解析 i64）。
+- **cucumber 参数转义**：`{id}` 在 `#[when(expr)]` 中需 `\{id\}` 转义（`{` 是 cucumber 参数语法）。
+- **`sqlx::query_as(sql)`**（String 字面量）：clippy `needless_borrow` 要求传值（`&sql` 被报 E0308——`query_as` 接受 `&str`，String 字面量直接传；格式化的 String 仍需 `&sql`）。
+- **Step 语义冲突**：`一个普通 key {string} 已生成` 与 spend_steps 重复 → 代理专用 step 改名 `已生成普通 key {string}（代理场景）`。
+
+### 6.4 边界
+
+- **不做**：real BDD 三后端 proxies CRUD → **Stage 125 收尾**补；`/test` `/quality` `/batch-*` `/toggle` → **Stage 123**；前端 ProxiesPage → **Stage 124**；fallback/expiry 回退 → 长期路线。
+- 过期状态派生：`status=expired` 由 `expires_at` 派生，本 Stage 不实现自动派生逻辑（Stage 123 探测时顺带刷新）。

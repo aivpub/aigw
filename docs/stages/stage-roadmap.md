@@ -7,9 +7,9 @@
 
 ## 当前状态
 
-- **当前 Phase**: **Phase 51 ✅ 规划完成（Stage 126-130，Claude OAuth 订阅反代，待实施）**；Phase 50 ✅ 规划完成（Stage 122-125，代理服务管理，待实施）。注：Phase 50/51 为**规划态**（文档就绪，未实施）。
-- **状态**: **125/125 Stages 交付完成 + Phase 50/51 规划待实施（新增 Stage 122-134）**。已交付 Stage 121 ✅（`enabled: bool` 列 + resolver filter + 前后端接线）：修复"上游模型停用功能完全无效"缺陷。Phase 50/51 规划：代理服务管理（proxies 表 + 出口/质量检测，含 CF challenge）+ Claude OAuth 订阅反代（sk-ant-sid cookie 换 token、凭证绑代理、billing 块注入、三层 token 自愈）。详见 `docs/plans/2026-08-18-claude-oauth-reverse-proxy.md`。
-- **下一里程碑**: Phase 50（代理服务管理，Stage 122-125）→ Phase 51（Claude OAuth 订阅反代，Stage 126-130）;中期 M1 guardrails / M2 Redis 分布式层。
+- **当前 Phase**: **Phase 50 实施中（Stage 122 ✅ 完成，Stage 123-125 待实施）**。Phase 51（Stage 126-130，Claude OAuth 订阅反代）规划完成待实施。
+- **状态**: **126/134 Stages 交付（Stage 122 ✅ 代理服务管理后端 CRUD）**。Stage 122 完成（2026-08-18）：Migration 027 ×3 建 `proxies` 表 + `Proxy` model + `ProxyStore` ×3 方言 + `/admin/proxies/*` 路由（CRUD + batch-delete + in-use 守卫 409）+ proxy_url 加密/redact + 创建异步探测预留。验证：aigw-core 468 + aigw-server 152 UT、mock BDD **257（244 pass / 13 skip）**、fmt + clippy green。详见 `docs/stages/stage-122.md`。
+- **下一里程碑**: Phase 50 Stage 123（出口+质量检测，含 CF challenge）→ Stage 124（前端 ProxiesPage）→ Stage 125（收尾 real BDD）;Phase 51 强依赖 Phase 50;中期 M1 guardrails / M2 Redis 分布式层。
 
 ### 整体进度
 
@@ -61,7 +61,7 @@ Phase 49:   ████████████████████ 100% (1
 
 ---
 
-## Phase 50：代理服务管理 🔄（规划待实施，Stage 122-125，44h）
+## Phase 50：代理服务管理 🔄（实施中，Stage 122 ✅，Stage 123-125 待实施，44h）
 
 **背景**: sub2api 的代理管理（CRUD + 出口/质量检测）已生产验证，是 Claude OAuth 反代的底座。aigw 当前零代理能力——reqwest 客户端无代理配置、无 proxies 表、无检测端点。参考实现调研：`docs/research/2026-08-18-sub2api-proxy-oauth-reference.md`；总体规划：`docs/plans/2026-08-18-claude-oauth-reverse-proxy.md`。
 
@@ -69,7 +69,7 @@ Phase 49:   ████████████████████ 100% (1
 
 | Stage | 状态 | 目标 | 类型 | 预估 |
 |-------|------|------|------|------|
-| 122 | ⏳ 待开始 | **后端 CRUD** — Migration 027 ×3 建 `proxies` 表（整串 proxy_url 加密落库）+ `Proxy` model + db store ×3 方言 + `/admin/proxies/*` 路由 + in-use 守卫（credentials JSON 扫描 proxy_id）+ proxy_url 加密/redact + 创建异步探测预留。TDD: 5 core UT + 3 handler UT + proxies.feature | 后端+测试 | 10h |
+| 122 | ✅ 完成（2026-08-18） | **后端 CRUD** — Migration 027 ×3 建 `proxies` 表（整串 proxy_url 加密落库）+ `Proxy` model + db store ×3 方言 + `/admin/proxies/*` 路由 + in-use 守卫（credentials JSON 扫描 proxy_id）+ proxy_url 加密/redact + 创建异步探测预留。TDD: 5 core UT + 3 handler UT + proxies.feature | 后端+测试 | 10h |
 | Stage 123 | ⏳ 待开始 | **出口+质量检测** — 出口探测（经代理 GET ip-api/ipify）+ 质量目标（openai/anthropic/**claude_oauth(CF challenge 检测)**/gemini/grok）+ 计分/等级（100−warn×10−fail×22−challenge×30）+ 创建/更新异步自动探测 + probe_result 快照 + reqwest `socks` feature + /test /quality /batch-* /toggle。TDD: 5 core UT + 2 handler UT + proxies.feature 扩展 | 后端+测试 | 12h |
 | Stage 124 | ⏳ 待开始 | **前端** — ProxiesPage（Settings 分组 /dash/proxies）：表格（出口 IP·国家/延迟/分数等级/状态/到期）+ 创建/编辑对话框 + Test/Quality 按钮 + 逐项展开 + 批量操作 + toggle + i18n 全量。TDD: 8 BDD × 3 viewports | 前端+测试 | 10h |
 | Stage 125 | ⏳ 待开始 | **收尾** — real BDD 三后端 proxies CRUD + in-use + 快照 + ADR-033 + roadmap/next-steps 回写 | 全栈+文档 | 4h |

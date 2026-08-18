@@ -1178,6 +1178,55 @@ pub struct ClaudeStreamEvent {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// proxies — proxy service management (Phase 50, Stage 122)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Proxy — a single outbound proxy service.
+///
+/// `proxy_url` is stored **encrypted** (AES-GCM `v2:gcm:` with master_key);
+/// the response decrypts + redacts the password before exposing it.
+/// `probe_result` is a single JSON snapshot (latency/exit/score/grade/items),
+/// filled by the Stage 123 probe engine; the top-level `status` column is only
+/// used for filtering.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct Proxy {
+    pub id: i64,
+    pub name: String,
+    /// Encrypted ciphertext as stored in the DB (`v2:gcm:...`). Handlers
+    /// decrypt this before use and redact the password in responses.
+    pub proxy_url: String,
+    /// active / inactive / expired
+    pub status: String,
+    pub expires_at: Option<String>,
+    #[sqlx(default)]
+    pub probe_result: serde_json::Value,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Request body for POST /admin/proxies (create)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateProxyRequest {
+    pub name: String,
+    pub proxy_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+}
+
+/// Request body for PUT /admin/proxies/{id} (update)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateProxyRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proxy_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Health Check models
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

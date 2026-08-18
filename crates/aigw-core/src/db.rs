@@ -4955,6 +4955,551 @@ pub trait CredentialsStore {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ProxyStore trait — proxies CRUD across all DB backends (Phase 50, Stage 122)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Proxy CRUD + in-use guard. `proxy_url` is stored encrypted; handlers decrypt
+/// and redact before responding.
+#[async_trait]
+pub trait ProxyStore {
+    async fn create_proxy(&self, p: &Proxy) -> Result<i64>;
+    async fn get_proxy_by_id(&self, id: i64) -> Result<Option<Proxy>>;
+    async fn list_proxies(
+        &self,
+        limit: i64,
+        offset: i64,
+        status: Option<&str>,
+        search: Option<&str>,
+        sort_by: Option<&str>,
+        sort_order: Option<&str>,
+    ) -> Result<Vec<Proxy>>;
+    async fn count_proxies(&self, status: Option<&str>, search: Option<&str>) -> Result<i64>;
+    async fn list_active_proxies(&self) -> Result<Vec<Proxy>>;
+    async fn update_proxy(&self, p: &Proxy) -> Result<()>;
+    async fn delete_proxy(&self, id: i64) -> Result<()>;
+    /// True when at least one credential's `credential_values.proxy_id` equals
+    /// the given proxy id (in-use guard).
+    async fn proxy_in_use_by_credentials(&self, id: i64) -> Result<bool>;
+    /// Return the credential names that reference the proxy id (for the 409 body).
+    async fn credentials_referencing_proxy(&self, id: i64) -> Result<Vec<String>>;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ProxyStore implementation for SqlitePool
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const CREATE_PROXY_SQLITE: &str = r#"
+INSERT INTO proxies (name, proxy_url, status, expires_at, probe_result, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+"#;
+
+const GET_PROXY_SQLITE: &str = r#"
+SELECT id, name, proxy_url, status, expires_at, probe_result, created_at, updated_at
+FROM proxies WHERE id = ?
+"#;
+
+const LIST_ACTIVE_PROXIES_SQLITE: &str = r#"
+SELECT id, name, proxy_url, status, expires_at, probe_result, created_at, updated_at
+FROM proxies WHERE status = 'active' ORDER BY name
+"#;
+
+const UPDATE_PROXY_SQLITE: &str = r#"
+UPDATE proxies SET name = ?, proxy_url = ?, status = ?, expires_at = ?, probe_result = ?, updated_at = ?
+WHERE id = ?
+"#;
+
+const DELETE_PROXY_SQLITE: &str = r#"
+DELETE FROM proxies WHERE id = ?
+"#;
+
+const CRED_PROXY_REF_SQLITE: &str = r#"
+SELECT credential_name FROM credentials
+WHERE json_extract(credential_values, '$.proxy_id') = ?1
+"#;
+
+#[async_trait]
+impl ProxyStore for SqlitePool {
+    async fn create_proxy(&self, p: &Proxy) -> Result<i64> {
+        let result = sqlx::query(CREATE_PROXY_SQLITE)
+            .bind(&p.name)
+            .bind(&p.proxy_url)
+            .bind(&p.status)
+            .bind(&p.expires_at)
+            .bind(&p.probe_result)
+            .bind(&p.created_at)
+            .bind(&p.updated_at)
+            .execute(self)
+            .await?;
+        Ok(result.last_insert_rowid())
+    }
+
+    async fn get_proxy_by_id(&self, id: i64) -> Result<Option<Proxy>> {
+        sqlx::query_as::<_, Proxy>(GET_PROXY_SQLITE)
+            .bind(id)
+            .fetch_optional(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn list_proxies(
+        &self,
+        limit: i64,
+        offset: i64,
+        status: Option<&str>,
+        search: Option<&str>,
+        sort_by: Option<&str>,
+        sort_order: Option<&str>,
+    ) -> Result<Vec<Proxy>> {
+        let sort_col = match sort_by {
+            Some("name") => "name",
+            Some("created_at") => "created_at",
+            Some("status") => "status",
+            _ => "created_at",
+        };
+        let order = match sort_order {
+            Some("asc") => "ASC",
+            _ => "DESC",
+        };
+        let sql = format!(
+            "SELECT id, name, proxy_url, status, expires_at, probe_result, created_at, updated_at FROM proxies \
+             WHERE (?1 IS NULL OR status = ?1) AND (?2 IS NULL OR name LIKE '%' || ?2 || '%' OR proxy_url LIKE '%' || ?2 || '%') \
+             ORDER BY {} {} LIMIT ?3 OFFSET ?4",
+            sort_col, order
+        );
+        let rows = sqlx::query_as::<_, Proxy>(&sql)
+            .bind(status)
+            .bind(search)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(self)
+            .await?;
+        Ok(rows)
+    }
+
+    async fn count_proxies(&self, status: Option<&str>, search: Option<&str>) -> Result<i64> {
+        let sql = "SELECT COUNT(*) FROM proxies \
+                   WHERE (?1 IS NULL OR status = ?1) AND (?2 IS NULL OR name LIKE '%' || ?2 || '%' OR proxy_url LIKE '%' || ?2 || '%')";
+        let row: (i64,) = sqlx::query_as(sql)
+            .bind(status)
+            .bind(search)
+            .fetch_one(self)
+            .await?;
+        Ok(row.0)
+    }
+
+    async fn list_active_proxies(&self) -> Result<Vec<Proxy>> {
+        sqlx::query_as::<_, Proxy>(LIST_ACTIVE_PROXIES_SQLITE)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn update_proxy(&self, p: &Proxy) -> Result<()> {
+        sqlx::query(UPDATE_PROXY_SQLITE)
+            .bind(&p.name)
+            .bind(&p.proxy_url)
+            .bind(&p.status)
+            .bind(&p.expires_at)
+            .bind(&p.probe_result)
+            .bind(&p.updated_at)
+            .bind(p.id)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn delete_proxy(&self, id: i64) -> Result<()> {
+        sqlx::query(DELETE_PROXY_SQLITE)
+            .bind(id)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn proxy_in_use_by_credentials(&self, id: i64) -> Result<bool> {
+        let row: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM credentials WHERE json_extract(credential_values, '$.proxy_id') = ?1",
+        )
+        .bind(id)
+        .fetch_one(self)
+        .await?;
+        Ok(row.0 > 0)
+    }
+
+    async fn credentials_referencing_proxy(&self, id: i64) -> Result<Vec<String>> {
+        let rows: Vec<(String,)> = sqlx::query_as(CRED_PROXY_REF_SQLITE)
+            .bind(id)
+            .fetch_all(self)
+            .await?;
+        Ok(rows.into_iter().map(|r| r.0).collect())
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ProxyStore implementation for MySqlPool
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[async_trait]
+impl ProxyStore for MySqlPool {
+    async fn create_proxy(&self, p: &Proxy) -> Result<i64> {
+        let result = sqlx::query(
+            "INSERT INTO proxies (name, proxy_url, status, expires_at, probe_result, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&p.name)
+        .bind(&p.proxy_url)
+        .bind(&p.status)
+        .bind(&p.expires_at)
+        .bind(&p.probe_result)
+        .bind(&p.created_at)
+        .bind(&p.updated_at)
+        .execute(self)
+        .await?;
+        Ok(result.last_insert_id().try_into().unwrap())
+    }
+
+    async fn get_proxy_by_id(&self, id: i64) -> Result<Option<Proxy>> {
+        sqlx::query_as::<_, Proxy>(
+            "SELECT id, name, proxy_url, status, expires_at, probe_result, created_at, updated_at FROM proxies WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(self)
+        .await
+        .map_err(DbError::from)
+    }
+
+    async fn list_proxies(
+        &self,
+        limit: i64,
+        offset: i64,
+        status: Option<&str>,
+        search: Option<&str>,
+        sort_by: Option<&str>,
+        sort_order: Option<&str>,
+    ) -> Result<Vec<Proxy>> {
+        let sort_col = match sort_by {
+            Some("name") => "name",
+            Some("created_at") => "created_at",
+            Some("status") => "status",
+            _ => "created_at",
+        };
+        let order = match sort_order {
+            Some("asc") => "ASC",
+            _ => "DESC",
+        };
+        let sql = format!(
+            "SELECT id, name, proxy_url, status, expires_at, probe_result, created_at, updated_at FROM proxies \
+             WHERE (? IS NULL OR status = ?) AND (? IS NULL OR name LIKE CONCAT('%', ?, '%') OR proxy_url LIKE CONCAT('%', ?, '%')) \
+             ORDER BY {} {} LIMIT ? OFFSET ?",
+            sort_col, order
+        );
+        sqlx::query_as::<_, Proxy>(&sql)
+            .bind(status)
+            .bind(search)
+            .bind(search)
+            .bind(search)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn count_proxies(&self, status: Option<&str>, search: Option<&str>) -> Result<i64> {
+        let sql = "SELECT COUNT(*) FROM proxies \
+                   WHERE (? IS NULL OR status = ?) AND (? IS NULL OR name LIKE CONCAT('%', ?, '%') OR proxy_url LIKE CONCAT('%', ?, '%'))";
+        let row: (i64,) = sqlx::query_as(sql)
+            .bind(status)
+            .bind(search)
+            .bind(search)
+            .bind(search)
+            .fetch_one(self)
+            .await?;
+        Ok(row.0)
+    }
+
+    async fn list_active_proxies(&self) -> Result<Vec<Proxy>> {
+        sqlx::query_as::<_, Proxy>(
+            "SELECT id, name, proxy_url, status, expires_at, probe_result, created_at, updated_at FROM proxies WHERE status = 'active' ORDER BY name",
+        )
+        .fetch_all(self)
+        .await
+        .map_err(DbError::from)
+    }
+
+    async fn update_proxy(&self, p: &Proxy) -> Result<()> {
+        sqlx::query(
+            "UPDATE proxies SET name = ?, proxy_url = ?, status = ?, expires_at = ?, probe_result = ?, updated_at = ? WHERE id = ?",
+        )
+        .bind(&p.name)
+        .bind(&p.proxy_url)
+        .bind(&p.status)
+        .bind(&p.expires_at)
+        .bind(&p.probe_result)
+        .bind(&p.updated_at)
+        .bind(p.id)
+        .execute(self)
+        .await?;
+        Ok(())
+    }
+
+    async fn delete_proxy(&self, id: i64) -> Result<()> {
+        sqlx::query("DELETE FROM proxies WHERE id = ?")
+            .bind(id)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn proxy_in_use_by_credentials(&self, id: i64) -> Result<bool> {
+        let row: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM credentials WHERE JSON_EXTRACT(credential_values, '$.proxy_id') = ?",
+        )
+        .bind(id)
+        .fetch_one(self)
+        .await?;
+        Ok(row.0 > 0)
+    }
+
+    async fn credentials_referencing_proxy(&self, id: i64) -> Result<Vec<String>> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT credential_name FROM credentials WHERE JSON_EXTRACT(credential_values, '$.proxy_id') = ?",
+        )
+        .bind(id)
+        .fetch_all(self)
+        .await?;
+        Ok(rows.into_iter().map(|r| r.0).collect())
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ProxyStore implementation for PgPool
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[async_trait]
+impl ProxyStore for PgPool {
+    async fn create_proxy(&self, p: &Proxy) -> Result<i64> {
+        let row: (i64,) = sqlx::query_as(
+            "INSERT INTO proxies (name, proxy_url, status, expires_at, probe_result, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id",
+        )
+        .bind(&p.name)
+        .bind(&p.proxy_url)
+        .bind(&p.status)
+        .bind(&p.expires_at)
+        .bind(&p.probe_result)
+        .bind(&p.created_at)
+        .bind(&p.updated_at)
+        .fetch_one(self)
+        .await?;
+        Ok(row.0)
+    }
+
+    async fn get_proxy_by_id(&self, id: i64) -> Result<Option<Proxy>> {
+        sqlx::query_as::<_, Proxy>(
+            "SELECT id, name, proxy_url, status, expires_at, probe_result, created_at, updated_at FROM proxies WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(self)
+        .await
+        .map_err(DbError::from)
+    }
+
+    async fn list_proxies(
+        &self,
+        limit: i64,
+        offset: i64,
+        status: Option<&str>,
+        search: Option<&str>,
+        sort_by: Option<&str>,
+        sort_order: Option<&str>,
+    ) -> Result<Vec<Proxy>> {
+        let sort_col = match sort_by {
+            Some("name") => "name",
+            Some("created_at") => "created_at",
+            Some("status") => "status",
+            _ => "created_at",
+        };
+        let order = match sort_order {
+            Some("asc") => "ASC",
+            _ => "DESC",
+        };
+        let sql = format!(
+            "SELECT id, name, proxy_url, status, expires_at, probe_result, created_at, updated_at FROM proxies \
+             WHERE ($1::text IS NULL OR status = $1) AND ($2::text IS NULL OR name ILIKE '%' || $2 || '%' OR proxy_url ILIKE '%' || $2 || '%') \
+             ORDER BY {} {} LIMIT $3 OFFSET $4",
+            sort_col, order
+        );
+        sqlx::query_as::<_, Proxy>(&sql)
+            .bind(status)
+            .bind(search)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn count_proxies(&self, status: Option<&str>, search: Option<&str>) -> Result<i64> {
+        let sql = "SELECT COUNT(*) FROM proxies \
+                   WHERE ($1::text IS NULL OR status = $1) AND ($2::text IS NULL OR name ILIKE '%' || $2 || '%' OR proxy_url ILIKE '%' || $2 || '%')";
+        let row: (i64,) = sqlx::query_as(sql)
+            .bind(status)
+            .bind(search)
+            .fetch_one(self)
+            .await?;
+        Ok(row.0)
+    }
+
+    async fn list_active_proxies(&self) -> Result<Vec<Proxy>> {
+        sqlx::query_as::<_, Proxy>(
+            "SELECT id, name, proxy_url, status, expires_at, probe_result, created_at, updated_at FROM proxies WHERE status = 'active' ORDER BY name",
+        )
+        .fetch_all(self)
+        .await
+        .map_err(DbError::from)
+    }
+
+    async fn update_proxy(&self, p: &Proxy) -> Result<()> {
+        sqlx::query(
+            "UPDATE proxies SET name = $1, proxy_url = $2, status = $3, expires_at = $4, probe_result = $5, updated_at = $6 WHERE id = $7",
+        )
+        .bind(&p.name)
+        .bind(&p.proxy_url)
+        .bind(&p.status)
+        .bind(&p.expires_at)
+        .bind(&p.probe_result)
+        .bind(&p.updated_at)
+        .bind(p.id)
+        .execute(self)
+        .await?;
+        Ok(())
+    }
+
+    async fn delete_proxy(&self, id: i64) -> Result<()> {
+        sqlx::query("DELETE FROM proxies WHERE id = $1")
+            .bind(id)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn proxy_in_use_by_credentials(&self, id: i64) -> Result<bool> {
+        let row: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM credentials WHERE credential_values->>'proxy_id' = $1",
+        )
+        .bind(id.to_string())
+        .fetch_one(self)
+        .await?;
+        Ok(row.0 > 0)
+    }
+
+    async fn credentials_referencing_proxy(&self, id: i64) -> Result<Vec<String>> {
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT credential_name FROM credentials WHERE credential_values->>'proxy_id' = $1",
+        )
+        .bind(id.to_string())
+        .fetch_all(self)
+        .await?;
+        Ok(rows.into_iter().map(|r| r.0).collect())
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Database enum proxy dispatch
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+impl Database {
+    pub async fn create_proxy(&self, p: &Proxy) -> Result<i64> {
+        match self {
+            Database::Sqlite(pool) => pool.create_proxy(p).await,
+            Database::Mysql(pool) => pool.create_proxy(p).await,
+            Database::Postgres(pool) => pool.create_proxy(p).await,
+        }
+    }
+
+    pub async fn get_proxy_by_id(&self, id: i64) -> Result<Option<Proxy>> {
+        match self {
+            Database::Sqlite(pool) => pool.get_proxy_by_id(id).await,
+            Database::Mysql(pool) => pool.get_proxy_by_id(id).await,
+            Database::Postgres(pool) => pool.get_proxy_by_id(id).await,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn list_proxies(
+        &self,
+        limit: i64,
+        offset: i64,
+        status: Option<&str>,
+        search: Option<&str>,
+        sort_by: Option<&str>,
+        sort_order: Option<&str>,
+    ) -> Result<Vec<Proxy>> {
+        match self {
+            Database::Sqlite(pool) => {
+                pool.list_proxies(limit, offset, status, search, sort_by, sort_order)
+                    .await
+            }
+            Database::Mysql(pool) => {
+                pool.list_proxies(limit, offset, status, search, sort_by, sort_order)
+                    .await
+            }
+            Database::Postgres(pool) => {
+                pool.list_proxies(limit, offset, status, search, sort_by, sort_order)
+                    .await
+            }
+        }
+    }
+
+    pub async fn count_proxies(&self, status: Option<&str>, search: Option<&str>) -> Result<i64> {
+        match self {
+            Database::Sqlite(pool) => pool.count_proxies(status, search).await,
+            Database::Mysql(pool) => pool.count_proxies(status, search).await,
+            Database::Postgres(pool) => pool.count_proxies(status, search).await,
+        }
+    }
+
+    pub async fn list_active_proxies(&self) -> Result<Vec<Proxy>> {
+        match self {
+            Database::Sqlite(pool) => pool.list_active_proxies().await,
+            Database::Mysql(pool) => pool.list_active_proxies().await,
+            Database::Postgres(pool) => pool.list_active_proxies().await,
+        }
+    }
+
+    pub async fn update_proxy(&self, p: &Proxy) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.update_proxy(p).await,
+            Database::Mysql(pool) => pool.update_proxy(p).await,
+            Database::Postgres(pool) => pool.update_proxy(p).await,
+        }
+    }
+
+    pub async fn delete_proxy(&self, id: i64) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.delete_proxy(id).await,
+            Database::Mysql(pool) => pool.delete_proxy(id).await,
+            Database::Postgres(pool) => pool.delete_proxy(id).await,
+        }
+    }
+
+    pub async fn proxy_in_use_by_credentials(&self, id: i64) -> Result<bool> {
+        match self {
+            Database::Sqlite(pool) => pool.proxy_in_use_by_credentials(id).await,
+            Database::Mysql(pool) => pool.proxy_in_use_by_credentials(id).await,
+            Database::Postgres(pool) => pool.proxy_in_use_by_credentials(id).await,
+        }
+    }
+
+    pub async fn credentials_referencing_proxy(&self, id: i64) -> Result<Vec<String>> {
+        match self {
+            Database::Sqlite(pool) => pool.credentials_referencing_proxy(id).await,
+            Database::Mysql(pool) => pool.credentials_referencing_proxy(id).await,
+            Database::Postgres(pool) => pool.credentials_referencing_proxy(id).await,
+        }
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // CredentialsStore implementation for SqlitePool
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -7703,6 +8248,7 @@ mod tests {
         "async_jobs",
         "async_job_steps",
         "async_job_logs",
+        "proxies",
     ];
 
     fn make_test_key(token_hash: &str, key_alias: &str) -> VirtualKey {
@@ -8489,6 +9035,155 @@ mod tests {
             .await
             .unwrap()
             .is_none());
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // ProxyStore CRUD tests (SQLite in-memory) — Stage 122
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    fn make_test_proxy(name: &str) -> Proxy {
+        let now = Utc::now().to_rfc3339();
+        Proxy {
+            id: 0,
+            name: name.to_string(),
+            // "encrypted" URL — callers may overwrite with real ciphertext.
+            proxy_url: "v2:gcm:encrypted".to_string(),
+            status: "active".to_string(),
+            expires_at: None,
+            probe_result: serde_json::json!({}),
+            created_at: now.clone(),
+            updated_at: now,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_proxy_crud_roundtrip() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let mut p = make_test_proxy("crud-proxy");
+        let id = db.create_proxy(&p).await.expect("create");
+        assert!(id > 0);
+
+        let fetched = db.get_proxy_by_id(id).await.expect("get").unwrap();
+        assert_eq!(fetched.name, "crud-proxy");
+        assert_eq!(fetched.status, "active");
+        assert_eq!(fetched.proxy_url, "v2:gcm:encrypted");
+
+        // Update
+        p.id = id;
+        p.name = "crud-proxy-renamed".to_string();
+        p.proxy_url = "v2:gcm:new-cipher".to_string();
+        p.status = "inactive".to_string();
+        db.update_proxy(&p).await.expect("update");
+        let updated = db.get_proxy_by_id(id).await.expect("get").unwrap();
+        assert_eq!(updated.name, "crud-proxy-renamed");
+        assert_eq!(updated.proxy_url, "v2:gcm:new-cipher");
+        assert_eq!(updated.status, "inactive");
+
+        // Delete → get returns None (idempotent delete → Ok)
+        db.delete_proxy(id).await.expect("delete");
+        assert!(db.get_proxy_by_id(id).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_proxy_list_filters() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        for (i, name) in ["alpha-proxy", "beta-proxy", "gamma-proxy"]
+            .iter()
+            .enumerate()
+        {
+            let mut p = make_test_proxy(name);
+            if i == 2 {
+                p.status = "inactive".to_string();
+            }
+            let _ = db.create_proxy(&p).await.expect("create");
+        }
+
+        // All (default sort created_at desc)
+        let all = db
+            .list_proxies(10, 0, None, None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(all.len(), 3);
+
+        // Status filter
+        let active = db
+            .list_proxies(10, 0, Some("active"), None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(active.len(), 2);
+        let inactive = db
+            .list_proxies(10, 0, Some("inactive"), None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(inactive.len(), 1);
+
+        // Search filter matches name
+        let search = db
+            .list_proxies(10, 0, None, Some("beta"), None, None)
+            .await
+            .unwrap();
+        assert_eq!(search.len(), 1);
+        assert_eq!(search[0].name, "beta-proxy");
+
+        // Count agrees with list
+        assert_eq!(db.count_proxies(Some("active"), None).await.unwrap(), 2);
+        assert_eq!(db.count_proxies(None, Some("alpha")).await.unwrap(), 1);
+
+        // Pagination
+        let page1 = db.list_proxies(2, 0, None, None, None, None).await.unwrap();
+        assert_eq!(page1.len(), 2);
+        let page2 = db.list_proxies(2, 2, None, None, None, None).await.unwrap();
+        assert_eq!(page2.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_proxy_list_active() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        for (i, name) in ["p1", "p2", "p3"].iter().enumerate() {
+            let mut p = make_test_proxy(name);
+            if i == 1 {
+                p.status = "inactive".to_string();
+            }
+            let _ = db.create_proxy(&p).await.expect("create");
+        }
+        let active = db.list_active_proxies().await.unwrap();
+        assert_eq!(active.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_proxy_delete_in_use() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let p = make_test_proxy("inuse-proxy");
+        let id = db.create_proxy(&p).await.expect("create");
+
+        // No credential references → not in use
+        assert!(!db.proxy_in_use_by_credentials(id).await.unwrap());
+
+        // Insert a credential whose credential_values.proxy_id references it
+        let cred = Credential {
+            credential_id: Uuid::new_v4().to_string(),
+            credential_name: "oauth-cred".to_string(),
+            credential_values: serde_json::json!({"proxy_id": id}),
+            credential_info: serde_json::json!({}),
+            created_at: Utc::now().to_rfc3339(),
+            created_by: None,
+            updated_at: Utc::now().to_rfc3339(),
+            updated_by: None,
+        };
+        db.insert_credential(&cred)
+            .await
+            .expect("insert credential");
+
+        assert!(db.proxy_in_use_by_credentials(id).await.unwrap());
+        let refs = db.credentials_referencing_proxy(id).await.unwrap();
+        assert_eq!(refs, vec!["oauth-cred".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn test_proxy_delete_not_found_idempotent() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        // Deleting a non-existent proxy is a no-op Ok (matches delete_credential).
+        db.delete_proxy(999).await.expect("delete idempotent");
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

@@ -22,6 +22,7 @@ pub mod migration_steps;
 pub mod migration_sync_steps;
 pub mod model_access_steps;
 pub mod model_steps;
+pub mod proxy_steps;
 pub mod rate_limit_steps;
 pub mod real_api_steps;
 pub mod real_db_seed;

@@ -164,6 +164,40 @@ fn derive_gcm_key(master_key: &str, salt: &[u8]) -> [u8; 32] {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// proxy_url encryption (Phase 50, Stage 122)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Encrypt a whole proxy URL string (`scheme://user:pass@host:port`) for
+/// `proxies.proxy_url` storage. Same strength as litellm credentials.
+pub fn encrypt_proxy_url(proxy_url: &str, master_key: &str) -> Result<String, String> {
+    encrypt_litellm_value(proxy_url, master_key)
+}
+
+/// Decrypt a `proxies.proxy_url` ciphertext back to the plaintext URL.
+pub fn decrypt_proxy_url(encrypted: &str, master_key: &str) -> Result<String, String> {
+    decrypt_litellm_value(encrypted, master_key)
+}
+
+/// Redact the password portion of a plaintext proxy URL for admin responses:
+/// `scheme://user:***@host:port`. If the URL has no `@` (no credentials), it is
+/// returned unchanged. Malformed URLs (no `://`) are returned as-is.
+pub fn redact_proxy_url(url: &str) -> String {
+    let Some((scheme_rest, rest)) = url.split_once("://") else {
+        return url.to_string();
+    };
+    // rest = [user:pass@]host:port — redact everything between start and the
+    // last '@' (only the credential part), keeping host:port intact.
+    let Some(at_idx) = rest.rfind('@') else {
+        return url.to_string();
+    };
+    let credentials = &rest[..at_idx];
+    let host_part = &rest[at_idx + 1..];
+    // Split credentials into user[:pass] — user is safe to keep, pass is masked.
+    let (user, _pass) = credentials.split_once(':').unwrap_or((credentials, ""));
+    format!("{}://{}:***@{}", scheme_rest, user, host_part)
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Nested field-level decryption
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -735,5 +769,56 @@ mod tests {
     fn test_decode_base64_type15_rejects_non_envelope() {
         assert!(decode_base64_type15("v2:gcm:abc").is_err());
         assert!(decode_base64_type15("{\"model\":\"gpt-4\"}").is_err());
+    }
+
+    // ━━━━━━━━━━━ proxy_url encrypt/decrypt/redact (Stage 122) ━━━━━━━━━━━
+
+    const PROXY_KEY: &str = "sk-proxy-master-key";
+
+    #[test]
+    fn test_proxy_url_encrypt_decrypt_roundtrip() {
+        let url = "http://user:pass@1.2.3.4:8080";
+        let encrypted = encrypt_proxy_url(url, PROXY_KEY).unwrap();
+        // Ciphertext must not leak the plaintext
+        assert!(
+            !encrypted.contains("user"),
+            "ciphertext must not contain user"
+        );
+        assert!(
+            !encrypted.contains("1.2.3.4"),
+            "ciphertext must not contain host"
+        );
+        assert_eq!(decrypt_proxy_url(&encrypted, PROXY_KEY).unwrap(), url);
+    }
+
+    #[test]
+    fn test_proxy_url_encrypt_wrong_key_fails() {
+        let encrypted = encrypt_proxy_url("socks5://u:p@h:1080", PROXY_KEY).unwrap();
+        assert!(decrypt_proxy_url(&encrypted, "wrong-key").is_err());
+    }
+
+    #[test]
+    fn test_redact_proxy_url_with_password() {
+        assert_eq!(
+            redact_proxy_url("http://user:secret@1.2.3.4:8080"),
+            "http://user:***@1.2.3.4:8080"
+        );
+        assert_eq!(
+            redact_proxy_url("socks5://proxyuser@h:1080"),
+            "socks5://proxyuser:***@h:1080"
+        );
+    }
+
+    #[test]
+    fn test_redact_proxy_url_no_credentials() {
+        assert_eq!(
+            redact_proxy_url("http://1.2.3.4:8080"),
+            "http://1.2.3.4:8080"
+        );
+    }
+
+    #[test]
+    fn test_redact_proxy_url_malformed() {
+        assert_eq!(redact_proxy_url("not-a-url"), "not-a-url");
     }
 }

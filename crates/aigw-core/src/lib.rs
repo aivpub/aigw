@@ -55,10 +55,10 @@ pub use config_loader::{
     seed_models_from_config, SeedStats,
 };
 pub use crypto::{
-    decode_base64_type15, decrypt_json_fields, decrypt_litellm_value, encrypt_litellm_value,
-    hash_token, rotate_json_fields,
+    decode_base64_type15, decrypt_json_fields, decrypt_litellm_value, decrypt_proxy_url,
+    encrypt_litellm_value, encrypt_proxy_url, hash_token, redact_proxy_url, rotate_json_fields,
 };
-pub use db::CredentialsStore;
+pub use db::{CredentialsStore, ProxyStore};
 pub use deployment::{Deployment, ProviderType};
 pub use engine::{Engine, EngineConfig};
 pub use image_tokens::{
@@ -68,7 +68,7 @@ pub use image_tokens::{
 pub use metrics::{MetricsRecorder, RequestSummary};
 pub use models::{
     Budget, Credential, DailySpendKind, DailySpendLog, Organization, OrganizationMembership,
-    Project, ProxyModel, SpendLog, Team, TeamMembership, User, VirtualKey,
+    Project, Proxy, ProxyModel, SpendLog, Team, TeamMembership, User, VirtualKey,
 };
 pub use otel_tracing::{extract_traceparent, inject_traceparent, OtelConfig};
 pub use password::{hash_password, verify_password};

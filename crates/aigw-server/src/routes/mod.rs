@@ -14,6 +14,7 @@ pub mod keys;
 pub mod login;
 pub mod models;
 pub mod org;
+pub mod proxies;
 pub mod proxy;
 pub mod responses;
 pub mod router_settings;

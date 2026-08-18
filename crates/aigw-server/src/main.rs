@@ -55,7 +55,7 @@ use clap::Parser;
 use routes::keys::{self, AppState, SharedState, DEFAULT_KEY_TOKEN_LEN};
 use routes::{
     budget, chat, cors_layer, credentials, docs, embeddings, health, jobs, login, models, org,
-    responses, router_settings, spend, team, user, v1_messages,
+    proxies, responses, router_settings, spend, team, user, v1_messages,
 };
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -620,6 +620,22 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/admin/budget-reset/stats",
             get(jobs::budget_reset_stats_handler),
+        )
+        // Proxy service management endpoints (Phase 50, Stage 122)
+        .route(
+            "/admin/proxies",
+            get(proxies::list_proxies).post(proxies::create_proxy),
+        )
+        .route("/admin/proxies/all", get(proxies::list_all_proxies))
+        .route(
+            "/admin/proxies/batch-delete",
+            axum::routing::post(proxies::batch_delete_proxies),
+        )
+        .route(
+            "/admin/proxies/{id}",
+            get(proxies::get_proxy)
+                .put(proxies::update_proxy)
+                .delete(proxies::delete_proxy),
         )
         // Login/Logout endpoints (litellm-compatible /v2/login/*)
         .route("/v2/login", axum::routing::post(login::login))
