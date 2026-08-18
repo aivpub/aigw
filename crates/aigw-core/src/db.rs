@@ -5192,7 +5192,10 @@ impl ProxyStore for MySqlPool {
              ORDER BY {} {} LIMIT ? OFFSET ?",
             sort_col, order
         );
+        // MySQL `?` are sequential — each placeholder needs its own bind
+        // (`? IS NULL OR status = ?` binds status twice).
         sqlx::query_as::<_, Proxy>(&sql)
+            .bind(status)
             .bind(status)
             .bind(search)
             .bind(search)
@@ -5208,6 +5211,7 @@ impl ProxyStore for MySqlPool {
         let sql = "SELECT COUNT(*) FROM proxies \
                    WHERE (? IS NULL OR status = ?) AND (? IS NULL OR name LIKE CONCAT('%', ?, '%') OR proxy_url LIKE CONCAT('%', ?, '%'))";
         let row: (i64,) = sqlx::query_as(sql)
+            .bind(status)
             .bind(status)
             .bind(search)
             .bind(search)

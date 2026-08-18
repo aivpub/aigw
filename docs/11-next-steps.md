@@ -1,29 +1,29 @@
 # aigw -- 下一步行动
 
 **上次更新**: 2026-08-18
-**当前阶段**: **Phase 50 实施中（Stage 122-123 ✅ 完成，Stage 124-125 待实施）** + Phase 51 规划完成（Stage 126-130）
+**当前阶段**: **Phase 50 ✅ 完成（Stage 122-125）** + Phase 51 规划完成（Stage 126-130）
 
 ---
 
-## 当前状态：Phase 50 Stage 122-123 ✅ 完成
+## 当前状态：Phase 50 ✅ 完成（Stage 122-125）
 
-**2026-08-18（Stage 122-123 ✅）**: 代理服务管理后端全交付——**Stage 122** proxies 表（Migration 027 ×3，整串 proxy_url AES-GCM `v2:gcm:` 加密落库）+ `Proxy` model + `ProxyStore` ×3 方言 + `/admin/proxies/*` CRUD + in-use 守卫 409 + proxy_url redact + 创建异步探测预留。**Stage 123** `aigw_core::probe` 引擎（出口探测 ip-api/ipify 经代理 + 5 质量目标含 claude_oauth CF challenge 检测 + 计分/等级 100−warn×10−fail×22−challenge×30 + probe_result 单 JSON 快照）+ `POST /{id}/test` `/quality` `/toggle` 端点 + 创建/更新异步自动探测（`spawn_async_probe` 接真实引擎）+ req socks feature。
+**2026-08-18（Phase 50 全部完成 ✅）**: 代理服务管理四 Stage 交付——**Stage 122** proxies 表（Migration 027 ×3，整串 proxy_url AES-GCM `v2:gcm:` 加密落库）+ `Proxy` model + `ProxyStore` ×3 方言 + `/admin/proxies/*` CRUD + in-use 守卫 409 + proxy_url redact。**Stage 123** `aigw_core::probe` 引擎（出口探测 ip-api/ipify 经代理 + 5 质量目标含 claude_oauth CF challenge 检测 + 计分/等级 + probe_result 单 JSON 快照）+ `/test` `/quality` `/toggle` 端点 + 创建/更新异步自动探测 + req socks feature。**Stage 124** ProxiesPage 前端（Settings 分组 + 表格 + ProxyDialog/QualityDialog + Test/Quality/编辑/删除/批量 + i18n 中英）。**Stage 125** real BDD 三后端（proxy_crud.feature 6 场景 × 3 = 53/53 各自全绿）+ 修复 PG/MySQL probe_result JSONB/JSON 方言 + MySQL list 绑定顺序 1835。
 
-**基线更新**: aigw-core **475 UT**（+7 probe 引擎）、aigw-server **154 UT**（+2 handler toggle/test-quality）、mock BDD **259 场景（246 pass / 13 skip body_archive / 0 fail）**、`task test`/`task fmt`/`task lint`/`task build` 全绿。设计文档：`docs/stages/stage-122.md` / `stage-123.md`（§实现记录）。
+**基线更新**: aigw-core **475 UT**、aigw-server **154 UT**、mock BDD **265（252 pass / 13 skip body_archive）**、real BDD **53/53 × 3**（sqlite/pg/mysql）、fe-bdd **372（369 pass / 3 skip）**、`task test`/`task fmt`/`task lint` 全绿。设计文档：`docs/stages/stage-122.md` ~ `stage-125.md`。
 
 | Phase | Stage | 主题 | 预估 | 状态 |
 |-------|-------|------|------|------|
 | **50** | 122 | proxies 表 + CRUD + in-use 守卫 + proxy_url 加密 | 10h | ✅ 完成 |
 | **50** | 123 | 出口探测 + 质量检测（含 claude_oauth CF challenge）+ 计分/等级 | 12h | ✅ 完成 |
-| **50** | 124 | ProxiesPage 前端 | 10h | ⏳ 下一步 |
-| **50** | 125 | 收尾：real BDD + batch-* + ADR-033 + roadmap 回写 | 4h | ⏳ |
-| **51** | 126 | 凭证扩展 + Cookie→Token 3 步交换（PKCE） | 12h | ⏳ |
+| **50** | 124 | ProxiesPage 前端 | 10h | ✅ 完成 |
+| **50** | 125 | 收尾：real BDD 三后端 + ADR-033 + roadmap 回写 | 4h | ✅ 完成 |
+| **51** | 126 | 凭证扩展 + Cookie→Token 3 步交换（PKCE） | 12h | ⏳ 下一步 |
 | **51** | 127 | Token 生命周期 + 三层自愈（缓存→刷新→cookie→告警） | 10h | ⏳ |
 | **51** | 128 | 反代管线（billing 注入 + 全协议转换 + 代理出口） | 14h | ⏳ |
 | **51** | 129 | CredentialsTab OAuth 入口前端 | 8h | ⏳ |
 | **51** | 130 | 收尾：real BDD + 安全审计 + ADR-034 | 6h | ⏳ |
 
-**依赖**: Stage 124 依赖 123（Test/Quality 按钮走真实探测端点）→ 125 收尾;Phase 51 强依赖 Phase 50（凭证绑代理 + 交换走代理出口 + 反代代理出口）。
+**依赖**: Phase 51 强依赖 Phase 50（凭证绑代理 + 交换走代理出口 + 反代代理出口 + claude_oauth 质量目标）。
 
 **规划文档**:
 - `docs/plans/2026-08-18-claude-oauth-reverse-proxy.md`（总体规划）
@@ -235,8 +235,7 @@ Phase 45:   ████████████████████ 100% (3
 | ✅ | Phase 47 Stage 118 Router 智能路由接线（cooldown/weighted/usage/latency/fallback） | ✅ 完成（2026-08-10，abad4db） |
 | ✅ | Phase 47 Stage 119 exact-match 响应缓存（moka LRU + X-Cache-Status + 计费 0 元） | ✅ 完成（2026-08-10，ad981b2） |
 | ✅ | Phase 47 收尾：前端 RouterSettings 下拉解锁 + config cache 块 + max_parallel key/budget 表字段 | ✅ 完成（2026-08-10，9fe6329 / cada57b） |
-| ✅ | **Phase 50 Stage 122-123 代理服务管理后端**（proxies 表 + in-use 守卫 + proxy_url 加密 + 出口/质量检测） | ✅ 完成（2026-08-18） |
-| ⏳ | **Phase 50 Stage 124-125**（ProxiesPage 前端 / real BDD + batch-* 收尾） | ⏳ 待实施 |
+| ✅ | **Phase 50 代理服务管理（Stage 122-125 全部完成）**（proxies 表 + in-use 守卫 + proxy_url 加密 + 出口/质量检测 + ProxiesPage 前端 + real BDD 三后端） | ✅ 完成（2026-08-18） |
 | ⏳ | **Phase 51 Stage 126-130 Claude OAuth 订阅反代**（凭证交换 + 三层自愈 + 反代管线 + 前端 + 收尾） | ⏳ 待实施（依赖 Phase 50） |
 | P2 | TD-008c/d 后端错误多语言 + RTL、TD-009e 外链缩略图、TD-011a 视频 token 估算（剩余） | 待处理（视使用量） |
 | P2 | Phase 41 测试缺口（适配器 UT + 流式接线） | ✅ 关闭（2026-08-09） |

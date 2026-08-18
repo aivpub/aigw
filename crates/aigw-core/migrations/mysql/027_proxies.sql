@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS proxies (
     proxy_url    TEXT NOT NULL,                -- 整串加密落库 (v2:gcm: prefix)
     status       VARCHAR(50) NOT NULL DEFAULT 'active',  -- active / inactive / expired
     expires_at   VARCHAR(64),
-    probe_result TEXT NOT NULL,
+    probe_result JSON NOT NULL,                -- sqlx maps serde_json::Value → MySQL JSON
     created_at   VARCHAR(64) NOT NULL,
     updated_at   VARCHAR(64) NOT NULL,
     INDEX idx_proxies_status (status)
