@@ -1,5 +1,67 @@
 import { Page, Route, Request } from "@playwright/test";
 
+// ── Proxies (Stage 124) — module-scoped so POST-create persists across
+// requests within the same page (defineMockRoutes runs per-request).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const proxyList: any[] = [
+  {
+    id: 1,
+    name: "hk-residential",
+    proxy_url: "http://user:***@1.2.3.4:8080",
+    status: "active",
+    expires_at: null,
+    probe_result: {
+      exit_ip: "1.2.3.4",
+      country: "香港",
+      country_code: "HK",
+      latency_ms: 120,
+      score: 88,
+      grade: "B",
+    },
+    created_at: "2026-07-01T00:00:00Z",
+    updated_at: "2026-07-01T00:00:00Z",
+    exit_ip: "1.2.3.4",
+    country: "香港",
+    country_code: "HK",
+    latency_ms: 120,
+    score: 88,
+    grade: "B",
+  },
+  {
+    id: 2,
+    name: "us-clean",
+    proxy_url: "socks5://proxyuser:***@8.8.8.8:1080",
+    status: "active",
+    expires_at: null,
+    probe_result: {
+      exit_ip: "8.8.8.8",
+      country: "United States",
+      country_code: "US",
+      latency_ms: 210,
+      score: 75,
+      grade: "B",
+    },
+    created_at: "2026-07-02T00:00:00Z",
+    updated_at: "2026-07-02T00:00:00Z",
+    exit_ip: "8.8.8.8",
+    country: "United States",
+    country_code: "US",
+    latency_ms: 210,
+    score: 75,
+    grade: "B",
+  },
+  {
+    id: 3,
+    name: "sg-tunnel",
+    proxy_url: "http://tunnel:***@192.168.1.100:3128",
+    status: "inactive",
+    expires_at: null,
+    probe_result: {},
+    created_at: "2026-07-03T00:00:00Z",
+    updated_at: "2026-07-03T00:00:00Z",
+  },
+];
+
 interface MockOptions {
   role?: string;
   keyCount?: number;
@@ -273,6 +335,78 @@ export async function defineMockRoutes(route: Route, request: Request) {
       status: 200,
       json: { data: [{ credential_name: "prod-openai" }, { credential_name: "dev-anthropic" }] },
     });
+  }
+
+  // ── Proxies management (Stage 124) ──
+  // Uses the module-scoped `proxyList` (declared at the top of this file) so
+  // POST-create persists across requests within the same page — defineMockRoutes
+  // runs once per request, so a function-local array would reset each time.
+  if (url.pathname === "/admin/proxies" && route.request().method() === "POST") {
+    const body = JSON.parse(request.postData() ?? "{}");
+    const newProxy = {
+      id: proxyList.length + 1,
+      name: body.name ?? "new-proxy",
+      proxy_url: "http://user:***@9.9.9.9:8080",
+      status: "active",
+      expires_at: null,
+      probe_result: {},
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    proxyList.push(newProxy);
+    return route.fulfill({ status: 200, json: newProxy });
+  }
+  if (url.pathname === "/admin/proxies") {
+    const q = url.searchParams.get("search");
+    const st = url.searchParams.get("status");
+    let filtered = proxyList;
+    if (q) filtered = filtered.filter((p) => p.name.includes(q) || p.proxy_url.includes(q));
+    if (st) filtered = filtered.filter((p) => p.status === st);
+    return route.fulfill({
+      status: 200,
+      json: { object: "list", data: filtered, total_count: filtered.length, page: 1, page_size: 30, total_pages: 1 },
+    });
+  }
+  if (url.pathname === "/admin/proxies/all") {
+    return route.fulfill({ status: 200, json: { object: "list", data: proxyList, count: proxyList.length } });
+  }
+  if (url.pathname === "/admin/proxies/batch-delete" && route.request().method() === "POST") {
+    const body = JSON.parse(request.postData() ?? "{}");
+    const ids: number[] = body.ids ?? [];
+    return route.fulfill({ status: 200, json: { status: "ok", deleted_ids: ids, skipped: [] } });
+  }
+  if (url.pathname.match(/^\/admin\/proxies\/\d+\/test$/)) {
+    return route.fulfill({
+      status: 200,
+      json: { id: 1, probe_result: { exit_ip: "1.2.3.4", country: "香港", latency_ms: 120 } },
+    });
+  }
+  if (url.pathname.match(/^\/admin\/proxies\/\d+\/quality$/)) {
+    return route.fulfill({
+      status: 200,
+      json: {
+        id: 1,
+        probe_result: {
+          score: 88,
+          grade: "B",
+          overall_status: "healthy",
+          latency_ms: 120,
+          items: [
+            { target: "openai", status: "pass", latency_ms: 100, message: "HTTP 401（目标可达）" },
+            { target: "anthropic", status: "pass", latency_ms: 110, message: "HTTP 401（目标可达）" },
+            { target: "claude_oauth", status: "pass", latency_ms: 130, message: "claude.ai 无 challenge，OAuth 路径可达" },
+            { target: "gemini", status: "warn", latency_ms: 200, message: "目标返回 429，可能存在频控" },
+          ],
+          last_check_at: new Date().toISOString(),
+        },
+      },
+    });
+  }
+  if (url.pathname.match(/^\/admin\/proxies\/\d+\/toggle$/)) {
+    return route.fulfill({ status: 200, json: { id: 1, status: "inactive" } });
+  }
+  if (url.pathname.match(/^\/admin\/proxies\/\d+$/)) {
+    return route.fulfill({ status: 200, json: proxyList[0] });
   }
 
   // Spend

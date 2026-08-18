@@ -78,7 +78,8 @@
       "organizations": "Organizations",
       "routerSettings": "Router Settings",
       "jobs": "Jobs",
-      "budgets": "Budgets"
+      "budgets": "Budgets",
+      "proxies": "Proxies"
     },
     "expandSidebar": "Expand sidebar",
     "collapseSidebar": "Collapse sidebar"
@@ -1083,6 +1084,91 @@
       "created": "Budget created",
       "updated": "Budget updated",
       "deleted": "Budget deleted"
+    }
+  },
+  "proxies": {
+    "title": "Proxies",
+    "description": "Manage outbound proxy services and probe their exit/quality",
+    "newProxy": "New Proxy",
+    "allProxies": "All Proxies",
+    "searchPlaceholder": "Search by name or URL...",
+    "noProxies": "No proxies configured",
+    "noMatch": "No proxies match your search",
+    "table": {
+      "name": "Name",
+      "proxyUrl": "Proxy URL",
+      "exitIp": "Exit IP",
+      "country": "Country",
+      "latency": "Latency",
+      "score": "Score",
+      "grade": "Grade",
+      "status": "Status",
+      "expiresAt": "Expires At",
+      "actions": "Actions"
+    },
+    "grade": {
+      "A": "A",
+      "B": "B",
+      "C": "C",
+      "D": "D",
+      "F": "F"
+    },
+    "status": {
+      "active": "",
+      "inactive": "Inactive",
+      "expired": "Expired"
+    },
+    "dialog": {
+      "titleCreate": "New Proxy",
+      "titleEdit": "Edit Proxy",
+      "nameLabel": "Name",
+      "namePlaceholder": "e.g. HK residential pool",
+      "proxyUrlLabel": "Proxy URL",
+      "proxyUrlPlaceholder": "http://user:pass@host:port or socks5://...",
+      "proxyUrlHint": "Stored encrypted. Password is masked in responses.",
+      "expiresAtLabel": "Expires At (optional)",
+      "saveBtn": "Save",
+      "nameRequired": "Name is required",
+      "urlRequired": "Proxy URL is required"
+    },
+    "deleteDialog": {
+      "title": "Delete Proxy",
+      "description": "Delete proxy \"{{name}}\"? Proxies referenced by credentials cannot be deleted."
+    },
+    "quality": {
+      "title": "Quality Check",
+      "score": "Score",
+      "grade": "Grade",
+      "overall": "Overall",
+      "overallHealthy": "Healthy",
+      "overallWarn": "Warn",
+      "overallFailed": "Failed",
+      "overallChallenge": "Challenge",
+      "target": "Target",
+      "status": "Status",
+      "latency": "Latency",
+      "cfRay": "CF Ray",
+      "message": "Message",
+      "lastCheckAt": "Last check:",
+      "noItems": "No quality items",
+      "itemStatus": {
+        "pass": "Pass",
+        "warn": "Warn",
+        "challenge": "Challenge",
+        "fail": "Fail"
+      }
+    },
+    "toast": {
+      "created": "Proxy created",
+      "updated": "Proxy updated",
+      "deleted": "Proxy deleted",
+      "testDone": "Exit probe done",
+      "testFailed": "Exit probe failed",
+      "qualityDone": "Quality check done",
+      "qualityFailed": "Quality check failed",
+      "toggleDone": "Status toggled",
+      "batchDone": "Batch operation done",
+      "inUseSkipped": "{{n}} proxy(s) skipped (in use)"
     }
   }
 }

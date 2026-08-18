@@ -78,7 +78,8 @@
       "organizations": "组织管理",
       "routerSettings": "路由设置",
       "jobs": "任务管理",
-      "budgets": "预算管理"
+      "budgets": "预算管理",
+      "proxies": "代理服务"
     },
     "expandSidebar": "展开侧边栏",
     "collapseSidebar": "折叠侧边栏"
@@ -1083,6 +1084,91 @@
       "created": "预算已创建",
       "updated": "预算已更新",
       "deleted": "预算已删除"
+    }
+  },
+  "proxies": {
+    "title": "代理服务",
+    "description": "管理出口代理服务并检测出口/质量",
+    "newProxy": "新建代理",
+    "allProxies": "全部代理",
+    "searchPlaceholder": "按名称或 URL 搜索...",
+    "noProxies": "暂无代理",
+    "noMatch": "没有匹配的代理",
+    "table": {
+      "name": "名称",
+      "proxyUrl": "代理 URL",
+      "exitIp": "出口 IP",
+      "country": "国家/地区",
+      "latency": "延迟",
+      "score": "分数",
+      "grade": "等级",
+      "status": "状态",
+      "expiresAt": "到期时间",
+      "actions": "操作"
+    },
+    "grade": {
+      "A": "A",
+      "B": "B",
+      "C": "C",
+      "D": "D",
+      "F": "F"
+    },
+    "status": {
+      "active": "",
+      "inactive": "停用",
+      "expired": "已过期"
+    },
+    "dialog": {
+      "titleCreate": "新建代理",
+      "titleEdit": "编辑代理",
+      "nameLabel": "名称",
+      "namePlaceholder": "例如：香港住宅池",
+      "proxyUrlLabel": "代理 URL",
+      "proxyUrlPlaceholder": "http://user:pass@host:port 或 socks5://...",
+      "proxyUrlHint": "加密存储，响应中密码会被掩码。",
+      "expiresAtLabel": "到期时间（可选）",
+      "saveBtn": "保存",
+      "nameRequired": "名称必填",
+      "urlRequired": "代理 URL 必填"
+    },
+    "deleteDialog": {
+      "title": "删除代理",
+      "description": "删除代理 \"{{name}}\"？被凭证引用的代理无法删除。"
+    },
+    "quality": {
+      "title": "质量检测",
+      "score": "分数",
+      "grade": "等级",
+      "overall": "总评",
+      "overallHealthy": "健康",
+      "overallWarn": "警告",
+      "overallFailed": "失败",
+      "overallChallenge": "被挑战",
+      "target": "目标",
+      "status": "状态",
+      "latency": "延迟",
+      "cfRay": "CF Ray",
+      "message": "说明",
+      "lastCheckAt": "上次检测：",
+      "noItems": "无检测项",
+      "itemStatus": {
+        "pass": "通过",
+        "warn": "警告",
+        "challenge": "挑战",
+        "fail": "失败"
+      }
+    },
+    "toast": {
+      "created": "代理已创建",
+      "updated": "代理已更新",
+      "deleted": "代理已删除",
+      "testDone": "出口检测完成",
+      "testFailed": "出口检测失败",
+      "qualityDone": "质量检测完成",
+      "qualityFailed": "质量检测失败",
+      "toggleDone": "状态已切换",
+      "batchDone": "批量操作完成",
+      "inUseSkipped": "{{n}} 个代理被跳过（使用中）"
     }
   }
 }

@@ -95,6 +95,7 @@ declare module "i18next" {
       routerSettings: string;
       jobs: string;
       budgets: string;
+      proxies: string;
     },
     expandSidebar: string;
     collapseSidebar: string;
@@ -1099,6 +1100,91 @@ declare module "i18next" {
       created: string;
       updated: string;
       deleted: string;
+    },
+  },
+  proxies: {
+    title: string;
+    description: string;
+    newProxy: string;
+    allProxies: string;
+    searchPlaceholder: string;
+    noProxies: string;
+    noMatch: string;
+    table: {
+      name: string;
+      proxyUrl: string;
+      exitIp: string;
+      country: string;
+      latency: string;
+      score: string;
+      grade: string;
+      status: string;
+      expiresAt: string;
+      actions: string;
+    },
+    grade: {
+      A: string;
+      B: string;
+      C: string;
+      D: string;
+      F: string;
+    },
+    status: {
+      active: string;
+      inactive: string;
+      expired: string;
+    },
+    dialog: {
+      titleCreate: string;
+      titleEdit: string;
+      nameLabel: string;
+      namePlaceholder: string;
+      proxyUrlLabel: string;
+      proxyUrlPlaceholder: string;
+      proxyUrlHint: string;
+      expiresAtLabel: string;
+      saveBtn: string;
+      nameRequired: string;
+      urlRequired: string;
+    },
+    deleteDialog: {
+      title: string;
+      description: string;
+    },
+    quality: {
+      title: string;
+      score: string;
+      grade: string;
+      overall: string;
+      overallHealthy: string;
+      overallWarn: string;
+      overallFailed: string;
+      overallChallenge: string;
+      target: string;
+      status: string;
+      latency: string;
+      cfRay: string;
+      message: string;
+      lastCheckAt: string;
+      noItems: string;
+      itemStatus: {
+        pass: string;
+        warn: string;
+        challenge: string;
+        fail: string;
+      },
+    },
+    toast: {
+      created: string;
+      updated: string;
+      deleted: string;
+      testDone: string;
+      testFailed: string;
+      qualityDone: string;
+      qualityFailed: string;
+      toggleDone: string;
+      batchDone: string;
+      inUseSkipped: string;
     },
   },
       };
