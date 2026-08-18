@@ -1,11 +1,39 @@
 # aigw -- 下一步行动
 
-**上次更新**: 2026-08-17
-**当前阶段**: **Phase 49 ✅ Stage 121（上游模型停用功能接线）**；Phase 48 ✅ Stage 120（GLM5 流式 tool_use 首帧修复）；Phase 47 全部交付
+**上次更新**: 2026-08-18
+**当前阶段**: **Phase 50/51 规划完成（待实施）**：代理服务管理（Stage 122-125）+ Claude OAuth 订阅反代（Stage 126-130）
 
 ---
 
-## 当前状态：Phase 49 Stage 121 ✅（上游模型停用功能接线）
+## 当前状态：Phase 50/51 规划完成（待实施）
+
+**2026-08-18（规划态，仅文档不实施）**: 完成两 Phase 规划——代理服务管理 + Claude OAuth 订阅反代，参考 `~/works/play/sub2api` 生产实现。用户确认 8 项决策（最小化 billing 块默认注入 / 三层 token 自愈 / 全协议统一反代 / 凭证存 credentials 表 / TLS 指纹推迟 / proxies 表整串 proxy_url / probe_result 单 JSON / 质量检测加 CF challenge 项）。
+
+| Phase | Stage | 主题 | 预估 |
+|-------|-------|------|------|
+| **50** | 122 | proxies 表 + CRUD + in-use 守卫 + proxy_url 加密 | 10h |
+| **50** | 123 | 出口探测 + 质量检测（含 claude_oauth CF challenge）+ 计分/等级 | 12h |
+| **50** | 124 | ProxiesPage 前端 | 10h |
+| **50** | 125 | 收尾：real BDD + ADR-033 + roadmap 回写 | 4h |
+| **51** | 126 | 凭证扩展 + Cookie→Token 3 步交换（PKCE） | 12h |
+| **51** | 127 | Token 生命周期 + 三层自愈（缓存→刷新→cookie→告警） | 10h |
+| **51** | 128 | 反代管线（billing 注入 + 全协议转换 + 代理出口） | 14h |
+| **51** | 129 | CredentialsTab OAuth 入口前端 | 8h |
+| **51** | 130 | 收尾：real BDD + 安全审计 + ADR-034 | 6h |
+
+**依赖**: Phase 51 强依赖 Phase 50（凭证绑代理 + 交换走代理出口 + 反代代理出口）。
+
+**规划文档**:
+- `docs/plans/2026-08-18-claude-oauth-reverse-proxy.md`（总体规划）
+- `docs/research/2026-08-18-sub2api-proxy-oauth-reference.md`（参考实现调研）
+- `docs/stages/stage-122.md` ~ `stage-130.md`（9 份 Stage 设计文档）
+- ADR-033 / ADR-034
+
+---
+
+## 已完成 Phase 回顾（节选最新）
+
+### Phase 49 Stage 121 ✅（上游模型停用功能接线）
 
 **2026-08-13（Stage 121 ✅）**: 修复"上游模型停用功能完全无效"缺陷。前端 Switch 之前只写 `model_info.mode="inactive"` 到 DB，后端**零处消费**该字段（DB SQL 只过 model_name / Resolver 不看 mode / Deployment 结构无 disabled 字段 / Router 只按 cooldown 过滤）。同一 `model_info.mode` 还兼载业务类别 "embed"/"image"，语义污染。**方案 B 落地**：独立 `enabled: bool` 列。
 
@@ -205,5 +233,7 @@ Phase 45:   ████████████████████ 100% (3
 | ✅ | Phase 47 Stage 118 Router 智能路由接线（cooldown/weighted/usage/latency/fallback） | ✅ 完成（2026-08-10，abad4db） |
 | ✅ | Phase 47 Stage 119 exact-match 响应缓存（moka LRU + X-Cache-Status + 计费 0 元） | ✅ 完成（2026-08-10，ad981b2） |
 | ✅ | Phase 47 收尾：前端 RouterSettings 下拉解锁 + config cache 块 + max_parallel key/budget 表字段 | ✅ 完成（2026-08-10，9fe6329 / cada57b） |
+| ⏳ | **Phase 50 Stage 122-125 代理服务管理**（proxies 表 + 出口/质量检测 + 前端 + 收尾） | ⏳ 规划完成，待实施 |
+| ⏳ | **Phase 51 Stage 126-130 Claude OAuth 订阅反代**（凭证交换 + 三层自愈 + 反代管线 + 前端 + 收尾） | ⏳ 规划完成，待实施（依赖 Phase 50） |
 | P2 | TD-008c/d 后端错误多语言 + RTL、TD-009e 外链缩略图、TD-011a 视频 token 估算（剩余） | 待处理（视使用量） |
 | P2 | Phase 41 测试缺口（适配器 UT + 流式接线） | ✅ 关闭（2026-08-09） |
