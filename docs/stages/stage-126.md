@@ -3,7 +3,7 @@
 **所属**: Phase 51（Claude OAuth 订阅反代）
 **预估**: 12h（凭证结构 + 3 步交换客户端 + 敏感加密/redact + exchange 端点 + mock OAuth 上游 + UT/BDD）
 **依赖**: Phase 50（Stage 122-123，凭证绑代理引用 + 代理客户端 + proxy_id in-use 扫描）
-**状态**: ⏳ 待开始
+**状态**: ✅ 完成（2026-08-18）
 
 ---
 
@@ -99,7 +99,45 @@ BDD mock 新增 Anthropic OAuth 模拟（`MockUpstream`）：
 
 ## 4. 验收标准
 
-- [ ] credential OAuth 结构化字段 + 敏感加密/redact 全绿
-- [ ] 3 步交换（mock 上游）+ proxy 绑定 + 错误分类全绿
-- [ ] `POST /credential/oauth/exchange` 可用
-- [ ] mock BDD claude_oauth.feature 全绿;既有基线无回归
+- [x] credential OAuth 结构化字段 + 敏感加密/redact 全绿
+- [x] 3 步交换（mock 上游）+ proxy 绑定 + 错误分类全绿
+- [x] `POST /credential/oauth/exchange` 可用
+- [x] mock BDD claude_oauth.feature 全绿;既有基线无回归
+
+---
+
+## 5. 实现记录（2026-08-18 ✅）
+
+### 5.1 交付清单
+
+- **`crates/aigw-core/src/claude_oauth.rs`（新建）**：
+  - 常量：`CLIENT_ID` / `REDIRECT_URI` / `SCOPE_API` / `DEFAULT_EXPIRES_IN`（对齐 sub2api 抓包）。
+  - `pkce_s256()`——32 随机字节 base64url-nopad verifier（43 字符）+ SHA-256 challenge；`pkce_state()`。
+  - `OauthClient`——`new(proxy_url)`（走 `build_proxy_client` 经绑定代理，60s 超时 + 浏览器 UA 伪装）；`fetch_orgs`（cookie `sessionKey=` → org 列表）/ `authorize`（PKCE body → redirect_uri 解析 code+state）/ `exchange_code` / `refresh`（refresh_token grant，Stage 127 接线）/ `exchange`（3 步全流程 → `(TokenResponse, org_uuid)`）。
+  - `select_org`——多 org 优先 `raven_type=="team"`；空列表报 `no_org`。
+  - `parse_redirect_code`——redirect_uri 查询串解析 code+state（state 校验）。
+  - `classify_oauth_error`——CF challenge（cf-ray/cf-mitigated/签名/HTML-403）→ `account_session_invalid` → `account_disabled|suspended|terminated` → 401/403/429/5xx/unknown。
+  - `build_oauth_credential_values`——access/refresh/session_key **AES-GCM 单独加密** + proxy_id/inject_prompt/org_uuid/account_uuid/email_address/expires_at/status 明文。
+  - lib.rs re-export（`OauthClient`/`OauthError`/`OauthOrg`/`TokenResponse`/`pkce_s256`/`select_org`/`parse_redirect_code`/`classify_oauth_error`/`build_oauth_credential_values`）。
+- **crypto.rs**：`OAUTH_SENSITIVE_KEYS`（access_token/refresh_token/session_key）+ `redact_oauth_credential_values`（敏感键掩码 `***`，非对象透传）+ 2 UT。
+- **`routes/credentials.rs`**：`POST /credential/oauth/exchange`——session_key 校验（sk-ant- 前缀 warn）+ proxy_id 存在性/active + 解密 proxy_url → 3 步交换 → 凭证落库（敏感加密）→ 响应 redact；`credential_info`/`credential_list` 响应统一 redact OAuth 敏感字段。main.rs 注册路由。
+- **mock OAuth 上游**：`MockUpstream` 新增 `/api/organizations`（GET）+ `/v1/oauth/{org}/authorize`（POST）+ `/v1/oauth/token`（POST，authorization_code/refresh_token 双 grant），默认返回 team org + 固定 token 对，支持 `set_response` 覆盖错误。
+- **BDD harness 端点重映射**：`AIGW_OAUTH_MOCK_BASE` env（仅测试）→ OAuth client 把 claude.ai/platform.claude.com 端点改写为 mock base，3 步交换全走 MockUpstream（**永不进生产代码路径**）。
+- **测试**：11 core UT（PKCE/org 选择/redirect 解析/错误分类/凭证加密）+ mock BDD **claude_oauth.feature 4 场景**（成功+redact / 坏 cookie 403 / 无代理 400 / 已存凭证 redact）。
+
+### 5.2 验证
+
+- aigw-core **487 UT**（+12：claude_oauth 11 + crypto redact 1）；aigw-server **154 UT** 保持。
+- mock BDD **269（256 pass / 13 skip body_archive / 0 fail）**——+4 claude_oauth.feature。
+- `task fmt` / `task lint` 全绿。
+
+### 5.3 实现偏差
+
+- **端点常量改写**：原设计固定 `https://claude.ai/...` 常量；为让 mock BDD 走通，加 `endpoint()` helper 读 `AIGW_OAUTH_MOCK_BASE`（仅 BDD 设 env）——**生产零影响**（env 未设时走原 URL）。
+- **`refresh()` 为 async**：Stage 127 TokenProvider 需要 await（设计 §2.2 提到 refresh，未标注同步/异步）。
+- **401 分类**：mock 401 JSON body `{"error":"unauthorized"}` 命中 `unauthorized` kind（非 account_session_invalid——那需要 body 含 `account_session_invalid` 标记）。
+- **credential_info/list redact**：设计 §2.1 仅提 exchange 响应 redact；实现扩大到 info/list 一致掩码（避免泄漏路径）。
+
+### 5.4 边界
+
+- **不做**：Token 生命周期（缓存/刷新/自愈）→ Stage 127；反代管线（resolver OAuth 识别 + billing 注入）→ Stage 128；前端 CredentialsTab OAuth 入口 → Stage 129。

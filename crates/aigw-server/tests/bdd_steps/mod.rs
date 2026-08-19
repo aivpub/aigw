@@ -7,6 +7,7 @@ pub mod async_task_steps;
 pub mod body_archive_steps;
 pub mod budget_reset_steps;
 pub mod cache_steps;
+pub mod claude_oauth_steps;
 pub mod common;
 pub mod common_steps;
 pub mod deleted_list_steps;

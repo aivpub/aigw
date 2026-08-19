@@ -22,6 +22,7 @@ pub mod auth;
 pub mod body_archive;
 pub mod budget;
 pub mod cache;
+pub mod claude_oauth;
 pub mod config;
 pub mod config_loader;
 pub mod crypto;
@@ -47,6 +48,10 @@ pub mod tenant;
 // Re-export commonly used types
 pub use async_task::{AsyncTask, JobLogEntry, NewStep, StepOutput};
 pub use auth::{decode_jwt, encode_jwt, JwtClaims};
+pub use claude_oauth::{
+    build_oauth_credential_values, classify_oauth_error, parse_redirect_code, pkce_s256,
+    select_org, OauthClient, OauthError, OauthOrg, TokenResponse,
+};
 pub use config::{
     AigwConfig, BudgetResetConfig, GeneralSettings, ModelEntry, ModelInfo, ModelParams,
     RouterSettings,
@@ -57,7 +62,8 @@ pub use config_loader::{
 };
 pub use crypto::{
     decode_base64_type15, decrypt_json_fields, decrypt_litellm_value, decrypt_proxy_url,
-    encrypt_litellm_value, encrypt_proxy_url, hash_token, redact_proxy_url, rotate_json_fields,
+    encrypt_litellm_value, encrypt_proxy_url, hash_token, redact_oauth_credential_values,
+    redact_proxy_url, rotate_json_fields, OAUTH_SENSITIVE_KEYS,
 };
 pub use db::{CredentialsStore, ProxyStore};
 pub use deployment::{Deployment, ProviderType};

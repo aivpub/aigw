@@ -198,6 +198,45 @@ pub fn redact_proxy_url(url: &str) -> String {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// OAuth credential sensitive-field redact (Phase 51, Stage 126)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Keys inside `credentials.credential_values` (or `credential_info`) that must
+/// never be echoed to admin responses in plaintext — the OAuth token trio.
+///
+/// `credential_values` stores these fields individually **encrypted**
+/// (`v2:gcm:` via `encrypt_litellm_value`); the response path decrypts them
+/// (via `decrypt_json_fields`) for internal use, but the admin API must mask
+/// them so a leaked response body never exposes a live access/refresh token or
+/// the session cookie.
+pub const OAUTH_SENSITIVE_KEYS: &[&str] = &["access_token", "refresh_token", "session_key"];
+
+/// Redact a decrypted OAuth `credential_values` object for admin responses.
+///
+/// Replaces the value of every `OAUTH_SENSITIVE_KEYS` field with a masked
+/// `***` placeholder (kept non-empty so callers can distinguish "present but
+/// masked" from "absent"). All other fields pass through unchanged. Non-object
+/// values are returned as-is.
+pub fn redact_oauth_credential_values(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut out = serde_json::Map::new();
+            for (k, v) in map {
+                if OAUTH_SENSITIVE_KEYS.contains(&k.as_str()) {
+                    // Preserve presence + type shape (mask even nulls so a
+                    // missing token is still distinguishable from a hidden one).
+                    out.insert(k.clone(), serde_json::Value::String("***".to_string()));
+                } else {
+                    out.insert(k.clone(), v.clone());
+                }
+            }
+            Value::Object(out)
+        }
+        _ => value.clone(),
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Nested field-level decryption
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -820,5 +859,37 @@ mod tests {
     #[test]
     fn test_redact_proxy_url_malformed() {
         assert_eq!(redact_proxy_url("not-a-url"), "not-a-url");
+    }
+
+    // ━━━━━━━━━━━ OAuth credential redact (Stage 126) ━━━━━━━━━━━
+
+    #[test]
+    fn test_redact_oauth_masks_sensitive_keys() {
+        let values = serde_json::json!({
+            "type": "anthropic_oauth",
+            "access_token": "sk-ant-access-abc",
+            "refresh_token": "sk-ant-refresh-xyz",
+            "session_key": "sk-ant-sid-123",
+            "org_uuid": "org-1",
+            "proxy_id": 3,
+            "status": "active",
+        });
+        let redacted = redact_oauth_credential_values(&values);
+        assert_eq!(redacted["access_token"], "***");
+        assert_eq!(redacted["refresh_token"], "***");
+        assert_eq!(redacted["session_key"], "***");
+        // Non-sensitive fields pass through unchanged.
+        assert_eq!(redacted["type"], "anthropic_oauth");
+        assert_eq!(redacted["org_uuid"], "org-1");
+        assert_eq!(redacted["proxy_id"], 3);
+        assert_eq!(redacted["status"], "active");
+    }
+
+    #[test]
+    fn test_redact_oauth_non_object_passthrough() {
+        let v = serde_json::json!(["a", "b"]);
+        assert_eq!(redact_oauth_credential_values(&v), v);
+        let s = serde_json::json!("sk-ant-sid-1");
+        assert_eq!(redact_oauth_credential_values(&s), s);
     }
 }

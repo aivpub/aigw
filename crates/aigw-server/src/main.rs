@@ -538,6 +538,10 @@ async fn main() -> anyhow::Result<()> {
             "/credential/delete",
             axum::routing::delete(credentials::credential_delete),
         )
+        .route(
+            "/credential/oauth/exchange",
+            axum::routing::post(credentials::oauth_exchange),
+        )
         // Organization management routes
         .route("/org/new", axum::routing::post(org::org_new))
         .route("/org/info", get(org::org_info))

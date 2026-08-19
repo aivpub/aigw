@@ -194,7 +194,11 @@ pub async fn credential_info(
     match credential {
         Some(c) => {
             let resp = CredentialResponse::from_credential(c, state.aigw_master_key.as_deref());
-            Ok(Json(serde_json::to_value(resp).unwrap_or(json!({}))))
+            let mut value = serde_json::to_value(resp).unwrap_or(json!({}));
+            if let Some(cv) = value.get_mut("credential_values") {
+                *cv = aigw_core::crypto::redact_oauth_credential_values(cv);
+            }
+            Ok(Json(value))
         }
         None => Err((
             StatusCode::NOT_FOUND,
@@ -230,8 +234,13 @@ pub async fn credential_list(
     let data: Vec<Value> = credentials
         .into_iter()
         .map(|c| {
-            serde_json::to_value(CredentialResponse::from_credential(c, master_key))
-                .unwrap_or(json!({}))
+            let mut value =
+                serde_json::to_value(CredentialResponse::from_credential(c, master_key))
+                    .unwrap_or(json!({}));
+            if let Some(cv) = value.get_mut("credential_values") {
+                *cv = aigw_core::crypto::redact_oauth_credential_values(cv);
+            }
+            value
         })
         .collect();
 
@@ -333,4 +342,179 @@ pub async fn credential_delete(
         })?;
 
     Ok(Json(json!({"status": "deleted"})))
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Claude OAuth cookie→token exchange (Phase 51, Stage 126)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// POST /credential/oauth/exchange request body.
+#[derive(Debug, Deserialize)]
+pub struct OauthExchangeBody {
+    /// `sk-ant-sid...` session cookie.
+    pub session_key: String,
+    /// Optional proxy binding (must exist + be active). None → direct exchange.
+    #[serde(default)]
+    pub proxy_id: Option<i64>,
+    /// Optional prompt appended to the system block when the model is resolved
+    /// to this OAuth credential (Stage 128 wiring).
+    #[serde(default)]
+    pub inject_prompt: Option<String>,
+    /// Credential name (must be unique).
+    pub name: String,
+}
+
+/// POST /credential/oauth/exchange — run the 3-step cookie→token exchange and
+/// persist an `anthropic_oauth` credential with sensitive fields encrypted.
+///
+/// Returns the credential with the token trio redacted (access/refresh/session
+/// masked as `***`).
+pub async fn oauth_exchange(
+    State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
+    Json(body): Json<OauthExchangeBody>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    use aigw_core::claude_oauth as oauth;
+
+    require_admin(&auth)?;
+
+    // Validate session_key shape (warn-only for sk-ant- prefix, hard-error empty).
+    if body.session_key.trim().is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": {"message": "session_key is required"}})),
+        ));
+    }
+    if !body.session_key.starts_with("sk-ant-") {
+        warn!("session_key does not start with sk-ant- — may not be a valid Claude cookie");
+    }
+
+    // Resolve the bound proxy URL (optional binding).
+    let proxy_url = match body.proxy_id {
+        Some(pid) => {
+            let p = state.db.get_proxy_by_id(pid).await.map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
+                )
+            })?;
+            let p = p.ok_or_else(|| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({"error": {"message": "proxy_id not found"}})),
+                )
+            })?;
+            if p.status != "active" {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({"error": {"message": "proxy_id is not active"}})),
+                ));
+            }
+            // proxy_url is encrypted — decrypt with the master key.
+            let mk = state.aigw_master_key.as_deref().ok_or_else(|| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": {"message": "AIGW_MASTER_KEY not configured — cannot decrypt proxy_url"}})),
+                )
+            })?;
+            let plain = aigw_core::crypto::decrypt_proxy_url(&p.proxy_url, mk).map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": {"message": format!("Failed to decrypt proxy_url: {}", e)}})),
+                )
+            })?;
+            Some(plain)
+        }
+        None => None,
+    };
+
+    // Run the 3-step exchange (through the proxy client when bound).
+    let client = oauth::OauthClient::new(proxy_url.as_deref()).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": {"message": format!("Invalid proxy_url: {}", e), "type": "invalid_request_error"}})),
+        )
+    })?;
+    let (token, org_uuid) = match client.exchange(&body.session_key).await {
+        Ok(pair) => pair,
+        Err(e) => {
+            let status = match e.kind.as_str() {
+                "cf_challenge"
+                | "account_session_invalid"
+                | "account_blocked"
+                | "forbidden"
+                | "unauthorized" => StatusCode::FORBIDDEN,
+                "rate_limited" => StatusCode::TOO_MANY_REQUESTS,
+                "no_org" => StatusCode::BAD_REQUEST,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            return Err((status, Json(json!({ "error": e }))));
+        }
+    };
+
+    // Persist as an OAuth credential with sensitive fields encrypted.
+    let mk = state.aigw_master_key.as_deref().ok_or_else(|| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {"message": "AIGW_MASTER_KEY not configured — cannot encrypt credential"}})),
+        )
+    })?;
+    let values = aigw_core::claude_oauth::build_oauth_credential_values(
+        &body.session_key,
+        &token,
+        &org_uuid,
+        body.proxy_id,
+        body.inject_prompt.as_deref(),
+        mk,
+    )
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {"message": format!("Failed to encrypt credential: {}", e)}})),
+        )
+    })?;
+
+    // Duplicate name guard (same as /credential/new).
+    let existing = state
+        .db
+        .get_credential_by_name(&body.name)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": {"message": format!("{}", e)}})),
+            )
+        })?;
+    if existing.is_some() {
+        return Err((
+            StatusCode::CONFLICT,
+            Json(json!({"error": {"message": "credential_name already exists"}})),
+        ));
+    }
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let credential = Credential {
+        credential_id: uuid::Uuid::new_v4().to_string(),
+        credential_name: body.name.clone(),
+        credential_values: values,
+        credential_info: json!({}),
+        created_at: now.clone(),
+        created_by: None,
+        updated_at: now,
+        updated_by: None,
+    };
+    state.db.insert_credential(&credential).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {"message": format!("{}", e)}})),
+        )
+    })?;
+
+    // Response: decrypt + redact the token trio before exposing.
+    let resp = CredentialResponse::from_credential(credential, Some(mk));
+    let mut value = serde_json::to_value(resp).unwrap_or(json!({}));
+    if let Some(cv) = value.get_mut("credential_values") {
+        *cv = aigw_core::crypto::redact_oauth_credential_values(cv);
+    }
+    Ok(Json(value))
 }
