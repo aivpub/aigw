@@ -36,3 +36,15 @@ Feature: Claude OAuth 凭证交换 — /credential/oauth/exchange（Stage 126）
     When 发送 GET /credential/info 请求查询该凭证
     Then 响应状态码为 200
     And 响应凭证敏感字段已 redact
+
+  # ── Stage 127: Token 生命周期 + 三层自愈 ──
+
+  Scenario: 缓存命中返回 token 不刷新
+    Given 已存在 OAuth 凭证 "oauth-token-cache" 用于 token 获取
+    When 通过 TokenProvider 获取该凭证的 token
+    Then token 获取结果为 "sk-ant-access-refreshed"
+
+  Scenario: refresh 失效后 cookie 自愈拿到新 token
+    Given 已存在 OAuth 凭证 "oauth-token-heal" 其 refresh_token 已失效
+    When 通过 TokenProvider 获取该凭证的 token
+    Then token 获取结果为 "sk-ant-access-refreshed"

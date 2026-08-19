@@ -100,6 +100,57 @@ pub fn dispatch_soft_budget_alert(
     });
 }
 
+/// Dispatch an OAuth credential re-auth alert to the configured webhook
+/// (Phase 51, Stage 127). Fire-and-forget — never blocks the request path.
+pub fn dispatch_oauth_reauth_alert(credential_name: &str, reason: &str) {
+    tracing::error!(
+        credential = credential_name,
+        reason = reason,
+        "OAuth credential needs re-auth — cookie/token self-heal exhausted"
+    );
+    let Some(url) = alert_webhook() else {
+        return; // no webhook configured → tracing::error already emitted
+    };
+    let payload = serde_json::json!({
+        "alert": "oauth_needs_reauth",
+        "credential_name": credential_name,
+        "reason": reason,
+        "message": format!(
+            "OAuth credential '{}' needs manual re-auth: {}",
+            credential_name, reason
+        ),
+        "ts": chrono::Utc::now().to_rfc3339(),
+    });
+    let url = url.to_string();
+    tokio::spawn(async move {
+        let client = match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(3))
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(%url, error = %e, "alert webhook client build failed");
+                return;
+            }
+        };
+        match client.post(&url).json(&payload).send().await {
+            Ok(resp) if resp.status().is_success() => {
+                tracing::debug!(%url, "oauth reauth alert delivered");
+            }
+            Ok(resp) => {
+                tracing::warn!(
+                    %url,
+                    status = resp.status().as_u16(),
+                    "oauth reauth alert webhook returned non-success"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(%url, error = %e, "oauth reauth alert webhook failed");
+            }
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

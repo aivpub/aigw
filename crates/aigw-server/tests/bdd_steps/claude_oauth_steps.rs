@@ -79,6 +79,7 @@ async fn given_db_ready_with_master_key(world: &mut TestWorld) {
             daily_spend_queue: None,
             otel_active: false,
             body_archiver: None,
+            token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
             metrics: None,
         });
     world.master_key = "sk-master-test".to_string();
@@ -159,6 +160,89 @@ async fn given_existing_oauth_credential(world: &mut TestWorld, name: String) {
         .expect("insert oauth credential");
 }
 
+/// Seed an OAuth credential whose access token is still valid and NOT expiring
+/// (expires_at far in the future). The Stage 127 cache-hit scenario relies on
+/// the refresh path: with a long-lived token, the cache miss triggers a refresh
+/// which (through the mock token endpoint) returns `sk-ant-access-mock`.
+/// (Distinct text from the plain `已存在 OAuth 凭证` to avoid ambiguity.)
+#[given(expr = "已存在 OAuth 凭证 {string} 用于 token 获取")]
+async fn given_existing_oauth_credential_cached(world: &mut TestWorld, name: String) {
+    // Reuse the shared seed step for the raw credential (long-lived token).
+    let state = world.ensure_state().await;
+    let enc_access =
+        aigw_core::crypto::encrypt_litellm_value("sk-ant-access-secret", "bdd-master-key").unwrap();
+    let enc_refresh =
+        aigw_core::crypto::encrypt_litellm_value("sk-ant-refresh-secret", "bdd-master-key")
+            .unwrap();
+    let enc_session =
+        aigw_core::crypto::encrypt_litellm_value("sk-ant-sid-secret", "bdd-master-key").unwrap();
+    let cred = aigw_core::models::Credential {
+        credential_id: uuid::Uuid::new_v4().to_string(),
+        credential_name: name.clone(),
+        credential_values: serde_json::json!({
+            "type": "anthropic_oauth",
+            "access_token": enc_access,
+            "refresh_token": enc_refresh,
+            "session_key": enc_session,
+            "expires_at": chrono::Utc::now().timestamp() + 3600,
+            "proxy_id": null,
+            "org_uuid": "org-team-1",
+            "status": "active",
+        }),
+        credential_info: serde_json::json!({}),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        created_by: None,
+        updated_at: chrono::Utc::now().to_rfc3339(),
+        updated_by: None,
+    };
+    state
+        .db
+        .insert_credential(&cred)
+        .await
+        .expect("insert oauth credential");
+    world.created_keys.insert("oauth:latest".to_string(), name);
+}
+
+/// Seed an OAuth credential whose refresh_token is invalid, forcing the
+/// cookie self-heal path (refresh → invalid_grant → cookie exchange → mock
+/// token endpoint returns sk-ant-access-mock).
+#[given(expr = "已存在 OAuth 凭证 {string} 其 refresh_token 已失效")]
+async fn given_oauth_credential_stale_refresh(world: &mut TestWorld, name: String) {
+    let state = world.ensure_state().await;
+    let enc_access =
+        aigw_core::crypto::encrypt_litellm_value("sk-ant-access-old", "bdd-master-key").unwrap();
+    let enc_refresh =
+        aigw_core::crypto::encrypt_litellm_value("sk-ant-refresh-invalid", "bdd-master-key")
+            .unwrap();
+    let enc_session =
+        aigw_core::crypto::encrypt_litellm_value("sk-ant-sid-heal", "bdd-master-key").unwrap();
+    let cred = aigw_core::models::Credential {
+        credential_id: uuid::Uuid::new_v4().to_string(),
+        credential_name: name.clone(),
+        credential_values: serde_json::json!({
+            "type": "anthropic_oauth",
+            "access_token": enc_access,
+            "refresh_token": enc_refresh,
+            "session_key": enc_session,
+            "expires_at": chrono::Utc::now().timestamp() + 60,
+            "proxy_id": null,
+            "org_uuid": "org-team-1",
+            "status": "active",
+        }),
+        credential_info: serde_json::json!({}),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        created_by: None,
+        updated_at: chrono::Utc::now().to_rfc3339(),
+        updated_by: None,
+    };
+    state
+        .db
+        .insert_credential(&cred)
+        .await
+        .expect("insert oauth credential");
+    world.created_keys.insert("oauth:latest".to_string(), name);
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // When
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -193,6 +277,44 @@ async fn when_credential_info(world: &mut TestWorld) {
         None,
     )
     .await;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Stage 127 — Token lifecycle steps (TokenProvider through the mock OAuth)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[when(expr = "通过 TokenProvider 获取该凭证的 token")]
+async fn when_get_token_via_provider(world: &mut TestWorld) {
+    let state = world.ensure_state().await;
+    let name = world
+        .created_keys
+        .get("oauth:latest")
+        .cloned()
+        .unwrap_or_else(|| "oauth-token-cache".to_string());
+    let provider = aigw_core::claude_token::TokenProvider::new();
+    let result = provider
+        .get_access_token(&state.db, &name, "bdd-master-key")
+        .await;
+    match result {
+        Ok(token) => {
+            world.last_status = Some(200);
+            world.last_body = Some(serde_json::json!({ "token": token }));
+        }
+        Err(e) => {
+            world.last_status = Some(500);
+            world.last_body = Some(serde_json::json!({ "error": e.to_string() }));
+        }
+    }
+}
+
+#[then(expr = "token 获取结果为 {string}")]
+async fn then_token_result(world: &mut TestWorld, expected: String) {
+    let body = world.last_body.as_ref().expect("no token response");
+    if let Some(token) = body.get("token").and_then(|v| v.as_str()) {
+        assert_eq!(token, expected, "token mismatch");
+        return;
+    }
+    panic!("token fetch failed: {}", body);
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

@@ -23,6 +23,7 @@ pub mod body_archive;
 pub mod budget;
 pub mod cache;
 pub mod claude_oauth;
+pub mod claude_token;
 pub mod config;
 pub mod config_loader;
 pub mod crypto;
@@ -52,6 +53,7 @@ pub use claude_oauth::{
     build_oauth_credential_values, classify_oauth_error, parse_redirect_code, pkce_s256,
     select_org, OauthClient, OauthError, OauthOrg, TokenResponse,
 };
+pub use claude_token::{TokenError, TokenProvider};
 pub use config::{
     AigwConfig, BudgetResetConfig, GeneralSettings, ModelEntry, ModelInfo, ModelParams,
     RouterSettings,

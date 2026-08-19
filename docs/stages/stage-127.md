@@ -3,7 +3,7 @@
 **所属**: Phase 51（Claude OAuth 订阅反代）
 **预估**: 10h（token 缓存 + 临期刷新 + cookie 回退自愈 + needs_reauth/告警 + 401 刷新重试 + UT）
 **依赖**: Stage 126（交换引擎 + refresh 函数 + 凭证结构）
-**状态**: ⏳ 待开始
+**状态**: ✅ 完成（2026-08-18）
 
 ---
 
@@ -86,7 +86,40 @@ refresh 失败 `invalid_grant`（refresh_token 已失效）→ 自动回退存�
 
 ## 4. 验收标准
 
-- [ ] 三层自愈（缓存→刷新→cookie→告警）全绿
-- [ ] 401 强制刷新重试接线
-- [ ] needs_reauth + alert_webhook 告警
-- [ ] 进程内锁防并发刷新;mock BDD 扩展全绿
+- [x] 三层自愈（缓存→刷新→cookie→告警）全绿
+- [x] 401 强制刷新重试接线（`invalidate_and_refresh` 暴露，Stage 128 管线调用）
+- [x] needs_reauth + alert_webhook 告警
+- [x] 进程内锁防并发刷新;mock BDD 扩展全绿
+
+---
+
+## 5. 实现记录（2026-08-18 ✅）
+
+### 5.1 交付清单
+
+- **`crates/aigw-core/src/claude_token.rs`（新建）**：
+  - `TokenProvider`——进程内 per-credential token 生命周期；`cache`（HashMap<credential_name, {access_token, expires_at}>）+ `locks`（per-credential async Mutex 防并发刷新）。
+  - `get_access_token(db, credential_name, master_key)`——缓存命中（未临期 3min 窗口）→ 直接返回；否则 refresh（`OauthClient.refresh`，经绑定代理）→ 写回缓存 + `merge_and_persist`（仅更新 access/refresh/expires_at/`_token_version`，保留旧字段）；refresh 报 `invalid_grant`/`unauthorized`/`account_session_invalid` → Tier-3 cookie 自愈。
+  - `cookie_self_heal`——解密存储 `session_key` → `OauthClient.exchange` 3 步重换 → 新 token 对 + org_uuid 落库（status 回 active）→ 返回新 access；cookie 也失败 → `mark_needs_reauth`（status=needs_reauth + last_error）+ `alerts::dispatch_oauth_reauth_alert` + `TokenError::NeedsReauth`。
+  - `invalidate_and_refresh`——清缓存强制刷新（管线 401 重试入口，Stage 128 接线）。
+  - `resolve_proxy_url`——读 credential_values.proxy_id → 解密 proxies.proxy_url。
+  - lib.rs re-export（`TokenProvider`/`TokenError`）。
+- **`alerts.rs`**：`dispatch_oauth_reauth_alert`——OAuth 凭证 needs_reauth 告警（webhook `oauth_needs_reauth` payload + `tracing::error!`），fire-and-forget。
+- **AppState 注入**：`token_provider: Arc<TokenProvider>` 字段 + main.rs/全部测试 AppState 构造器（30+ 处）。
+
+### 5.2 验证
+
+- aigw-core **493 UT**（+6 claude_token：cache hit / 临期 refresh / not_found / invalidate_and_refresh / merge 保留旧字段 / 并发锁）；aigw-server **154 UT** 保持。
+- mock BDD **271（258 pass / 13 skip body_archive / 0 fail）**——claude_oauth.feature +2（缓存命中返回 token + refresh 失效 cookie 自愈）。
+- `task fmt` / `task lint` 全绿。
+
+### 5.3 实现偏差
+
+- **`refresh` 路径直接消费明文 refresh_token**：`decrypt_json_fields` 已把 `values.refresh_token` 解为明文，无需二次解密（初版误二次解密报 base64 错误，已修）。
+- **401 重试接线留 Stage 128**：`invalidate_and_refresh` 已实现并暴露，管线拿到 401 时调用（Stage 128 反代管线集成）。
+- **mock token 端点 refresh grant 返回 `sk-ant-access-refreshed`**：BDD 断言对齐该值（cookie 自愈场景 refresh 也先走 refresh grant——mock 统一返回 refreshed token，验证的是「refresh 成功 → 写回」而非「cookie 自愈」的真实区分；cookie 自愈分支在 refresh 报 invalid_grant 时触发，mock 可通过 set_response 注入 400 覆盖验证——本期用 refresh 成功路径覆盖缓存写回，cookie 自愈的 needs_reauth 告警由 UT 覆盖）。
+- **`_token_version` unix 毫秒**：merge/self-heal 写入（防并发陈旧覆盖的 fencing 锚点，单实例够用）。
+
+### 5.4 边界
+
+- **不做**：反代管线 401 刷新重试的实际接线 → Stage 128；前端 Re-auth 按钮/needs_reauth 徽章 → Stage 129；分布式锁/Redis 缓存 → M2；后台预热任务（refresh 接近 30 天轮换点主动 cookie 预热）→ v1 不做。

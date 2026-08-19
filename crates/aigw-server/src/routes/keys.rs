@@ -68,6 +68,10 @@ pub struct AppState {
     pub otel_active: bool,
     /// Body archiver — archive spend_logs body fields to Parquet cold storage.
     pub body_archiver: Option<Arc<BodyArchiver>>,
+    /// OAuth token lifecycle provider (Stage 127) — per-credential cache +
+    /// refresh + cookie self-heal. Shared across all handlers.
+    #[allow(dead_code)] // read by the reverse-proxy pipeline (Stage 128)
+    pub token_provider: Arc<aigw_core::claude_token::TokenProvider>,
 }
 
 impl AppState {
@@ -97,6 +101,7 @@ impl AppState {
             daily_spend_queue: None,
             otel_active: false,
             body_archiver: None,
+            token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
         }
     }
 }
@@ -1096,6 +1101,7 @@ mod tests {
             metrics: None,
             otel_active: false,
             body_archiver: None,
+            token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
         });
         Router::new()
             .route("/key/generate", axum::routing::post(generate_key))
@@ -1145,6 +1151,7 @@ mod tests {
             metrics: None,
             otel_active: false,
             body_archiver: None,
+            token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
         });
         let app = Router::new()
             .route("/key/generate", axum::routing::post(generate_key))
@@ -1203,6 +1210,7 @@ mod tests {
             metrics: None,
             otel_active: false,
             body_archiver: None,
+            token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
         });
         let app = Router::new()
             .route("/key/generate", axum::routing::post(generate_key))
@@ -1340,6 +1348,7 @@ mod tests {
             metrics: None,
             otel_active: false,
             body_archiver: None,
+            token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
         });
         let app = Router::new()
             .route("/key/generate", axum::routing::post(generate_key))

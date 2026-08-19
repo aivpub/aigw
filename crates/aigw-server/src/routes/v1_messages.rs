@@ -1459,6 +1459,7 @@ mod tests {
             daily_spend_queue: None,
             otel_active: false,
             body_archiver: None,
+            token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
             metrics: None,
         });
 

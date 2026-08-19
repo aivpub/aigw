@@ -376,6 +376,7 @@ async fn main() -> anyhow::Result<()> {
         resolver,
         otel_active,
         body_archiver: body_archiver_arc.clone(),
+        token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
     });
 
     // Seed `config.model_list` into proxy_models (idempotent; DB-first — rows
