@@ -318,6 +318,285 @@ async fn then_token_result(world: &mut TestWorld, expected: String) {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Stage 128 — Reverse-proxy pipeline steps (messages/chat/embeddings/401)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Seed an OAuth credential for the reverse-proxy pipeline, and point the
+/// pipeline's Anthropic target at the mock upstream.
+#[given(expr = "已存在 OAuth 凭证 {string} 用于反代")]
+async fn given_existing_oauth_credential_pipeline(world: &mut TestWorld, name: String) {
+    let state = world.ensure_state().await;
+    let enc_access =
+        aigw_core::crypto::encrypt_litellm_value("sk-ant-access-secret", "bdd-master-key").unwrap();
+    let enc_refresh =
+        aigw_core::crypto::encrypt_litellm_value("sk-ant-refresh-secret", "bdd-master-key")
+            .unwrap();
+    let enc_session =
+        aigw_core::crypto::encrypt_litellm_value("sk-ant-sid-secret", "bdd-master-key").unwrap();
+    let cred = aigw_core::models::Credential {
+        credential_id: uuid::Uuid::new_v4().to_string(),
+        credential_name: name.clone(),
+        credential_values: serde_json::json!({
+            "type": "anthropic_oauth",
+            "access_token": enc_access,
+            "refresh_token": enc_refresh,
+            "session_key": enc_session,
+            "expires_at": chrono::Utc::now().timestamp() + 3600,
+            "proxy_id": null,
+            "org_uuid": "org-team-1",
+            "status": "active",
+        }),
+        credential_info: serde_json::json!({}),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        created_by: None,
+        updated_at: chrono::Utc::now().to_rfc3339(),
+        updated_by: None,
+    };
+    state
+        .db
+        .insert_credential(&cred)
+        .await
+        .expect("insert oauth credential");
+    world.created_keys.insert("oauth:latest".to_string(), name);
+
+    // Point the reverse-proxy pipeline at the mock upstream (never in prod).
+    let mu = mock_upstream().lock().await;
+    let mock_base = mu
+        .as_ref()
+        .expect("mock upstream not started")
+        .url()
+        .to_string();
+    drop(mu);
+    std::env::set_var("AIGW_ANTHROPIC_MOCK_BASE", &mock_base);
+}
+
+/// Register a proxy model whose litellm_params reference an OAuth credential.
+#[given(expr = "已配置 model {string} 引用 OAuth 凭证 {string}")]
+async fn given_model_referencing_oauth_credential(
+    world: &mut TestWorld,
+    model_name: String,
+    credential_name: String,
+) {
+    let state = world.ensure_state().await;
+    let model = aigw_core::models::ProxyModel {
+        model_id: uuid::Uuid::new_v4().to_string(),
+        model_name: model_name.clone(),
+        litellm_params: serde_json::json!({
+            "model": model_name,
+            "litellm_credential_name": credential_name,
+            "custom_llm_provider": "anthropic"
+        }),
+        model_info: serde_json::json!({}),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        created_by: Some("test".to_string()),
+        updated_at: chrono::Utc::now().to_rfc3339(),
+        updated_by: Some("test".to_string()),
+        enabled: true,
+    };
+    state.db.insert_model(&model).await.expect("insert model");
+}
+
+/// Send a /v1/messages request to the OAuth reverse-proxy pipeline (model
+/// resolves to an OAuth credential → billing block + Bearer + proxy egress).
+#[when(expr = "发送 POST \\/v1\\/messages 请求带认证 model={string} 走 OAuth 反代")]
+#[allow(unused_variables)]
+async fn when_oauth_pipeline_messages(world: &mut TestWorld, model_name: String) {
+    let state = world.ensure_state().await;
+    use axum::Router;
+    use tower::util::ServiceExt;
+    let router = Router::new()
+        .route(
+            "/v1/messages",
+            axum::routing::post(aigw_server::routes::v1_messages::messages_handler),
+        )
+        .with_state(state);
+
+    let body = serde_json::json!({
+        "model": model_name,
+        "messages": [{"role": "user", "content": "hi"}],
+        "max_tokens": 100
+    })
+    .to_string();
+
+    let req = axum::http::Request::builder()
+        .method(Method::POST)
+        .uri("/v1/messages")
+        .header("Content-Type", "application/json")
+        .header("anthropic-version", "2023-06-01")
+        .header("x-api-key", &world.master_key)
+        .body(axum::body::Body::from(body))
+        .unwrap();
+    let response = router.oneshot(req).await.unwrap();
+    world.last_status = Some(response.status().as_u16());
+    let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap_or_default();
+    world.last_body = serde_json::from_slice(&body_bytes).ok();
+}
+
+/// Assert the mock upstream received a /v1/messages request carrying the Bearer
+/// access token.
+#[then(expr = "mock 上游收到 \\/v1\\/messages 请求且 Authorization 为 Bearer token")]
+async fn then_mock_received_messages_bearer(world: &mut TestWorld) {
+    let _ = world;
+    let mu = mock_upstream().lock().await;
+    let upstream = mu.as_ref().expect("mock upstream not started");
+    let reqs = upstream.recorded_requests();
+    let messages_reqs: Vec<_> = reqs.iter().filter(|r| r.path == "/v1/messages").collect();
+    assert!(
+        !messages_reqs.is_empty(),
+        "no /v1/messages request recorded (recorded: {:?})",
+        reqs.iter().map(|r| r.path.clone()).collect::<Vec<_>>()
+    );
+    let last = messages_reqs.last().unwrap();
+    let auth = last
+        .headers
+        .get("authorization")
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        auth.starts_with("Bearer "),
+        "expected Bearer authorization, got: {}",
+        auth
+    );
+    // The access token must not be the plaintext stored credential value.
+    assert_ne!(auth, "Bearer sk-ant-access-secret");
+}
+
+/// Assert the mock upstream received a /v1/messages body whose system[0] is the
+/// billing block.
+#[then(expr = "mock 上游收到的 body 首条 system 块为 billing 块")]
+async fn then_mock_messages_billing_block(world: &mut TestWorld) {
+    let _ = world;
+    let mu = mock_upstream().lock().await;
+    let upstream = mu.as_ref().expect("mock upstream not started");
+    let reqs = upstream.recorded_requests();
+    let messages_reqs: Vec<_> = reqs.iter().filter(|r| r.path == "/v1/messages").collect();
+    assert!(!messages_reqs.is_empty(), "no /v1/messages request");
+    let last = messages_reqs.last().unwrap();
+    let system = last
+        .body
+        .get("system")
+        .and_then(|v| v.as_array())
+        .expect("system array present");
+    assert!(!system.is_empty(), "system array non-empty");
+    let first = &system[0];
+    let text = first.get("text").and_then(|v| v.as_str()).unwrap_or("");
+    assert!(
+        text.starts_with("x-anthropic-billing-header: cc_version="),
+        "system[0] must be the billing block, got: {}",
+        text
+    );
+    assert!(text.contains("cc_entrypoint=cli;"));
+}
+
+/// Send a /v1/chat/completions request to the OAuth reverse-proxy pipeline
+/// (chat → Anthropic conversion → billing block → Bearer → proxy egress).
+#[when(
+    expr = "使用 master-key 发送 POST \\/chat\\/completions 请求用 model {string} 走 OAuth 反代"
+)]
+#[allow(unused_variables)]
+async fn when_oauth_pipeline_chat(world: &mut TestWorld, model_name: String) {
+    let state = world.ensure_state().await;
+    use axum::Router;
+    use tower::util::ServiceExt;
+    let router = Router::new()
+        .route(
+            "/chat/completions",
+            axum::routing::post(aigw_server::routes::chat::chat_completions),
+        )
+        .with_state(state);
+
+    let body = serde_json::json!({
+        "model": model_name,
+        "messages": [{"role": "user", "content": "hi"}]
+    })
+    .to_string();
+
+    let req = axum::http::Request::builder()
+        .method(Method::POST)
+        .uri("/chat/completions")
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", world.master_key))
+        .body(axum::body::Body::from(body))
+        .unwrap();
+    let response = router.oneshot(req).await.unwrap();
+    world.last_status = Some(response.status().as_u16());
+    let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap_or_default();
+    world.last_body = serde_json::from_slice(&body_bytes).ok();
+}
+
+/// Send a /v1/embeddings request to a model that resolves to an OAuth
+/// credential → expect 400 (Anthropic has no embedding endpoint).
+#[when(expr = "使用 master-key 发送 POST \\/v1\\/embeddings 请求用 model {string} 走 OAuth 反代")]
+async fn when_oauth_pipeline_embeddings(world: &mut TestWorld, model_name: String) {
+    let state = world.ensure_state().await;
+    use axum::Router;
+    use tower::util::ServiceExt;
+    let router = Router::new()
+        .route(
+            "/v1/embeddings",
+            axum::routing::post(aigw_server::routes::embeddings::embeddings_handler),
+        )
+        .with_state(state);
+
+    let body = serde_json::json!({
+        "model": model_name,
+        "input": "hello world"
+    })
+    .to_string();
+
+    let req = axum::http::Request::builder()
+        .method(Method::POST)
+        .uri("/v1/embeddings")
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {}", world.master_key))
+        .body(axum::body::Body::from(body))
+        .unwrap();
+    let response = router.oneshot(req).await.unwrap();
+    world.last_status = Some(response.status().as_u16());
+    let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap_or_default();
+    world.last_body = serde_json::from_slice(&body_bytes).ok();
+}
+
+/// Make the mock upstream return 401 on the FIRST /v1/messages request, then
+/// fall back to the default 200 on the retry — exercising the pipeline's
+/// 401 refresh-retry.
+#[given(expr = "mock 上游 \\/v1\\/messages 首次返回 401")]
+async fn given_mock_messages_first_401(world: &mut TestWorld) {
+    let _ = world;
+    let mu = mock_upstream().lock().await;
+    let upstream = mu.as_ref().expect("mock upstream not started");
+    upstream.set_response_first_n(
+        "/v1/messages",
+        401,
+        serde_json::json!({"type": "error", "error": {"type": "authentication_error", "message": "invalid token"}}),
+        1,
+    );
+}
+
+/// Assert the mock upstream saw at least N /v1/messages requests (proves a
+/// 401 → refresh → retry happened).
+#[then(expr = "mock 上游 \\/v1\\/messages 请求次数为 {int}")]
+async fn then_mock_messages_request_count(world: &mut TestWorld, expected: i32) {
+    let _ = world;
+    let mu = mock_upstream().lock().await;
+    let upstream = mu.as_ref().expect("mock upstream not started");
+    let reqs = upstream.recorded_requests();
+    let count = reqs.iter().filter(|r| r.path == "/v1/messages").count();
+    assert!(
+        count >= expected as usize,
+        "expected at least {} /v1/messages requests, got {}",
+        expected,
+        count
+    );
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Then
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

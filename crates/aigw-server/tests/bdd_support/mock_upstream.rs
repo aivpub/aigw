@@ -80,6 +80,9 @@ pub struct MockResponse {
     pub body: Value,
     #[allow(dead_code)]
     pub headers: HashMap<String, String>,
+    /// Remaining one-shot hits before the response is removed (0 = persistent).
+    #[allow(dead_code)]
+    pub remaining: usize,
 }
 
 impl Default for MockResponse {
@@ -106,6 +109,7 @@ impl Default for MockResponse {
                 }
             }),
             headers: HashMap::new(),
+            remaining: 0,
         }
     }
 }
@@ -129,6 +133,20 @@ impl MockState {
             .lock()
             .unwrap()
             .insert(path.to_string(), response);
+    }
+
+    /// One-shot response: fire for the first N hits, then remove (default used).
+    pub fn set_response_first_n(&self, path: &str, status: u16, body: Value, n: usize) {
+        let mut map = self.responses.lock().unwrap();
+        map.insert(
+            path.to_string(),
+            MockResponse {
+                status,
+                body,
+                headers: HashMap::new(),
+                remaining: n,
+            },
+        );
     }
 
     #[allow(dead_code)]
@@ -210,8 +228,17 @@ impl MockUpstream {
                 status,
                 body,
                 headers: HashMap::new(),
+                remaining: 0,
             },
         );
+    }
+
+    /// Set a response that fires only for the first N matching requests; after
+    /// N hits the configured response is removed (falls back to the default).
+    /// Used by the Stage 128 401-refresh-retry scenario: first call 401, the
+    /// retry after token refresh gets the default 200.
+    pub fn set_response_first_n(&self, path: &str, status: u16, body: Value, n: usize) {
+        self.state.set_response_first_n(path, status, body, n);
     }
 
     /// Get recorded requests
@@ -355,21 +382,42 @@ async fn claude_handler(
         });
     }
 
-    let resp = state.responses.lock().unwrap();
-    let mock = resp.get("/v1/messages").cloned().unwrap_or(MockResponse {
-        status: 200,
-        body: serde_json::json!({
-            "id": "msg_mock",
-            "type": "message",
-            "role": "assistant",
-            "content": [{"type": "text", "text": "Mock Claude response"}],
-            "model": "claude-3",
-            "stop_reason": "end_turn",
-            "stop_sequence": null,
-            "usage": {"input_tokens": 10, "output_tokens": 5}
-        }),
-        headers: HashMap::new(),
-    });
+    // Look up the configured /v1/messages response; if it's one-shot
+    // (remaining > 0), decrement and remove when exhausted (default response
+    // then applies). Used by the Stage 128 401-refresh-retry scenario.
+    let mut responses = state.responses.lock().unwrap();
+    let mock = {
+        let resp = responses.get("/v1/messages");
+        match resp {
+            Some(m) if m.remaining > 0 => {
+                let mut m = m.clone();
+                m.remaining -= 1;
+                if m.remaining == 0 {
+                    responses.remove("/v1/messages");
+                } else {
+                    responses.insert("/v1/messages".to_string(), m.clone());
+                }
+                m
+            }
+            Some(m) => m.clone(),
+            None => MockResponse {
+                status: 200,
+                body: serde_json::json!({
+                    "id": "msg_mock",
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": "Mock Claude response"}],
+                    "model": "claude-3",
+                    "stop_reason": "end_turn",
+                    "stop_sequence": null,
+                    "usage": {"input_tokens": 10, "output_tokens": 5}
+                }),
+                headers: HashMap::new(),
+                remaining: 0,
+            },
+        }
+    };
+    drop(responses);
 
     Ok((
         StatusCode::from_u16(mock.status).unwrap_or(StatusCode::OK),
@@ -419,6 +467,7 @@ async fn embeddings_handler(
             "usage": {"prompt_tokens": 10, "total_tokens": 10}
         }),
         headers: HashMap::new(),
+        remaining: 0,
     });
 
     Ok((
@@ -535,6 +584,7 @@ async fn responses_handler(
             }
         }),
         headers: HashMap::new(),
+        remaining: 0,
     });
 
     let status = StatusCode::from_u16(mock.status).unwrap_or(StatusCode::OK);

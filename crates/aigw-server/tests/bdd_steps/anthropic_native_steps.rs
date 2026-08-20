@@ -124,6 +124,7 @@ async fn given_anthropic_deployment(_world: &mut TestWorld, model: String) {
             fail_count: 0,
             cooldown_until: None,
             last_latency_ms: 0.0,
+            oauth: None,
         });
     });
 }
@@ -270,6 +271,7 @@ async fn when_roundtrip_image_via_adapter(_world: &mut TestWorld) {
                 fail_count: 0,
                 cooldown_until: None,
                 last_latency_ms: 0.0,
+                oauth: None,
             },
         );
         state.adapted = result.ok();

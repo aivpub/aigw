@@ -48,3 +48,35 @@ Feature: Claude OAuth 凭证交换 — /credential/oauth/exchange（Stage 126）
     Given 已存在 OAuth 凭证 "oauth-token-heal" 其 refresh_token 已失效
     When 通过 TokenProvider 获取该凭证的 token
     Then token 获取结果为 "sk-ant-access-refreshed"
+
+  # ── Stage 128: 反代管线 ──
+
+  Scenario: messages 走 OAuth 反代（Bearer + billing 块 + 代理出口）
+    Given 已存在 OAuth 凭证 "oauth-pipeline-messages" 用于反代
+    And 已配置 model "claude-oauth-mock" 引用 OAuth 凭证 "oauth-pipeline-messages"
+    When 发送 POST /v1/messages 请求带认证 model="claude-oauth-mock" 走 OAuth 反代
+    Then 响应状态码为 200
+    And mock 上游收到 /v1/messages 请求且 Authorization 为 Bearer token
+    And mock 上游收到的 body 首条 system 块为 billing 块
+
+  Scenario: chat/completions → OAuth 反代（转换 + 同一管线）
+    Given 已存在 OAuth 凭证 "oauth-pipeline-chat" 用于反代
+    And 已配置 model "claude-oauth-chat" 引用 OAuth 凭证 "oauth-pipeline-chat"
+    When 使用 master-key 发送 POST /chat/completions 请求用 model "claude-oauth-chat" 走 OAuth 反代
+    Then 响应状态码为 200
+    And mock 上游收到 /v1/messages 请求且 Authorization 为 Bearer token
+
+  Scenario: embeddings 解析到 OAuth 凭证返回 400
+    Given 已存在 OAuth 凭证 "oauth-pipeline-embed" 用于反代
+    And 已配置 model "claude-oauth-embed" 引用 OAuth 凭证 "oauth-pipeline-embed"
+    When 使用 master-key 发送 POST /v1/embeddings 请求用 model "claude-oauth-embed" 走 OAuth 反代
+    Then 响应状态码为 400
+    And 错误信息包含 "不支持 embeddings"
+
+  Scenario: 401 → 刷新重试成功
+    Given 已存在 OAuth 凭证 "oauth-pipeline-401" 用于反代
+    And 已配置 model "claude-oauth-401" 引用 OAuth 凭证 "oauth-pipeline-401"
+    And mock 上游 /v1/messages 首次返回 401
+    When 发送 POST /v1/messages 请求带认证 model="claude-oauth-401" 走 OAuth 反代
+    Then 响应状态码为 200
+    And mock 上游 /v1/messages 请求次数为 2
