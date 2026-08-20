@@ -2495,6 +2495,7 @@ mod tests {
             fail_count: 0,
             cooldown_until: None,
             last_latency_ms: 0.0,
+            oauth: None,
         }
     }
 
@@ -2645,6 +2646,7 @@ mod tests {
             fail_count: 0,
             cooldown_until: None,
             last_latency_ms: 0.0,
+            oauth: None,
         };
         let adapted = ResponsesToChatCompletions
             .adapt_request(body, &dep)
@@ -2711,6 +2713,7 @@ mod tests {
             fail_count: 0,
             cooldown_until: None,
             last_latency_ms: 0.0,
+            oauth: None,
         };
         let adapted = ResponsesToChatCompletions
             .adapt_request(body, &dep)
@@ -2746,6 +2749,7 @@ mod tests {
             fail_count: 0,
             cooldown_until: None,
             last_latency_ms: 0.0,
+            oauth: None,
         };
         let err = ResponsesToChatCompletions
             .adapt_request(body, &dep)
@@ -3410,6 +3414,7 @@ mod tests {
             fail_count: 0,
             cooldown_until: None,
             last_latency_ms: 0.0,
+            oauth: None,
         };
         let body = json!({
             "model": "claude-sonnet", "max_tokens": 1024,
@@ -3466,6 +3471,7 @@ mod tests {
             fail_count: 0,
             cooldown_until: None,
             last_latency_ms: 0.0,
+            oauth: None,
         };
 
         assert_eq!(
@@ -3507,6 +3513,7 @@ mod tests {
             fail_count: 0,
             cooldown_until: None,
             last_latency_ms: 0.0,
+            oauth: None,
         };
         assert_eq!(
             resolve_chat_template_compat(&deployment),
@@ -3542,6 +3549,7 @@ mod tests {
             fail_count: 0,
             cooldown_until: None,
             last_latency_ms: 0.0,
+            oauth: None,
         }
     }
 

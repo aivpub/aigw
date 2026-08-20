@@ -624,6 +624,7 @@ mod router_tests {
             fail_count: 0,
             cooldown_until: None,
             last_latency_ms: 0.0,
+            oauth: None,
         }
     }
 

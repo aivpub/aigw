@@ -68,6 +68,25 @@ pub struct Deployment {
     /// EWMA of recent upstream latency (ms), recorded by `Router::report_success`
     /// for the latency-based routing strategy (Stage 118 §3.4). 0.0 = no sample.
     pub last_latency_ms: f64,
+    /// OAuth reverse-proxy reference (Phase 51, Stage 128). `Some` when the
+    /// deployment resolves to an `anthropic_oauth` credential — such deployments
+    /// always go through the OAuth reverse-proxy pipeline (bound proxy → billing
+    /// block → Bearer access token → `https://api.anthropic.com/v1/messages`).
+    pub oauth: Option<OAuthDeployment>,
+}
+
+/// OAuth reverse-proxy target info carried by a deployment resolved to an
+/// `anthropic_oauth` credential (Phase 51, Stage 128).
+#[derive(Debug, Clone)]
+pub struct OAuthDeployment {
+    /// The credential name (the TokenProvider's per-credential cache key).
+    pub credential_id: String,
+    /// Decrypted proxy URL bound to the credential (Stage 126), if any. When
+    /// present the reverse-proxy pipeline sends the request through this proxy.
+    pub proxy_url: Option<String>,
+    /// Optional credential-level prompt injected as an extra system block after
+    /// the billing block (gate only inspects block[0]).
+    pub inject_prompt: Option<String>,
 }
 
 /// Upstream provider type.
@@ -183,6 +202,7 @@ mod tests {
             fail_count: 0,
             cooldown_until: None,
             last_latency_ms: 0.0,
+            oauth: None,
         };
 
         assert_eq!(d.api_base, "https://api.openai.com/v1");

@@ -100,6 +100,7 @@ impl ModelResolver {
                     fail_count: 0,
                     cooldown_until: None,
                     last_latency_ms: 0.0,
+                    oauth: None,
                 }]);
             }
         }
@@ -258,7 +259,7 @@ impl ModelResolver {
             };
 
             // Merge: credential values take precedence where not already set
-            let mut merged = cred_values;
+            let mut merged = cred_values.clone();
             if let Some(obj) = merged.as_object_mut() {
                 for (k, v) in params_json.as_object().into_iter().flat_map(|o| o.iter()) {
                     if !obj.contains_key(k) {
@@ -301,6 +302,33 @@ impl ModelResolver {
             let tpm = merged.get("tpm").and_then(|v| v.as_i64());
             let priority = merged.get("priority").and_then(|v| v.as_i64());
 
+            // Stage 128: OAuth reverse-proxy detection — when the referenced
+            // credential is `type=="anthropic_oauth"`, mark the deployment so
+            // the handler routes through the OAuth pipeline (bound proxy →
+            // billing block → Bearer access token → /v1/messages).
+            let oauth = if merged.get("type").and_then(|v| v.as_str()) == Some("anthropic_oauth") {
+                let proxy_url = match cred_values.get("proxy_id").and_then(|v| v.as_i64()) {
+                    Some(pid) => match self.db.get_proxy_by_id(pid).await {
+                        Ok(Some(p)) => match self.aigw_master_key.as_deref() {
+                            Some(mk) => crate::crypto::decrypt_proxy_url(&p.proxy_url, mk).ok(),
+                            None => None,
+                        },
+                        _ => None,
+                    },
+                    None => None,
+                };
+                Some(crate::deployment::OAuthDeployment {
+                    credential_id: cred_name.to_string(),
+                    proxy_url,
+                    inject_prompt: cred_values
+                        .get("inject_prompt")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string()),
+                })
+            } else {
+                None
+            };
+
             Ok(Deployment {
                 api_base,
                 api_key,
@@ -323,6 +351,7 @@ impl ModelResolver {
                 fail_count: 0,
                 cooldown_until: None,
                 last_latency_ms: 0.0,
+                oauth,
             })
         } else {
             tracing::warn!(%model_name, "resolve: NO credential reference, using litellm_params directly");
@@ -394,6 +423,7 @@ impl ModelResolver {
                 fail_count: 0,
                 cooldown_until: None,
                 last_latency_ms: 0.0,
+                oauth: None,
             })
         }
     }

@@ -36,6 +36,7 @@ pub mod instance;
 pub mod metrics;
 pub mod middleware;
 pub mod models;
+pub mod oauth_pipeline;
 pub mod otel_tracing;
 pub mod password;
 pub mod probe;
