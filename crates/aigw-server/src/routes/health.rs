@@ -814,6 +814,7 @@ mod tests {
             fail_count: 0,
             cooldown_until: None,
             last_latency_ms: 0.0,
+            oauth: None,
         };
         let (probe_path, body, is_embed) =
             build_probe_spec(&embed_deployment, &serde_json::json!({"mode": "embed"}));
@@ -852,6 +853,7 @@ mod tests {
             fail_count: 0,
             cooldown_until: None,
             last_latency_ms: 0.0,
+            oauth: None,
         };
         let (probe_path, body, is_embed) =
             build_probe_spec(&chat_deployment, &serde_json::json!({}));
