@@ -241,6 +241,142 @@ pub async fn responses_handler(
             )
         })?;
     let deployment = deployments.remove(deployment_idx);
+
+    // Stage 128 §2.5: Responses → OAuth reverse-proxy. Any Responses request
+    // resolving to an `anthropic_oauth` credential is converted to Anthropic
+    // Messages format, billing-injected, and sent through the pipeline (Bearer
+    // + proxy egress + 401 refresh-retry).
+    if let Some(ref oauth) = deployment.oauth {
+        let token_provider = state.token_provider.clone();
+        let mk = state.aigw_master_key.clone().unwrap_or_default();
+        let is_stream = body
+            .get("stream")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let mut upstream_body = match aigw_core::oauth_pipeline::adapt_to_anthropic(
+            ClientProtocol::Responses,
+            body.clone(),
+            &deployment,
+        ) {
+            Ok(v) => v,
+            Err(e) => {
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "error": {"message": format!("OAuth adapter error: {}", e), "type": "adapter_error"}
+                    })),
+                ));
+            }
+        };
+        aigw_core::oauth_pipeline::inject_billing_block(&mut upstream_body, oauth);
+
+        let upstream_resp = aigw_core::oauth_pipeline::send(
+            &token_provider,
+            &state.db,
+            &mk,
+            oauth,
+            upstream_body,
+            aigw_core::oauth_pipeline::OauthTarget::Messages,
+        )
+        .await;
+
+        let upstream_resp = match upstream_resp {
+            Ok(r) => r,
+            Err(e) => {
+                let err_msg = format!("OAuth pipeline error: {}", e);
+                tracing::error!(%err_msg, model = %_model, "oauth responses reverse-proxy failed");
+                return Err((
+                    StatusCode::BAD_GATEWAY,
+                    Json(json!({
+                        "error": {"message": err_msg, "type": "upstream_error", "code": null}
+                    })),
+                ));
+            }
+        };
+        let upstream_status = upstream_resp.status();
+        let _upstream_req_id = upstream_resp
+            .headers()
+            .get("x-request-id")
+            .or_else(|| upstream_resp.headers().get("request-id"))
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+
+        // Streaming: the adapted body is Anthropic Messages — passthrough the
+        // upstream SSE unchanged (the upstream Anthropic response is native).
+        if is_stream {
+            if !upstream_status.is_success() {
+                let error_body = upstream_resp.text().await.unwrap_or_default();
+                return Err((
+                    StatusCode::from_u16(upstream_status.as_u16())
+                        .unwrap_or(StatusCode::BAD_GATEWAY),
+                    Json(json!({
+                        "error": {
+                            "message": format!("Upstream returned {}: {}", upstream_status.as_u16(), error_body),
+                            "type": "upstream_error",
+                            "code": null
+                        }
+                    })),
+                ));
+            }
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+            tokio::spawn(async move {
+                use tokio_stream::StreamExt;
+                let mut stream = upstream_resp.bytes_stream();
+                while let Some(chunk_result) = stream.next().await {
+                    match chunk_result {
+                        Ok(chunk) => {
+                            if tx.send(chunk.to_vec()).is_err() {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+            });
+            let sse_stream = tokio_stream::wrappers::UnboundedReceiverStream::new(rx)
+                .map(|data: Vec<u8>| Ok::<_, Infallible>(data));
+            return Ok(axum::response::Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "text/event-stream")
+                .header(header::CACHE_CONTROL, "no-cache")
+                .header(header::CONNECTION, "keep-alive")
+                .body(axum::body::Body::from_stream(sse_stream))
+                .unwrap());
+        }
+
+        // Non-streaming: return the native Anthropic response (the inbound
+        // protocol was Responses; the client receives the Anthropic body).
+        if !upstream_status.is_success() {
+            let error_body = upstream_resp.text().await.unwrap_or_default();
+            return Err((
+                StatusCode::from_u16(upstream_status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY),
+                Json(json!({
+                    "error": {
+                        "message": format!("Upstream returned {}: {}", upstream_status.as_u16(), error_body),
+                        "type": "upstream_error",
+                        "code": null
+                    }
+                })),
+            ));
+        }
+        let resp_body: Value = upstream_resp.json().await.map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({
+                    "error": {"message": format!("Failed to parse upstream response: {}", e), "type": "upstream_error"}
+                })),
+            )
+        })?;
+        return Ok(axum::response::Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(axum::body::Body::from(
+                serde_json::to_string(&resp_body).unwrap(),
+            ))
+            .unwrap());
+    }
+
     let adapter =
         select_adapter(ClientProtocol::Responses, &deployment.provider_type).ok_or_else(|| {
             (

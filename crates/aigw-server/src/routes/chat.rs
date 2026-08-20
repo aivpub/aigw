@@ -1105,6 +1105,399 @@ pub async fn chat_completions(
             }
         });
     let mut deployment = deployments.remove(deployment_idx);
+
+    // Stage 128: OAuth reverse-proxy pipeline. Any deployment resolved to an
+    // `anthropic_oauth` credential bypasses the normal adapter + api_base path
+    // and instead: adapts the body to Anthropic Messages format, injects the
+    // billing block (minimal, byte-aligned fingerprint), egresses through the
+    // credential's bound proxy with CC disguise headers + `Authorization: Bearer
+    // <access_token>`, and retries once on a 401 (token refresh).
+    if let Some(ref oauth) = deployment.oauth {
+        let token_provider = state.token_provider.clone();
+        let mk = state.aigw_master_key.clone().unwrap_or_default();
+        let is_stream = body
+            .get("stream")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let dep = deployment.clone();
+        let upstream_model = deployment.upstream_model.clone();
+        let model_id = deployment.model_id.clone();
+        let model_group = deployment.model_group.clone();
+        let custom_llm_provider = deployment.custom_llm_provider.clone();
+
+        // Metadata extraction (mirrors the non-OAuth path below).
+        let end_user = body
+            .get("metadata")
+            .and_then(|m| m.get("user_id"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let session_id = end_user.as_ref().and_then(|eu| {
+            serde_json::from_str::<Value>(eu).ok().and_then(|v| {
+                v.get("session_id")
+                    .and_then(|id| id.as_str())
+                    .map(|s| s.to_string())
+            })
+        });
+        let requester_ip: Option<String> = client_ip.map(|cip| cip.0.to_string());
+        let start_time = chrono::Utc::now();
+
+        // Adapt the inbound body to Anthropic Messages format.
+        let mut upstream_body = match aigw_core::oauth_pipeline::adapt_to_anthropic(
+            ClientProtocol::OpenAI,
+            body.clone(),
+            &dep,
+        ) {
+            Ok(v) => v,
+            Err(e) => {
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "error": {"message": format!("OAuth adapter error: {}", e), "type": "adapter_error"}
+                    })),
+                ));
+            }
+        };
+        // Inject the minimal billing block as system[0] (fingerprint aligned).
+        aigw_core::oauth_pipeline::inject_billing_block(&mut upstream_body, oauth);
+
+        // Send through the OAuth pipeline (proxy egress + Bearer + 401 retry).
+        let resp = aigw_core::oauth_pipeline::send(
+            &token_provider,
+            &state.db,
+            &mk,
+            oauth,
+            upstream_body,
+            aigw_core::oauth_pipeline::OauthTarget::Messages,
+        )
+        .await;
+
+        let upstream_resp = match resp {
+            Ok(r) => r,
+            Err(e) => {
+                let err_msg = format!("OAuth pipeline error: {}", e);
+                tracing::error!(%err_msg, model = %_model, "oauth reverse-proxy failed");
+                return Err((
+                    StatusCode::BAD_GATEWAY,
+                    Json(json!({
+                        "error": {"message": err_msg, "type": "upstream_error", "code": null}
+                    })),
+                ));
+            }
+        };
+        let upstream_status = upstream_resp.status();
+        let upstream_latency_ms = 0_i64;
+        let upstream_req_id = upstream_resp
+            .headers()
+            .get("x-request-id")
+            .or_else(|| upstream_resp.headers().get("request-id"))
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+
+        // Report outcome to the router for cooldown/latency tracking.
+        let mut dep_report = deployment.clone();
+        if upstream_status.is_success() {
+            effective_router.report_success(&mut dep_report, upstream_latency_ms as f64);
+        } else {
+            effective_router.report_failure(&mut dep_report, upstream_status.as_u16());
+        }
+        deployment.cooldown_until = dep_report.cooldown_until;
+        deployment.fail_count = dep_report.fail_count;
+        deployment.last_latency_ms = dep_report.last_latency_ms;
+
+        // Streaming: proxy the Anthropic SSE passthrough (native protocol, no
+        // adapter conversion needed — the adapted body is already Anthropic).
+        if is_stream {
+            if !upstream_status.is_success() {
+                let error_body = upstream_resp.text().await.unwrap_or_default();
+                return Err((
+                    StatusCode::from_u16(upstream_status.as_u16())
+                        .unwrap_or(StatusCode::BAD_GATEWAY),
+                    Json(json!({
+                        "error": {
+                            "message": format!("Upstream returned {}: {}", upstream_status.as_u16(), error_body),
+                            "type": "upstream_error",
+                            "code": null
+                        }
+                    })),
+                ));
+            }
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+            let state_clone = state.clone();
+            let body_clone = body.clone();
+            let _model_name = _model.to_string();
+            let token_hash = auth.token_hash.clone();
+            let user_id = auth.user_id.clone();
+            let team_id = auth.team_id.clone();
+            let organization_id = auth.organization_id.clone();
+            let end_user_clone = end_user.clone();
+            let requester_ip_clone = requester_ip.clone();
+            let session_id_clone = session_id.clone();
+            let start_time = chrono::Utc::now();
+            let request_id_clone = request_id.clone();
+            let upstream_model_cl = upstream_model.clone();
+            let model_id_cl = model_id.clone();
+            let model_group_cl = model_group.clone();
+            let custom_llm_provider_cl = custom_llm_provider.clone();
+            let upstream_req_id_cl = upstream_req_id.clone();
+
+            // Phase 1 placeholder SpendLog.
+            {
+                let sl = SpendLog {
+                    call_id: request_id.clone(),
+                    request_id: None,
+                    call_type: "completion".to_string(),
+                    api_key: token_hash.clone(),
+                    spend: 0.0,
+                    total_tokens: 0,
+                    prompt_tokens: 0,
+                    completion_tokens: 0,
+                    start_time,
+                    end_time: chrono::Utc::now(),
+                    request_duration_ms: None,
+                    completion_start_time: None,
+                    model: upstream_model.clone(),
+                    model_id,
+                    model_group,
+                    custom_llm_provider,
+                    api_base: Some("oauth:anthropic".to_string()),
+                    user: auth.user_id.clone(),
+                    metadata: Some(json!({"oauth": true})),
+                    cache_hit: None,
+                    cache_key: None,
+                    request_tags: None,
+                    team_id: auth.team_id.clone(),
+                    organization_id: auth.organization_id.clone(),
+                    end_user: end_user.clone(),
+                    requester_ip_address: requester_ip.clone(),
+                    messages: Some(body.clone()),
+                    response: Some(json!({"status": "streaming"})),
+                    session_id: session_id.clone(),
+                    status: Some("streaming".to_string()),
+                    mcp_namespaced_tool_name: None,
+                    agent_id: None,
+                    proxy_server_request: None,
+                    body_archived: false,
+                    parquet_path: None,
+                    image_tokens: None,
+                };
+                let _ = state.db.insert_spend_log(&sl).await;
+            }
+
+            tokio::spawn(async move {
+                use tokio_stream::StreamExt;
+                let mut stream = upstream_resp.bytes_stream();
+                let mut stream_prompt_tokens: i32 = 0;
+                let mut stream_completion_tokens: i32 = 0;
+                let mut upstream_id: Option<String> = None;
+                let mut failure: Option<(u16, String)> = None;
+                while let Some(chunk_result) = stream.next().await {
+                    match chunk_result {
+                        Ok(chunk) => {
+                            if let Ok(text) = std::str::from_utf8(&chunk) {
+                                for line in text.lines() {
+                                    if let Some(data) = line.strip_prefix("data: ") {
+                                        if data != "[DONE]" {
+                                            if let Ok(val) = serde_json::from_str::<Value>(data) {
+                                                if upstream_id.is_none() {
+                                                    if let Some(id) =
+                                                        val.get("id").and_then(|v| v.as_str())
+                                                    {
+                                                        upstream_id = Some(id.to_string());
+                                                    }
+                                                }
+                                                if let Some(usage) = val.get("usage") {
+                                                    stream_prompt_tokens = usage
+                                                        .get("input_tokens")
+                                                        .or_else(|| usage.get("prompt_tokens"))
+                                                        .and_then(|v| v.as_i64())
+                                                        .unwrap_or(0)
+                                                        as i32;
+                                                    stream_completion_tokens = usage
+                                                        .get("output_tokens")
+                                                        .or_else(|| usage.get("completion_tokens"))
+                                                        .and_then(|v| v.as_i64())
+                                                        .unwrap_or(0)
+                                                        as i32;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if tx.send(chunk.to_vec()).is_err() {
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            failure = Some((0, e.to_string()));
+                            break;
+                        }
+                    }
+                }
+                let now = chrono::Utc::now();
+                let _ = failure;
+                let spend = 0.0_f64;
+                let sl = SpendLog {
+                    call_id: request_id_clone.clone(),
+                    request_id: upstream_id.or(upstream_req_id_cl),
+                    call_type: "completion".to_string(),
+                    api_key: token_hash.clone(),
+                    spend,
+                    total_tokens: stream_prompt_tokens + stream_completion_tokens,
+                    prompt_tokens: stream_prompt_tokens,
+                    completion_tokens: stream_completion_tokens,
+                    start_time,
+                    end_time: now,
+                    request_duration_ms: Some(
+                        now.signed_duration_since(start_time).num_milliseconds() as i32,
+                    ),
+                    completion_start_time: None,
+                    model: upstream_model_cl.clone(),
+                    model_id: model_id_cl.clone(),
+                    model_group: model_group_cl.clone(),
+                    custom_llm_provider: custom_llm_provider_cl.clone(),
+                    api_base: Some("oauth:anthropic".to_string()),
+                    user: user_id.clone(),
+                    metadata: Some(json!({"oauth": true})),
+                    cache_hit: None,
+                    cache_key: None,
+                    request_tags: None,
+                    team_id: team_id.clone(),
+                    organization_id: organization_id.clone(),
+                    end_user: end_user_clone.clone(),
+                    requester_ip_address: requester_ip_clone.clone(),
+                    messages: Some(body_clone.clone()),
+                    response: Some(json!({"status": "streaming"})),
+                    session_id: session_id_clone.clone(),
+                    status: Some("success".to_string()),
+                    mcp_namespaced_tool_name: None,
+                    agent_id: None,
+                    proxy_server_request: None,
+                    body_archived: false,
+                    parquet_path: None,
+                    image_tokens: None,
+                };
+                let _ = state_clone.db.insert_spend_log(&sl).await;
+            });
+
+            let sse_stream = tokio_stream::wrappers::UnboundedReceiverStream::new(rx)
+                .map(|data: Vec<u8>| Ok::<_, Infallible>(data));
+            let body_stream = axum::body::Body::from_stream(sse_stream);
+            return Ok(axum::response::Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "text/event-stream")
+                .header(header::CACHE_CONTROL, "no-cache")
+                .header(header::CONNECTION, "keep-alive")
+                .body(body_stream)
+                .unwrap());
+        }
+
+        // Non-streaming: return the upstream Anthropic response as-is (the
+        // inbound protocol was chat; the client receives the native response).
+        if !upstream_status.is_success() {
+            let error_body = upstream_resp.text().await.unwrap_or_default();
+            return Err((
+                StatusCode::from_u16(upstream_status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY),
+                Json(json!({
+                    "error": {
+                        "message": format!("Upstream returned {}: {}", upstream_status.as_u16(), error_body),
+                        "type": "upstream_error",
+                        "code": null
+                    }
+                })),
+            ));
+        }
+        let resp_body: Value = upstream_resp.json().await.map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({
+                    "error": {"message": format!("Failed to parse upstream response: {}", e), "type": "upstream_error"}
+                })),
+            )
+        })?;
+        let now = chrono::Utc::now();
+        let usage = resp_body.get("usage");
+        let prompt_tokens = usage
+            .and_then(|u| u.get("input_tokens").or_else(|| u.get("prompt_tokens")))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0) as i32;
+        let completion_tokens = usage
+            .and_then(|u| {
+                u.get("output_tokens")
+                    .or_else(|| u.get("completion_tokens"))
+            })
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0) as i32;
+        let cache_read = usage.map(extract_cache_read_tokens).unwrap_or(0);
+        let cache_create = usage.map(extract_cache_creation_tokens).unwrap_or(0);
+        let effective_prompt = prompt_tokens + cache_read + cache_create;
+        let spend_amount = calc_spend(
+            effective_prompt,
+            completion_tokens,
+            deployment.input_cost_per_token,
+            deployment.output_cost_per_token,
+            cache_read,
+            cache_create,
+            deployment.cache_read_input_token_cost,
+            deployment.cache_creation_input_token_cost,
+        );
+        let sl = SpendLog {
+            call_id: request_id.clone(),
+            request_id: resp_body
+                .get("id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            call_type: "completion".to_string(),
+            api_key: auth.token_hash.clone(),
+            spend: spend_amount,
+            total_tokens: prompt_tokens + completion_tokens,
+            prompt_tokens,
+            completion_tokens,
+            start_time,
+            end_time: now,
+            request_duration_ms: Some(
+                now.signed_duration_since(start_time).num_milliseconds() as i32
+            ),
+            completion_start_time: None,
+            model: upstream_model.clone(),
+            model_id,
+            model_group,
+            custom_llm_provider,
+            api_base: Some("oauth:anthropic".to_string()),
+            user: auth.user_id.clone(),
+            metadata: Some(json!({"oauth": true})),
+            cache_hit: None,
+            cache_key: None,
+            request_tags: None,
+            team_id: auth.team_id.clone(),
+            organization_id: auth.organization_id.clone(),
+            end_user: end_user.clone(),
+            requester_ip_address: requester_ip.clone(),
+            messages: Some(body.clone()),
+            response: Some(resp_body.clone()),
+            session_id: session_id.clone(),
+            status: Some("success".to_string()),
+            mcp_namespaced_tool_name: None,
+            agent_id: None,
+            proxy_server_request: None,
+            body_archived: false,
+            parquet_path: None,
+            image_tokens: None,
+        };
+        let _ = state.db.insert_spend_log(&sl).await;
+        let _ = state
+            .db
+            .increment_key_spend(&auth.token_hash, spend_amount)
+            .await;
+        return Ok(axum::response::Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(axum::body::Body::from(
+                serde_json::to_string(&resp_body).unwrap(),
+            ))
+            .unwrap());
+    }
+
     let adapter =
         select_adapter(ClientProtocol::OpenAI, &deployment.provider_type).ok_or_else(|| {
             (
@@ -3730,6 +4123,7 @@ mod tests {
             fail_count: 0,
             cooldown_until: None,
             last_latency_ms: 0.0,
+            oauth: None,
         };
         if cap <= 0 {
             d.raw_params = json!({});

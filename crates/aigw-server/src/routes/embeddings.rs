@@ -209,6 +209,24 @@ async fn embeddings_handler_inner(
         })?;
     let deployment = deployments.remove(deployment_idx);
 
+    // Stage 128 §2.5: Anthropic OAuth credentials have no embedding endpoint —
+    // reject with 400 (Anthropic offers no /v1/embeddings).
+    if deployment.oauth.is_some() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": {
+                    "message": format!(
+                        "Anthropic OAuth 凭证不支持 embeddings — 模型 '{}' 解析到 OAuth 反代部署",
+                        _model
+                    ),
+                    "type": "invalid_request_error",
+                    "code": "unsupported_provider"
+                }
+            })),
+        ));
+    }
+
     // ⚠️ Hard-select OpenAIPassthrough. `select_adapter(OpenAI, AnthropicNative)`
     //    returns `OpenAIToAnthropic` which would mangle the embedding body.
     //    Embedding models are inherently OpenAI-compatible; AnthropicNative

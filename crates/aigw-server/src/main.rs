@@ -666,6 +666,13 @@ async fn main() -> anyhow::Result<()> {
             "/v1/messages",
             axum::routing::post(v1_messages::messages_handler),
         )
+        // Stage 128 §2.5: count_tokens (Anthropic token-counting endpoint) —
+        // runs the OAuth pipeline with the token-counting beta when the model
+        // resolves to an OAuth credential, else a passthrough to the upstream.
+        .route(
+            "/v1/messages/count_tokens",
+            axum::routing::post(v1_messages::count_tokens_handler),
+        )
         // OpenAI Responses API endpoint
         .route(
             "/v1/responses",
