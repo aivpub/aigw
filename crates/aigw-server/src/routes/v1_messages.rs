@@ -1664,11 +1664,17 @@ pub async fn messages_handler(
             }
         });
 
-        // Record OTEL span attributes and close root span
+        // Record OTEL span attributes and close root span. The root span guard
+        // must be dropped BEFORE the (possibly long) daily_spend_queue await
+        // below — leaving an entered guard across an await on the tokio
+        // multi-thread runtime risks a cross-thread drop panic in
+        // tracing-subscriber's sharded registry.
         root_span.record("prompt_tokens", spend_log.prompt_tokens as i64);
         root_span.record("completion_tokens", spend_log.completion_tokens as i64);
         root_span.record("total_tokens", spend_log.total_tokens as i64);
         root_span.record("spend", spend_amount);
+        drop(_root_enter);
+        drop(root_span);
 
         // Record Prometheus metrics (non-streaming v1/messages success)
         if let Some(ref m) = state.metrics {
