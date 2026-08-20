@@ -3,6 +3,8 @@
 ## [未发布]
 
 ### 新增
+- Stage 127: OAuth Token 生命周期 + 三层自愈（`claude_token.rs` TokenProvider——内存缓存 + per-credential 锁防并发刷新 + 临期 3min 刷新 + invalid_grant cookie 自愈 + needs_reauth 告警 `dispatch_oauth_reauth_alert` + `invalidate_and_refresh` 管线 401 重试入口）
+- Stage 126: Claude OAuth 凭证 + Cookie→Token 3 步交换（`claude_oauth.rs` OauthClient 经代理 + PKCE S256 + fetch_orgs/authorize/exchange_code/refresh + select_org + classify_oauth_error；`build_oauth_credential_values` 敏感字段 AES-GCM 加密；`POST /credential/oauth/exchange` + credential_info/list redact；crypto `redact_oauth_credential_values`）
 - Stage 115: Anthropic image token downsizing（`estimate_anthropic` 迭代缩放保比例到 ≤1568 target）——TD-011c 解决
 - Stage 115: 多模态按模态计费（`ModalPricing` + `Deployment.modal_pricing` + resolver 提取 + `calc_spend_modal` 纯函数 + 6 UT）——TD-012b 解决（embeddings.rs 接线留待真实负载）
 - Stage 115: HEIC/AVIF 前端转码（`compressImage` 检测 heic/avif → Safari 解码转 JPEG；无法解码浏览器 toast 提示）——TD-011b 解决
