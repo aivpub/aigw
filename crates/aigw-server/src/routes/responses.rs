@@ -162,6 +162,9 @@ pub async fn responses_handler(
     // Root span
     let root_span = tracing::info_span!("responses", model = %_model, stream = is_stream);
     let _root_enter = root_span.enter();
+    // NOTE: `Span::enter` guards are NOT held across `await` points (tracing
+    // sharded.rs assertion risk on the tokio multi-thread runtime). Each guard
+    // below is dropped before the next `await`-span boundary.
 
     // 3. Auth — reused ChatAuth already extracted; now look up key permissions
     let auth_span = tracing::info_span!("auth_check");

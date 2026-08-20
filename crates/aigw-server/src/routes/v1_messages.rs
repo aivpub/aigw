@@ -327,6 +327,12 @@ pub async fn messages_handler(
         stream = is_stream,
     );
     let _root_enter = root_span.enter();
+    // NOTE: `Span::enter` guards are NOT held across `await` points. The
+    // tracing Registry clones spans into a per-thread stack; a guard left
+    // alive across a suspension on the tokio multi-thread runtime can be
+    // dropped on a DIFFERENT worker thread, hitting the subscriber's
+    // `sharded.rs` assertions. Each guard below is dropped before the next
+    // `await`-span boundary.
 
     // Extract end_user from Anthropic protocol metadata.user_id
     // Claude Code packs device_id/session_id as JSON string in this field

@@ -971,6 +971,21 @@ pub async fn chat_completions(
     // 3. Look up key permissions from the database
     let auth_span = tracing::info_span!("auth_check");
     let _auth_enter = auth_span.enter();
+    // NOTE: `Span::enter` guards are NOT held across `await` points. The
+    // tracing Registry clones spans into a per-thread stack; a guard left
+    // alive across a suspension on the tokio multi-thread runtime can be
+    // dropped on a DIFFERENT worker thread, hitting the subscriber's
+    // `sharded.rs` assertions ("tried to clone a span that already closed" /
+    // "refs left=1 right=0"). Each guard below is dropped before the next
+    // `await`-span boundary.
+    // NOTE: `Span::enter` guards are NOT held across `await` points. The
+    // tracing Registry clones spans into a per-thread stack; a guard left
+    // alive across a suspension on the tokio multi-thread runtime can be
+    // dropped on a DIFFERENT worker thread, hitting the subscriber's
+    // `sharded.rs` assertions ("tried to clone a span that already closed" /
+    // "refs left=1 right=0"). This is an existing intermittent panic on real
+    // BDD (not tied to Stage 128). Each guard below is dropped before the next
+    // `await`-span boundary; spans live only within their synchronous block.
     // Only master key bypasses the model permission check
     if !auth.is_master_key {
         let key_record = state
@@ -1035,6 +1050,9 @@ pub async fn chat_completions(
     let resolve_span = tracing::info_span!("resolve_deployment", model = %_model);
     let _resolve_enter = resolve_span.enter();
     let mut deployments = state.resolver.resolve(_model).await?;
+    // NOTE: the `resolve_deployment` span guard must be dropped BEFORE the
+    // OAuth reverse-proxy branch below (which awaits the token pipeline); it is
+    // released at line ~1531 `drop(_resolve_enter)` before the adapter span.
 
     // Stage 118 §3.2: merge key>team>global router_settings into an effective
     // Router for this request (routing_strategy / allowed_fails / cooldown_time
@@ -1513,7 +1531,7 @@ pub async fn chat_completions(
         })?;
 
     // Build upstream request body via adapter
-    drop(_resolve_enter);
+    drop(_resolve_enter); // release the resolve span before the adapter + upstream awaits
     let adapt_span = tracing::info_span!("adapt_request");
     let _adapt_enter = adapt_span.enter();
     let upstream_body_val = adapter.adapt_request(body.clone(), &deployment).map_err(|e| {
