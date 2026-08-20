@@ -679,6 +679,7 @@ async fn ensure_decrypt_state() -> aigw_server::routes::keys::SharedState {
             daily_spend_queue: None,
             otel_active: false,
             body_archiver: None,
+            token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
             metrics: None,
         });
     let _ = DECRYPT_STATE.set(state.clone());
