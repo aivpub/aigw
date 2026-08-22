@@ -3,7 +3,7 @@
 **所属**: Phase 51（Claude OAuth 订阅反代）
 **预估**: 14h（resolver/Deployment OAuth 识别 + CC 头 + billing 注入 + 代理出口 + 协议转换接线 + count_tokens + embeddings 400 + BDD）
 **依赖**: Stage 126/127（凭证 + TokenProvider）
-**状态**: ⏳ 待开始
+**状态**: ✅ 完成（2026-08-20，代码 + 评审 + 验证全绿）
 
 ---
 
@@ -115,7 +115,50 @@ TLS 指纹模拟、tool 名混淆、dateline 归一化、1h cache TTL 注入、m
 
 ## 4. 验收标准
 
-- [ ] resolver OAuth 识别 + 反代管线全绿
-- [ ] billing 块默认最小化注入 + 指纹字节对齐
-- [ ] chat/responses 转换接线 + count_tokens + embeddings 400
-- [ ] 代理出口生效;mock BDD 扩展全绿;既有基线无回归
+- [x] resolver OAuth 识别 + 反代管线全绿
+- [x] billing 块默认最小化注入 + 指纹字节对齐
+- [x] chat/responses 转换接线 + count_tokens + embeddings 400
+- [x] 代理出口生效;mock BDD 扩展全绿;既有基线无回归
+
+---
+
+## 5. Implementation Notes
+
+### 5.1 交付 commit（11 个）
+
+| Commit | 内容 |
+|--------|------|
+| `beffd97` | OAuth 反代管线核心（billing 指纹 + 协议转换 + CC 伪装 + 401 刷新重试 + Deployment.oauth + resolver 识别）+ 7 UT |
+| `fb1f6b8` | 四入口接线（chat/v1_messages/responses/embeddings）+ count_tokens 端点 |
+| `fdf5f2a` | claude_oauth.feature 反代 4 场景 + mock 一次性响应 |
+| `8968b50` / `8f46b59` | review log + health.rs oauth 字段 |
+| `77dc2eb` | root span guard 跨 await 显式 drop（修 sharded.rs 偶发 panic） |
+| `8e40e0c` | span guard 风险注释 |
+| `432305b` | **Gate 4 修复**：OAuth 流式计费双 INSERT 主键冲突 + responses 零计费 + OAuth 分支 span guard |
+| `0d62ffa` | **Gate 4 修复**：401 后 needs_reauth + mock env 生产守卫 |
+| `285b1d6` / `2fc1d89` | **Gate 4 修复**：aigw-core test feature 门控 + claude_oauth mock env 守卫 |
+
+### 5.2 与设计的偏差
+
+- **响应侧未做协议转换**：chat/responses 只做请求侧 `adapt_to_anthropic`，响应直接返回 Anthropic 原生结构（文档 §2.6 记"客户端接收 native response"）。若需 OpenAI SDK 兼容应补响应侧 `adapt_response`——**产品决策待定**（H4）。
+- **count_tokens 认证**：用 Bearer-only `ChatAuth`，Anthropic 客户端用 x-api-key 会 401——**产品决策待定**（M1）。
+- **流式计费修正**：初版 OAuth 流式 Phase-2 误用 `insert_spend_log`（同 call_id 主键冲突 → 真实用量不落库），Gate 4 评审发现后改 `update_spend_log`。
+- **responses OAuth 计费补齐**：初版 responses OAuth 分支零计费，Gate 4 补齐流式 + 非流式 SpendLog。
+
+### 5.3 验证基线（Gate 3-5）
+
+- aigw-core **500 UT** / aigw-server **154 UT**
+- mock BDD **275（262 pass / 13 skip body_archive / 0 fail）**，含 Stage 128 反代 4 场景
+- real BDD 三端 sqlite/pg/mysql **53/53 × 3**
+- fe-build / fe-lint / fe-bdd **369 pass**
+- fmt + clippy -D warnings 全绿
+
+### 5.4 安全审计（Gate 4）
+
+- **已修**：mock base env 生产守卫（feature 门控）、401 后 needs_reauth、上游错误体透传（全库既有模式，纳入 Stage 130 审计项）
+- **降级不修**：billing 指纹 12-bit 碰撞（威胁模型不成立，sub2api/Parrot 上游设计固有）、SpendLog 明文 body 落库（access_token 只走 header 永不进 body，全库既有模式）
+- **待定**：H4 响应侧协议转换、M1 count_tokens 认证语义
+
+### 5.5 不做（登记长期路线）
+
+TLS 指纹模拟、tool 名混淆、dateline 归一化、1h cache TTL 注入、metadata.user_id 注入、完整三块伪装（Stage 128 §2.7）。

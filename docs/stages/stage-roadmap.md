@@ -7,9 +7,9 @@
 
 ## 当前状态
 
-- **当前 Phase**: **Phase 51 进行中（Stage 126-127 ✅，Stage 128 下一步）**。Claude OAuth 订阅反代四 Stage 已交付二：凭证交换引擎 + Token 三层自愈。
-- **状态**: **131/134 Stages 交付（Phase 51 前二 Stage 完成）**。Stage 126-127（2026-08-19）：credentials 表 OAuth 结构化扩展 + Cookie→Token 3 步交换（PKCE S256 经代理）+ `claude_token.rs` TokenProvider 三层自愈 + needs_reauth 告警。验证：aigw-core **493** + aigw-server **154 UT**、mock BDD **271（258 pass / 13 skip body_archive）**、fmt + lint green。详见 `docs/stages/stage-126.md` ~ `stage-127.md`。
-- **下一里程碑**: Stage 128 反代管线（resolver OAuth 识别 + billing 注入 + 代理出口 + 401 刷新重试接线）;中期 M1 guardrails / M2 Redis 分布式层。
+- **当前 Phase**: **Phase 51 进行中（Stage 126-128 ✅，Stage 129 下一步）**。Claude OAuth 订阅反代四 Stage 已交付三：凭证交换引擎 + Token 三层自愈 + 反代管线。
+- **状态**: **132/134 Stages 交付（Phase 51 前三 Stage 完成）**。Stage 126-127（2026-08-19）：credentials 表 OAuth 结构化扩展 + Cookie→Token 3 步交换（PKCE S256 经代理）+ `claude_token.rs` TokenProvider 三层自愈 + needs_reauth 告警。**Stage 128（2026-08-20）**：OAuth 反代管线（`oauth_pipeline.rs` billing 指纹字节对齐 sub2api/Parrot + 协议转换 + CC 伪装 + 401 刷新重试 + count_tokens + embeddings 400 + 代理出口）+ 四入口接线（chat/v1_messages/responses/embeddings）+ Gate 4 评审修复（流式计费双 INSERT / responses 零计费 / span guard / mock env 守卫 / needs_reauth）。验证：aigw-core **500** + aigw-server **154 UT**、mock BDD **275（262 pass / 13 skip）**、real BDD 三端 **53/53 × 3**、fe-bdd **369**、fmt + lint green。详见 `docs/stages/stage-126.md` ~ `stage-128.md` + `stage-128-review-log.md`。
+- **下一里程碑**: Stage 129 CredentialsTab OAuth 前端入口;中期 M1 guardrails / M2 Redis 分布式层。
 
 ### 整体进度
 
@@ -58,7 +58,7 @@ Phase 47:   ████████████████████ 100% (3
 Phase 48:   ████████████████████ 100% (1/1 Stage)  ✅ GLM5 流式 tool_use 首帧修复 (Stage 120)
 Phase 49:   ████████████████████ 100% (1/1 Stage)  ✅ 上游模型停用功能接线 (Stage 121)
 Phase 50:   ████████████████████ 100% (4/4 Stages) ✅ 代理服务管理 (Stage 122-125)
-Phase 51:   ██████████░░░░░░░░░░ 50% (2/4 Stages) 🔄 Claude OAuth 订阅反代 (Stage 126-127, 128-130 进行中)
+Phase 51:   ████████████████░░░░ 75% (3/4 Stages) 🔄 Claude OAuth 订阅反代 (Stage 126-128, 129-130 进行中)
 
 ---
 
@@ -85,19 +85,20 @@ Phase 51:   ██████████░░░░░░░░░░ 50% (2/
 
 ---
 
-## Phase 51：Claude OAuth 订阅反代 🔄（Stage 126-127 ✅，Stage 128-130 进行中，50h）
+## Phase 51：Claude OAuth 订阅反代 🔄（Stage 126-128 ✅，Stage 129-130 进行中，50h）
 
 **背景**: Anthropic OAuth 凭证（`sk-ant-sid` 订阅 cookie）打 `/v1/messages` 必须 `system[0]` 是 billing 块或身份句，否则 429 拒（身份 gate 实测）。凭证管理需支持 cookie 换 token、绑定代理 IP、模型解析到 OAuth 凭证时经代理出口以 Bearer access_token 访问、默认注入 billing header。
 
 **已完成（2026-08-19）**:
 - **Stage 126**：`claude_oauth.rs` 交换引擎（OauthClient 经代理 + PKCE S256 + fetch_orgs/authorize/exchange_code/refresh/exchange 3 步全流程 + select_org 优先 team + classify_oauth_error）+ `build_oauth_credential_values` 敏感字段 AES-GCM 加密 + `POST /credential/oauth/exchange` 端点 + credential_info/list 统一 redact + MockUpstream OAuth 三端点 + `AIGW_OAUTH_MOCK_BASE` 测试端点重映射。**commit `22c7f61`**。
 - **Stage 127**：`claude_token.rs` TokenProvider（缓存 + per-credential 锁防并发刷新 + get_access_token 缓存→临期刷新→cookie 自愈→needs_reauth）+ `alerts::dispatch_oauth_reauth_alert` + AppState 注入 token_provider（30+ 构造器）+ `invalidate_and_refresh`（Stage 128 管线 401 重试入口）。**commit `1bd649c`**。
+- **Stage 128（2026-08-20）**：`oauth_pipeline.rs` 反代管线（billing 指纹 SHA256(SALT+chars[4,7,20]+version)[:3] 字节对齐 sub2api/Parrot + `adapt_to_anthropic` 协议转换 + `apply_cc_headers` CC 伪装 + `send` Bearer/代理出口/401 刷新重试 + count_tokens token-counting beta）+ Deployment.oauth + resolver 识别 + 四入口接线（chat/v1_messages/responses/embeddings 400）+ `AIGW_ANTHROPIC_MOCK_BASE` 测试重映射。**commits `beffd97` ~ `2fc1d89`（11 个）**。Gate 4 评审修复：流式计费双 INSERT 主键冲突 → update_spend_log、responses 零计费补齐、OAuth 分支 span guard、mock env 生产守卫（feature 门控）、401 后 needs_reauth。
 
 | Stage | 状态 | 目标 | 类型 | 预估 |
 |-------|------|------|------|------|
 | Stage 126 | ✅ 完成（2026-08-19） | **凭证 + Cookie→Token 交换引擎** — credentials 表 `credential_values` 扩展 OAuth 结构化字段（access/refresh/session_key 加密落库 + proxy_id/inject_prompt/org_uuid 明文）+ `claude_oauth.rs` 3 步交换（PKCE S256，经绑定代理）+ 敏感字段加密/redact + `POST /credential/oauth/exchange` + mock Anthropic OAuth 上游。TDD: 11 core UT + 2 crypto UT + claude_oauth.feature 4 场景 | 后端+测试 | 12h |
 | Stage 127 | ✅ 完成（2026-08-19） | **Token 生命周期 + 三层自愈** — 内存缓存 → 临期(3min)刷新 → refresh 失效回退存储 cookie 重走 3 步自愈 → cookie 也失效 needs_reauth + alert_webhook 告警;`invalidate_and_refresh` 暴露（管线 401 刷新重试入口）;进程内锁防并发刷新。TDD: 6 core UT + claude_oauth.feature +2 场景 | 后端+测试 | 10h |
-| Stage 128 | ⏳ 待开始 | **反代管线** — resolver/Deployment OAuth 识别（type==anthropic_oauth）+ 统一上游 /v1/messages + **billing 块注入（默认最小化，指纹字节对齐 sub2api/Parrot）** + inject_prompt 追加 + CC 伪装头（UA/Stainless/anthropic-beta）+ 代理出口 + chat/responses 转换接线 + count_tokens + embeddings 400 + 401 刷新重试。TDD: 7 core UT + claude_oauth.feature 扩展 | 后端+测试 | 14h |
+| Stage 128 | ✅ 完成（2026-08-20） | **反代管线** — resolver/Deployment OAuth 识别（type==anthropic_oauth）+ 统一上游 /v1/messages + **billing 块注入（默认最小化，指纹字节对齐 sub2api/Parrot）** + inject_prompt 追加 + CC 伪装头（UA/Stainless/anthropic-beta）+ 代理出口 + chat/responses 转换接线 + count_tokens + embeddings 400 + 401 刷新重试。TDD: 7 core UT + claude_oauth.feature 扩展 | 后端+测试 | 14h |
 | Stage 129 | ⏳ 待开始 | **前端** — CredentialsTab OAuth 入口（粘贴 sk-ant-sid + 代理下拉 + inject_prompt + 交换）+ 状态徽章（active/needs_reauth）+ token 到期 + Refresh/Re-auth 按钮 + 敏感字段 redact + i18n。TDD: 6 BDD × 3 viewports | 前端+测试 | 8h |
 | Stage 130 | ⏳ 待开始 | **收尾 + 安全审计** — real BDD 三后端 OAuth 凭证 CRUD + in-use + 快照;安全审计 8 项（cookie/token 加密落库、响应/日志 redact、proxy_url 加密）+ ADR-034 + roadmap/next-steps 回写 + 长期路线追加 | 全栈+文档+安全 | 6h |
 

@@ -171,6 +171,22 @@
 - **Resolution**: TD-014a 新增 `@real_api` 标签场景走真实 server+DB+真实上游（复用 `real_api_steps.rs` 模式）；TD-014b 记录为已知限制（文档注释已注明"env fallback is intended catch-all"）；TD-014c 给 `ModelEntry` 加 `enabled` 字段并让 config_loader 使用。
 - **Target Phase**: 无固定排期（视真实三端覆盖诉求 / 静态配置停用诉求触发）。
 
+### TD-015: OAuth 反代管线安全/产品收尾项（Stage 128 后续）
+
+- **Date**: 2026-08-20
+- **Priority**: P2
+- **Source**: Stage 128 Gate 4 多模型代码评审 + 独立安全审计 + 逐条代码验证
+- **Description**: Stage 128 反代管线交付后，评审发现的真实/待定项，非主路径正确性风险：
+
+| Sub-ID | 条目 | 优先级 | 描述 |
+|--------|------|--------|------|
+| TD-015a | 上游错误体原样透传客户端 | P2 | OAuth 分支 `format!("Upstream returned {}: {}", status, error_body)` 把上游错误体拼进客户端响应。**全库既有模式**（chat/v1_messages 非 OAuth 路径同样透传），非 Stage 128 新增；与 Stage 130 安全审计验收项"错误传播只透传 message，不含凭证"冲突。纳入 Stage 130 统一修。 |
+| TD-015b | billing 指纹 12-bit 碰撞 | P3 | `SHA256(SALT+chars[4,7,20]+version)[:3]` = 12 bit。独立验证判定**威胁模型不成立**（fp 只发上游、与账单归属无关、SALT 本就公开、身份 gate 无指纹注册表校验），是 sub2api/Parrot 上游设计固有。记录不修。 |
+| TD-015c | SpendLog 明文 body 落库 | P3 | OAuth 分支 `messages: Some(body.clone())`（billing 注入前原始 body）+ `response`（上游响应原文）落 spend_logs。**access_token 只走 Authorization 头永不进 body**，非凭据泄漏；上游响应原文落库是全库既有模式。数据面大，若审计要求可纳入 Stage 130。 |
+| TD-015d | OAuth 响应侧协议转换（H4，产品决策） | P2 | chat/responses 只做请求侧 `adapt_to_anthropic`，响应把 Anthropic 原生结构返回给 OpenAI 客户端（缺 `choices`/`usage.prompt_tokens`），OpenAI SDK 客户端无法解析。当前文档记"客户端接收 native response"。若需完整反代应补响应侧 `adapt_response`。**产品决策待定**。 |
+| TD-015e | count_tokens 认证语义（M1，产品决策） | P3 | `count_tokens_handler` 用 Bearer-only `ChatAuth`，Anthropic 客户端按惯例用 `x-api-key` 会 401。应支持双认证（x-api-key / Bearer）与 messages_handler 一致。**产品决策待定**。 |
+| TD-015f | health 探针不感知 OAuth 部署 | P3 | `health.rs` 探针对 OAuth 模型（api_base 默认 openai + api_key None + AnthropicNative）探错误端点且 401 计 healthy。OAuth 模型恒显示"健康"但探的是错误端点。 |
+
 ## Resolved Items
 
 ### TD-002: @real_api step bindings implemented (Resolved 2026-07-05)
