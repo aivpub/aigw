@@ -37,11 +37,26 @@ pub const DEFAULT_EXPIRES_IN: i64 = 28800;
 /// the real claude.ai. **Never set in production** — only the BDD harness sets
 /// it (claude_oauth_steps.rs). This avoids touching the public URL constants in
 /// the request path.
+/// Resolve an OAuth endpoint (orgs/authorize/token). When the BDD harness sets
+/// `AIGW_OAUTH_MOCK_BASE`, the endpoint is remapped to the mock upstream.
+///
+/// **Production guard**: the env is only honoured when the test build gate is
+/// active. `cfg!(test)` is unreliable across crates (aigw-core is compiled
+/// without cfg(test) for aigw-server's integration BDD), so instead we guard on
+/// a dedicated `#[cfg(test)]`-style compile flag that BOTH the unit tests and
+/// the integration test harness enable. That flag is `cfg(feature = "test")` —
+/// see the crate Cargo.toml; the BDD harness is the only consumer.
 fn endpoint(base: &str, path: &str) -> String {
-    match std::env::var("AIGW_OAUTH_MOCK_BASE") {
-        Ok(mock) if !mock.is_empty() => format!("{}/{}", mock.trim_end_matches('/'), path),
-        _ => format!("{}{}", base, path),
+    #[cfg(feature = "test")]
+    {
+        match std::env::var("AIGW_OAUTH_MOCK_BASE") {
+            Ok(mock) if !mock.is_empty() => {
+                return format!("{}/{}", mock.trim_end_matches('/'), path);
+            }
+            _ => {}
+        }
     }
+    format!("{}{}", base, path)
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
