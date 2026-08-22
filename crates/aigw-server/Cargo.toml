@@ -40,6 +40,7 @@ axum-client-ip = "1"
 sqlx = { workspace = true }
 
 [dev-dependencies]
+aigw-core = { path = "../aigw-core", features = ["reqwest", "test"] }
 aigw-migrate = { path = "../aigw-migrate" }
 axum-test = "16"
 cucumber = { version = "0.21", features = ["macros"] }

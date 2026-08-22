@@ -57,3 +57,7 @@ testcontainers-modules = { version = "0.11", features = ["postgres", "mysql"] }
 default = ["reqwest"]
 reqwest = ["dep:reqwest", "dep:reqwest-middleware", "dep:reqwest-retry"]
 integration = []
+# Test-only: enables the OAuth mock-endpoint env remap (AIGW_*_MOCK_BASE).
+# Enabled by the aigw-server integration BDD harness and by `cargo test`
+# workspace dev builds. NEVER enabled in production builds.
+test = []
