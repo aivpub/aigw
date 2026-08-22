@@ -35,13 +35,30 @@ pub const BILLING_SALT: &str = "59cf53e54c78";
 pub const ANTHROPIC_API_BASE: &str = "https://api.anthropic.com";
 /// Test override: when `AIGW_ANTHROPIC_MOCK_BASE` is set, the pipeline targets
 /// `{mock_base}/v1/messages` so the BDD harness can drive the reverse-proxy
-/// against MockUpstream instead of the real api.anthropic.com. **Never set in
-/// production** — only the BDD harness sets it (claude_oauth_steps.rs).
+/// against MockUpstream instead of the real api.anthropic.com.
+///
+/// **Production guard**: in a non-test deployment the env is IGNORED — a stray
+/// `AIGW_ANTHROPIC_MOCK_BASE` in production would otherwise silently redirect
+/// every OAuth reverse-proxy request (with the Bearer access token) to an
+/// attacker-controlled server. The BDD harness sets the env inside the test
+/// process and calls handlers via `Router::oneshot`; `cfg!(test)` is the only
+/// reliable marker there (integration tests compile the crate's lib, so the
+/// `#[cfg(test)]` block is inactive — `cfg!(test)` at the level works
+/// for both).
 fn target_base() -> String {
-    match std::env::var("AIGW_ANTHROPIC_MOCK_BASE") {
-        Ok(mock) if !mock.is_empty() => mock.trim_end_matches('/').to_string(),
-        _ => ANTHROPIC_API_BASE.to_string(),
+    // Only honour the mock override when the `test` feature is enabled (the
+    // BDD harness builds aigw-core with that feature). `cfg!(test)` alone is
+    // unreliable: aigw-core is compiled without cfg(test) for aigw-server's
+    // integration BDD, so the mock remap would silently stop working.
+    #[cfg(feature = "test")]
+    {
+        if let Ok(mock) = std::env::var("AIGW_ANTHROPIC_MOCK_BASE") {
+            if !mock.is_empty() {
+                return mock.trim_end_matches('/').to_string();
+            }
+        }
     }
+    ANTHROPIC_API_BASE.to_string()
 }
 /// OAuth + Claude Code beta headers.
 pub const ANTHROPIC_BETA: &str = "oauth-2025-04-20, claude-code-20250219";
@@ -325,6 +342,23 @@ pub async fn send(
             .send()
             .await
             .map_err(|e| PipelineError::Upstream(format!("OAuth retry failed: {}", e)))?;
+        // Retry STILL 401 → the account is rejected upstream (scope stripped /
+        // revoked / region-blocked). The refresh path only self-heals when the
+        // refresh_token itself is invalid; a valid token that the upstream
+        // rejects means the account needs manual re-auth. Mark needs_reauth so
+        // ops is alerted instead of the request silently failing forever.
+        if retry.status() == reqwest::StatusCode::UNAUTHORIZED {
+            if let Ok(Some(cred)) = db.get_credential_by_name(&oauth.credential_id).await {
+                provider
+                    .mark_needs_reauth(
+                        db,
+                        &cred,
+                        master_key,
+                        "OAuth upstream rejected access token after refresh (401)",
+                    )
+                    .await;
+            }
+        }
         return Ok(retry);
     }
     Ok(resp)

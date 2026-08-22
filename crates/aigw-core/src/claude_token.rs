@@ -317,8 +317,12 @@ impl TokenProvider {
             .map_err(|e| TokenError::Config(format!("persist self-heal: {}", e)))
     }
 
-    /// Mark the credential `needs_reauth` + record `last_error`.
-    async fn mark_needs_reauth(
+    /// Mark the credential `needs_reauth` + record `last_error`. Exposed so the
+    /// reverse-proxy pipeline can flag an account rejected by the upstream
+    /// (401 after refresh) — the token may be valid but the scope stripped /
+    /// revoked / region-blocked (reference doc §2.7), which the cookie self-heal
+    /// path does NOT cover.
+    pub async fn mark_needs_reauth(
         &self,
         db: &Database,
         cred: &crate::models::Credential,
