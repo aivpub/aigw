@@ -250,6 +250,11 @@ pub async fn responses_handler(
     // Messages format, billing-injected, and sent through the pipeline (Bearer
     // + proxy egress + 401 refresh-retry).
     if let Some(ref oauth) = deployment.oauth {
+        // Drop the resolve span guard before the OAuth branch's long awaits
+        // (token pipeline + reqwest) — same sharded.rs cross-thread drop risk
+        // as chat/v1_messages.
+        drop(_resolve_enter);
+
         let token_provider = state.token_provider.clone();
         let mk = state.aigw_master_key.clone().unwrap_or_default();
         let is_stream = body
@@ -305,6 +310,26 @@ pub async fn responses_handler(
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
 
+        // ── Metadata extraction (same as the non-OAuth path) ──
+        let end_user = body
+            .get("metadata")
+            .and_then(|m| m.get("user_id"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let session_id = end_user.as_ref().and_then(|eu| {
+            serde_json::from_str::<Value>(eu).ok().and_then(|v| {
+                v.get("session_id")
+                    .and_then(|id| id.as_str())
+                    .map(|s| s.to_string())
+            })
+        });
+        let requester_ip: Option<String> = client_ip.map(|cip| cip.0.to_string());
+        let start_time = chrono::Utc::now();
+        let upstream_model_cl = deployment.upstream_model.clone();
+        let model_id_cl = deployment.model_id.clone();
+        let model_group_cl = deployment.model_group.clone();
+        let custom_llm_provider_cl = deployment.custom_llm_provider.clone();
+
         // Streaming: the adapted body is Anthropic Messages — passthrough the
         // upstream SSE unchanged (the upstream Anthropic response is native).
         if is_stream {
@@ -323,12 +348,92 @@ pub async fn responses_handler(
                 ));
             }
             let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+            let state_clone = state.clone();
+            let request_id_cl = request_id.clone();
+
+            // Phase 1 placeholder SpendLog (streaming: INSERT then UPDATE).
+            {
+                let sl = SpendLog {
+                    call_id: request_id.clone(),
+                    request_id: None,
+                    call_type: "responses".to_string(),
+                    api_key: auth.token_hash.clone(),
+                    spend: 0.0,
+                    total_tokens: 0,
+                    prompt_tokens: 0,
+                    completion_tokens: 0,
+                    start_time,
+                    end_time: chrono::Utc::now(),
+                    request_duration_ms: None,
+                    completion_start_time: None,
+                    model: upstream_model_cl.clone(),
+                    model_id: model_id_cl.clone(),
+                    model_group: model_group_cl.clone(),
+                    custom_llm_provider: custom_llm_provider_cl.clone(),
+                    api_base: Some("oauth:anthropic".to_string()),
+                    user: auth.user_id.clone(),
+                    metadata: Some(json!({"oauth": true})),
+                    cache_hit: None,
+                    cache_key: None,
+                    request_tags: None,
+                    team_id: auth.team_id.clone(),
+                    organization_id: auth.organization_id.clone(),
+                    end_user: end_user.clone(),
+                    requester_ip_address: requester_ip.clone(),
+                    messages: Some(body.clone()),
+                    response: Some(json!({"status": "streaming"})),
+                    session_id: session_id.clone(),
+                    status: Some("streaming".to_string()),
+                    mcp_namespaced_tool_name: None,
+                    agent_id: None,
+                    proxy_server_request: None,
+                    body_archived: false,
+                    parquet_path: None,
+                    image_tokens: None,
+                };
+                let _ = state.db.insert_spend_log(&sl).await;
+            }
+
             tokio::spawn(async move {
                 use tokio_stream::StreamExt;
                 let mut stream = upstream_resp.bytes_stream();
+                let mut stream_prompt_tokens: i32 = 0;
+                let mut stream_completion_tokens: i32 = 0;
+                let mut upstream_id: Option<String> = None;
                 while let Some(chunk_result) = stream.next().await {
                     match chunk_result {
                         Ok(chunk) => {
+                            if let Ok(text) = std::str::from_utf8(&chunk) {
+                                for line in text.lines() {
+                                    if let Some(data) = line.strip_prefix("data: ") {
+                                        if data != "[DONE]" {
+                                            if let Ok(val) = serde_json::from_str::<Value>(data) {
+                                                if upstream_id.is_none() {
+                                                    if let Some(id) =
+                                                        val.get("id").and_then(|v| v.as_str())
+                                                    {
+                                                        upstream_id = Some(id.to_string());
+                                                    }
+                                                }
+                                                if let Some(usage) = val.get("usage") {
+                                                    stream_prompt_tokens = usage
+                                                        .get("input_tokens")
+                                                        .or_else(|| usage.get("prompt_tokens"))
+                                                        .and_then(|v| v.as_i64())
+                                                        .unwrap_or(0)
+                                                        as i32;
+                                                    stream_completion_tokens = usage
+                                                        .get("output_tokens")
+                                                        .or_else(|| usage.get("completion_tokens"))
+                                                        .and_then(|v| v.as_i64())
+                                                        .unwrap_or(0)
+                                                        as i32;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                             if tx.send(chunk.to_vec()).is_err() {
                                 break;
                             }
@@ -336,6 +441,28 @@ pub async fn responses_handler(
                         Err(_) => break,
                     }
                 }
+                let now = chrono::Utc::now();
+                // Phase 2: UPDATE the pre-inserted placeholder row (same
+                // call_id) — matching chat/v1_messages OAuth streaming.
+                let duration_ms = now.signed_duration_since(start_time).num_milliseconds() as i32;
+                let _ = state_clone
+                    .db
+                    .update_spend_log(
+                        &request_id_cl,
+                        upstream_id.as_deref(),
+                        0.0,
+                        stream_prompt_tokens + stream_completion_tokens,
+                        stream_prompt_tokens,
+                        stream_completion_tokens,
+                        now,
+                        duration_ms,
+                        now,
+                        serde_json::json!({"status": "streaming"}),
+                        "success",
+                        Some(json!({"oauth": true})),
+                        None,
+                    )
+                    .await;
             });
             let sse_stream = tokio_stream::wrappers::UnboundedReceiverStream::new(rx)
                 .map(|data: Vec<u8>| Ok::<_, Infallible>(data));
@@ -371,6 +498,79 @@ pub async fn responses_handler(
                 })),
             )
         })?;
+        let now = chrono::Utc::now();
+        let usage = resp_body.get("usage");
+        let prompt_tokens = usage
+            .and_then(|u| u.get("input_tokens").or_else(|| u.get("prompt_tokens")))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0) as i32;
+        let completion_tokens = usage
+            .and_then(|u| {
+                u.get("output_tokens")
+                    .or_else(|| u.get("completion_tokens"))
+            })
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0) as i32;
+        let cache_read = usage
+            .map(super::chat::extract_cache_read_tokens)
+            .unwrap_or(0);
+        let cache_create = usage
+            .map(super::chat::extract_cache_creation_tokens)
+            .unwrap_or(0);
+        let spend_amount = super::chat::calc_spend(
+            prompt_tokens,
+            completion_tokens,
+            deployment.input_cost_per_token,
+            deployment.output_cost_per_token,
+            cache_read,
+            cache_create,
+            deployment.cache_read_input_token_cost,
+            deployment.cache_creation_input_token_cost,
+        );
+        let sl = SpendLog {
+            call_id: request_id.clone(),
+            request_id: resp_body
+                .get("id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            call_type: "responses".to_string(),
+            api_key: auth.token_hash.clone(),
+            spend: spend_amount,
+            total_tokens: prompt_tokens + completion_tokens,
+            prompt_tokens,
+            completion_tokens,
+            start_time,
+            end_time: now,
+            request_duration_ms: Some(
+                now.signed_duration_since(start_time).num_milliseconds() as i32
+            ),
+            completion_start_time: None,
+            model: upstream_model_cl.clone(),
+            model_id: model_id_cl.clone(),
+            model_group: model_group_cl.clone(),
+            custom_llm_provider: custom_llm_provider_cl.clone(),
+            api_base: Some("oauth:anthropic".to_string()),
+            user: auth.user_id.clone(),
+            metadata: Some(json!({"oauth": true})),
+            cache_hit: None,
+            cache_key: None,
+            request_tags: None,
+            team_id: auth.team_id.clone(),
+            organization_id: auth.organization_id.clone(),
+            end_user: end_user.clone(),
+            requester_ip_address: requester_ip.clone(),
+            messages: Some(body.clone()),
+            response: Some(resp_body.clone()),
+            session_id: session_id.clone(),
+            status: Some("success".to_string()),
+            mcp_namespaced_tool_name: None,
+            agent_id: None,
+            proxy_server_request: None,
+            body_archived: false,
+            parquet_path: None,
+            image_tokens: None,
+        };
+        let _ = state.db.insert_spend_log(&sl).await;
         return Ok(axum::response::Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "application/json")

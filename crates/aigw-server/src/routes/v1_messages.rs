@@ -481,6 +481,11 @@ pub async fn messages_handler(
     // Bearer + proxy egress + 401 refresh-retry). The adapter path below is
     // bypassed entirely; the upstream Anthropic response is returned as-is.
     if let Some(ref oauth) = resolved_deployment.oauth {
+        // Drop the resolve span guard before the OAuth branch's long awaits
+        // (token pipeline + reqwest) — same sharded.rs cross-thread drop risk
+        // as the non-OAuth path (fixed in 77dc2eb).
+        drop(_resolve_enter);
+
         let token_provider = state.token_provider.clone();
         let mk = state.aigw_master_key.clone().unwrap_or_default();
         let is_stream = body_val
@@ -541,19 +546,6 @@ pub async fn messages_handler(
             }
             let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
             let state_clone = state.clone();
-            let body_clone = body_val.clone();
-            let _model_cl = model.clone();
-            let upstream_model_cl = upstream_model.clone();
-            let model_id_cl = upstream_model_id.clone();
-            let model_group_cl = upstream_model_group.clone();
-            let custom_llm_provider_cl = upstream_custom_llm_provider.clone();
-            let token_hash_cl = auth_token_hash.clone();
-            let user_id_cl = auth_user_id.clone();
-            let team_id_cl = auth_team_id.clone();
-            let org_id_cl = auth_org_id.clone();
-            let end_user_cl = end_user.clone();
-            let session_id_cl = session_id.clone();
-            let requester_ip_cl = requester_ip.clone();
             let start_time = chrono::Utc::now();
             let request_id_cl = request_id.clone();
             let upstream_req_id_cl = upstream_req_id.clone();
@@ -655,47 +647,28 @@ pub async fn messages_handler(
                     }
                 }
                 let now = chrono::Utc::now();
-                let sl = SpendLog {
-                    call_id: request_id_cl.clone(),
-                    request_id: upstream_id.or(upstream_req_id_cl),
-                    call_type: call_type.to_string(),
-                    api_key: token_hash_cl.clone(),
-                    spend: 0.0,
-                    total_tokens: stream_prompt_tokens + stream_completion_tokens,
-                    prompt_tokens: stream_prompt_tokens,
-                    completion_tokens: stream_completion_tokens,
-                    start_time,
-                    end_time: now,
-                    request_duration_ms: Some(
-                        now.signed_duration_since(start_time).num_milliseconds() as i32,
-                    ),
-                    completion_start_time: None,
-                    model: upstream_model_cl.clone(),
-                    model_id: model_id_cl.clone(),
-                    model_group: model_group_cl.clone(),
-                    custom_llm_provider: custom_llm_provider_cl.clone(),
-                    api_base: Some("oauth:anthropic".to_string()),
-                    user: user_id_cl.clone(),
-                    metadata: Some(json!({"oauth": true})),
-                    cache_hit: None,
-                    cache_key: None,
-                    request_tags: None,
-                    team_id: team_id_cl.clone(),
-                    organization_id: org_id_cl.clone(),
-                    end_user: end_user_cl.clone(),
-                    requester_ip_address: requester_ip_cl.clone(),
-                    messages: Some(body_clone.clone()),
-                    response: Some(json!({"status": "streaming"})),
-                    session_id: session_id_cl.clone(),
-                    status: Some("success".to_string()),
-                    mcp_namespaced_tool_name: None,
-                    agent_id: None,
-                    proxy_server_request: None,
-                    body_archived: false,
-                    parquet_path: None,
-                    image_tokens: None,
-                };
-                let _ = state_clone.db.insert_spend_log(&sl).await;
+                // Phase 2: UPDATE the pre-inserted placeholder row (same
+                // call_id) with real tokens — matching the non-OAuth streaming
+                // path. INSERT would fail on the call_id PK.
+                let duration_ms = now.signed_duration_since(start_time).num_milliseconds() as i32;
+                let _ = state_clone
+                    .db
+                    .update_spend_log(
+                        &request_id_cl,
+                        upstream_id.as_deref().or(upstream_req_id_cl.as_deref()),
+                        0.0,
+                        stream_prompt_tokens + stream_completion_tokens,
+                        stream_prompt_tokens,
+                        stream_completion_tokens,
+                        now,
+                        duration_ms,
+                        now,
+                        serde_json::json!({"status": "streaming"}),
+                        "success",
+                        Some(json!({"oauth": true})),
+                        None,
+                    )
+                    .await;
             });
 
             let sse_stream = tokio_stream::wrappers::UnboundedReceiverStream::new(rx)

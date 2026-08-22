@@ -1131,6 +1131,12 @@ pub async fn chat_completions(
     // credential's bound proxy with CC disguise headers + `Authorization: Bearer
     // <access_token>`, and retries once on a 401 (token refresh).
     if let Some(ref oauth) = deployment.oauth {
+        // Drop the resolve span guard before the OAuth branch's long awaits
+        // (token pipeline + reqwest). Leaving an entered guard across an await
+        // risks a cross-thread drop panic in tracing-subscriber's sharded
+        // registry (see 77dc2eb for the same fix on the non-OAuth path).
+        drop(_resolve_enter);
+
         let token_provider = state.token_provider.clone();
         let mk = state.aigw_master_key.clone().unwrap_or_default();
         let is_stream = body
@@ -1241,21 +1247,9 @@ pub async fn chat_completions(
             }
             let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
             let state_clone = state.clone();
-            let body_clone = body.clone();
-            let _model_name = _model.to_string();
-            let token_hash = auth.token_hash.clone();
-            let user_id = auth.user_id.clone();
-            let team_id = auth.team_id.clone();
-            let organization_id = auth.organization_id.clone();
-            let end_user_clone = end_user.clone();
-            let requester_ip_clone = requester_ip.clone();
-            let session_id_clone = session_id.clone();
             let start_time = chrono::Utc::now();
             let request_id_clone = request_id.clone();
-            let upstream_model_cl = upstream_model.clone();
-            let model_id_cl = model_id.clone();
-            let model_group_cl = model_group.clone();
-            let custom_llm_provider_cl = custom_llm_provider.clone();
+            let token_hash = auth.token_hash.clone();
             let upstream_req_id_cl = upstream_req_id.clone();
 
             // Phase 1 placeholder SpendLog.
@@ -1307,7 +1301,6 @@ pub async fn chat_completions(
                 let mut stream_prompt_tokens: i32 = 0;
                 let mut stream_completion_tokens: i32 = 0;
                 let mut upstream_id: Option<String> = None;
-                let mut failure: Option<(u16, String)> = None;
                 while let Some(chunk_result) = stream.next().await {
                     match chunk_result {
                         Ok(chunk) => {
@@ -1346,56 +1339,34 @@ pub async fn chat_completions(
                                 break;
                             }
                         }
-                        Err(e) => {
-                            failure = Some((0, e.to_string()));
+                        Err(_) => {
                             break;
                         }
                     }
                 }
                 let now = chrono::Utc::now();
-                let _ = failure;
-                let spend = 0.0_f64;
-                let sl = SpendLog {
-                    call_id: request_id_clone.clone(),
-                    request_id: upstream_id.or(upstream_req_id_cl),
-                    call_type: "completion".to_string(),
-                    api_key: token_hash.clone(),
-                    spend,
-                    total_tokens: stream_prompt_tokens + stream_completion_tokens,
-                    prompt_tokens: stream_prompt_tokens,
-                    completion_tokens: stream_completion_tokens,
-                    start_time,
-                    end_time: now,
-                    request_duration_ms: Some(
-                        now.signed_duration_since(start_time).num_milliseconds() as i32,
-                    ),
-                    completion_start_time: None,
-                    model: upstream_model_cl.clone(),
-                    model_id: model_id_cl.clone(),
-                    model_group: model_group_cl.clone(),
-                    custom_llm_provider: custom_llm_provider_cl.clone(),
-                    api_base: Some("oauth:anthropic".to_string()),
-                    user: user_id.clone(),
-                    metadata: Some(json!({"oauth": true})),
-                    cache_hit: None,
-                    cache_key: None,
-                    request_tags: None,
-                    team_id: team_id.clone(),
-                    organization_id: organization_id.clone(),
-                    end_user: end_user_clone.clone(),
-                    requester_ip_address: requester_ip_clone.clone(),
-                    messages: Some(body_clone.clone()),
-                    response: Some(json!({"status": "streaming"})),
-                    session_id: session_id_clone.clone(),
-                    status: Some("success".to_string()),
-                    mcp_namespaced_tool_name: None,
-                    agent_id: None,
-                    proxy_server_request: None,
-                    body_archived: false,
-                    parquet_path: None,
-                    image_tokens: None,
-                };
-                let _ = state_clone.db.insert_spend_log(&sl).await;
+                // Phase 2: UPDATE the pre-inserted placeholder row (same
+                // call_id) with real tokens/spend — matching the non-OAuth
+                // streaming path. INSERT would fail on the call_id PK.
+                let duration_ms = now.signed_duration_since(start_time).num_milliseconds() as i32;
+                let _ = state_clone
+                    .db
+                    .update_spend_log(
+                        &request_id_clone,
+                        upstream_id.as_deref().or(upstream_req_id_cl.as_deref()),
+                        0.0,
+                        stream_prompt_tokens + stream_completion_tokens,
+                        stream_prompt_tokens,
+                        stream_completion_tokens,
+                        now,
+                        duration_ms,
+                        now,
+                        serde_json::json!({"status": "streaming"}),
+                        "success",
+                        Some(json!({"oauth": true})),
+                        None,
+                    )
+                    .await;
             });
 
             let sse_stream = tokio_stream::wrappers::UnboundedReceiverStream::new(rx)
