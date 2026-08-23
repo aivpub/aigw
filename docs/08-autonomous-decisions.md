@@ -658,3 +658,16 @@
   - 配置 OAuth 凭证的模型可被 Claude Code + OpenAI 格式客户端共用订阅号；仅 cookie 被 Anthropic 吊销时需人工（告警通知 + 前端 Re-auth）。
   - 完整伪装链（tool 混淆/dateline/1h TTL/metadata.user_id/完整三块）登记长期路线。
   - 设计文档：`docs/plans/2026-08-18-claude-oauth-reverse-proxy.md` + `docs/stages/stage-126.md` ~ `stage-130.md`。
+
+## ADR-035: Stage 129 前端 OAuth 入口 + 手动 refresh 端点（Phase 51）
+
+- **Date**: 2026-08-24
+- **Status**: Accepted
+- **Decision**: Stage 129 交付前端 CredentialsTab OAuth 入口 + 后端 `POST /credential/oauth/refresh` 手动刷新端点。
+  - **手动 refresh 端点纳入 Stage 129**（设计收敛）：Stage 127 仅暴露 core `TokenProvider::invalidate_and_refresh`（管线 401 重试入口），无 HTTP 端点；前端 Refresh 按钮必须有后端可调，故 `POST /credential/oauth/refresh {credential_name}`（admin）正式纳入。成功返回 redact 后凭证；非 OAuth 凭证 400；cookie/refresh 均失效 → 409 + `kind=oauth_refresh_failed`（前端据此提示需 Re-auth）。
+  - **前端形态**：独立 `OAuthCredentialDialog`（粘贴 `sk-ant-sid` cookie + 代理下拉 + inject_prompt + 名称 → exchange）；OAuth 凭证独立行（active/needs_reauth 徽章 + 到期时间 + 绑定代理 + last_error 截断 + Refresh/Re-auth/编辑/删除）。Re-auth 复用 exchange 端点（同 name upsert 恢复 active）。
+- **Background**: 实现中发现 `cookie_self_heal` 对已解密 `session_key` 二次解密（base64 Invalid padding）→ 自愈永远不可达；由 Stage 129 的 409 场景暴露并修复（直接使用已解密明文）。
+- **Consequences**:
+  - 前端可按凭证状态操作；needs_reauth 凭证经 Re-auth 一键恢复 active，无需 CLI。
+  - token 三件套在响应/日志/前端 DOM 全链路 redact（安全审计项在 Stage 130 复核）。
+  - 设计文档：`docs/stages/stage-129.md` + `stage-129-review-log.md`；技术债：TD-016a（Refresh 409 不自动弹 Re-auth）、TD-016b（OAuth 编辑仍走通用 advanced JSON）。

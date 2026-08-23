@@ -26,9 +26,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Plus, Pencil, Trash2, Code } from "lucide-react";
+import {
+  Plus,
+  Pencil,
+  Trash2,
+  Code,
+  RefreshCw,
+  KeyRound,
+} from "lucide-react";
 import { toast } from "sonner";
 import { PaginationBar } from "@/components/ui/pagination";
+import { OAuthCredentialDialog } from "./OAuthCredentialDialog";
 
 interface CredentialItem {
   credential_id: string;
@@ -37,9 +45,41 @@ interface CredentialItem {
   credential_info: Record<string, unknown> | null;
 }
 
+/** Values inside a decrypted OAuth `credential_values` (server redacts the
+ *  token trio before sending — these are the only fields the UI needs). */
+interface OAuthCredentialValues {
+  type?: string;
+  status?: string;
+  last_error?: string | null;
+  expires_at?: number;
+  proxy_id?: number | null;
+  inject_prompt?: string | null;
+  org_uuid?: string | null;
+  email_address?: string | null;
+}
+
+function isOAuthCredential(c: CredentialItem): boolean {
+  return c.credential_values?.type === "anthropic_oauth";
+}
+
 function maskApiKey(raw: string): string {
   if (raw.length <= 8) return "***";
   return raw.slice(0, 4) + "***" + raw.slice(-4);
+}
+
+/** Format a unix-seconds expiry into a human-readable local date. */
+function formatExpiry(expiresAt: number | undefined): string {
+  if (typeof expiresAt !== "number" || Number.isNaN(expiresAt)) return "—";
+  try {
+    return new Date(expiresAt * 1000).toLocaleString();
+  } catch {
+    return String(expiresAt);
+  }
+}
+
+interface ProxyInfo {
+  id: number;
+  name: string;
 }
 
 export function CredentialsTab() {
@@ -53,6 +93,18 @@ export function CredentialsTab() {
     queryFn: () =>
       apiGet(`/credential/list?page=${page}&page_size=${pageSize}`),
   });
+
+  // Proxy name mapping for the "Bound Proxy" column (Stage 129).
+  const { data: proxiesData } = useQuery({
+    queryKey: ["proxies-all"],
+    queryFn: () => apiGet<{ data: ProxyInfo[] }>("/admin/proxies/all"),
+  });
+  const proxyNames = new Map<number, string>(
+    ((proxiesData as { data?: ProxyInfo[] })?.data ?? []).map((p) => [
+      p.id,
+      p.name,
+    ]),
+  );
 
   const credentials: CredentialItem[] =
     (data as { data?: CredentialItem[] })?.data ?? [];
@@ -81,6 +133,14 @@ export function CredentialsTab() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState<CredentialItem | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
+
+  // OAuth dialog (Stage 129) + refresh/re-auth
+  const [oauthOpen, setOauthOpen] = useState(false);
+  const [refreshName, setRefreshName] = useState<string | null>(null);
+  const [reAuthOpen, setReAuthOpen] = useState(false);
+  const [reAuthName, setReAuthName] = useState<CredentialItem | null>(null);
+  const [reAuthKey, setReAuthKey] = useState("");
+  const [reAuthSaving, setReAuthSaving] = useState(false);
 
   function openNew() {
     setEditing(null);
@@ -204,6 +264,60 @@ export function CredentialsTab() {
     return typeof b === "string" ? b.replace("https://", "").slice(0, 30) : "—";
   }
 
+  function getOAuth(c: CredentialItem): OAuthCredentialValues {
+    return (c.credential_values ?? {}) as OAuthCredentialValues;
+  }
+
+  function boundProxyName(c: CredentialItem): string {
+    const pid = getOAuth(c).proxy_id;
+    if (pid == null) return t("claudeOAuth.direct");
+    return proxyNames.get(pid) ?? String(pid);
+  }
+
+  async function handleRefresh(c: CredentialItem) {
+    setRefreshName(c.credential_name);
+    try {
+      await apiPost("/credential/oauth/refresh", {
+        credential_name: c.credential_name,
+      });
+      queryClient.invalidateQueries({ queryKey: ["credentials-list"] });
+      toast.success(t("claudeOAuth.toast.refreshed"));
+    } catch (e) {
+      const msg = (e as Error).message;
+      toast.error(t("claudeOAuth.toast.refreshFailed"), { description: msg });
+      // A refresh that lands in needs_reauth returns 409 — reload so the
+      // needs_reauth badge + last_error surface immediately.
+      if (String(msg).length > 0) {
+        queryClient.invalidateQueries({ queryKey: ["credentials-list"] });
+      }
+    } finally {
+      setRefreshName(null);
+    }
+  }
+
+  async function handleReAuth() {
+    if (!reAuthName || !reAuthKey.trim()) return;
+    setReAuthSaving(true);
+    try {
+      await apiPost("/credential/oauth/exchange", {
+        session_key: reAuthKey.trim(),
+        proxy_id: getOAuth(reAuthName).proxy_id ?? null,
+        inject_prompt: getOAuth(reAuthName).inject_prompt ?? undefined,
+        name: reAuthName.credential_name,
+      });
+      queryClient.invalidateQueries({ queryKey: ["credentials-list"] });
+      setReAuthOpen(false);
+      setReAuthKey("");
+      toast.success(t("claudeOAuth.toast.refreshed"));
+    } catch (e) {
+      toast.error(t("claudeOAuth.toast.exchangeFailed"), {
+        description: (e as Error).message,
+      });
+    } finally {
+      setReAuthSaving(false);
+    }
+  }
+
   if (isLoading) return <Skeleton className="h-64 w-full" />;
 
   return (
@@ -217,9 +331,14 @@ export function CredentialsTab() {
             }}
           />
         </p>
-        <Button size="sm" onClick={openNew}>
-          <Plus className="mr-1 h-4 w-4" /> {t("models.credentials.new")}
-        </Button>
+        <div className="flex gap-2">
+          <Button size="sm" onClick={openNew}>
+            <Plus className="mr-1 h-4 w-4" /> {t("models.credentials.new")}
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => setOauthOpen(true)}>
+            <KeyRound className="mr-1 h-4 w-4" /> {t("claudeOAuth.new")}
+          </Button>
+        </div>
       </div>
 
       <Card>
@@ -263,45 +382,132 @@ export function CredentialsTab() {
                   </TableCell>
                 </TableRow>
               ) : (
-                credentials.map((c) => (
-                  <TableRow key={c.credential_id}>
-                    <TableCell className="font-medium">
-                      {c.credential_name}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline">{getProvider(c)}</Badge>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground text-sm font-mono">
-                      {getApiBase(c)}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground text-sm font-mono">
-                      {getApiKeyHint(c)}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex gap-1">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8"
-                          onClick={() => openEdit(c)}
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-destructive"
-                          onClick={() => {
-                            setDeleting(c);
-                            setDeleteOpen(true);
-                          }}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))
+                credentials.map((c) =>
+                  isOAuthCredential(c) ? (
+                    <TableRow key={`oauth-${c.credential_id}`}>
+                      <TableCell className="font-medium">
+                        {c.credential_name}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline">
+                          {getOAuth(c).status === "needs_reauth"
+                            ? t("claudeOAuth.status.needsReauth")
+                            : t("claudeOAuth.status.active")}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground text-sm">
+                        {getOAuth(c).status === "needs_reauth" &&
+                        getOAuth(c).last_error ? (
+                          <span
+                            className="text-destructive"
+                            data-testid="oauth-last-error"
+                            title={getOAuth(c).last_error ?? ""}
+                          >
+                            {getOAuth(c).last_error?.slice(0, 48)}
+                          </span>
+                        ) : (
+                          <span>
+                            {t("claudeOAuth.expiresAt")}:{" "}
+                            {formatExpiry(getOAuth(c).expires_at)}
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground text-sm">
+                        {t("claudeOAuth.boundProxy")}: {boundProxyName(c)}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 px-2"
+                            onClick={() => handleRefresh(c)}
+                            disabled={refreshName === c.credential_name}
+                            data-testid={`oauth-refresh-${c.credential_name}`}
+                          >
+                            <RefreshCw className="h-3.5 w-3.5" />
+                            <span className="sr-only">
+                              {t("claudeOAuth.refresh")}
+                            </span>
+                          </Button>
+                          {getOAuth(c).status === "needs_reauth" && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-8 px-2"
+                              onClick={() => {
+                                setReAuthName(c);
+                                setReAuthKey("");
+                                setReAuthOpen(true);
+                              }}
+                              data-testid={`oauth-reauth-${c.credential_name}`}
+                            >
+                              <KeyRound className="h-3.5 w-3.5" />
+                              {t("claudeOAuth.reAuth")}
+                            </Button>
+                          )}
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={() => openEdit(c)}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-destructive"
+                            onClick={() => {
+                              setDeleting(c);
+                              setDeleteOpen(true);
+                            }}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    <TableRow key={`plain-${c.credential_id}`}>
+                      <TableCell className="font-medium">
+                        {c.credential_name}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline">{getProvider(c)}</Badge>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground text-sm font-mono">
+                        {getApiBase(c)}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground text-sm font-mono">
+                        {getApiKeyHint(c)}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={() => openEdit(c)}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-destructive"
+                            onClick={() => {
+                              setDeleting(c);
+                              setDeleteOpen(true);
+                            }}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ),
+                )
               )}
             </TableBody>
           </Table>
@@ -322,6 +528,15 @@ export function CredentialsTab() {
           ) : null}
         </CardContent>
       </Card>
+
+      {/* OAuth Credential dialog (Stage 129) */}
+      <OAuthCredentialDialog
+        open={oauthOpen}
+        onOpenChange={setOauthOpen}
+        onExchanged={() =>
+          queryClient.invalidateQueries({ queryKey: ["credentials-list"] })
+        }
+      />
 
       {/* Create/Edit Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -486,6 +701,48 @@ export function CredentialsTab() {
               disabled={deleteLoading}
             >
               {deleteLoading ? t("common.deleting") : t("common.delete")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Re-auth Dialog (Stage 129) — re-paste a fresh cookie for a
+          needs_reauth OAuth credential. Sends the same exchange body as
+          creation (server upserts / restores to active). */}
+      <Dialog open={reAuthOpen} onOpenChange={setReAuthOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t("claudeOAuth.reAuth")}</DialogTitle>
+            <DialogDescription>
+              {t("claudeOAuth.sessionKeyHint")}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="reauth-session">
+              {t("claudeOAuth.sessionKeyLabel")}
+            </Label>
+            <Textarea
+              id="reauth-session"
+              rows={3}
+              className="font-mono text-xs"
+              value={reAuthKey}
+              onChange={(e) => setReAuthKey(e.target.value)}
+              placeholder={t("claudeOAuth.sessionKeyPlaceholder")}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setReAuthOpen(false)}
+              disabled={reAuthSaving}
+            >
+              {t("common.cancel")}
+            </Button>
+            <Button
+              onClick={handleReAuth}
+              disabled={reAuthSaving || !reAuthKey.trim()}
+            >
+              {reAuthSaving ? t("claudeOAuth.exchanging") : t("claudeOAuth.reAuth")}
             </Button>
           </DialogFooter>
         </DialogContent>

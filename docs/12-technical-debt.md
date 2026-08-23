@@ -187,6 +187,13 @@
 | TD-015e | count_tokens 认证语义（M1，产品决策） | P3 | `count_tokens_handler` 用 Bearer-only `ChatAuth`，Anthropic 客户端按惯例用 `x-api-key` 会 401。应支持双认证（x-api-key / Bearer）与 messages_handler 一致。**产品决策待定**。 |
 | TD-015f | health 探针不感知 OAuth 部署 | P3 | `health.rs` 探针对 OAuth 模型（api_base 默认 openai + api_key None + AnthropicNative）探错误端点且 401 计 healthy。OAuth 模型恒显示"健康"但探的是错误端点。 |
 
+### TD-016: OAuth 前端 refresh 语义（Stage 129 后续）
+
+| TD 编号 | 标题 | 优先级 | 说明 |
+|---------|------|--------|------|
+| TD-016a | Refresh 按钮 409 后仅重载列表、不自动降级为 Re-auth 对话框 | P3 | `handleRefresh` 捕获 409 → toast + 重载列表（needs_reauth 徽章 + Re-auth 按钮随即出现）。未做"409 自动打开 Re-auth 对话框"——需用户二次点击。触发：凭证 cookie/refresh 均失效时点 Refresh。缓解：toast 已提示 + 列表徽章可见。 |
+| TD-016b | OAuth 凭证编辑对话框仍用通用 Credential 编辑（advanced JSON） | P3 | OAuth 行仍可点铅笔打开通用 `openEdit`（advanced JSON 模式），能手工改 status/last_error 等字段（字段加密落库）。非 Stage 129 需求（§2.1 只要求改 proxy_id + inject_prompt，未单独实现 OAuth 编辑表单）。纳入 Stage 130 可选。 |
+
 ## Resolved Items
 
 ### TD-002: @real_api step bindings implemented (Resolved 2026-07-05)

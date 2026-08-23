@@ -21,6 +21,10 @@ fn build_credential_router(state: aigw_server::routes::keys::SharedState) -> Rou
             axum::routing::post(aigw_server::routes::credentials::oauth_exchange),
         )
         .route(
+            "/credential/oauth/refresh",
+            axum::routing::post(aigw_server::routes::credentials::oauth_refresh),
+        )
+        .route(
             "/credential/info",
             axum::routing::get(aigw_server::routes::credentials::credential_info),
         )
@@ -113,13 +117,56 @@ async fn given_mock_oauth_configured(world: &mut TestWorld) {
 #[given(expr = "mock 上游 OAuth 组织接口返回 401")]
 async fn given_mock_oauth_orgs_401(world: &mut TestWorld) {
     let _state = world.ensure_state().await;
-    let mut mu = mock_upstream().lock().await;
-    mu.as_mut().unwrap().set_response(
+    let mu = mock_upstream().lock().await;
+    let upstream = mu.as_ref().expect("mock upstream not started");
+    upstream.set_response(
         "/api/organizations",
         401,
         serde_json::json!({"error": "unauthorized"}),
     );
     drop(mu);
+}
+
+/// Force the mock `/v1/oauth/token` refresh route to reject with a 401
+/// `account_session_invalid` — classified by `classify_oauth_error` into the
+/// recoverable set (`invalid_grant`-family), so the token chain falls through
+/// to the cookie self-heal, which then fails against the 401 org list and the
+/// credential lands in needs_reauth. Used by the refresh-409 scenario.
+#[given(expr = "mock 上游 OAuth 刷新接口返回 invalid_grant")]
+async fn given_mock_oauth_refresh_invalid(world: &mut TestWorld) {
+    let _state = world.ensure_state().await;
+    let mu = mock_upstream().lock().await;
+    let upstream = mu.as_ref().expect("mock upstream not started");
+    upstream.set_response(
+        "/v1/oauth/token",
+        401,
+        serde_json::json!({"error": "account_session_invalid", "error_description": "refresh revoked"}),
+    );
+    drop(mu);
+}
+
+/// Seed a plain (non-OAuth) credential — used by the refresh-400 scenario.
+#[given(expr = "已存在普通凭证 {string}")]
+async fn given_existing_plain_credential(world: &mut TestWorld, name: String) {
+    let state = world.ensure_state().await;
+    let cred = aigw_core::models::Credential {
+        credential_id: uuid::Uuid::new_v4().to_string(),
+        credential_name: name,
+        credential_values: serde_json::json!({
+            "type": "openai",
+            "api_key": "sk-plain-secret",
+        }),
+        credential_info: serde_json::json!({}),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        created_by: None,
+        updated_at: chrono::Utc::now().to_rfc3339(),
+        updated_by: None,
+    };
+    state
+        .db
+        .insert_credential(&cred)
+        .await
+        .expect("insert plain credential");
 }
 
 /// Seed an OAuth credential with encrypted sensitive fields so the /credential/
@@ -203,6 +250,18 @@ async fn given_existing_oauth_credential_cached(world: &mut TestWorld, name: Str
     world.created_keys.insert("oauth:latest".to_string(), name);
 }
 
+/// Seed an OAuth credential whose refresh_token AND cookie are both dead, so
+/// the manual refresh chain (refresh → invalid_grant → cookie exchange →
+/// invalid_grant) lands in needs_reauth. Uses the mock 401 on the org list.
+#[given(expr = "已存在 OAuth 凭证 {string} 其 refresh_token 与 cookie 均失效")]
+async fn given_oauth_credential_both_dead(world: &mut TestWorld, name: String) {
+    // Force BOTH recovery legs to fail: the refresh route rejects with
+    // invalid_grant AND the cookie self-heal's org list returns 401.
+    given_mock_oauth_refresh_invalid(world).await;
+    given_mock_oauth_orgs_401(world).await;
+    given_oauth_credential_stale_refresh(world, name).await;
+}
+
 /// Seed an OAuth credential whose refresh_token is invalid, forcing the
 /// cookie self-heal path (refresh → invalid_grant → cookie exchange → mock
 /// token endpoint returns sk-ant-access-mock).
@@ -246,6 +305,23 @@ async fn given_oauth_credential_stale_refresh(world: &mut TestWorld, name: Strin
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // When
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Send a manual token-refresh request to /credential/oauth/refresh (Stage 129).
+#[when(expr = "发送 POST \\/credential\\/oauth\\/refresh 请求用凭证 {string}")]
+async fn when_oauth_refresh(world: &mut TestWorld, credential_name: String) {
+    world
+        .last_request_credential_name
+        .replace(credential_name.clone());
+    let body = serde_json::json!({ "credential_name": credential_name }).to_string();
+    send_request(
+        world,
+        Method::POST,
+        "/credential/oauth/refresh",
+        Some(&world.master_key.clone()),
+        Some(&body),
+    )
+    .await;
+}
 
 #[when(expr = "发送 POST \\/credential\\/oauth\\/exchange 请求")]
 async fn when_oauth_exchange(world: &mut TestWorld, step: &cucumber::gherkin::Step) {
@@ -640,4 +716,39 @@ async fn then_oauth_error_kind(world: &mut TestWorld, expected: String) {
         .and_then(|v| v.as_str())
         .unwrap_or_else(|| panic!("no error.kind in response: {}", body));
     assert_eq!(kind, expected);
+}
+
+/// Assert the named OAuth credential is persisted with status=needs_reauth
+/// (used by the refresh-409 scenario — the failed refresh chain marks it).
+#[then(expr = "该凭证已标记为 needs_reauth")]
+async fn then_credential_marked_reauth(world: &mut TestWorld) {
+    // The refresh body named the credential — read it from the exchange info
+    // lookup captured by then_oauth_cred_type / the step chain. Simplest: pull
+    // the name from the last request's credential_name (set in the When step).
+    let name = world
+        .last_request_credential_name
+        .as_ref()
+        .expect("credential name from refresh request")
+        .clone();
+    let state = world.ensure_state().await;
+    let cred = state
+        .db
+        .get_credential_by_name(&name)
+        .await
+        .expect("fetch credential")
+        .expect("credential exists");
+    let cv = aigw_core::crypto::decrypt_json_fields(&cred.credential_values, "bdd-master-key");
+    let status = cv.get("status").cloned().unwrap_or(serde_json::Value::Null);
+    assert_eq!(
+        status,
+        "needs_reauth",
+        "expected needs_reauth status; last_error={:?}; last response body={}",
+        cv.get("last_error"),
+        world
+            .last_body
+            .as_ref()
+            .map(|b| b.to_string())
+            .unwrap_or_default(),
+    );
+    assert!(cv["last_error"].is_string(), "expected a last_error reason");
 }

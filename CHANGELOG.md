@@ -3,6 +3,10 @@
 ## [未发布]
 
 ### 新增
+- Stage 129: `POST /credential/oauth/refresh` 手动刷新端点（`credentials.rs oauth_refresh`——`TokenProvider::invalidate_and_refresh`；非 OAuth 400；cookie/refresh 均失效 409 `kind=oauth_refresh_failed`；成功响应 redact）
+- Stage 129: CredentialsTab OAuth 入口（`OAuthCredentialDialog.tsx` 粘贴 `sk-ant-sid` cookie + 代理下拉 + inject_prompt → exchange；OAuth 独立行 active/needs_reauth 徽章 + 到期时间 + 绑定代理 + last_error + Refresh/Re-auth/编辑/删除）
+- Stage 129: `claudeOAuth` i18n 命名空间（en + zh-CN，`fe-i18n-types` 已再生成）
+- Stage 129: 修复 `claude_token.rs cookie_self_heal` 对已解密 `session_key` 二次解密（base64 Invalid padding）→ 自愈永远不可达，改用已解密明文
 - Stage 127: OAuth Token 生命周期 + 三层自愈（`claude_token.rs` TokenProvider——内存缓存 + per-credential 锁防并发刷新 + 临期 3min 刷新 + invalid_grant cookie 自愈 + needs_reauth 告警 `dispatch_oauth_reauth_alert` + `invalidate_and_refresh` 管线 401 重试入口）
 - Stage 126: Claude OAuth 凭证 + Cookie→Token 3 步交换（`claude_oauth.rs` OauthClient 经代理 + PKCE S256 + fetch_orgs/authorize/exchange_code/refresh + select_org + classify_oauth_error；`build_oauth_credential_values` 敏感字段 AES-GCM 加密；`POST /credential/oauth/exchange` + credential_info/list redact；crypto `redact_oauth_credential_values`）
 - Stage 115: Anthropic image token downsizing（`estimate_anthropic` 迭代缩放保比例到 ≤1568 target）——TD-011c 解决
@@ -28,6 +32,7 @@
 - Stage 103: `openai_message_to_claude` 修 image 转换 bug — data URL 剥离 + media_type 推导（parse_data_url）
 
 ### 修复
+- Stage 129: `claude_token.rs cookie_self_heal` 对已解密 `session_key` 二次 `decrypt_litellm_value` → base64 Invalid padding → cookie 自愈永远不可达（409 场景暴露）；改用已解密明文
 - Stage 115: `compressImage` 解码失败返回 null（原返回原图 → caller 无法区分「无法渲染」）；TD-011c 单次缩放 overshoot → 迭代缩放
 - Stage 114: i18n 动态 import 归一化（navigator=en-US → en bundle，防 Unknown dynamic import unhandled-rejection）
 - Stage 114: 修复 5 个缺失 i18n key（health.min/keys.deletedKeys/keys.tpmLabel+rpmLabel/drawer.tabDescription+tabParams）+ dashboard.spend 拼写错误

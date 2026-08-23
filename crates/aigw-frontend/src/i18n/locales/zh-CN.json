@@ -1170,5 +1170,52 @@
       "batchDone": "批量操作完成",
       "inUseSkipped": "{{n}} 个代理被跳过（使用中）"
     }
+  },
+  "claudeOAuth": {
+    "title": "Claude OAuth 凭证",
+    "description": "用 Claude 网页会话 Cookie（sk-ant-sid）换取访问令牌。绑定 anthropic_oauth 凭证的模型将通过你的 Claude 订阅反向代理转发。",
+    "new": "新建 OAuth 凭证",
+    "allCredentials": "Claude OAuth 凭证",
+    "empty": "暂无 OAuth 凭证。创建一个即可启用 Claude 订阅反向代理。",
+    "sessionKeyLabel": "会话 Cookie（sk-ant-sid…）",
+    "sessionKeyPlaceholder": "粘贴完整的 sk-ant-sid01... Cookie 值",
+    "sessionKeyHint": "Cookie 仅发送给 exchange 端点，随后加密落库，之后不再显示。",
+    "proxyLabel": "绑定代理",
+    "proxyHint": "可选。OAuth 交换与反代流量均走该代理出口。不选为直连。",
+    "direct": "直连",
+    "injectPromptLabel": "注入提示词（可选）",
+    "injectPromptPlaceholder": "该凭证的每次反代请求都会追加到 system 块末尾。",
+    "nameLabel": "凭证名称 *",
+    "namePlaceholder": "如 claude-oauth-personal",
+    "nameRequired": "请填写凭证名称",
+    "sessionKeyRequired": "请粘贴会话 Cookie",
+    "noProxies": "无可用代理",
+    "exchange": "交换并创建",
+    "exchanging": "交换中…",
+    "status": {
+      "active": "正常",
+      "needsReauth": "需重新认证",
+      "unknown": "未知"
+    },
+    "expiresAt": "到期时间",
+    "boundProxy": "代理",
+    "lastError": "上次错误",
+    "refresh": "刷新",
+    "refreshing": "刷新中…",
+    "reAuth": "重新认证",
+    "edit": "编辑",
+    "delete": "删除",
+    "redactedHint": "令牌值已脱敏，永不展示。",
+    "toast": {
+      "exchanged": "OAuth 凭证已创建",
+      "exchangeFailed": "OAuth 交换失败",
+      "refreshed": "令牌已刷新",
+      "refreshFailed": "令牌刷新失败",
+      "reauthNeeded": "需要重新认证",
+      "saved": "OAuth 凭证已更新",
+      "saveFailed": "保存失败",
+      "deleted": "OAuth 凭证已删除",
+      "deleteFailed": "删除失败"
+    }
   }
 }

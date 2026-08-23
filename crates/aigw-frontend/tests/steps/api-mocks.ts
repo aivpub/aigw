@@ -68,6 +68,28 @@ interface MockOptions {
   modelCount?: number;
 }
 
+// Module-scoped credential list (Stage 129): the OAuth exchange handler appends
+// the created credential so a post-invalidation refetch shows it. Same
+// persistence pattern as `proxyList`.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const oauthCredentialList: any[] = [
+  { credential_name: "prod-openai", credential_values: { type: "openai", api_key: "sk-abc123xxx", api_base: "https://api.openai.com/v1" }, credential_info: {} },
+  { credential_name: "dev-anthropic", credential_values: { type: "anthropic", api_key: "sk-ant-plain" }, credential_info: {} },
+  {
+    credential_name: "oauth-personal",
+    credential_values: {
+      type: "anthropic_oauth",
+      status: "active",
+      expires_at: 1756000000,
+      proxy_id: 1,
+      inject_prompt: null,
+      org_uuid: "org-team-1",
+      email_address: "mock@example.com",
+    },
+    credential_info: {},
+  },
+];
+
 const baseSpend = {
   total_spend: 42.50,
   spend: 42.50,
@@ -329,11 +351,59 @@ export async function defineMockRoutes(route: Route, request: Request) {
     return route.fulfill({ status: 200, json: { message: "Model deleted" } });
   }
 
-  // Credentials list (for ModelDialog credential dropdown)
+  // Credentials list (for ModelDialog credential dropdown + Stage 129 OAuth UI).
+  // Module-scoped so an exchange-created OAuth credential shows up on the
+  // refetch after invalidation (same persistence pattern as `proxyList`).
   if (url.pathname === "/credential/list") {
     return route.fulfill({
       status: 200,
-      json: { data: [{ credential_name: "prod-openai" }, { credential_name: "dev-anthropic" }] },
+      json: {
+        object: "list",
+        total_count: oauthCredentialList.length,
+        data: oauthCredentialList,
+      },
+    });
+  }
+  // Stage 129: OAuth exchange — echo the submitted name and append to the
+  // module-scoped list so the credential appears after list invalidation.
+  if (url.pathname === "/credential/oauth/exchange" && route.request().method() === "POST") {
+    const body = JSON.parse(request.postData() ?? "{}");
+    const createdName = body.name ?? "oauth-personal";
+    const createdValues = {
+      type: "anthropic_oauth",
+      status: "active",
+      expires_at: 1756000000,
+      proxy_id: body.proxy_id ?? 1,
+      inject_prompt: body.inject_prompt ?? null,
+      org_uuid: "org-team-1",
+      email_address: "mock@example.com",
+    };
+    if (!oauthCredentialList.some((c) => c.credential_name === createdName)) {
+      oauthCredentialList.push({ credential_name: createdName, credential_values: createdValues, credential_info: {} });
+    }
+    return route.fulfill({
+      status: 200,
+      json: { credential_name: createdName, credential_values: createdValues, credential_info: {} },
+    });
+  }
+  if (url.pathname === "/credential/oauth/refresh" && route.request().method() === "POST") {
+    const body = JSON.parse(request.postData() ?? "{}");
+    const refreshName = body.credential_name ?? "oauth-personal";
+    return route.fulfill({
+      status: 200,
+      json: {
+        credential_name: refreshName,
+        credential_values: {
+          type: "anthropic_oauth",
+          status: "active",
+          expires_at: 1756000000,
+          proxy_id: 1,
+          inject_prompt: null,
+          org_uuid: "org-team-1",
+          email_address: "mock@example.com",
+        },
+        credential_info: {},
+      },
     });
   }
 

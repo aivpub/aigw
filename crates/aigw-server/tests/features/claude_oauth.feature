@@ -80,3 +80,25 @@ Feature: Claude OAuth 凭证交换 — /credential/oauth/exchange（Stage 126）
     When 发送 POST /v1/messages 请求带认证 model="claude-oauth-401" 走 OAuth 反代
     Then 响应状态码为 200
     And mock 上游 /v1/messages 请求次数为 2
+
+  # ── Stage 129: /credential/oauth/refresh ──
+
+  Scenario: 手动刷新 OAuth 凭证 token 成功
+    Given 已存在 OAuth 凭证 "oauth-refresh-ok" 用于反代
+    When 发送 POST /credential/oauth/refresh 请求用凭证 "oauth-refresh-ok"
+    Then 响应状态码为 200
+    And 响应凭证 type 为 "anthropic_oauth"
+    And 响应凭证敏感字段已 redact
+
+  Scenario: 非 OAuth 凭证刷新返回 400
+    Given 已存在普通凭证 "oauth-refresh-plain"
+    When 发送 POST /credential/oauth/refresh 请求用凭证 "oauth-refresh-plain"
+    Then 响应状态码为 400
+
+  Scenario: 刷新失败（cookie/refresh 均失效）标记 needs_reauth 并返回 409
+    Given 已存在 OAuth 凭证 "oauth-refresh-needs-reauth" 其 refresh_token 与 cookie 均失效
+    When 发送 POST /credential/oauth/refresh 请求用凭证 "oauth-refresh-needs-reauth"
+    Then 响应状态码为 409
+    And 响应错误 kind 为 "oauth_refresh_failed"
+    And 该凭证已标记为 needs_reauth
+

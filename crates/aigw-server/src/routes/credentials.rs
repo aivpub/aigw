@@ -518,3 +518,112 @@ pub async fn oauth_exchange(
     }
     Ok(Json(value))
 }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Claude OAuth token refresh (Stage 129 §2.2)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// POST /credential/oauth/refresh request body.
+#[derive(Debug, Deserialize)]
+pub struct OauthRefreshBody {
+    /// Credential name (must be an `anthropic_oauth` credential).
+    pub credential_name: String,
+}
+
+/// POST /credential/oauth/refresh — force a token refresh for an OAuth
+/// credential (admin). Wraps `TokenProvider::invalidate_and_refresh` behind a
+/// HTTP endpoint so the frontend "Refresh" button can re-resolve the token
+/// manually. Returns the credential with the token trio redacted, or 409 when
+/// the credential requires manual re-auth (cookie/refresh both failed).
+pub async fn oauth_refresh(
+    State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
+    Json(body): Json<OauthRefreshBody>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    require_admin(&auth)?;
+
+    let existing = state
+        .db
+        .get_credential_by_name(&body.credential_name)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": {"message": format!("{}", e), "type": "db_error"}})),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": {"message": "credential not found"}})),
+            )
+        })?;
+
+    // Only `anthropic_oauth` credentials can be refreshed.
+    let is_oauth = decrypt_json_fields(
+        &existing.credential_values,
+        state.aigw_master_key.as_deref().unwrap_or(""),
+    )
+    .get("type")
+    .and_then(|v| v.as_str())
+        == Some("anthropic_oauth");
+    if !is_oauth {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": {"message": "not an anthropic_oauth credential"}})),
+        ));
+    }
+
+    let mk = state.aigw_master_key.as_deref().ok_or_else(|| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {"message": "AIGW_MASTER_KEY not configured — cannot refresh token"}})),
+        )
+    })?;
+
+    // Force refresh (invalidate cache + re-resolve through refresh/cookie chain).
+    match state
+        .token_provider
+        .invalidate_and_refresh(&state.db, &body.credential_name, mk)
+        .await
+    {
+        Ok(_token) => {
+            let refreshed = state
+                .db
+                .get_credential_by_name(&body.credential_name)
+                .await
+                .map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({"error": {"message": format!("{}", e)}})),
+                    )
+                })?
+                .ok_or_else(|| {
+                    (
+                        StatusCode::NOT_FOUND,
+                        Json(json!({"error": {"message": "credential not found"}})),
+                    )
+                })?;
+            let resp = CredentialResponse::from_credential(refreshed, Some(mk));
+            let mut value = serde_json::to_value(resp).unwrap_or(json!({}));
+            if let Some(cv) = value.get_mut("credential_values") {
+                *cv = aigw_core::crypto::redact_oauth_credential_values(cv);
+            }
+            Ok(Json(value))
+        }
+        Err(e) => {
+            // The refresh chain failed (needs_reauth / config / upstream) — the
+            // credential was already marked needs_reauth by the self-heal path
+            // when applicable. Surface the reason to the frontend.
+            Err((
+                StatusCode::CONFLICT,
+                Json(json!({
+                    "error": {
+                        "message": format!("OAuth token refresh failed: {}", e),
+                        "kind": "oauth_refresh_failed"
+                    }
+                })),
+            ))
+        }
+    }
+}

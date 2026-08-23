@@ -17,7 +17,7 @@ use serde_json::{json, Value};
 use tokio::sync::Mutex;
 
 use crate::claude_oauth::{OauthClient, TokenResponse};
-use crate::crypto::{decrypt_json_fields, decrypt_litellm_value, encrypt_litellm_value};
+use crate::crypto::{decrypt_json_fields, encrypt_litellm_value};
 use crate::db::Database;
 
 /// Access token considered expiring when within this window of `expires_at`.
@@ -217,14 +217,17 @@ impl TokenProvider {
         client: &OauthClient,
         master_key: &str,
     ) -> Result<String, TokenError> {
-        let session_enc = values
+        // `values` was produced by `decrypt_json_fields` in `get_access_token`,
+        // so `session_key` is ALREADY plaintext here — decrypting it again (the
+        // pre-Stage-129 behaviour) base64-fails on the plain cookie value and
+        // made cookie self-heal unreachable (Config error instead of
+        // NeedsReauth). Use it directly.
+        let session_key = values
             .get("session_key")
             .and_then(|v| v.as_str())
             .ok_or_else(|| TokenError::Config("missing session_key".to_string()))?;
-        let session_key = decrypt_litellm_value(session_enc, master_key)
-            .map_err(|e| TokenError::Config(format!("decrypt session_key: {}", e)))?;
 
-        match client.exchange(&session_key).await {
+        match client.exchange(session_key).await {
             Ok((token, org_uuid)) => {
                 self.insert_cache(&cred.credential_name, &token).await;
                 self.persist_after_self_heal(db, cred, values, &token, &org_uuid, master_key)

@@ -543,6 +543,10 @@ async fn main() -> anyhow::Result<()> {
             "/credential/oauth/exchange",
             axum::routing::post(credentials::oauth_exchange),
         )
+        .route(
+            "/credential/oauth/refresh",
+            axum::routing::post(credentials::oauth_refresh),
+        )
         // Organization management routes
         .route("/org/new", axum::routing::post(org::org_new))
         .route("/org/info", get(org::org_info))

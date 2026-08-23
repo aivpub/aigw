@@ -1187,6 +1187,53 @@ declare module "i18next" {
       inUseSkipped: string;
     },
   },
+  claudeOAuth: {
+    title: string;
+    description: string;
+    new: string;
+    allCredentials: string;
+    empty: string;
+    sessionKeyLabel: string;
+    sessionKeyPlaceholder: string;
+    sessionKeyHint: string;
+    proxyLabel: string;
+    proxyHint: string;
+    direct: string;
+    injectPromptLabel: string;
+    injectPromptPlaceholder: string;
+    nameLabel: string;
+    namePlaceholder: string;
+    nameRequired: string;
+    sessionKeyRequired: string;
+    noProxies: string;
+    exchange: string;
+    exchanging: string;
+    status: {
+      active: string;
+      needsReauth: string;
+      unknown: string;
+    },
+    expiresAt: string;
+    boundProxy: string;
+    lastError: string;
+    refresh: string;
+    refreshing: string;
+    reAuth: string;
+    edit: string;
+    delete: string;
+    redactedHint: string;
+    toast: {
+      exchanged: string;
+      exchangeFailed: string;
+      refreshed: string;
+      refreshFailed: string;
+      reauthNeeded: string;
+      saved: string;
+      saveFailed: string;
+      deleted: string;
+      deleteFailed: string;
+    },
+  },
       };
     };
   }

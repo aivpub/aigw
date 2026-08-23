@@ -32,6 +32,10 @@ pub struct TestWorld {
     /// Created users by user_id → (email, password)
     #[world(skip)]
     pub created_users: std::collections::HashMap<String, (String, String)>,
+    /// Credential name from the most recent /credential/oauth/refresh request
+    /// (so a Then step can re-read the persisted row and assert needs_reauth).
+    #[world(skip)]
+    pub last_request_credential_name: Option<String>,
 }
 
 impl Default for TestWorld {
@@ -45,6 +49,7 @@ impl Default for TestWorld {
             last_headers: None,
             created_keys: std::collections::HashMap::new(),
             created_users: std::collections::HashMap::new(),
+            last_request_credential_name: None,
         }
     }
 }

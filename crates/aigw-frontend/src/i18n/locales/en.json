@@ -1170,5 +1170,52 @@
       "batchDone": "Batch operation done",
       "inUseSkipped": "{{n}} proxy(s) skipped (in use)"
     }
+  },
+  "claudeOAuth": {
+    "title": "Claude OAuth Credentials",
+    "description": "Exchange a Claude web session cookie (sk-ant-sid) for an access token. Models bound to an anthropic_oauth credential are reverse-proxied through your Claude subscription.",
+    "new": "New OAuth Credential",
+    "allCredentials": "Claude OAuth Credentials",
+    "empty": "No OAuth credentials. Create one to enable Claude subscription reverse-proxying.",
+    "sessionKeyLabel": "Session Cookie (sk-ant-sid…)",
+    "sessionKeyPlaceholder": "Paste the full sk-ant-sid01... cookie value",
+    "sessionKeyHint": "The cookie is sent to the exchange endpoint only, then encrypted at rest. It is never displayed again.",
+    "proxyLabel": "Bound Proxy",
+    "proxyHint": "Optional. Route the OAuth exchange and reverse-proxy traffic through this proxy. Direct when unset.",
+    "direct": "Direct",
+    "injectPromptLabel": "Inject Prompt (optional)",
+    "injectPromptPlaceholder": "Appended to the system block on every reverse-proxied request for this credential.",
+    "nameLabel": "Credential Name *",
+    "namePlaceholder": "e.g. claude-oauth-personal",
+    "nameRequired": "Credential name is required",
+    "sessionKeyRequired": "Session cookie is required",
+    "noProxies": "No active proxies",
+    "exchange": "Exchange & Create",
+    "exchanging": "Exchanging…",
+    "status": {
+      "active": "Active",
+      "needsReauth": "Needs Re-auth",
+      "unknown": "Unknown"
+    },
+    "expiresAt": "Expires",
+    "boundProxy": "Proxy",
+    "lastError": "Last error",
+    "refresh": "Refresh",
+    "refreshing": "Refreshing…",
+    "reAuth": "Re-auth",
+    "edit": "Edit",
+    "delete": "Delete",
+    "redactedHint": "Token values are redacted and never shown.",
+    "toast": {
+      "exchanged": "OAuth credential created",
+      "exchangeFailed": "OAuth exchange failed",
+      "refreshed": "Token refreshed",
+      "refreshFailed": "Token refresh failed",
+      "reauthNeeded": "Re-authentication required",
+      "saved": "OAuth credential updated",
+      "saveFailed": "Save failed",
+      "deleted": "OAuth credential deleted",
+      "deleteFailed": "Delete failed"
+    }
   }
 }
