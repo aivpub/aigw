@@ -3,7 +3,10 @@
 ## [未发布]
 
 ### 新增
-- Stage 129: `POST /credential/oauth/refresh` 手动刷新端点（`credentials.rs oauth_refresh`——`TokenProvider::invalidate_and_refresh`；非 OAuth 400；cookie/refresh 均失效 409 `kind=oauth_refresh_failed`；成功响应 redact）
+- Stage 130: `/credential/new` OAuth 凭证逐字段 AES-256-GCM 加密落库（`encrypt_oauth_credential_values` 经 `aigw-core::crypto::encrypt_litellm_value_gcm`——`v2:gcm:` 信封，与 exchange 一致）——安全审计第 1/2 项
+- Stage 130: `aigw-core::crypto::encrypt_litellm_value_gcm`（litellm `v2:gcm:` AES-256-GCM 加密信封，PBKDF2-HMAC-SHA256 600k） + roundtrip UT
+- Stage 130: `chat::upstream_error_message`（只提取上游 `error.message`，parse 失败退化 `Upstream returned HTTP {status}`）接线 chat/v1_messages/responses/embeddings 四处 handler——TD-015a 解决
+- Stage 130: real BDD `claude_oauth_crud.feature`（三后端 OAuth 凭证 CRUD + 加密落库 DB 直读断言 + in-use 409 + 探测）——`real_oauth_steps.rs`
 - Stage 129: CredentialsTab OAuth 入口（`OAuthCredentialDialog.tsx` 粘贴 `sk-ant-sid` cookie + 代理下拉 + inject_prompt → exchange；OAuth 独立行 active/needs_reauth 徽章 + 到期时间 + 绑定代理 + last_error + Refresh/Re-auth/编辑/删除）
 - Stage 129: `claudeOAuth` i18n 命名空间（en + zh-CN，`fe-i18n-types` 已再生成）
 - Stage 129: 修复 `claude_token.rs cookie_self_heal` 对已解密 `session_key` 二次解密（base64 Invalid padding）→ 自愈永远不可达，改用已解密明文
@@ -28,10 +31,12 @@
 - Stage 103: `/v1/models` 暴露 `model_info.mode`（多模态模型可识别）
 
 ### 变更
+- Stage 130: chat/v1_messages/responses/embeddings 客户端上游错误从「拼原始 body」收窄为 `upstream_error_message`（TD-015a，全库模式）
 - Stage 113: `Engine::run` 拆出 `run_with_cancel(token)`（保持 `run()` 兼容签名）；health.rs `run_and_save_health_check` 增 `model_info` 参数 + 抽 `build_probe_spec`
 - Stage 103: `openai_message_to_claude` 修 image 转换 bug — data URL 剥离 + media_type 推导（parse_data_url）
 
 ### 修复
+- Stage 130: `/credential/new` OAuth 凭证明文落库（token 三件套经 exchange 已加密但通用创建路径遗漏）——real BDD DB 直读探针暴露并修复
 - Stage 129: `claude_token.rs cookie_self_heal` 对已解密 `session_key` 二次 `decrypt_litellm_value` → base64 Invalid padding → cookie 自愈永远不可达（409 场景暴露）；改用已解密明文
 - Stage 115: `compressImage` 解码失败返回 null（原返回原图 → caller 无法区分「无法渲染」）；TD-011c 单次缩放 overshoot → 迭代缩放
 - Stage 114: i18n 动态 import 归一化（navigator=en-US → en bundle，防 Unknown dynamic import unhandled-rejection）
@@ -40,6 +45,6 @@
 - Stage 103: `test_activity_reports_timezone_metadata` date-sensitive 修复（固定 start_time 在查询窗口内）
 
 ### 技术债
-- 解决: TD-011b/c + TD-012b（Stage 115）；TD-008a/b + TD-009a/b（Stage 114）；TD-005 / TD-003 / TD-010a（Stage 113）——Phase 45 技术债清理全收官
-- 引入: 无（TD-011a 视频输入维持剩余，待真实负载）
+- 解决: TD-015a（Stage 130，`upstream_error_message` 全库收窄）；TD-011b/c + TD-012b（Stage 115）；TD-008a/b + TD-009a/b（Stage 114）；TD-005 / TD-003 / TD-010a（Stage 113）——Phase 45 技术债清理全收官
+- 引入: 无（TD-015b/c/d/e/f + TD-016a/b 维持记录；TD-015d/e 转长期路线 LT-OAuthResponseAdapt / LT-CountTokensAuth）
 

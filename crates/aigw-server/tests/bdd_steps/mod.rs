@@ -27,6 +27,7 @@ pub mod proxy_steps;
 pub mod rate_limit_steps;
 pub mod real_api_steps;
 pub mod real_db_seed;
+pub mod real_oauth_steps;
 pub mod real_proxy_steps;
 pub mod responses_steps;
 pub mod router_settings_steps;

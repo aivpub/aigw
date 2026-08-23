@@ -124,6 +124,26 @@ impl CredentialResponse {
 // Handlers
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+/// Encrypt the OAuth token trio of a plaintext `credential_values` object for
+/// at-rest storage (Stage 130 security audit). `type == "anthropic_oauth"` only.
+///
+/// Mirrors `claude_oauth::build_oauth_credential_values` — the trio
+/// (`access_token`, `refresh_token`, `session_key`) is individually encrypted
+/// with AES-256-GCM (`v2:gcm:` envelope, litellm-compatible); every other
+/// field (proxy_id, org_uuid, status, …) passes through unchanged.
+fn encrypt_oauth_credential_values(values: &Value, master_key: &str) -> Result<Value, String> {
+    let mut out = values.clone();
+    if let Some(map) = out.as_object_mut() {
+        for key in aigw_core::crypto::OAUTH_SENSITIVE_KEYS {
+            if let Some(Value::String(plain)) = map.get(*key) {
+                let enc = aigw_core::crypto::encrypt_litellm_value_gcm(plain, master_key)?;
+                map.insert(key.to_string(), Value::String(enc));
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// POST /credential/new — create a new credential (admin)
 pub async fn credential_new(
     State(state): State<SharedState>,
@@ -160,6 +180,39 @@ pub async fn credential_new(
         created_by: None,
         updated_at: now,
         updated_by: None,
+    };
+
+    // Security audit (Stage 130): OAuth credentials created via the generic
+    // /credential/new path MUST have their token trio encrypted at rest, exactly
+    // like /credential/oauth/exchange does. Generic credentials (openai/api_key)
+    // are stored as-is (litellm convention — the whole values blob is handled by
+    // the resolver's decrypt_json_fields on read). For `anthropic_oauth`, re-map
+    // the plaintext trio through encrypt_litellm_value before persisting.
+    let credential = match credential
+        .credential_values
+        .get("type")
+        .and_then(|t| t.as_str())
+    {
+        Some("anthropic_oauth") => {
+            let mk = state.aigw_master_key.as_deref().ok_or_else(|| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": {"message": "AIGW_MASTER_KEY not configured — cannot encrypt OAuth credential"}})),
+                )
+            })?;
+            let encrypted =
+                encrypt_oauth_credential_values(&credential.credential_values, mk).map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({"error": {"message": format!("Failed to encrypt OAuth credential: {}", e)}})),
+                    )
+                })?;
+            Credential {
+                credential_values: encrypted,
+                ..credential
+            }
+        }
+        _ => credential,
     };
 
     state.db.insert_credential(&credential).await.map_err(|e| {
@@ -625,5 +678,61 @@ pub async fn oauth_refresh(
                 })),
             ))
         }
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Tests
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// Stage 130 security audit: /credential/new with an `anthropic_oauth`
+    /// credential must encrypt the token trio at rest (v2:gcm: envelope) and
+    /// leave non-sensitive fields untouched.
+    #[test]
+    fn test_encrypt_oauth_credential_values_encrypts_trio() {
+        let values = json!({
+            "type": "anthropic_oauth",
+            "access_token": "sk-ant-access-plain",
+            "refresh_token": "sk-ant-refresh-plain",
+            "session_key": "sk-ant-sid-plain",
+            "org_uuid": "org-team-1",
+            "proxy_id": 3,
+            "status": "active",
+        });
+        let enc = encrypt_oauth_credential_values(&values, "sk-master").unwrap();
+        for key in ["access_token", "refresh_token", "session_key"] {
+            let v = enc[key].as_str().expect(key);
+            assert!(v.starts_with("v2:gcm:"), "{} must be encrypted: {}", key, v);
+            // Round-trips back to the plaintext.
+            assert_eq!(
+                decrypt_litellm_value(v, "sk-master").unwrap(),
+                values[key].as_str().unwrap()
+            );
+        }
+        // Non-sensitive fields pass through unchanged.
+        assert_eq!(enc["type"], "anthropic_oauth");
+        assert_eq!(enc["org_uuid"], "org-team-1");
+        assert_eq!(enc["proxy_id"], 3);
+        assert_eq!(enc["status"], "active");
+    }
+
+    /// Stage 130 security audit: a non-OAuth credential (plain api_key) is
+    /// NOT encrypted by /credential/new (litellm convention — whole blob
+    /// handled on read), and encrypt_oauth_credential_values is a no-op for
+    /// values without the token trio.
+    #[test]
+    fn test_encrypt_oauth_credential_values_non_oauth_unchanged() {
+        let values = json!({
+            "type": "openai",
+            "api_key": "sk-plain-key",
+        });
+        let enc = encrypt_oauth_credential_values(&values, "sk-master").unwrap();
+        assert_eq!(enc["api_key"], "sk-plain-key");
+        assert_eq!(enc["type"], "openai");
     }
 }

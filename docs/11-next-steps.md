@@ -1,15 +1,19 @@
 # aigw -- 下一步行动
 
 **上次更新**: 2026-08-24
-**当前阶段**: **Phase 51 进行中（Stage 126-129 ✅ 完成）**，Stage 130 收为下一步
+**当前阶段**: **Phase 51 ✅ 全部完成（Stage 126-130）— 134/134 ALL STAGES COMPLETE**
 
 ---
 
-## 当前状态：Phase 51 进行中（Stage 126-129 ✅ 完成）
+## 当前状态：Phase 51 全部完成（Stage 126-130 ✅）
 
-**2026-08-24（Stage 129 前端 OAuth 入口交付 ✅）**: CredentialsTab OAuth 入口 + 后端手动 refresh 端点。**后端 `POST /credential/oauth/refresh`**（`credentials.rs`）：admin 手动刷新（`TokenProvider::invalidate_and_refresh`）→ 成功返回 redact 后凭证 / 非 OAuth 400 / cookie+refresh 均失效 409 + `kind=oauth_refresh_failed`。**前端**：`OAuthCredentialDialog.tsx`（粘贴 `sk-ant-sid` cookie + 代理下拉 `/admin/proxies` + inject_prompt + 名称 → exchange）+ CredentialsTab OAuth 独立行（active/needs_reauth 徽章 + 到期时间 + 绑定代理 + last_error 截断 + Refresh/Re-auth/编辑/删除）。**i18n** `claudeOAuth` 命名空间 en+zh-CN。**关键修复**：`claude_token.rs cookie_self_heal` 对已解密 `session_key` 二次解密（base64 Invalid padding）→ 自愈永远不可达，由 409 场景暴露并修复（直接用明文）。**验证**：mock BDD **278 场景（265 pass / 13 skip）**、aigw-core 500 + aigw-server 154 UT、fe-bdd 全量 **387 pass / 3 skip（0 fail）**（claude_oauth.feature 6 × 3 = 18 全绿）、fmt + lint + fe-build + fe-lint 全绿。设计文档：`docs/stages/stage-129.md` + `stage-129-review-log.md` + ADR-035 + TD-016a/b。
+**2026-08-24（Stage 130 收尾 + 安全审计 ✅，134/134）**: real BDD 三后端 OAuth 凭证 CRUD + 加密落库直读断言 + in-use 守卫（**58/58 × 3 全绿**）。**安全审计 8 项全部通过**。两个关键修复：
+- **`/credential/new` OAuth 凭证逐字段加密落库**：`anthropic_oauth` 凭证的 access/refresh/session_key 之前以明文经通用创建路径落库（exchange 已加密但 new 遗漏）——新增 `aigw-core::crypto::encrypt_litellm_value_gcm`（AES-256-GCM `v2:gcm:`）+ `credential_new` 加密接线 + 2 UT。real BDD DB 直读探针三后端验证无明文。
+- **TD-015a 全库收窄**：`chat::upstream_error_message`（只提取上游 `error.message`，parse 失败退化 `Upstream returned HTTP {status}`）接线 chat/v1_messages/responses/embeddings 四处 handler——所有上游错误不再暴露原始 body。
 
-**基线更新（Stage 129 后）**: aigw-core **500 UT**、aigw-server **154 UT**、mock BDD **278（265 pass / 13 skip body_archive）**、real BDD 三端 **53/53 × 3**、fe-bdd **387 pass / 3 skip（0 fail）**、`task fmt`/`task lint`/`fe-build`/`fe-lint` 全绿。
+**验证**: aigw-core **502** + aigw-server **157** + aigw-migrate 27 UT、mock BDD **278（265 pass / 13 skip body_archive）**、real BDD 三端 **58/58 × 3**、`task fmt`/`task lint` green。设计文档：`docs/stages/stage-130.md` + `stage-130-review-log.md`；TD-015a Resolved；ADR-034 收尾；长期路线追加 LT-OAuthResponseAdapt / LT-CountTokensAuth。
+
+**基线更新（Stage 130 后）**: aigw-core **502 UT**、aigw-server **157 UT**、mock BDD **278（265 pass / 13 skip body_archive）**、real BDD 三端 **58/58 × 3**、`task fmt`/`task lint` green。
 
 | Phase | Stage | 主题 | 预估 | 状态 |
 |-------|-------|------|------|------|
@@ -17,7 +21,9 @@
 | **51** | 127 | Token 生命周期 + 三层自愈（缓存→刷新→cookie→告警） | 10h | ✅ 完成 |
 | **51** | 128 | 反代管线（billing 注入 + 全协议转换 + 代理出口） | 14h | ✅ 完成 |
 | **51** | 129 | CredentialsTab OAuth 入口前端 | 8h | ✅ 完成（2026-08-24） |
-| **51** | 130 | 收尾：real BDD + 安全审计 + ADR-034 | 6h | ⏳ |
+| **51** | 130 | 收尾：real BDD + 安全审计 + ADR-034 | 6h | ✅ 完成（2026-08-24） |
+
+**后续候选（OAuth）**: TD-015d 响应侧协议转换（LT-OAuthResponseAdapt）/ TD-015e count_tokens 双认证（LT-CountTokensAuth）/ TD-016a/b 前端 refresh 语义;中期 M1 guardrails / M2 Redis 分布式层。
 
 **依赖**: Phase 51 强依赖 Phase 50（凭证绑代理 + 交换走代理出口 + 反代代理出口 + claude_oauth 质量目标）。
 
@@ -233,6 +239,7 @@ Phase 45:   ████████████████████ 100% (3
 | ✅ | Phase 47 收尾：前端 RouterSettings 下拉解锁 + config cache 块 + max_parallel key/budget 表字段 | ✅ 完成（2026-08-10，9fe6329 / cada57b） |
 | ✅ | **Phase 50 代理服务管理（Stage 122-125 全部完成）**（proxies 表 + in-use 守卫 + proxy_url 加密 + 出口/质量检测 + ProxiesPage 前端 + real BDD 三后端） | ✅ 完成（2026-08-18） |
 | ✅ | **Phase 51 Stage 126-128 完成**（凭证扩展 + Cookie→Token 交换 + Token 三层自愈 + 反代管线） | ✅ 完成（2026-08-20，11 commits beffd97~2fc1d89） |
-| ⏳ | **Phase 51 Stage 130 剩余**（收尾安全审计） | ⏳ Stage 130 下一步（real BDD OAuth CRUD + 安全审计 8 项 + TD-015a 错误体透传 + ADR-034 收尾） |
+| ✅ | **Phase 51 Stage 129 前端 OAuth 入口 + 手动 refresh** | ✅ 完成（2026-08-24，ADR-035 + TD-016a/b） |
+| ✅ | **Phase 51 Stage 130 收尾 + 安全审计（134/134 ALL STAGES COMPLETE）** | ✅ 完成（2026-08-24，real BDD 58/58 × 3 + 审计 8 项 + TD-015a Resolved + ADR-034 收尾） |
 | P2 | TD-008c/d 后端错误多语言 + RTL、TD-009e 外链缩略图、TD-011a 视频 token 估算（剩余） | 待处理（视使用量） |
 | P2 | Phase 41 测试缺口（适配器 UT + 流式接线） | ✅ 关闭（2026-08-09） |

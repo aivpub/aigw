@@ -191,6 +191,30 @@ pub(crate) fn extract_cache_creation_tokens(usage: &Value) -> i32 {
         .unwrap_or(0) as i32
 }
 
+/// Extract a safe client-facing message from an upstream error body (TD-015a).
+///
+/// The upstream error body may embed caller-supplied data (echoed prompt,
+/// provider debug detail) that should not be blindly surfaced. This returns
+/// only the upstream `error.message` (or `error` string, Anthropic shape) when
+/// parseable, falling back to the HTTP status line alone — never the raw body.
+pub(crate) fn upstream_error_message(status: u16, body: &str) -> String {
+    let parsed = serde_json::from_str::<Value>(body).ok();
+    let msg = parsed
+        .as_ref()
+        .and_then(|v| v.get("error"))
+        .and_then(|e| match e {
+            Value::Object(_) => e.get("message").and_then(|m| m.as_str()),
+            Value::String(s) => Some(s.as_str()),
+            _ => None,
+        });
+    match msg {
+        Some(m) if !m.trim().is_empty() => {
+            format!("Upstream returned {}: {}", status, m)
+        }
+        _ => format!("Upstream returned HTTP {}", status),
+    }
+}
+
 /// Label the deployment set for the cache key provider bucket. Uses the
 /// custom_llm_provider if uniform across candidates, else "multi" (different
 /// providers shouldn't share a cache entry).
@@ -1238,7 +1262,8 @@ pub async fn chat_completions(
                         .unwrap_or(StatusCode::BAD_GATEWAY),
                     Json(json!({
                         "error": {
-                            "message": format!("Upstream returned {}: {}", upstream_status.as_u16(), error_body),
+                            // TD-015a: never surface the raw upstream body.
+                            "message": upstream_error_message(upstream_status.as_u16(), &error_body),
                             "type": "upstream_error",
                             "code": null
                         }
@@ -1389,7 +1414,8 @@ pub async fn chat_completions(
                 StatusCode::from_u16(upstream_status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY),
                 Json(json!({
                     "error": {
-                        "message": format!("Upstream returned {}: {}", upstream_status.as_u16(), error_body),
+                        // TD-015a: never surface the raw upstream body.
+                        "message": upstream_error_message(upstream_status.as_u16(), &error_body),
                         "type": "upstream_error",
                         "code": null
                     }
@@ -1931,11 +1957,8 @@ pub async fn chat_completions(
                 StatusCode::from_u16(upstream_status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY),
                 Json(json!({
                     "error": {
-                        "message": format!(
-                            "Upstream returned {}: {}",
-                            upstream_status.as_u16(),
-                            error_body
-                        ),
+                        // TD-015a: never surface the raw upstream body.
+                        "message": upstream_error_message(upstream_status.as_u16(), &error_body),
                         "type": "upstream_error",
                         "code": null
                     }
@@ -4195,5 +4218,44 @@ mod tests {
         // Master key ignores the key-level cap (2), applies deployment cap (9).
         let mp = resolve_effective_max_parallel(&state, &identity, &dep).await;
         assert_eq!(mp, 9);
+    }
+
+    /// TD-015a: the client-facing upstream error message must only carry the
+    /// upstream `error.message`, never the raw error body (which may embed
+    /// caller-supplied data / provider debug detail).
+    #[test]
+    fn test_upstream_error_message_extracts_message_only() {
+        // Anthropic shape: error.message
+        let body = r#"{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}"#;
+        let msg = upstream_error_message(401, body);
+        assert!(msg.contains("invalid x-api-key"), "msg: {msg}");
+        assert!(
+            !msg.contains("authentication_error"),
+            "raw type leaked: {msg}"
+        );
+
+        // OpenAI shape: error.message inside a non-object error value
+        let body2 = r#"{"error":{"message":"model not found"}}"#;
+        let msg2 = upstream_error_message(404, body2);
+        assert!(msg2.contains("model not found"), "msg2: {msg2}");
+
+        // String-typed error field (Anthropic older shape)
+        let body3 = r#"{"error":"overloaded"}"#;
+        let msg3 = upstream_error_message(503, body3);
+        assert!(msg3.contains("overloaded"), "msg3: {msg3}");
+
+        // Unparseable / no message → status-line only, never the raw body.
+        let body4 = "GATEWAY_TIMEOUT";
+        let msg4 = upstream_error_message(504, body4);
+        assert!(msg4.contains("HTTP 504"), "msg4: {msg4}");
+        assert!(!msg4.contains("GATEWAY_TIMEOUT"), "raw body leaked: {msg4}");
+
+        // Raw body must NEVER be surfaced even when it embeds a long prompt.
+        let prompt_echo = r#"{"error":{"message":"harmful input","prompt":"REPEAT-THE-SECRET"}}"#;
+        let msg5 = upstream_error_message(400, prompt_echo);
+        assert!(
+            !msg5.contains("REPEAT-THE-SECRET"),
+            "prompt echoed to client: {msg5}"
+        );
     }
 }

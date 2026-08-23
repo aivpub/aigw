@@ -646,6 +646,7 @@
   - **Stage 127（Token 生命周期）**：内存缓存 → 临期刷新 → cookie 自愈 → needs_reauth 告警；管线 401 强制刷新重试。
   - **Stage 128（反代管线）**：resolver OAuth 识别 + 统一上游 /v1/messages + billing 块注入（默认最小化）+ CC 伪装头 + 代理出口 + chat/responses 转换 + count_tokens + embeddings 400。
   - **Stage 129（前端）** / **Stage 130（收尾+安全审计）**。
+  - **Stage 130（2026-08-24 ✅）**：real BDD 三后端 OAuth 凭证 CRUD + 加密落库直读断言 + in-use 守卫（58/58 × 3 全绿）；安全审计 8 项全部通过（cookie/token `v2:gcm:` 加密落库、响应/日志 redact、错误传播只透传 message、proxy_url 加密 + redact）；`/credential/new` 补 OAuth 凭证逐字段加密（`encrypt_litellm_value_gcm`）;TD-015a 全库收窄（`upstream_error_message`）。
 - **Background**: Anthropic OAuth 凭证仅授权 Claude Code 使用，无 billing attribution 块打 /v1/messages 会被 429 拒（身份 gate 实测，`docs/research` 引 sub2api `docs/claude-oauth-identity-gate.md`）。access_token 8h、refresh_token 30 天轮换、cookie 可被 Anthropic 单方面吊销。
 - **Key decisions**:
   - **最小化 billing 块默认注入**（用户决策）：`system[0]` = `x-anthropic-billing-header: cc_version={ver}.{fp}; cc_entrypoint=cli;`（指纹 SHA256(SALT+chars[4,7,20]+version)[:3]，SALT `59cf53e54c78`，字节对齐 sub2api/Parrot）；0 token 成本、服务端剥离；凭证可配置 `inject_prompt` 追加为额外 block。
@@ -657,6 +658,7 @@
 - **Consequences**:
   - 配置 OAuth 凭证的模型可被 Claude Code + OpenAI 格式客户端共用订阅号；仅 cookie 被 Anthropic 吊销时需人工（告警通知 + 前端 Re-auth）。
   - 完整伪装链（tool 混淆/dateline/1h TTL/metadata.user_id/完整三块）登记长期路线。
+  - Stage 130 收尾（2026-08-24 ✅）：`/credential/new` OAuth 凭证逐字段 AES-256-GCM 加密落库（与 exchange 一致）;TD-015a 全库收窄;real BDD 三后端 58/58 × 3 全绿。**后续候选**：TD-015d 响应侧协议转换 / TD-015e count_tokens 双认证 / TD-016a/b 前端 refresh 语义。
   - 设计文档：`docs/plans/2026-08-18-claude-oauth-reverse-proxy.md` + `docs/stages/stage-126.md` ~ `stage-130.md`。
 
 ## ADR-035: Stage 129 前端 OAuth 入口 + 手动 refresh 端点（Phase 51）

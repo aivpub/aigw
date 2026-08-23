@@ -163,6 +163,39 @@ fn derive_gcm_key(master_key: &str, salt: &[u8]) -> [u8; 32] {
     key
 }
 
+/// Encrypt a plaintext into the litellm AES-256-GCM envelope (`v2:gcm:` prefix).
+///
+/// Format: salt[0..16] || nonce[16..28] || ciphertext[28..-16] || tag[-16..],
+/// base64-encoded and prefixed with `v2:gcm:`. This is the same envelope that
+/// `decrypt_litellm_value` recognises and that Stage 126's OAuth credential
+/// builder writes — used by /credential/new to encrypt OAuth token trio at rest.
+///
+/// NOTE: the Stage 126 `build_oauth_credential_values` still uses NaCl
+/// (`encrypt_litellm_value`, no prefix). Both envelopes decrypt via
+/// `decrypt_litellm_value`; the GCM form is preferred for new OAuth writes so
+/// the stored value is self-describing (`v2:gcm:`), matching litellm's
+/// production convention.
+pub fn encrypt_litellm_value_gcm(plaintext: &str, master_key: &str) -> Result<String, String> {
+    use aes_gcm::{aead::Aead, Aes256Gcm, KeyInit};
+
+    let mut salt = [0u8; 16];
+    getrandom::fill(&mut salt).map_err(|e| format!("RNG failed: {}", e))?;
+    let key = derive_gcm_key(master_key, &salt);
+    let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| format!("invalid key: {}", e))?;
+    let mut nonce = [0u8; 12];
+    getrandom::fill(&mut nonce).map_err(|e| format!("RNG failed: {}", e))?;
+    use aes_gcm::aead::consts::U12;
+    let nonce_ref = <&aes_gcm::Nonce<U12>>::try_from(&nonce[..]).map_err(|e| format!("{e}"))?;
+    let ct = cipher
+        .encrypt(nonce_ref, plaintext.as_bytes())
+        .map_err(|e| format!("AES-GCM encrypt failed: {}", e))?;
+    let mut data = Vec::with_capacity(16 + 12 + ct.len());
+    data.extend_from_slice(&salt);
+    data.extend_from_slice(&nonce);
+    data.extend_from_slice(&ct);
+    Ok(format!("v2:gcm:{}", BASE64_STD.encode(&data)))
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // proxy_url encryption (Phase 50, Stage 122)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -558,6 +591,20 @@ mod tests {
         assert_eq!(decrypted.as_bytes(), plaintext);
     }
 
+    /// Stage 130: `encrypt_litellm_value_gcm` round-trips through
+    /// `decrypt_litellm_value` (same v2:gcm: envelope the OAuth credential
+    /// builder writes).
+    #[test]
+    fn test_encrypt_litellm_value_gcm_roundtrip() {
+        let plain = "sk-ant-sid-secret-123";
+        let enc = encrypt_litellm_value_gcm(plain, "sk-master").unwrap();
+        assert!(enc.starts_with("v2:gcm:"));
+        assert!(!enc.contains("sk-ant"), "ciphertext leaks plaintext: {enc}");
+        assert_eq!(decrypt_litellm_value(&enc, "sk-master").unwrap(), plain);
+        // Wrong key fails.
+        assert!(decrypt_litellm_value(&enc, "wrong-key").is_err());
+    }
+
     // ━━━━━━━━━━━ edge case tests ━━━━━━━━━━━
 
     #[test]
@@ -728,6 +775,39 @@ mod tests {
         });
         let rotated_str = rotate_json_fields(&params, SOURCE_KEY, TARGET_KEY).unwrap();
         assert_eq!(rotated_str, params.to_string());
+    }
+
+    /// TD-015g / Stage 130 security audit: a plaintext token value (e.g. a
+    /// cookie that was NOT encrypted before storage) must round-trip through
+    /// `rotate_json_fields` and still be rejected by `decrypt_litellm_value` —
+    /// otherwise the rotate helper would be a bypass that "looks encrypted".
+    #[test]
+    fn test_rotate_json_fields_plaintext_oauth_cookie_stays_plaintext() {
+        let values = serde_json::json!({
+            "type": "anthropic_oauth",
+            "session_key": "sk-ant-sid-real-enc",
+            "access_token": "sk-ant-access-real",
+            "refresh_token": "sk-ant-refresh-real",
+        });
+        let rotated_str = rotate_json_fields(&values, SOURCE_KEY, TARGET_KEY).unwrap();
+        let rotated: Value = serde_json::from_str(&rotated_str).unwrap();
+        // Plaintext (non-encrypted) fields are left untouched by rotation.
+        assert_eq!(
+            rotated["session_key"],
+            serde_json::json!("sk-ant-sid-real-enc")
+        );
+        assert_eq!(
+            rotated["access_token"],
+            serde_json::json!("sk-ant-access-real")
+        );
+        // And a plaintext value still fails to decrypt (never looks encrypted).
+        assert!(decrypt_litellm_value("sk-ant-access-real", SOURCE_KEY).is_err());
+        // After decrypt_json_fields, plaintext passes through unchanged.
+        let decrypted = decrypt_json_fields(&rotated, TARGET_KEY);
+        assert_eq!(
+            decrypted["session_key"],
+            serde_json::json!("sk-ant-sid-real-enc")
+        );
     }
 
     #[test]

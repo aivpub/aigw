@@ -180,7 +180,7 @@
 
 | Sub-ID | 条目 | 优先级 | 描述 |
 |--------|------|--------|------|
-| TD-015a | 上游错误体原样透传客户端 | P2 | OAuth 分支 `format!("Upstream returned {}: {}", status, error_body)` 把上游错误体拼进客户端响应。**全库既有模式**（chat/v1_messages 非 OAuth 路径同样透传），非 Stage 128 新增；与 Stage 130 安全审计验收项"错误传播只透传 message，不含凭证"冲突。纳入 Stage 130 统一修。 |
+| TD-015a | 上游错误体原样透传客户端 | P2 | ✅ **Resolved 2026-08-24（Stage 130）** — `chat::upstream_error_message` 收窄，见 Resolved Items。 |
 | TD-015b | billing 指纹 12-bit 碰撞 | P3 | `SHA256(SALT+chars[4,7,20]+version)[:3]` = 12 bit。独立验证判定**威胁模型不成立**（fp 只发上游、与账单归属无关、SALT 本就公开、身份 gate 无指纹注册表校验），是 sub2api/Parrot 上游设计固有。记录不修。 |
 | TD-015c | SpendLog 明文 body 落库 | P3 | OAuth 分支 `messages: Some(body.clone())`（billing 注入前原始 body）+ `response`（上游响应原文）落 spend_logs。**access_token 只走 Authorization 头永不进 body**，非凭据泄漏；上游响应原文落库是全库既有模式。数据面大，若审计要求可纳入 Stage 130。 |
 | TD-015d | OAuth 响应侧协议转换（H4，产品决策） | P2 | chat/responses 只做请求侧 `adapt_to_anthropic`，响应把 Anthropic 原生结构返回给 OpenAI 客户端（缺 `choices`/`usage.prompt_tokens`），OpenAI SDK 客户端无法解析。当前文档记"客户端接收 native response"。若需完整反代应补响应侧 `adapt_response`。**产品决策待定**。 |
@@ -195,6 +195,12 @@
 | TD-016b | OAuth 凭证编辑对话框仍用通用 Credential 编辑（advanced JSON） | P3 | OAuth 行仍可点铅笔打开通用 `openEdit`（advanced JSON 模式），能手工改 status/last_error 等字段（字段加密落库）。非 Stage 129 需求（§2.1 只要求改 proxy_id + inject_prompt，未单独实现 OAuth 编辑表单）。纳入 Stage 130 可选。 |
 
 ## Resolved Items
+
+### TD-015a: 上游错误体原样透传客户端（Resolved 2026-08-24, Stage 130）
+
+- 新增 `chat::upstream_error_message(status, body)`——只提取上游 `error.message`（Anthropic object / string 双形状），parse 失败退化为 `Upstream returned HTTP {status}`；chat/v1_messages/responses/embeddings 四处 handler 全部接线。
+- real BDD 验证：SQLite/PG/MySQL 三后端 58/58 × 3 全绿；+1 UT（含 prompt-echo 不泄漏断言）。
+- TD-015c（SpendLog 明文 body 落库）维持 P3 记录不修（access_token 只走 Authorization 头、永不进 body）。
 
 ### TD-002: @real_api step bindings implemented (Resolved 2026-07-05)
 

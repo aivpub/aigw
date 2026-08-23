@@ -340,7 +340,11 @@ pub async fn responses_handler(
                         .unwrap_or(StatusCode::BAD_GATEWAY),
                     Json(json!({
                         "error": {
-                            "message": format!("Upstream returned {}: {}", upstream_status.as_u16(), error_body),
+                            // TD-015a: never surface the raw upstream body.
+                            "message": super::chat::upstream_error_message(
+                                upstream_status.as_u16(),
+                                &error_body
+                            ),
                             "type": "upstream_error",
                             "code": null
                         }
@@ -483,7 +487,11 @@ pub async fn responses_handler(
                 StatusCode::from_u16(upstream_status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY),
                 Json(json!({
                     "error": {
-                        "message": format!("Upstream returned {}: {}", upstream_status.as_u16(), error_body),
+                        // TD-015a: never surface the raw upstream body.
+                        "message": super::chat::upstream_error_message(
+                            upstream_status.as_u16(),
+                            &error_body
+                        ),
                         "type": "upstream_error",
                         "code": null
                     }
@@ -1387,14 +1395,10 @@ pub async fn responses_handler(
                 StatusCode::from_u16(upstream_status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY),
                 Json(json!({
                     "error": {
-                        "message": format!(
-                            "Upstream returned {}: {}",
+                        // TD-015a: never surface the raw upstream body.
+                        "message": super::chat::upstream_error_message(
                             upstream_status.as_u16(),
-                            resp_body
-                                .get("error")
-                                .and_then(|e| e.get("message"))
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("Unknown error")
+                            &resp_body.to_string()
                         ),
                         "type": "upstream_error",
                         "code": null

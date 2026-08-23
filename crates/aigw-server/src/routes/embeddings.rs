@@ -436,6 +436,10 @@ async fn embeddings_handler_inner(
         let fail_session_id2 = session_id.clone();
         let fail_requester_ip2 = requester_ip.clone();
         let fail_request_id = request_id.clone();
+        // TD-015a: embeddings is OpenAI-compatible (never OAuth) — keep the
+        // upstream error message extraction for the failure spend-log, but the
+        // client-facing error message must only carry the upstream error
+        // message (never the raw error body, which may embed caller data).
         let fail_upstream_id = fail_resp
             .get("id")
             .and_then(|v| v.as_str())
@@ -490,14 +494,10 @@ async fn embeddings_handler_inner(
             StatusCode::from_u16(upstream_status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY),
             Json(json!({
                 "error": {
-                    "message": format!(
-                        "Upstream returned {}: {}",
+                    // TD-015a: never surface the raw upstream body.
+                    "message": super::chat::upstream_error_message(
                         upstream_status.as_u16(),
-                        resp_body
-                            .get("error")
-                            .and_then(|e| e.get("message"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("Unknown error")
+                        &resp_body.to_string()
                     ),
                     "type": "upstream_error",
                     "code": null

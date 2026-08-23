@@ -536,11 +536,8 @@ pub async fn messages_handler(
                     StatusCode::from_u16(upstream_status.as_u16())
                         .unwrap_or(StatusCode::BAD_GATEWAY),
                     "upstream_error",
-                    &format!(
-                        "Upstream returned {}: {}",
-                        upstream_status.as_u16(),
-                        error_body
-                    ),
+                    // TD-015a: never surface the raw upstream body.
+                    &super::chat::upstream_error_message(upstream_status.as_u16(), &error_body),
                     &request_id,
                 ));
             }
@@ -689,11 +686,8 @@ pub async fn messages_handler(
             return Err(anthropic_error(
                 StatusCode::from_u16(upstream_status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY),
                 "upstream_error",
-                &format!(
-                    "Upstream returned {}: {}",
-                    upstream_status.as_u16(),
-                    error_body
-                ),
+                // TD-015a: never surface the raw upstream body.
+                &super::chat::upstream_error_message(upstream_status.as_u16(), &error_body),
                 &request_id,
             ));
         }
@@ -1080,11 +1074,8 @@ pub async fn messages_handler(
             return Err(anthropic_error(
                 StatusCode::from_u16(upstream_status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY),
                 "upstream_error",
-                &format!(
-                    "Upstream returned {}: {}",
-                    upstream_status.as_u16(),
-                    error_body
-                ),
+                // TD-015a: never surface the raw upstream body.
+                &super::chat::upstream_error_message(upstream_status.as_u16(), &error_body),
                 &request_id,
             ));
         }
@@ -1444,11 +1435,8 @@ pub async fn messages_handler(
             return Err(anthropic_error(
                 StatusCode::from_u16(upstream_status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY),
                 "upstream_error",
-                &format!(
-                    "Upstream returned {}: {}",
-                    upstream_status.as_u16(),
-                    error_body
-                ),
+                // TD-015a: never surface the raw upstream body.
+                &super::chat::upstream_error_message(upstream_status.as_u16(), &error_body),
                 &request_id,
             ));
         }
