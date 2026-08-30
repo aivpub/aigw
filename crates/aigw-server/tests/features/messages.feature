@@ -78,3 +78,12 @@ Feature: Claude /v1/messages 端点
     When 使用 key "msg-image-user" 发送带图片的 POST /v1/messages 请求用 model "gpt-4o-img"
     Then 响应状态码为 200
     And mock 上游收到的 /v1/messages 请求 body 含 image_url 图片 parts
+
+  Scenario: 流式首帧 content_block_delta 不丢失（Mult 丢字回归）
+    Given mock 上游已启动
+    And mock 上游 chat 返回分帧 SSE 首 content 为 Mult
+    And 已配置 model "claude-stream-mult" 指向 mock 上游
+    And 一个普通 key "msg-stream-mult-user" 已生成
+    When 使用 key "msg-stream-mult-user" 发送流式 POST /v1/messages 请求用 model "claude-stream-mult"
+    Then 响应状态码为 200
+    And 流式 content_block_delta 文本拼接后为 "Multica 没有独立的归档区"

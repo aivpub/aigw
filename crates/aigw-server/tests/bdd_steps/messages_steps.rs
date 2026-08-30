@@ -326,3 +326,144 @@ async fn then_mock_received_messages_image_parts(_world: &mut TestWorld) {
         "AnthropicToOpenAI must reconstruct the data URL (data:{{media_type}};base64,{{data}})"
     );
 }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 流式首帧 delta 不丢失 回归场景（"Mult 丢字" bug）
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Reproduce the "首帧 Mult 丢字" bug at the SSE frame level: the OpenAI
+/// upstream streams a role frame, then a first content delta of exactly
+/// "Mult", then the remainder "ica 没有独立的归档区", then stop + usage. The
+/// gateway must emit every content_block_delta — including the first "Mult".
+#[given(expr = "mock 上游 chat 返回分帧 SSE 首 content 为 Mult")]
+async fn given_mock_chat_stream_mult_frames(_world: &mut TestWorld) {
+    let mu = crate::bdd_steps::e2e_steps::mock_upstream().lock().await;
+    let upstream = mu.as_ref().expect("mock upstream not started");
+
+    let frame = |delta: serde_json::Value,
+                 finish_reason: Option<&str>,
+                 usage: Option<serde_json::Value>| {
+        let mut obj = serde_json::json!({
+            "id": "chatcmpl-stream-mock",
+            "object": "chat.completion.chunk",
+            "created": 1700000000,
+            "model": "gpt-4o",
+            "choices": [{"index": 0, "delta": delta, "finish_reason": finish_reason}]
+        });
+        if let Some(u) = usage {
+            obj["usage"] = u;
+        }
+        obj
+    };
+    let sse = format!(
+        "data: {}\n\ndata: {}\n\ndata: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
+        frame(serde_json::json!({"role": "assistant"}), None, None),
+        frame(serde_json::json!({"content": "Mult"}), None, None),
+        frame(
+            serde_json::json!({"content": "ica 没有独立的归档区"}),
+            None,
+            None
+        ),
+        frame(
+            serde_json::json!({}),
+            Some("stop"),
+            Some(
+                serde_json::json!({"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15})
+            )
+        )
+    );
+    upstream.set_sse_body("/v1/chat/completions", sse.into_bytes());
+}
+
+/// Send a streaming `POST /v1/messages` request, capturing the raw SSE body
+/// (into `last_body.__raw` when the response is not JSON) so Then steps can
+/// assert on the reconstructed text.
+#[when(expr = "使用 key {string} 发送流式 POST \\/v1\\/messages 请求用 model {string}")]
+async fn when_post_messages_stream(world: &mut TestWorld, alias: String, model: String) {
+    let state = world.ensure_state().await;
+    let router = build_messages_router(state);
+    let token = world.created_keys.get(&alias).expect("key not found");
+    let body = serde_json::json!({
+        "model": model,
+        "max_tokens": 256,
+        "stream": true,
+        "messages": [{"role": "user", "content": "hi"}]
+    })
+    .to_string();
+
+    let req = axum::http::Request::builder()
+        .method(Method::POST)
+        .uri("/v1/messages")
+        .header("Content-Type", "application/json")
+        .header("anthropic-version", "2023-06-01")
+        .header("x-api-key", token)
+        .body(axum::body::Body::from(body))
+        .unwrap();
+
+    let response = router.oneshot(req).await.unwrap();
+    let status = response.status().as_u16();
+    let resp_headers = response.headers().clone();
+    let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap_or_default();
+
+    let is_json = resp_headers
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.starts_with("application/json"))
+        .unwrap_or(false);
+
+    let json_body: Option<serde_json::Value> = if is_json {
+        serde_json::from_slice(&body_bytes).ok()
+    } else {
+        let text = String::from_utf8_lossy(&body_bytes).to_string();
+        Some(serde_json::json!({
+            "__raw": text,
+            "__content_type": resp_headers
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("")
+        }))
+    };
+    world.last_status = Some(status);
+    world.last_body = json_body;
+    world.last_headers = Some(resp_headers);
+}
+
+/// Concatenate every `content_block_delta` text_delta from the raw Claude SSE
+/// stream and assert it equals the expected full text — which fails if the
+/// first delta (e.g. "Mult") was dropped.
+#[then(regex = r#"^流式 content_block_delta 文本拼接后为 "(.+)"$"#)]
+async fn then_stream_text_equals(world: &mut TestWorld, expected: String) {
+    let body = world.last_body.as_ref().expect("no response body");
+    let raw = body
+        .get("__raw")
+        .and_then(|v| v.as_str())
+        .expect("no __raw streaming body");
+
+    let mut assembled = String::new();
+    for block in raw.split("\n\n") {
+        let block = block.trim();
+        if !block.starts_with("event: content_block_delta") {
+            continue;
+        }
+        for line in block.lines() {
+            if let Some(data) = line.strip_prefix("data: ") {
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
+                    if let Some(text) = val
+                        .get("delta")
+                        .and_then(|d| d.get("text"))
+                        .and_then(|t| t.as_str())
+                    {
+                        assembled.push_str(text);
+                    }
+                }
+            }
+        }
+    }
+
+    assert_eq!(
+        assembled, expected,
+        "stream text lost the first delta — expected {expected:?}, got {assembled:?}\nraw:\n{raw}"
+    );
+}

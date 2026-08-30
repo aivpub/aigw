@@ -83,6 +83,12 @@ pub struct MockResponse {
     /// Remaining one-shot hits before the response is removed (0 = persistent).
     #[allow(dead_code)]
     pub remaining: usize,
+    /// Raw SSE body for streaming endpoints (`/v1/chat/completions`). When set,
+    /// the streaming branch returns this exact byte sequence instead of the
+    /// default single-frame reply. Lets tests drive multi-frame / split-chunk
+    /// SSE scenarios (e.g. first text delta not dropped).
+    #[allow(dead_code)]
+    pub sse_body: Option<Vec<u8>>,
 }
 
 impl Default for MockResponse {
@@ -110,6 +116,7 @@ impl Default for MockResponse {
             }),
             headers: HashMap::new(),
             remaining: 0,
+            sse_body: None,
         }
     }
 }
@@ -145,6 +152,7 @@ impl MockState {
                 body,
                 headers: HashMap::new(),
                 remaining: n,
+                sse_body: None,
             },
         );
     }
@@ -229,8 +237,28 @@ impl MockUpstream {
                 body,
                 headers: HashMap::new(),
                 remaining: 0,
+                sse_body: None,
             },
         );
+    }
+
+    /// Set a raw SSE body for a streaming endpoint. When the streaming branch
+    /// of the matching handler sees this, it returns the bytes verbatim
+    /// (content-type `text/event-stream`) instead of the default single frame.
+    pub fn set_sse_body(&self, path: &str, sse_body: Vec<u8>) {
+        self.state
+            .responses
+            .lock()
+            .unwrap()
+            .entry(path.to_string())
+            .or_insert_with(|| MockResponse {
+                status: 200,
+                body: serde_json::json!({}),
+                headers: HashMap::new(),
+                remaining: 0,
+                sse_body: None,
+            })
+            .sse_body = Some(sse_body);
     }
 
     /// Set a response that fires only for the first N matching requests; after
@@ -305,6 +333,24 @@ async fn openai_handler(
         .unwrap_or(false);
 
     if is_stream {
+        // If a raw SSE body was configured for this path, return it verbatim so
+        // tests can drive multi-frame / split-chunk SSE scenarios (e.g. the
+        // first text delta must not be dropped).
+        let sse_body = state
+            .responses
+            .lock()
+            .unwrap()
+            .get("/v1/chat/completions")
+            .and_then(|m| m.sse_body.clone());
+        if let Some(sse_bytes) = sse_body {
+            let body_stream = tokio_stream::once(Ok::<_, std::convert::Infallible>(sse_bytes));
+            return axum::response::Response::builder()
+                .status(StatusCode::OK)
+                .header("content-type", "text/event-stream")
+                .body(axum::body::Body::from_stream(body_stream))
+                .unwrap();
+        }
+
         // Return a real SSE stream: emit one usage chunk with the final usage
         // (including prompt_tokens_details when configured), then [DONE].
         // This exercises the gateway's streaming two-phase SpendLog path.
@@ -414,6 +460,7 @@ async fn claude_handler(
                 }),
                 headers: HashMap::new(),
                 remaining: 0,
+                sse_body: None,
             },
         }
     };
@@ -468,6 +515,7 @@ async fn embeddings_handler(
         }),
         headers: HashMap::new(),
         remaining: 0,
+        sse_body: None,
     });
 
     Ok((
@@ -585,6 +633,7 @@ async fn responses_handler(
         }),
         headers: HashMap::new(),
         remaining: 0,
+        sse_body: None,
     });
 
     let status = StatusCode::from_u16(mock.status).unwrap_or(StatusCode::OK);
