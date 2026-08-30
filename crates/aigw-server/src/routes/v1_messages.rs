@@ -51,6 +51,71 @@ fn anthropic_error(
     )
 }
 
+/// Strip a `data:` SSE prefix, accepting both `data: ` (with space) and
+/// `data:` (no space), mirroring `aigw_core::adapter::AnthropicToOpenAIStream`
+/// parsing. Lines without a `data:` prefix are returned unchanged.
+fn strip_data_prefix(line: &str) -> &str {
+    line.strip_prefix("data: ")
+        .or_else(|| line.strip_prefix("data:"))
+        .unwrap_or(line)
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Byte-level line buffer for SSE streams
+//
+// Upstream HTTP chunks may split a multi-byte UTF-8 character (or any SSE
+// line) across arbitrary byte boundaries. Decoding each chunk independently
+// with `std::str::from_utf8` fails on a split character and drops the whole
+// chunk. Instead we buffer raw bytes and only decode complete,
+// newline-terminated lines, so a split character is reassembled before UTF-8
+// decoding.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+struct LineBuffer {
+    buf: Vec<u8>,
+}
+
+impl LineBuffer {
+    fn new() -> Self {
+        Self { buf: Vec::new() }
+    }
+
+    /// Append raw bytes and return every complete newline-terminated line
+    /// decoded as UTF-8. A trailing partial line (no `\n` yet) stays in the
+    /// internal buffer. Lines that fail UTF-8 decoding are dropped.
+    fn push(&mut self, chunk: &[u8]) -> Vec<String> {
+        self.buf.extend_from_slice(chunk);
+        let mut lines = Vec::new();
+        while let Some(nl) = self.buf.iter().position(|&b| b == b'\n') {
+            let mut line: Vec<u8> = self.buf.drain(..=nl).collect();
+            // Strip the trailing `\n`, then a preceding `\r` (CRLF) so the
+            // result matches `str::lines()` semantics.
+            if line.last() == Some(&b'\n') {
+                line.pop();
+            }
+            if line.last() == Some(&b'\r') {
+                line.pop();
+            }
+            if let Ok(s) = String::from_utf8(line) {
+                lines.push(s);
+            }
+        }
+        lines
+    }
+
+    /// Flush any remaining buffered bytes (a final line without a trailing
+    /// newline) as one decoded string.
+    fn finish(&mut self) -> Option<String> {
+        while self.buf.last() == Some(&b'\n') || self.buf.last() == Some(&b'\r') {
+            self.buf.pop();
+        }
+        if self.buf.is_empty() {
+            return None;
+        }
+        let line = std::mem::take(&mut self.buf);
+        String::from_utf8(line).ok()
+    }
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Cookie JWT auth helper (mirrors ChatAuth::try_cookie_jwt)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -601,36 +666,35 @@ pub async fn messages_handler(
                         Ok(chunk) => {
                             if let Ok(text) = std::str::from_utf8(&chunk) {
                                 for line in text.lines() {
-                                    if let Some(data) = line.strip_prefix("data: ") {
-                                        if data != "[DONE]" {
-                                            if let Ok(val) = serde_json::from_str::<Value>(data) {
-                                                if upstream_id.is_none() {
+                                    let data = strip_data_prefix(line);
+                                    if data != "[DONE]" {
+                                        if let Ok(val) = serde_json::from_str::<Value>(data) {
+                                            if upstream_id.is_none() {
+                                                if let Some(id) =
+                                                    val.get("id").and_then(|v| v.as_str())
+                                                {
+                                                    upstream_id = Some(id.to_string());
+                                                } else if let Some(msg) = val.get("message") {
                                                     if let Some(id) =
-                                                        val.get("id").and_then(|v| v.as_str())
+                                                        msg.get("id").and_then(|v| v.as_str())
                                                     {
                                                         upstream_id = Some(id.to_string());
-                                                    } else if let Some(msg) = val.get("message") {
-                                                        if let Some(id) =
-                                                            msg.get("id").and_then(|v| v.as_str())
-                                                        {
-                                                            upstream_id = Some(id.to_string());
-                                                        }
                                                     }
                                                 }
-                                                if let Some(usage) = val.get("usage") {
-                                                    stream_prompt_tokens = usage
-                                                        .get("input_tokens")
-                                                        .or_else(|| usage.get("prompt_tokens"))
-                                                        .and_then(|v| v.as_i64())
-                                                        .unwrap_or(0)
-                                                        as i32;
-                                                    stream_completion_tokens = usage
-                                                        .get("output_tokens")
-                                                        .or_else(|| usage.get("completion_tokens"))
-                                                        .and_then(|v| v.as_i64())
-                                                        .unwrap_or(0)
-                                                        as i32;
-                                                }
+                                            }
+                                            if let Some(usage) = val.get("usage") {
+                                                stream_prompt_tokens = usage
+                                                    .get("input_tokens")
+                                                    .or_else(|| usage.get("prompt_tokens"))
+                                                    .and_then(|v| v.as_i64())
+                                                    .unwrap_or(0)
+                                                    as i32;
+                                                stream_completion_tokens = usage
+                                                    .get("output_tokens")
+                                                    .or_else(|| usage.get("completion_tokens"))
+                                                    .and_then(|v| v.as_i64())
+                                                    .unwrap_or(0)
+                                                    as i32;
                                             }
                                         }
                                     }
@@ -1146,7 +1210,7 @@ pub async fn messages_handler(
             use tokio_stream::StreamExt;
             let mut stream = upstream_resp.bytes_stream();
             let mut first_chunk_time: Option<chrono::DateTime<chrono::Utc>> = None;
-            let _buffer: Vec<u8> = Vec::new();
+            let mut line_buf = LineBuffer::new();
             let _message_id = format!("msg_{}", uuid::Uuid::new_v4());
             let mut last_prompt_tokens: i32 = 0;
             let mut last_completion_tokens: i32 = 0;
@@ -1167,69 +1231,72 @@ pub async fn messages_handler(
                             first_chunk_time = Some(chrono::Utc::now());
                         }
                         // Process each SSE 'data:' line individually through AnthropicToOpenAIStream
-                        if let Ok(text) = std::str::from_utf8(&chunk) {
-                            for line in text.lines() {
-                                if let Some(data) = line.strip_prefix("data: ") {
-                                    if data != "[DONE]" {
-                                        if let Ok(raw) = serde_json::from_str::<Value>(data) {
-                                            // Extract upstream id (borrow raw, before any push/move).
-                                            // Anthropic: message_start.message.id; OpenAI: top-level id.
-                                            if upstream_id.is_none() {
-                                                if let Some(id) =
-                                                    raw.get("id").and_then(|v| v.as_str())
-                                                {
-                                                    upstream_id = Some(id.to_string());
-                                                } else if let Some(msg) = raw.get("message") {
-                                                    if let Some(id) =
-                                                        msg.get("id").and_then(|v| v.as_str())
-                                                    {
-                                                        upstream_id = Some(id.to_string());
-                                                    }
-                                                }
-                                            }
-                                            if let Some(usage) = raw.get("usage") {
-                                                last_prompt_tokens = usage
-                                                    .get("prompt_tokens")
-                                                    .or_else(|| usage.get("input_tokens"))
-                                                    .and_then(|v| v.as_i64())
-                                                    .unwrap_or(0)
-                                                    as i32;
-                                                last_completion_tokens = usage
-                                                    .get("completion_tokens")
-                                                    .or_else(|| usage.get("output_tokens"))
-                                                    .and_then(|v| v.as_i64())
-                                                    .unwrap_or(0)
-                                                    as i32;
-                                                last_cache_read =
-                                                    super::chat::extract_cache_read_tokens(usage);
-                                                last_cache_creation =
-                                                    super::chat::extract_cache_creation_tokens(
-                                                        usage,
-                                                    );
-                                            }
-                                            if raw
-                                                .get("choices")
-                                                .and_then(|c| c.as_array())
-                                                .map(|a| !a.is_empty())
-                                                .unwrap_or(false)
+                        // Buffer raw bytes and decode complete lines only, so a
+                        // multi-byte UTF-8 character split across chunks is
+                        // reassembled instead of dropping the whole chunk.
+                        for line in line_buf.push(&chunk) {
+                            let data = strip_data_prefix(&line);
+                            if data != "[DONE]" {
+                                if let Ok(raw) = serde_json::from_str::<Value>(data) {
+                                    // Extract upstream id (borrow raw, before any push/move).
+                                    // Anthropic: message_start.message.id; OpenAI: top-level id.
+                                    if upstream_id.is_none() {
+                                        if let Some(id) = raw.get("id").and_then(|v| v.as_str()) {
+                                            upstream_id = Some(id.to_string());
+                                        } else if let Some(msg) = raw.get("message") {
+                                            if let Some(id) = msg.get("id").and_then(|v| v.as_str())
                                             {
-                                                chunk_jsons.push(raw);
+                                                upstream_id = Some(id.to_string());
                                             }
                                         }
-                                        // Forward each SSE data line to the streaming adapter for Claude conversion
-                                        if let Some(sse_event) =
-                                            stream_adapter.next(data.as_bytes())
-                                        {
-                                            if tx.send(sse_event).is_err() {
-                                                break;
-                                            }
-                                        }
+                                    }
+                                    if let Some(usage) = raw.get("usage") {
+                                        last_prompt_tokens = usage
+                                            .get("prompt_tokens")
+                                            .or_else(|| usage.get("input_tokens"))
+                                            .and_then(|v| v.as_i64())
+                                            .unwrap_or(0)
+                                            as i32;
+                                        last_completion_tokens = usage
+                                            .get("completion_tokens")
+                                            .or_else(|| usage.get("output_tokens"))
+                                            .and_then(|v| v.as_i64())
+                                            .unwrap_or(0)
+                                            as i32;
+                                        last_cache_read =
+                                            super::chat::extract_cache_read_tokens(usage);
+                                        last_cache_creation =
+                                            super::chat::extract_cache_creation_tokens(usage);
+                                    }
+                                    if raw
+                                        .get("choices")
+                                        .and_then(|c| c.as_array())
+                                        .map(|a| !a.is_empty())
+                                        .unwrap_or(false)
+                                    {
+                                        chunk_jsons.push(raw);
+                                    }
+                                }
+                                // Forward each SSE data line to the streaming adapter for Claude conversion
+                                if let Some(sse_event) = stream_adapter.next(data.as_bytes()) {
+                                    if tx.send(sse_event).is_err() {
+                                        break;
                                     }
                                 }
                             }
                         }
                     }
                     Err(_) => break,
+                }
+            }
+            // Flush any trailing line that upstream sent without a final
+            // newline (a non-standard but real-world occurrence).
+            if let Some(line) = line_buf.finish() {
+                let data = strip_data_prefix(&line);
+                if data != "[DONE]" {
+                    if let Some(sse_event) = stream_adapter.next(data.as_bytes()) {
+                        let _ = tx.send(sse_event);
+                    }
                 }
             }
             // Send finishing SSE events once after stream ends (content_block_stop + message_stop).
@@ -2275,5 +2342,64 @@ mod tests {
 
         assert_eq!(prompt, 15);
         assert_eq!(completion, 42);
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // Regression: cross-chunk UTF-8 reassembly + `data:` prefix compatibility
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    /// A multi-byte UTF-8 character split across two upstream chunks must be
+    /// reassembled instead of dropping the chunk (Bug 1). "你" is U+4F60,
+    /// encoded as 3 bytes (E4 BD A0).
+    #[test]
+    fn test_line_buffer_reassembles_split_utf8_char() {
+        let full = "data: {\"id\":\"1\",\"choices\":[{\"delta\":{\"content\":\"你好\"}}]}\n";
+        let full_bytes = full.as_bytes();
+
+        // Split right through the middle of the 3-byte "你" sequence.
+        // "你好" = E4 BD A0 E5 A5 BD; index 0..3 is 你, so byte 1 (BD) is inside it.
+        let content_start = full.find("你好").unwrap();
+        let split = content_start + 1; // cut after the first byte of "你"
+
+        let mut lb = LineBuffer::new();
+        let lines_a = lb.push(&full_bytes[..split]);
+        assert!(lines_a.is_empty(), "no complete line before the newline");
+
+        let lines_b = lb.push(&full_bytes[split..]);
+        assert_eq!(lines_b.len(), 1);
+        let line = &lines_b[0];
+        assert!(
+            line.contains("你好"),
+            "reassembled line must contain 你好 intact, got: {line}"
+        );
+
+        // Nothing left over after the trailing newline.
+        assert!(lb.finish().is_none());
+    }
+
+    /// A partial line without a trailing newline is flushed by `finish()`.
+    #[test]
+    fn test_line_buffer_finish_flushes_trailing_line() {
+        let mut lb = LineBuffer::new();
+        assert!(lb.push("data: {\"content\":\"第一".as_bytes()).is_empty());
+        let flushed = lb.finish();
+        assert_eq!(
+            flushed.as_deref(),
+            Some("data: {\"content\":\"第一"),
+            "trailing partial line must be flushed as-is"
+        );
+    }
+
+    /// `strip_data_prefix` accepts both `data: ` (with space) and `data:`
+    /// (no space), and leaves non-prefixed lines unchanged (Bug 2).
+    #[test]
+    fn test_strip_data_prefix_both_forms() {
+        assert_eq!(strip_data_prefix("data: {\"a\":1}"), "{\"a\":1}");
+        assert_eq!(strip_data_prefix("data:{\"a\":1}"), "{\"a\":1}");
+        // No prefix: returned unchanged, never dropped.
+        assert_eq!(strip_data_prefix("{\"a\":1}"), "{\"a\":1}");
+        // `data:` followed by a space is still `data: ` stripped; the space
+        // case must win over the bare prefix.
+        assert_eq!(strip_data_prefix("data:  x"), " x");
     }
 }

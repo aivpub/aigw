@@ -2669,7 +2669,10 @@ mod tests {
         let text = String::from_utf8(result).unwrap();
         assert!(text.contains("message_start"), "got: {text}");
         assert!(text.contains("content_block_delta"), "got: {text}");
-        assert!(text.contains("\"text\":\"Mult\""), "first delta 'Mult' dropped, got: {text}");
+        assert!(
+            text.contains("\"text\":\"Mult\""),
+            "first delta 'Mult' dropped, got: {text}"
+        );
     }
 
     // ── Stage 102 Responses→Chat bridge — adapter-level UT (Phase 41 test gap ①) ──
