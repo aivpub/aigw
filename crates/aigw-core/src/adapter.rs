@@ -540,6 +540,7 @@ impl AnthropicToOpenAIStream {
 impl StreamAdapter for AnthropicToOpenAIStream {
     fn next(&mut self, chunk: &[u8]) -> Option<Vec<u8>> {
         let text = String::from_utf8_lossy(chunk);
+        let mut out: Vec<u8> = Vec::new();
         for line in text.lines() {
             let line = line.trim();
             if line.is_empty() || line.starts_with(':') {
@@ -559,9 +560,14 @@ impl StreamAdapter for AnthropicToOpenAIStream {
             }
 
             for choice in &chunk.choices {
+                // Emit `message_start` once, before any content events. Do NOT
+                // early-return here: the first chunk may carry `role` AND the
+                // first content delta in the same frame (e.g.
+                // `delta:{"role":"assistant","content":"Mult"}`). Early-returning
+                // dropped that first text delta.
                 if !self.started {
                     self.started = true;
-                    return self.emit_event(&ClaudeStreamEvent {
+                    if let Some(ev) = self.emit_event(&ClaudeStreamEvent {
                         event_type: "message_start".to_string(),
                         index: None,
                         delta: None,
@@ -582,7 +588,9 @@ impl StreamAdapter for AnthropicToOpenAIStream {
                             },
                         }),
                         usage: None,
-                    });
+                    }) {
+                        out.extend_from_slice(&ev);
+                    }
                 }
 
                 let has_tool_calls = choice
@@ -604,7 +612,7 @@ impl StreamAdapter for AnthropicToOpenAIStream {
                                 self.current_block = Some(BlockType::Text);
                                 let idx = self.current_block_index;
                                 self.current_block_index += 1;
-                                return self.emit_event(&ClaudeStreamEvent {
+                                if let Some(ev) = self.emit_event(&ClaudeStreamEvent {
                                     event_type: "content_block_start".to_string(),
                                     index: Some(idx),
                                     delta: None,
@@ -623,9 +631,14 @@ impl StreamAdapter for AnthropicToOpenAIStream {
                                     }),
                                     message: None,
                                     usage: None,
-                                });
+                                }) {
+                                    out.extend_from_slice(&ev);
+                                }
                             }
-                            return self.emit_event(&ClaudeStreamEvent {
+                            // Emit the first content_block_delta in the SAME
+                            // frame as content_block_start. The old early-return
+                            // dropped the first text delta (e.g. "Mult").
+                            if let Some(ev) = self.emit_event(&ClaudeStreamEvent {
                                 event_type: "content_block_delta".to_string(),
                                 index: Some(self.current_block_index - 1),
                                 delta: Some(ClaudeDelta {
@@ -636,7 +649,9 @@ impl StreamAdapter for AnthropicToOpenAIStream {
                                 content_block: None,
                                 message: None,
                                 usage: None,
-                            });
+                            }) {
+                                out.extend_from_slice(&ev);
+                            }
                         }
                     }
                 }
@@ -650,7 +665,6 @@ impl StreamAdapter for AnthropicToOpenAIStream {
                 // arguments 首帧(tokenhub GLM-5.2 首帧 `id + "{\""` 触发 bug),导致下游
                 // Claude Code 累积后的 partial JSON 缺开头 `{"` → `Invalid tool parameters`.
                 // 修复:累积到 local buffer,循环结束统一返回.
-                let mut tool_out: Vec<u8> = Vec::new();
                 if let Some(ref tool_calls) = choice.delta.tool_calls {
                     for tc in tool_calls {
                         if let Some(ref id) = tc.id {
@@ -682,7 +696,7 @@ impl StreamAdapter for AnthropicToOpenAIStream {
                                     message: None,
                                     usage: None,
                                 }) {
-                                    tool_out.extend_from_slice(&ev);
+                                    out.extend_from_slice(&ev);
                                 }
                             }
                         }
@@ -699,7 +713,7 @@ impl StreamAdapter for AnthropicToOpenAIStream {
                                 message: None,
                                 usage: None,
                             }) {
-                                tool_out.extend_from_slice(&ev);
+                                out.extend_from_slice(&ev);
                             }
                         }
                     }
@@ -724,16 +738,16 @@ impl StreamAdapter for AnthropicToOpenAIStream {
                         message: None,
                         usage: None,
                     }) {
-                        tool_out.extend_from_slice(&ev);
+                        out.extend_from_slice(&ev);
                     }
-                }
-
-                if !tool_out.is_empty() {
-                    return Some(tool_out);
                 }
             }
         }
-        None
+        if out.is_empty() {
+            None
+        } else {
+            Some(out)
+        }
     }
 
     fn finish(&mut self) -> Option<Vec<u8>> {
@@ -2610,6 +2624,52 @@ mod tests {
     fn test_passthrough_stream() {
         let mut stream = PassthroughStream;
         assert_eq!(stream.next(b"test").unwrap(), b"test");
+    }
+
+    /// Regression: the first text delta must not be dropped. The old
+    /// early-return in `next()` emitted only `content_block_start` and
+    /// swallowed the first `content_block_delta` (e.g. "Mult").
+    #[test]
+    fn test_stream_adapter_first_text_delta_not_dropped() {
+        let mut stream = AnthropicToOpenAIStream::new();
+        // Frame 1: role only (no content).
+        stream.next(
+            b"data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"g\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"}}]}",
+        );
+        // Frame 2: first content delta — the "Mult" case.
+        let result = stream.next(
+            b"data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"g\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Multica\"}}]}",
+        )
+        .expect("second frame must emit events");
+        let text = String::from_utf8(result).unwrap();
+        assert!(
+            text.contains("content_block_start"),
+            "expected content_block_start, got: {text}"
+        );
+        assert!(
+            text.contains("content_block_delta"),
+            "expected content_block_delta in same frame, got: {text}"
+        );
+        assert!(
+            text.contains("Multica"),
+            "first text delta 'Multica' must be forwarded, got: {text}"
+        );
+    }
+
+    /// Regression: if the first frame carries role AND content together
+    /// (`delta:{"role":"assistant","content":"Mult"}`), the content must
+    /// still be forwarded after `message_start`.
+    #[test]
+    fn test_stream_adapter_role_and_content_same_frame() {
+        let mut stream = AnthropicToOpenAIStream::new();
+        let result = stream.next(
+            b"data: {\"id\":\"1\",\"object\":\"chat.completion.chunk\",\"created\":1,\"model\":\"g\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Mult\"}}]}",
+        )
+        .expect("first frame must emit events");
+        let text = String::from_utf8(result).unwrap();
+        assert!(text.contains("message_start"), "got: {text}");
+        assert!(text.contains("content_block_delta"), "got: {text}");
+        assert!(text.contains("\"text\":\"Mult\""), "first delta 'Mult' dropped, got: {text}");
     }
 
     // ── Stage 102 Responses→Chat bridge — adapter-level UT (Phase 41 test gap ①) ──
