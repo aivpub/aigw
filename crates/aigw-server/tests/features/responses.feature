@@ -40,6 +40,7 @@ Feature: OpenAI Responses API Passthrough — /v1/responses
     And 响应原始流包含 "response.output_text.delta" 事件
     And 响应原始流包含 "response.completed" 事件
     And 响应原始流中 "response.completed" 出现在 "data: [DONE]" 之前
+    And SpendLog 中最近一条流式记录的 response 含完整文本
 
   Scenario: /v1/responses with input string (not array)
     Given mock 上游已启动

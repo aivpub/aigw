@@ -298,6 +298,28 @@ async fn then_spendlog_call_id_nonempty(world: &mut TestWorld) {
     assert!(!log.call_id.is_empty(), "call_id should not be empty");
 }
 
+#[then(expr = "SpendLog 中最近一条流式记录的 response 含完整文本")]
+async fn then_spendlog_stream_response_has_content(world: &mut TestWorld) {
+    let log = get_latest_spend_log(world).await;
+    let response = log
+        .response
+        .as_ref()
+        .expect("streaming spend log must carry a response");
+    // The final upstream chunk only holds `finish_reason`; a response that
+    // stored just that one has no content at all.
+    let content = response["choices"][0]["message"]["content"]
+        .as_str()
+        .unwrap_or("");
+    assert!(
+        !content.is_empty(),
+        "streamed response content must be merged from all chunks, got: {response}"
+    );
+    assert!(
+        response["streaming"].as_bool().unwrap_or(false),
+        "streaming flag must be preserved: {response}"
+    );
+}
+
 #[then(expr = "SpendLog 中最近一条记录的 prompt_tokens 大于 0")]
 async fn then_spendlog_prompt_tokens_positive(world: &mut TestWorld) {
     let log = get_latest_spend_log(world).await;
