@@ -39,6 +39,7 @@ Feature: OpenAI Responses API Passthrough — /v1/responses
     Then 响应状态码为 200
     And 响应原始流包含 "response.output_text.delta" 事件
     And 响应原始流包含 "response.completed" 事件
+    And 响应原始流中 "response.completed" 出现在 "data: [DONE]" 之前
 
   Scenario: /v1/responses with input string (not array)
     Given mock 上游已启动

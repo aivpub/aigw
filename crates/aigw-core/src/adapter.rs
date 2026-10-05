@@ -2856,7 +2856,8 @@ impl MessageAdapter for ResponsesToChatCompletions {
 //   delta.content              → response.output_text.delta
 //   delta.tool_calls           → response.function_call_arguments.delta
 //   finish_reason + usage      → response.completed
-//   [DONE]                     → data: [DONE]
+//   [DONE]                     → marks upstream end; `finish()` then emits
+//                                response.completed followed by data: [DONE]
 
 struct ResponsesToChatCompletionsStream {
     response_id: String,
@@ -2912,9 +2913,14 @@ impl StreamAdapter for ResponsesToChatCompletionsStream {
                 .or_else(|| line.strip_prefix("data:"))
                 .unwrap_or(line);
             if data == "[DONE]" {
+                // Upstream is finished, but the client protocol is not: the
+                // Responses SSE stream must end with `response.completed` and
+                // only then `data: [DONE]`. Both are emitted by `finish()`, so
+                // nothing is forwarded here — an early `[DONE]` makes clients
+                // (Codex) close the stream before `response.completed` arrives
+                // and report "stream closed before response.completed".
                 self.done = true;
-                out.extend_from_slice(b"data: [DONE]\n\n");
-                return if out.is_empty() { None } else { Some(out) };
+                continue;
             }
 
             let chunk_val: Value = match serde_json::from_str(data) {

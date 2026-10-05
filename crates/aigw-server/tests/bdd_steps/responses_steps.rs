@@ -195,6 +195,25 @@ async fn then_raw_stream_contains_event(world: &mut TestWorld, event: String) {
     );
 }
 
+#[then(regex = r#"^响应原始流中 "(.*)" 出现在 "(.*)" 之前$"#)]
+async fn then_raw_stream_orders(world: &mut TestWorld, first: String, second: String) {
+    let body = world.last_body.as_ref().expect("no response body");
+    let raw = body
+        .get("__raw")
+        .and_then(|v| v.as_str())
+        .expect("no __raw streaming body");
+    let first_pos = raw.find(&first).unwrap_or_else(|| {
+        panic!("stream does not contain '{first}':\n{raw}");
+    });
+    let second_pos = raw.find(&second).unwrap_or_else(|| {
+        panic!("stream does not contain '{second}':\n{raw}");
+    });
+    assert!(
+        first_pos < second_pos,
+        "'{first}' must appear before '{second}', got {first_pos} vs {second_pos}:\n{raw}"
+    );
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // TD-006: x-call-id response header
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
