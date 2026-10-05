@@ -89,6 +89,12 @@ pub struct MockResponse {
     /// SSE scenarios (e.g. first text delta not dropped).
     #[allow(dead_code)]
     pub sse_body: Option<Vec<u8>>,
+    /// Split SSE body: each element is delivered as its own stream item, so the
+    /// gateway's `bytes_stream()` yields one chunk per element. Needed to
+    /// reproduce the real upstream case where the first TCP read does not yet
+    /// contain `[DONE]` — a single-item body hides that entirely.
+    #[allow(dead_code)]
+    pub sse_chunks: Option<Vec<Vec<u8>>>,
 }
 
 impl Default for MockResponse {
@@ -117,6 +123,7 @@ impl Default for MockResponse {
             headers: HashMap::new(),
             remaining: 0,
             sse_body: None,
+            sse_chunks: None,
         }
     }
 }
@@ -153,6 +160,7 @@ impl MockState {
                 headers: HashMap::new(),
                 remaining: n,
                 sse_body: None,
+                sse_chunks: None,
             },
         );
     }
@@ -238,6 +246,7 @@ impl MockUpstream {
                 headers: HashMap::new(),
                 remaining: 0,
                 sse_body: None,
+                sse_chunks: None,
             },
         );
     }
@@ -257,8 +266,29 @@ impl MockUpstream {
                 headers: HashMap::new(),
                 remaining: 0,
                 sse_body: None,
+                sse_chunks: None,
             })
             .sse_body = Some(sse_body);
+    }
+
+    /// Set a streaming response delivered as several independent stream items,
+    /// one per element. This is what a real upstream looks like: the first TCP
+    /// read holds only the leading frames (no `[DONE]`), and more chunks follow.
+    /// A single-item body cannot reproduce chunk-boundary bugs.
+    pub fn set_sse_chunks(&self, path: &str, chunks: Vec<Vec<u8>>) {
+        let mut guard = self.state.responses.lock().unwrap();
+        let entry = guard
+            .entry(path.to_string())
+            .or_insert_with(|| MockResponse {
+                status: 200,
+                body: serde_json::json!({}),
+                headers: HashMap::new(),
+                remaining: 0,
+                sse_body: None,
+                sse_chunks: None,
+            });
+        entry.sse_body = None;
+        entry.sse_chunks = Some(chunks);
     }
 
     /// Set a response that fires only for the first N matching requests; after
@@ -333,6 +363,26 @@ async fn openai_handler(
         .unwrap_or(false);
 
     if is_stream {
+        // Split-chunk mode takes precedence: each element is its own stream item.
+        let sse_chunks = state
+            .responses
+            .lock()
+            .unwrap()
+            .get("/v1/chat/completions")
+            .and_then(|m| m.sse_chunks.clone());
+        if let Some(chunks) = sse_chunks {
+            let body_stream = tokio_stream::iter(
+                chunks
+                    .into_iter()
+                    .map(|c| Ok::<_, std::convert::Infallible>(c)),
+            );
+            return axum::response::Response::builder()
+                .status(StatusCode::OK)
+                .header("content-type", "text/event-stream")
+                .body(axum::body::Body::from_stream(body_stream))
+                .unwrap();
+        }
+
         // If a raw SSE body was configured for this path, return it verbatim so
         // tests can drive multi-frame / split-chunk SSE scenarios (e.g. the
         // first text delta must not be dropped).
@@ -461,6 +511,7 @@ async fn claude_handler(
                 headers: HashMap::new(),
                 remaining: 0,
                 sse_body: None,
+                sse_chunks: None,
             },
         }
     };
@@ -516,6 +567,7 @@ async fn embeddings_handler(
         headers: HashMap::new(),
         remaining: 0,
         sse_body: None,
+        sse_chunks: None,
     });
 
     Ok((
@@ -634,6 +686,7 @@ async fn responses_handler(
         headers: HashMap::new(),
         remaining: 0,
         sse_body: None,
+        sse_chunks: None,
     });
 
     let status = StatusCode::from_u16(mock.status).unwrap_or(StatusCode::OK);

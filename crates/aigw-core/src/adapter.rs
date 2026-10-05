@@ -46,6 +46,12 @@ pub trait MessageAdapter: Send + Sync {
 }
 
 /// Streaming chunk-by-chunk converter.
+///
+/// `next` is called **once per upstream byte chunk**, not in a drain loop: the
+/// chunk is fully consumed into events on that single call. Callers must not
+/// loop until `None` — a chunk that produced events always yields `Some` on the
+/// same input (the converter is not a queue), so a drain loop never terminates
+/// and the response stream hangs open.
 pub trait StreamAdapter: Send {
     fn next(&mut self, chunk: &[u8]) -> Option<Vec<u8>>;
     fn finish(&mut self) -> Option<Vec<u8>>;

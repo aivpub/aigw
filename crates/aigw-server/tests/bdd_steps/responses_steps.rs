@@ -5,7 +5,7 @@
 //! When and Then steps.
 
 use axum::http::Method;
-use cucumber::{then, when};
+use cucumber::{given, then, when};
 
 use crate::TestWorld;
 
@@ -426,6 +426,54 @@ async fn when_post_codex_shaped_request(world: &mut TestWorld, alias: String) {
         }),
     )
     .await;
+}
+
+/// Configure the mock upstream to answer `/v1/chat/completions` with a
+/// multi-frame Chat SSE stream, so the Responses bridge's stream conversion runs.
+#[given(expr = "mock 上游 chat 返回多帧流式响应")]
+async fn given_mock_chat_streams(_world: &mut TestWorld) {
+    use crate::bdd_steps::e2e_steps::mock_upstream;
+    let mu = mock_upstream().lock().await;
+    let upstream = mu.as_ref().expect("mock upstream not started");
+
+    let frame = |delta: serde_json::Value,
+                 finish_reason: Option<&str>,
+                 usage: Option<serde_json::Value>| {
+        let mut obj = serde_json::json!({
+            "id": "chatcmpl-stream-mock",
+            "object": "chat.completion.chunk",
+            "created": 1700000000,
+            "model": "gpt-4o",
+            "choices": [{"index": 0, "delta": delta, "finish_reason": finish_reason}]
+        });
+        if let Some(u) = usage {
+            obj["usage"] = u;
+        }
+        obj
+    };
+
+    // Four separate stream items: the first three carry no `[DONE]`, which is
+    // exactly the real-upstream shape that a single-item body cannot reproduce.
+    let chunk = |v: &serde_json::Value| format!("data: {}\n\n", v).into_bytes();
+    upstream.set_sse_chunks(
+        "/v1/chat/completions",
+        vec![
+            chunk(&frame(
+                serde_json::json!({"role": "assistant", "content": "Hel"}),
+                None,
+                None,
+            )),
+            chunk(&frame(serde_json::json!({"content": "lo"}), None, None)),
+            chunk(&frame(
+                serde_json::json!({}),
+                Some("stop"),
+                Some(
+                    serde_json::json!({"prompt_tokens": 7, "completion_tokens": 2, "total_tokens": 9}),
+                ),
+            )),
+            b"data: [DONE]\n\n".to_vec(),
+        ],
+    );
 }
 
 #[when(expr = "使用 key {string} 发送带 tool 历史的 \\/v1\\/responses 请求")]

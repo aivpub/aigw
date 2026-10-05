@@ -30,6 +30,16 @@ Feature: OpenAI Responses API Passthrough — /v1/responses
     And 响应原始流包含 "response.output_text.delta" 事件
     And 响应原始流包含 "response.completed" 事件
 
+  Scenario: /v1/responses 流式请求在有限时间内完成（回归：桥接转换不得死循环）
+    Given mock 上游已启动
+    And 已配置 model "gpt-4o" 指向 mock 上游
+    And mock 上游 chat 返回多帧流式响应
+    And 一个普通 key "resp-stream-term" 已生成
+    When 使用 key "resp-stream-term" 发送 POST /v1/responses 流式请求
+    Then 响应状态码为 200
+    And 响应原始流包含 "response.output_text.delta" 事件
+    And 响应原始流包含 "response.completed" 事件
+
   Scenario: /v1/responses with input string (not array)
     Given mock 上游已启动
     And 已配置 model "gpt-4o" 指向 mock 上游

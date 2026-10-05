@@ -1048,12 +1048,12 @@ pub async fn responses_handler(
                             }
                         }
                         // Convert the upstream chunk (Chat SSE) → Responses SSE
-                        // events via the bridge stream adapter.
+                        // events via the bridge stream adapter. One call per
+                        // chunk: `next` drains the whole input, so looping until
+                        // `None` on the same bytes would never terminate.
                         pending_chunk.extend_from_slice(&chunk);
-                        while let Some(transformed) = stream_adapter.next(&pending_chunk) {
-                            if tx.send(transformed).is_err() {
-                                break;
-                            }
+                        if let Some(transformed) = stream_adapter.next(&pending_chunk) {
+                            let _ = tx.send(transformed);
                         }
                         pending_chunk.clear();
                     }
