@@ -90,14 +90,13 @@ Feature: OpenAI Responses API Passthrough — /v1/responses
     Then 响应状态码为 200
     And 响应 JSON 中 "object" 为 "response"
 
-  Scenario: /v1/responses bridge web_search tool rejected
+  Scenario: /v1/responses bridge web_search tool dropped
     Given mock 上游已启动
     And 已配置 model "gpt-4o" 指向 mock 上游
     And 一个普通 key "resp-ws" 已生成
     When 使用 key "resp-ws" 发送带 web_search_preview tool 的 /v1/responses 请求
-    Then 响应状态码为 400
-    And 响应 JSON "error.message" 包含 "web_search_preview"
-    And 响应 JSON "error.message" 包含 "not supported"
+    Then 响应状态码为 200
+    And 上游收到的 tools 不含 "web_search_preview"
 
   Scenario: /v1/responses bridge tool call in response
     Given mock 上游已启动
@@ -107,10 +106,42 @@ Feature: OpenAI Responses API Passthrough — /v1/responses
     Then 响应状态码为 200
     And 响应 JSON 中 "object" 为 "response"
 
-  Scenario: /v1/responses bridge code_interpreter tool rejected
+  Scenario: /v1/responses bridge code_interpreter tool dropped
     Given mock 上游已启动
     And 已配置 model "gpt-4o" 指向 mock 上游
     And 一个普通 key "resp-ci" 已生成
     When 使用 key "resp-ci" 发送带 code_interpreter tool 的 /v1/responses 请求
-    Then 响应状态码为 400
-    And 响应 JSON "error.message" 包含 "code_interpreter"
+    Then 响应状态码为 200
+    And 上游收到的 tools 不含 "code_interpreter"
+
+  Scenario: /v1/responses bridge namespace tool flattened
+    Given mock 上游已启动
+    And 已配置 model "gpt-4o" 指向 mock 上游
+    And 一个普通 key "resp-ns" 已生成
+    When 使用 key "resp-ns" 发送带 namespace tool 的 /v1/responses 请求
+    Then 响应状态码为 200
+    And 上游收到的 tools 含 "multi_agent_v1__spawn_agent"
+
+  Scenario: /v1/responses bridge developer role mapped
+    Given mock 上游已启动
+    And 已配置 model "gpt-4o" 指向 mock 上游
+    And 一个普通 key "resp-dev" 已生成
+    When 使用 key "resp-dev" 发送带 developer role 的 /v1/responses 请求
+    Then 响应状态码为 200
+    And 上游收到的 messages 不含 role "developer"
+
+  Scenario: /v1/responses bridge developer passthrough
+    Given mock 上游已启动
+    And 已配置 model "gpt-4o" 指向 mock 上游 且 developer_role_passthrough 为 true
+    And 一个普通 key "resp-devpass" 已生成
+    When 使用 key "resp-devpass" 发送带 developer role 的 /v1/responses 请求
+    Then 响应状态码为 200
+    And 上游收到的 messages 含 role "developer"
+
+  Scenario: /v1/responses bridge codex-shaped request
+    Given mock 上游已启动
+    And 已配置 model "gpt-4o" 指向 mock 上游
+    And 一个普通 key "resp-codex" 已生成
+    When 使用 key "resp-codex" 发送 Codex 形状的 /v1/responses 请求
+    Then 响应状态码为 200
+    And 响应 JSON 中 "object" 为 "response"

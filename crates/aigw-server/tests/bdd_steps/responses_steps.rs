@@ -365,6 +365,175 @@ async fn when_post_responses_with_code_interpreter(world: &mut TestWorld, alias:
     .await;
 }
 
+#[when(expr = "使用 key {string} 发送带 namespace tool 的 \\/v1\\/responses 请求")]
+async fn when_post_responses_with_namespace(world: &mut TestWorld, alias: String) {
+    send_responses_request(
+        world,
+        &alias,
+        serde_json::json!({
+            "model": "gpt-4o",
+            "input": [{"role":"user","content":"spawn an agent"}],
+            "tools": [{
+                "type": "namespace",
+                "name": "multi_agent_v1",
+                "tools": [
+                    {"type": "function", "name": "spawn_agent", "parameters": {"type": "object", "properties": {}}}
+                ]
+            }]
+        }),
+    )
+    .await;
+}
+
+#[when(expr = "使用 key {string} 发送带 developer role 的 \\/v1\\/responses 请求")]
+async fn when_post_responses_with_developer_role(world: &mut TestWorld, alias: String) {
+    send_responses_request(
+        world,
+        &alias,
+        serde_json::json!({
+            "model": "gpt-4o",
+            "instructions": "base rules",
+            "input": [
+                {"role":"developer","content":[{"type":"input_text","text":"<permissions instructions>"}]},
+                {"role":"user","content":[{"type":"input_text","text":"hi"}]}
+            ]
+        }),
+    )
+    .await;
+}
+
+#[when(expr = "使用 key {string} 发送 Codex 形状的 \\/v1\\/responses 请求")]
+async fn when_post_codex_shaped_request(world: &mut TestWorld, alias: String) {
+    send_responses_request(
+        world,
+        &alias,
+        serde_json::json!({
+            "model": "gpt-4o",
+            "instructions": "You are a coding agent running in the Codex CLI.",
+            "input": [
+                {"type":"message","role":"developer","content":[{"type":"input_text","text":"<permissions>"}]},
+                {"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}
+            ],
+            "tools": [
+                {"type":"function","name":"exec_command","strict":false,"parameters":{"type":"object","properties":{}}},
+                {"type":"namespace","name":"multi_agent_v1","tools":[
+                    {"type":"function","name":"spawn_agent","strict":false,"parameters":{"type":"object","properties":{}}}
+                ]},
+                {"type":"web_search","external_web_access":false}
+            ],
+            "tool_choice": "auto",
+            "parallel_tool_calls": true
+        }),
+    )
+    .await;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Stage 131: upstream body assertions
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Body of the most recent request the mock upstream received.
+async fn last_upstream_request_body() -> serde_json::Value {
+    use crate::bdd_steps::e2e_steps::mock_upstream;
+    let mu = mock_upstream().lock().await;
+    let upstream = mu.as_ref().expect("mock upstream not started");
+    upstream
+        .recorded_requests()
+        .last()
+        .map(|r| r.body.clone())
+        .expect("mock upstream received no request")
+}
+
+#[then(expr = "上游收到的 tools 不含 {string}")]
+async fn then_upstream_tools_not_contains(_world: &mut TestWorld, name: String) {
+    let body = last_upstream_request_body().await;
+    let names: Vec<String> = body
+        .get("tools")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|t| {
+                    t.get("function")
+                        .and_then(|f| f.get("name"))
+                        .and_then(|v| v.as_str())
+                        .map(String::from)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(
+        !names.contains(&name),
+        "upstream tools must not contain '{}', got {:?}",
+        name,
+        names
+    );
+}
+
+#[then(expr = "上游收到的 tools 含 {string}")]
+async fn then_upstream_tools_contains(_world: &mut TestWorld, name: String) {
+    let body = last_upstream_request_body().await;
+    let names: Vec<String> = body
+        .get("tools")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|t| {
+                    t.get("function")
+                        .and_then(|f| f.get("name"))
+                        .and_then(|v| v.as_str())
+                        .map(String::from)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(
+        names.contains(&name),
+        "upstream tools must contain '{}', got {:?}",
+        name,
+        names
+    );
+}
+
+#[then(expr = "上游收到的 messages 不含 role {string}")]
+async fn then_upstream_messages_not_contains_role(_world: &mut TestWorld, role: String) {
+    let body = last_upstream_request_body().await;
+    let roles: Vec<String> = body
+        .get("messages")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|m| m.get("role").and_then(|v| v.as_str()).map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(
+        !roles.contains(&role),
+        "upstream messages must not contain role '{}', got {:?}",
+        role,
+        roles
+    );
+}
+
+#[then(expr = "上游收到的 messages 含 role {string}")]
+async fn then_upstream_messages_contains_role(_world: &mut TestWorld, role: String) {
+    let body = last_upstream_request_body().await;
+    let roles: Vec<String> = body
+        .get("messages")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|m| m.get("role").and_then(|v| v.as_str()).map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(
+        roles.contains(&role),
+        "upstream messages must contain role '{}', got {:?}",
+        role,
+        roles
+    );
+}
+
 #[when(expr = "使用 key {string} 发送带 function tools 的 \\/v1\\/responses 请求含工具调用响应")]
 async fn when_post_responses_with_tool_call_response(world: &mut TestWorld, alias: String) {
     send_responses_request(

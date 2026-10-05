@@ -44,6 +44,11 @@ pub struct Deployment {
     /// chat template compatibility mode from model_info
     /// "auto" (default/absent) / "strict" (fold extra system messages) / "loose" (passthrough)
     pub chat_template_compat: Option<String>,
+    /// Responses→Chat bridge: when `Some(true)`, keep `role="developer"` messages
+    /// verbatim instead of mapping them to `role="system"`. Absent/`Some(false)`
+    /// means map (the safe default — most non-OpenAI upstreams reject `developer`).
+    /// Sourced from `model_info.developer_role_passthrough`.
+    pub developer_role_passthrough: Option<bool>,
     /// Per-modality input pricing (TD-012b), extracted from model_info
     /// `modal_pricing: {image, audio, video}` (USD per 1M tokens, e.g. Gemini
     /// embeddings image $0.45 / audio $6.50 / video $12.00). None when the
@@ -194,6 +199,7 @@ mod tests {
             model_group: Some("gpt-4".to_string()),
             custom_llm_provider: Some("openai".to_string()),
             chat_template_compat: None,
+            developer_role_passthrough: None,
             modal_pricing: None,
             weight: None,
             rpm: None,

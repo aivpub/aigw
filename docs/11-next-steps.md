@@ -1,11 +1,11 @@
 # aigw -- 下一步行动
 
 **上次更新**: 2026-10-05
-**当前阶段**: **Phase 52（Stage 131）⏳ 规划待实施 — Codex Responses 桥接修复**（Phase 51 ✅ 134/134 已交付）
+**当前阶段**: **Phase 52 ✅ 完成（Stage 131）— Codex Responses 桥接修复**（总进度 135）
 
 ---
 
-## 当前状态：Phase 52 规划（Stage 131 ⏳）
+## 当前状态：Phase 52 完成（Stage 131 ✅）
 
 **2026-10-05（Codex 兼容缺陷调研 + Stage 131 规划）**: Codex CLI 0.157.1（`wire_api = "responses"`）接 aigw `/v1/responses` **首个请求即 400**：
 
@@ -36,9 +36,11 @@ Only 'function' tools are supported.
 
 | Phase | Stage | 主题 | 预估 | 状态 |
 |-------|-------|------|------|------|
-| **52** | 131 | Responses→Chat 桥接修复（工具归一化 + role 归一 + part 映射） | 12h | ⏳ 规划 |
+| **52** | 131 | Responses→Chat 桥接修复（工具归一化 + role 归一 + part 映射） | 12h | ✅ 完成（2026-10-05） |
 
-**Stage 131 范围**: ① 工具归一化（`function` 扁平转嵌套 / `namespace` 拍平 `{ns}__{child}` 含重名报错 / `custom`+`tool_search` 降级 / 服务端工具与 `mcp` 丢弃带告警 / `tool_choice` 同步清理）；② `developer` 合并进首位 system（默认映射 + `developer_role_passthrough` 开关）；③ `input_text`→`text`；④ 12 个适配器 UT（含 **Codex 抓包 fixture 端到端回归**）+ BDD 改写 2 条 + 新增 4 条 + mock 请求体断言能力。
+**Stage 131 交付**: ① 工具归一化（`function` 扁平转嵌套 / `namespace` 拍平 `{ns}__{child}` 含重名报错 / `custom`+`tool_search` 降级 / 服务端工具与 `mcp` 丢弃带告警 / `tool_choice` 同步清理）；② `developer` 与内联 `system` 合并进**唯一首位 system**（默认映射 + `developer_role_passthrough` 开关）；③ `input_text`/`output_text`→`text`；④ **13 个适配器 UT**（含 **Codex 抓包 fixture 端到端回归**）+ BDD 改写 2 条 + 新增 4 条 + mock 请求体断言能力。
+
+**验证**: aigw-core **517** UT（+13）、mock BDD **283 场景（270 pass / 13 skip）/ 1436 steps**、`task fmt`/`task lint` green；真实上游形态验证 → **200**（此前 400）。**未提交/未部署**（交用户）。
 
 **遗留**: `input[].type` 分派（`function_call` / `function_call_output`，多轮 Codex 必需）→ TD-017 独立立项（**多轮 tool call 验证已移出本 Stage 验收范围**，避免半吊子实现）；内建搜索执行（若要）独立 Phase。
 

@@ -92,6 +92,7 @@ impl ModelResolver {
                     model_group: None,
                     custom_llm_provider: None,
                     chat_template_compat: None,
+                    developer_role_passthrough: None,
                     modal_pricing: None,
                     weight: None,
                     rpm: None,
@@ -294,6 +295,7 @@ impl ModelResolver {
                 .get("chat_template_compat")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
+            let developer_role_passthrough = extract_developer_role_passthrough(&m.model_info);
             let modal_pricing = extract_modal_pricing(&m.model_info);
             // Stage 118: weighted/usage/latency/priority routing fields from
             // litellm_params (weight/rpm/tpm/priority).
@@ -343,6 +345,7 @@ impl ModelResolver {
                 model_group: model_group.clone(),
                 custom_llm_provider: custom_llm_provider.clone(),
                 chat_template_compat,
+                developer_role_passthrough,
                 modal_pricing,
                 weight,
                 rpm,
@@ -383,6 +386,7 @@ impl ModelResolver {
                 .get("chat_template_compat")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
+            let developer_role_passthrough = extract_developer_role_passthrough(&m.model_info);
             let modal_pricing = extract_modal_pricing(&m.model_info);
 
             // When proxy_models has api_key=None (encrypted/empty), fall back to env vars.
@@ -415,6 +419,7 @@ impl ModelResolver {
                 model_group,
                 custom_llm_provider,
                 chat_template_compat,
+                developer_role_passthrough,
                 modal_pricing,
                 weight,
                 rpm,
@@ -444,6 +449,17 @@ fn extract_modal_pricing(model_info: &Value) -> Option<crate::models::ModalPrici
         return None;
     }
     Some(pricing)
+}
+
+/// Extract `model_info.developer_role_passthrough`.
+///
+/// `Some(true)` → keep `role="developer"` verbatim in the Responses→Chat bridge
+/// (for upstreams that natively accept it). Absent / `Some(false)` → map to
+/// `system` (the safe default — most non-OpenAI upstreams reject `developer`).
+fn extract_developer_role_passthrough(model_info: &Value) -> Option<bool> {
+    model_info
+        .get("developer_role_passthrough")
+        .and_then(|v| v.as_bool())
 }
 
 /// Extract pricing — primary from model_info, fallback to litellm_params.

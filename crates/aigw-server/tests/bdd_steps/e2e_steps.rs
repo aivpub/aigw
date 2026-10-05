@@ -93,6 +93,33 @@ async fn given_model_points_to_mock(world: &mut TestWorld, name: String) {
     state.db.insert_model(&model).await.expect("insert model");
 }
 
+#[given(expr = "已配置 model {string} 指向 mock 上游 且 developer_role_passthrough 为 true")]
+async fn given_model_points_to_mock_developer_passthrough(world: &mut TestWorld, name: String) {
+    let state = world.ensure_state().await;
+    let mu = mock_upstream().lock().await;
+    let mock_base = mu
+        .as_ref()
+        .expect("mock upstream not started")
+        .url()
+        .to_string();
+
+    let model = aigw_core::models::ProxyModel {
+        model_id: uuid::Uuid::new_v4().to_string(),
+        model_name: name.clone(),
+        litellm_params: serde_json::json!({
+            "model": name,
+            "api_base": format!("{mock_base}/v1")
+        }),
+        model_info: serde_json::json!({"developer_role_passthrough": true}),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        created_by: Some("test".to_string()),
+        updated_at: chrono::Utc::now().to_rfc3339(),
+        updated_by: Some("test".to_string()),
+        enabled: true,
+    };
+    state.db.insert_model(&model).await.expect("insert model");
+}
+
 #[given(expr = "mock 上游 {string} 返回状态码 {int}")]
 async fn given_mock_returns_status(_world: &mut TestWorld, path: String, status: u16) {
     let mu = mock_upstream().lock().await;

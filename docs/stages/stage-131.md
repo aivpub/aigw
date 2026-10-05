@@ -3,7 +3,30 @@
 **所属**: Phase 52（Codex 客户端兼容）
 **预估**: 12h（tools 归一化 + role 归一化 + content part 映射 + UT/BDD + 文档）
 **依赖**: 无（独立缺陷修复；复用 Phase 21 / Stage 60 已有折叠机制）
-**状态**: ⏳ 规划（待实施）
+**状态**: ✅ 完成（代码 + UT + BDD + 门禁全绿；未提交/未部署）
+
+---
+
+## 0. 实施结果（2026-10-05）
+
+| 项 | 结果 |
+|----|------|
+| 工具归一化 | ✅ `normalize_responses_tools`：`function` 转嵌套 / `namespace` 拍平 `{ns}__{child}`（重名报错）/ `custom`+`tool_search` 降级 / 服务端工具丢弃 + `tracing::warn` |
+| `tool_choice` 清理 | ✅ `normalize_tool_choice`：指向已丢工具则丢弃，`auto`/`none` 字符串形态原样 |
+| `developer` 归一 | ✅ `merge_developer_into_system` + `consolidate_system_messages`（内联 system 也合并到首位）；默认映射，`developer_role_passthrough=true` 时透传 |
+| content part 映射 | ✅ `input_text`/`output_text` → `text` |
+| 新增字段 | ✅ `Deployment.developer_role_passthrough: Option<bool>` + resolver 从 `model_info` 解析 |
+| UT | ✅ **13 个新增**（含 Codex 抓包 fixture 端到端回归）；aigw-core 517 passed |
+| BDD | ✅ 改写 2 条（rejected → dropped）+ 新增 4 条；**mock BDD 283 场景（270 passed / 13 skip）/ 1436 steps 全绿** |
+| 门禁 | ✅ `task test` / `task bdd` / `task fmt` / `task lint` 全绿 |
+| 真实上游验证 | ✅ 按适配器产出形态构造的请求打生产网关 → **200**（此前 400） |
+
+**实施差异（vs §3 计划）**：
+1. 新增 `consolidate_system_messages`——§3.3 只提「避免产生第二个 system」，实测发现 `input[]` 自带内联 `system` 时仍会产生第二个，故补一步把所有 system 消息合并到首位（内容保真，不折叠成 `<system-reminder>`）。
+2. 实现路径选「显式 `index == 0` 检查 + 合并」，而非复用 `fold_extra_systems_into_adjacent_user`（后者会把内容降权进 user turn）。§3.3 的 M1 方案即为此，本次落地未用 fold。
+3. `mcp` 归入丢弃（§3.1 已定），实测上游 400 佐证。
+
+**未做（与计划一致）**：`input[].type` item 分派（TD-017a）、内建搜索执行、`features.multi_agent=false` 等客户端侧配置（属远端环境，非网关）。
 
 ---
 
@@ -301,7 +324,7 @@ content[] 各 part：{type:"input_text"|"output_text"} -> {type:"text"}
 
 | 文件 | 改动 |
 |------|------|
-| `crates/aigw-core/src/adapter.rs` | `ResponsesToChatCompletions::adapt_request` 接工具归一化 + role 归一 + part 映射；新增 `normalize_responses_tools` / `flatten_namespace_tools` / 冲突检测；12 个 UT |
+| `crates/aigw-core/src/adapter.rs` | `ResponsesToChatCompletions::adapt_request` 接工具归一化 + role 归一 + part 映射；新增 `normalize_responses_tools` / `flatten_namespace_tools` / 冲突检测；13 个 UT |
 | `crates/aigw-core/src/deployment.rs` | `Deployment` 新增 `developer_role_passthrough: Option<bool>`（与 `chat_template_compat` 同构） |
 | `crates/aigw-core/src/resolver.rs` | 从 `model_info` 解析 `developer_role_passthrough`（照搬 `chat_template_compat` 的提取模式，`resolver.rs:291-296`） |
 | `crates/aigw-server/tests/bdd_steps/model_steps.rs` | 承载新配置字段的 BDD step |
@@ -320,21 +343,23 @@ content[] 各 part：{type:"input_text"|"output_text"} -> {type:"text"}
 
 ## 6. 回归验证
 
-1. `task test` 全绿（含 12 个新 UT）
+1. `task test` 全绿（含 13 个新 UT）
 2. `task test-bdd` mock BDD 场景数净增 3（改写 2 条不变），0 fail
 3. `task bdd-real-sqlite` 通过（本 Stage 不涉 DB，仅确认无回归）
 4. `task fmt` / `task lint` green
 5. 人工：Codex exec 接 `9.135.87.221:4001` 返回正常回复
 
+> 注：任务名为 `task bdd`（非 `task test-bdd`）。
+
 ---
 
 ## 7. 门禁
 
-- [ ] 12 个新 UT 先 fail 后 pass（TDD 红绿）
-- [ ] Codex 抓包 fixture 回归 UT 通过
-- [ ] `task test` / `task test-bdd` / `task fmt` / `task lint` 全绿
-- [ ] BDD 改写 2 条在评审中确认（BC 破坏）
-- [ ] `docs/11-next-steps.md` + `stage-roadmap.md` 回写
+- [x] 13 个新 UT 先 fail 后 pass（TDD 红绿）——`test_responses_to_chat_no_second_system` 与 `..._developer_passthrough_when_configured` 初次红，修正后绿
+- [x] Codex 抓包 fixture 回归 UT 通过（`test_responses_to_chat_codex_fixture_end_to_end`）
+- [x] `task test` / `task bdd` / `task fmt` / `task lint` 全绿
+- [x] BDD 改写 2 条（rejected → dropped，上游体断言替代原错误串断言）
+- [ ] `docs/11-next-steps.md` + `stage-roadmap.md` 回写（待回写）
 - [ ] git commit（精确 add，禁 `-A`/`.`；`--signoff`）
 
 ---
@@ -355,4 +380,4 @@ content[] 各 part：{type:"input_text"|"output_text"} -> {type:"text"}
 - **`input[].type` 分派**：`function_call` / `function_call_output` / `reasoning` / `local_shell_call` 等 item type 当前一律按 message 处理。**单轮可用，多轮 tool 回填会走偏。** Codex 多轮必需，建议独立 Stage（参照 sub2api `buildChatMessagesFromItems` 的 item 分派 + `normalizeChatMessages` 的 tool_call/tool 配对清理，`chatcompletions_responses_bridge.go:187-215 / 576-640`）。
 - **`tool_choice` 的 `{type:"namespace"}` 形态**：Codex 会发 `tool_choice: {type:"function", name, namespace}`，命名空间字段的剥离需在 8.2 项一并处理。
 - **`web_search` 真实支持**：当前丢弃；若产品需要，走 litellm 的派生路线。
-- **Phase 41 遗留适配器 UT 缺口**：本 Stage 补 12 个，剩余（streaming 事件映射等）仍待补。
+- **Phase 41 遗留适配器 UT 缺口**：本 Stage 补 13 个，剩余（streaming 事件映射等）仍待补。

@@ -4133,6 +4133,7 @@ mod tests {
             model_group: None,
             custom_llm_provider: Some("openai".into()),
             chat_template_compat: None,
+            developer_role_passthrough: None,
             modal_pricing: None,
             weight: None,
             rpm: None,

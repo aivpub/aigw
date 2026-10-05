@@ -1959,6 +1959,95 @@ impl StreamAdapter for OpenAIToAnthropicStream {
 
 pub struct ResponsesToChatCompletions;
 
+/// Chat Completions tool names are capped by most upstreams; sub2api uses the
+/// same 64-char ceiling before falling back to a hashed suffix.
+const CHAT_TOOL_NAME_MAX_LEN: usize = 64;
+
+/// The `custom` tool has no Chat Completions equivalent — its raw input is
+/// passed through as a single string field (matches sub2api's `customToolInputSchema`).
+const CUSTOM_TOOL_INPUT_SCHEMA: &str = r#"{"type":"object","properties":{"input":{"type":"string","description":"The raw input for this tool, passed through verbatim."}},"required":["input"]}"#;
+
+/// `tool_search` is invoked by name from the client side, so it cannot be
+/// renamed; it degrades to a same-named function proxy (sub2api-compatible).
+const TOOL_SEARCH_PROXY_NAME: &str = "tool_search";
+const TOOL_SEARCH_PROXY_SCHEMA: &str = r#"{"type":"object","properties":{"query":{"type":"string","description":"Search query for tools or connectors to load."},"limit":{"type":"integer","description":"Maximum number of tool groups to return."}},"required":["query"]}"#;
+
+/// Server-side tool types with no Chat Completions equivalent are listed in the
+/// `normalize_responses_tools` doc comment; they are dropped with a warning
+/// (whether the upstream accepts them as-is is provider-specific, and measured
+/// against the target MaaS upstream all of them 400).
+///
+/// Flatten a Responses `content` value (string or array of parts) to plain text.
+/// Used when merging `developer` messages into the leading system message.
+fn flatten_responses_content_to_text(content: &Value) -> String {
+    match content {
+        Value::String(s) => s.clone(),
+        Value::Array(parts) => parts
+            .iter()
+            .filter_map(|p| p.get("text").and_then(|v| v.as_str()))
+            .collect::<Vec<&str>>()
+            .join(""),
+        Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
+/// Map Responses content parts to their Chat Completions equivalents.
+/// `input_text` / `output_text` → `text`; anything else is left untouched.
+fn normalize_content_parts(content: &Value) -> Value {
+    let Value::Array(parts) = content else {
+        return content.clone();
+    };
+    Value::Array(
+        parts
+            .iter()
+            .map(|part| {
+                let Some(obj) = part.as_object() else {
+                    return part.clone();
+                };
+                let part_type = obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                if part_type == "input_text" || part_type == "output_text" {
+                    let mut out = obj.clone();
+                    out.insert("type".to_string(), json!("text"));
+                    Value::Object(out)
+                } else {
+                    part.clone()
+                }
+            })
+            .collect(),
+    )
+}
+
+/// Namespace-qualified function name: `{namespace}__{child}`, hashed when over
+/// the chat tool-name ceiling. Byte-compatible with sub2api / litellm.
+fn flatten_namespace_tool_name(namespace: &str, name: &str) -> String {
+    let full = format!("{}__{}", namespace, name);
+    if full.len() <= CHAT_TOOL_NAME_MAX_LEN {
+        return full;
+    }
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(full.as_bytes());
+    let digest = hasher.finalize();
+    let suffix = format!("__{}", hex::encode(&digest[..4]));
+    let prefix_len = CHAT_TOOL_NAME_MAX_LEN - suffix.len();
+    let prefix: String = full.chars().take(prefix_len).collect();
+    format!("{}{}", prefix, suffix)
+}
+
+/// Build a nested Chat Completions function tool from a flat Responses function tool.
+fn nested_function_tool(name: &str, description: &str, parameters: Value, strict: Value) -> Value {
+    json!({
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": parameters,
+            "strict": strict,
+        }
+    })
+}
+
 impl ResponsesToChatCompletions {
     /// Convert Responses API `input` field to Chat Completions `messages`.
     fn input_to_messages(input: &Value) -> Result<Vec<Value>, AdapterError> {
@@ -1970,12 +2059,17 @@ impl ResponsesToChatCompletions {
                         "input array must not be empty".to_string(),
                     ));
                 }
-                // Map {role, content} directly
+                // Map {role, content} directly; content parts are normalized
+                // (`input_text` / `output_text` → `text`).
                 let messages: Vec<Value> = items
                     .iter()
                     .map(|item| {
                         let role = item.get("role").and_then(|v| v.as_str()).unwrap_or("user");
-                        json!({"role": role, "content": item.get("content").cloned().unwrap_or(Value::Null)})
+                        let content = item
+                            .get("content")
+                            .map(normalize_content_parts)
+                            .unwrap_or(Value::Null);
+                        json!({"role": role, "content": content})
                     })
                     .collect();
                 Ok(messages)
@@ -1984,6 +2078,276 @@ impl ResponsesToChatCompletions {
                 "input must be a string or array".to_string(),
             )),
         }
+    }
+
+    /// Normalize `developer` messages into the leading system message.
+    ///
+    /// Codex always emits `[system?, developer, user...]`. OpenAI treats a
+    /// `developer` message as equivalent to `instructions` (application-level
+    /// rules), so it belongs in the system slot — merging there preserves its
+    /// system-level priority instead of downgrading it into a user turn, and
+    /// avoids producing a second `system` message (which strict Jinja chat
+    /// templates such as Qwen's reject outright).
+    ///
+    /// When `passthrough` is set the roles are left untouched (the upstream is
+    /// known to accept `developer` natively).
+    fn merge_developer_into_system(messages: Vec<Value>, passthrough: bool) -> Vec<Value> {
+        if passthrough {
+            return messages;
+        }
+        let mut merged_texts: Vec<String> = Vec::new();
+        let mut rest: Vec<Value> = Vec::with_capacity(messages.len());
+
+        for msg in messages {
+            if msg.get("role").and_then(|v| v.as_str()) == Some("developer") {
+                let text =
+                    flatten_responses_content_to_text(msg.get("content").unwrap_or(&Value::Null));
+                if !text.is_empty() {
+                    merged_texts.push(text);
+                }
+                continue;
+            }
+            rest.push(msg);
+        }
+
+        if merged_texts.is_empty() {
+            return rest;
+        }
+
+        let appendix = merged_texts.join("\n\n");
+        if let Some(first) = rest.first_mut() {
+            if first.get("role").and_then(|v| v.as_str()) == Some("system") {
+                let existing =
+                    flatten_responses_content_to_text(first.get("content").unwrap_or(&Value::Null));
+                let combined = if existing.is_empty() {
+                    appendix
+                } else {
+                    format!("{}\n\n{}", existing, appendix)
+                };
+                if let Some(obj) = first.as_object_mut() {
+                    obj.insert("content".to_string(), json!(combined));
+                }
+                return rest;
+            }
+        }
+
+        // No leading system message — the developer content becomes one.
+        let mut out = Vec::with_capacity(rest.len() + 1);
+        out.push(json!({"role": "system", "content": appendix}));
+        out.extend(rest);
+        out
+    }
+
+    /// Collapse every `system` message into a single leading one.
+    ///
+    /// `input[]` may carry inline `system` messages of its own. Strict Jinja
+    /// templates (Qwen family) reject a `system` beyond index 0, so they are
+    /// merged into the leading system slot rather than dropped — the content is
+    /// system-level rules and must keep that priority.
+    fn consolidate_system_messages(messages: Vec<Value>) -> Vec<Value> {
+        let mut system_texts: Vec<String> = Vec::new();
+        let mut rest: Vec<Value> = Vec::with_capacity(messages.len());
+
+        for msg in messages {
+            if msg.get("role").and_then(|v| v.as_str()) == Some("system") {
+                let text =
+                    flatten_responses_content_to_text(msg.get("content").unwrap_or(&Value::Null));
+                if !text.is_empty() {
+                    system_texts.push(text);
+                }
+                continue;
+            }
+            rest.push(msg);
+        }
+
+        if system_texts.is_empty() {
+            return rest;
+        }
+
+        let mut out = Vec::with_capacity(rest.len() + 1);
+        out.push(json!({"role": "system", "content": system_texts.join("\n\n")}));
+        out.extend(rest);
+        out
+    }
+
+    /// Normalize the Responses `tools` array into Chat Completions tools.
+    ///
+    /// Returns the converted tools plus the set of declared (surviving) tool
+    /// names, which callers use to drop dangling `tool_choice` references.
+    ///
+    /// Sub2api/litellm-compatible behaviour:
+    /// - `function`  → nested `{type, function:{...}}`
+    /// - `namespace` → children flattened to `{ns}__{child}` functions
+    /// - `custom`    → degraded to a single-string-input function
+    /// - `tool_search` → same-named function proxy (cannot be renamed)
+    /// - server-side tools (`web_search`, `code_interpreter`, `mcp`, ...) → dropped
+    fn normalize_responses_tools(
+        tools: &[Value],
+    ) -> Result<(Vec<Value>, std::collections::HashSet<String>), AdapterError> {
+        use std::collections::{HashMap, HashSet};
+
+        let top_level: HashSet<&str> = tools
+            .iter()
+            .filter(|t| {
+                matches!(
+                    t.get("type").and_then(|v| v.as_str()),
+                    Some("function" | "custom")
+                )
+            })
+            .filter_map(|t| t.get("name").and_then(|v| v.as_str()))
+            .collect();
+
+        let mut out: Vec<Value> = Vec::with_capacity(tools.len());
+        let mut declared: HashSet<String> = HashSet::new();
+        let mut flat_owner: HashMap<String, String> = HashMap::new();
+        let mut tool_search_declared = false;
+
+        for tool in tools {
+            let tool_type = tool.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            let name = tool.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            match tool_type {
+                "function" => {
+                    let converted = nested_function_tool(
+                        name,
+                        tool.get("description")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(""),
+                        tool.get("parameters").cloned().unwrap_or(json!({})),
+                        tool.get("strict").cloned().unwrap_or(json!(false)),
+                    );
+                    declared.insert(name.to_string());
+                    out.push(converted);
+                }
+                "namespace" => {
+                    for child in namespace_children(tool) {
+                        let child_name = child.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                        if child_name.is_empty() {
+                            continue;
+                        }
+                        let flat = flatten_namespace_tool_name(name, child_name);
+                        // A flattened name colliding with a top-level tool (or with
+                        // another namespace's child) is unrepresentable upstream —
+                        // silently overwriting would route the model's call to the
+                        // wrong tool, so reject explicitly.
+                        if top_level.contains(flat.as_str()) {
+                            return Err(AdapterError::Unsupported(format!(
+                                "namespace tool '{}/{}' flattens to '{}' which conflicts with a top-level tool of the same name; this upstream cannot disambiguate them, rename one of the tools",
+                                name, child_name, flat
+                            )));
+                        }
+                        if let Some(prev) = flat_owner.get(&flat) {
+                            if prev != &format!("{}/{}", name, child_name) {
+                                return Err(AdapterError::Unsupported(format!(
+                                    "namespace tools '{}' and '{}/{}' both flatten to '{}'; this upstream cannot disambiguate them, rename one of the tools",
+                                    prev, name, child_name, flat
+                                )));
+                            }
+                        }
+                        flat_owner.insert(flat.clone(), format!("{}/{}", name, child_name));
+                        declared.insert(flat.clone());
+                        out.push(nested_function_tool(
+                            &flat,
+                            child
+                                .get("description")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or(""),
+                            child.get("parameters").cloned().unwrap_or(json!({})),
+                            child.get("strict").cloned().unwrap_or(json!(false)),
+                        ));
+                    }
+                }
+                "custom" => {
+                    let converted = nested_function_tool(
+                        name,
+                        tool.get("description")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(""),
+                        serde_json::from_str(CUSTOM_TOOL_INPUT_SCHEMA).unwrap_or(json!({})),
+                        json!(false),
+                    );
+                    declared.insert(name.to_string());
+                    out.push(converted);
+                }
+                "tool_search" => {
+                    if top_level.contains(TOOL_SEARCH_PROXY_NAME) {
+                        return Err(AdapterError::Unsupported(format!(
+                            "built-in tool_search conflicts with a declared tool named '{}'; this upstream cannot disambiguate them, rename the tool",
+                            TOOL_SEARCH_PROXY_NAME
+                        )));
+                    }
+                    if tool_search_declared {
+                        continue;
+                    }
+                    tool_search_declared = true;
+                    declared.insert(TOOL_SEARCH_PROXY_NAME.to_string());
+                    out.push(nested_function_tool(
+                        TOOL_SEARCH_PROXY_NAME,
+                        "Search and load tools, plugins, connectors, and MCP namespaces for the current task.",
+                        serde_json::from_str(TOOL_SEARCH_PROXY_SCHEMA).unwrap_or(json!({})),
+                        json!(false),
+                    ));
+                }
+                other => {
+                    tracing::warn!(
+                        tool_type = %other,
+                        tool_name = %name,
+                        "dropping Responses API tool: no Chat Completions equivalent"
+                    );
+                }
+            }
+        }
+
+        Ok((out, declared))
+    }
+}
+
+/// Children of a `namespace` tool — `tools` preferred, `children` as fallback.
+fn namespace_children(tool: &Value) -> Vec<&Value> {
+    for key in ["tools", "children"] {
+        if let Some(arr) = tool.get(key).and_then(|v| v.as_array()) {
+            if !arr.is_empty() {
+                return arr
+                    .iter()
+                    .filter(|c| c.get("type").and_then(|v| v.as_str()) == Some("function"))
+                    .collect();
+            }
+        }
+    }
+    Vec::new()
+}
+
+/// Drop a `tool_choice` that points at a tool which did not survive conversion —
+/// Chat Completions upstreams reject choices naming undeclared tools.
+fn normalize_tool_choice(
+    tool_choice: &Value,
+    declared: &std::collections::HashSet<String>,
+) -> Option<Value> {
+    match tool_choice {
+        Value::String(_) => Some(tool_choice.clone()),
+        Value::Object(obj) => {
+            let is_named = matches!(
+                obj.get("type").and_then(|v| v.as_str()),
+                Some("function" | "custom" | "namespace" | "tool_search")
+            );
+            if !is_named {
+                return Some(tool_choice.clone());
+            }
+            let name = obj
+                .get("name")
+                .and_then(|v| v.as_str())
+                .or_else(|| {
+                    obj.get("function")
+                        .and_then(|f| f.get("name"))
+                        .and_then(|v| v.as_str())
+                })
+                .unwrap_or("");
+            if name.is_empty() || declared.contains(name) {
+                return Some(tool_choice.clone());
+            }
+            tracing::debug!(tool_name = %name, "dropping tool_choice referencing a tool that was not declared");
+            None
+        }
+        _ => Some(tool_choice.clone()),
     }
 }
 
@@ -2002,18 +2366,27 @@ impl MessageAdapter for ResponsesToChatCompletions {
             }
         };
 
-        // 1. Validate tools — only function type is supported
-        if let Some(tools) = obj.get("tools").and_then(|v| v.as_array()) {
-            for tool in tools {
-                let tool_type = tool.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                match tool_type {
-                    "function" => {} // allowed
-                    other => {
-                        return Err(AdapterError::Unsupported(format!(
-                            "tool type '{}' is not supported in Responses→Chat bridge. Only 'function' tools are supported.",
-                            other
-                        )));
-                    }
+        // 1. Normalize tools — flatten namespaces, degrade custom/tool_search,
+        //    drop server-side tools. Never reject the whole request.
+        let mut declared_tools = std::collections::HashSet::new();
+        if let Some(tools) = obj.get("tools").and_then(|v| v.as_array()).cloned() {
+            let (normalized, declared) = Self::normalize_responses_tools(&tools)?;
+            declared_tools = declared;
+            if normalized.is_empty() {
+                obj.remove("tools");
+            } else {
+                obj.insert("tools".to_string(), Value::Array(normalized));
+            }
+        }
+
+        // 1b. Drop a tool_choice that survives but references a dropped tool.
+        if let Some(choice) = obj.get("tool_choice").cloned() {
+            match normalize_tool_choice(&choice, &declared_tools) {
+                Some(kept) => {
+                    obj.insert("tool_choice".to_string(), kept);
+                }
+                None => {
+                    obj.remove("tool_choice");
                 }
             }
         }
@@ -2033,6 +2406,12 @@ impl MessageAdapter for ResponsesToChatCompletions {
                 messages.insert(0, json!({"role": "system", "content": instructions}));
             }
         }
+
+        // 3b. Collapse inline `system` messages into the single leading one, then
+        //     fold `developer` messages into it as well (see merge_developer_into_system).
+        let messages = Self::consolidate_system_messages(messages);
+        let passthrough = deployment.developer_role_passthrough.unwrap_or(false);
+        let messages = Self::merge_developer_into_system(messages, passthrough);
 
         // 4. Field rename: max_output_tokens → max_tokens
         if let Some(mot) = obj.remove("max_output_tokens") {
@@ -2501,6 +2880,7 @@ mod tests {
             model_group: Some("gpt-4".into()),
             custom_llm_provider: Some("openai".into()),
             chat_template_compat: None,
+            developer_role_passthrough: None,
             modal_pricing: None,
             weight: None,
             rpm: None,
@@ -2701,6 +3081,7 @@ mod tests {
             model_group: None,
             custom_llm_provider: None,
             chat_template_compat: None,
+            developer_role_passthrough: None,
             modal_pricing: None,
             weight: None,
             rpm: None,
@@ -2768,6 +3149,7 @@ mod tests {
             model_group: None,
             custom_llm_provider: None,
             chat_template_compat: None,
+            developer_role_passthrough: None,
             modal_pricing: None,
             weight: None,
             rpm: None,
@@ -2804,6 +3186,7 @@ mod tests {
             model_group: None,
             custom_llm_provider: None,
             chat_template_compat: None,
+            developer_role_passthrough: None,
             modal_pricing: None,
             weight: None,
             rpm: None,
@@ -2955,6 +3338,336 @@ mod tests {
         );
         assert!(out.contains("\"name\":\"get_weather\""));
         assert!(out.contains("\"arguments\":\"{\\\"city\\\":\\\"NYC\\\"}\""));
+    }
+
+    // ── Stage 131 Responses→Chat bridge — tools/role/part normalization ──
+
+    fn bridge_dep() -> Deployment {
+        Deployment {
+            upstream_model: "upstream-model".into(),
+            ..test_deployment()
+        }
+    }
+
+    fn bridge_adapt(body: serde_json::Value) -> serde_json::Value {
+        ResponsesToChatCompletions
+            .adapt_request(body, &bridge_dep())
+            .expect("adapt_request")
+    }
+
+    fn bridge_adapt_with(body: serde_json::Value, passthrough: Option<bool>) -> serde_json::Value {
+        let dep = Deployment {
+            developer_role_passthrough: passthrough,
+            ..bridge_dep()
+        };
+        ResponsesToChatCompletions
+            .adapt_request(body, &dep)
+            .expect("adapt_request")
+    }
+
+    #[test]
+    fn test_responses_to_chat_tools_flatten_function() {
+        let adapted = bridge_adapt(json!({
+            "model": "m",
+            "input": "hi",
+            "tools": [{
+                "type": "function",
+                "name": "exec_command",
+                "description": "run",
+                "parameters": {"type": "object", "properties": {}},
+                "strict": false
+            }]
+        }));
+        let tool = &adapted["tools"][0];
+        assert_eq!(tool["type"].as_str(), Some("function"));
+        assert_eq!(tool["function"]["name"].as_str(), Some("exec_command"));
+        assert_eq!(tool["function"]["description"].as_str(), Some("run"));
+        assert!(tool.get("name").is_none(), "flat name must not leak");
+    }
+
+    #[test]
+    fn test_responses_to_chat_tools_namespace_flattened() {
+        let adapted = bridge_adapt(json!({
+            "model": "m",
+            "input": "hi",
+            "tools": [{
+                "type": "namespace",
+                "name": "multi_agent_v1",
+                "tools": [
+                    {"type": "function", "name": "spawn_agent", "parameters": {"type": "object"}},
+                    {"type": "function", "name": "close_agent", "parameters": {"type": "object"}}
+                ]
+            }]
+        }));
+        let names: Vec<&str> = adapted["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|t| t["function"]["name"].as_str())
+            .collect();
+        assert_eq!(
+            names,
+            vec!["multi_agent_v1__spawn_agent", "multi_agent_v1__close_agent"]
+        );
+    }
+
+    #[test]
+    fn test_responses_to_chat_tools_namespace_name_collision() {
+        let err = ResponsesToChatCompletions
+            .adapt_request(
+                json!({
+                    "model": "m",
+                    "input": "hi",
+                    "tools": [
+                        {"type": "function", "name": "ns__child", "parameters": {"type": "object"}},
+                        {"type": "namespace", "name": "ns", "tools": [
+                            {"type": "function", "name": "child", "parameters": {"type": "object"}}
+                        ]}
+                    ]
+                }),
+                &bridge_dep(),
+            )
+            .expect_err("flatten collision must be rejected");
+        assert!(matches!(err, AdapterError::Unsupported(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn test_responses_to_chat_tools_server_side_dropped() {
+        let adapted = bridge_adapt(json!({
+            "model": "m",
+            "input": "hi",
+            "tools": [
+                {"type": "web_search"},
+                {"type": "web_search_preview"},
+                {"type": "code_interpreter"},
+                {"type": "computer_use_preview"},
+                {"type": "mcp", "server_label": "x"},
+                {"type": "function", "name": "keep_me", "parameters": {"type": "object"}}
+            ]
+        }));
+        let tools = adapted["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 1, "only the function tool survives");
+        assert_eq!(tools[0]["function"]["name"].as_str(), Some("keep_me"));
+    }
+
+    #[test]
+    fn test_responses_to_chat_tools_all_dropped_removes_key() {
+        let adapted = bridge_adapt(json!({
+            "model": "m",
+            "input": "hi",
+            "tools": [{"type": "web_search"}]
+        }));
+        assert!(
+            adapted.get("tools").is_none(),
+            "empty tools must be removed"
+        );
+    }
+
+    #[test]
+    fn test_responses_to_chat_tool_choice_dropped_with_tool() {
+        let adapted = bridge_adapt(json!({
+            "model": "m",
+            "input": "hi",
+            "tools": [{"type": "web_search"}],
+            "tool_choice": {"type": "function", "name": "web_search"}
+        }));
+        assert!(
+            adapted.get("tool_choice").is_none(),
+            "tool_choice pointing at a dropped tool must be dropped too"
+        );
+    }
+
+    #[test]
+    fn test_responses_to_chat_tool_choice_kept_for_surviving() {
+        let adapted = bridge_adapt(json!({
+            "model": "m",
+            "input": "hi",
+            "tools": [{"type": "function", "name": "get_weather", "parameters": {"type": "object"}}],
+            "tool_choice": {"type": "function", "name": "get_weather"}
+        }));
+        assert_eq!(adapted["tool_choice"]["name"].as_str(), Some("get_weather"));
+
+        let auto = bridge_adapt(json!({
+            "model": "m",
+            "input": "hi",
+            "tools": [{"type": "function", "name": "get_weather", "parameters": {"type": "object"}}],
+            "tool_choice": "auto"
+        }));
+        assert_eq!(auto["tool_choice"].as_str(), Some("auto"));
+    }
+
+    #[test]
+    fn test_responses_to_chat_developer_role_becomes_system() {
+        let adapted = bridge_adapt(json!({
+            "model": "m",
+            "input": [
+                {"role": "developer", "content": [{"type": "input_text", "text": "no network"}]},
+                {"role": "user", "content": [{"type": "input_text", "text": "hi"}]}
+            ]
+        }));
+        let messages = adapted["messages"].as_array().unwrap();
+        assert!(
+            messages
+                .iter()
+                .all(|m| m["role"].as_str() != Some("developer")),
+            "developer role must not reach upstream: {messages:?}"
+        );
+    }
+
+    #[test]
+    fn test_responses_to_chat_developer_passthrough_when_configured() {
+        let adapted = bridge_adapt_with(
+            json!({
+                "model": "m",
+                "input": [
+                    {"role": "developer", "content": [{"type": "input_text", "text": "no network"}]},
+                    {"role": "user", "content": [{"type": "input_text", "text": "hi"}]}
+                ]
+            }),
+            Some(true),
+        );
+        let messages = adapted["messages"].as_array().unwrap();
+        assert_eq!(messages[0]["role"].as_str(), Some("developer"));
+        assert_eq!(
+            messages[0]["content"][0]["text"].as_str(),
+            Some("no network")
+        );
+    }
+
+    #[test]
+    fn test_responses_to_chat_developer_merged_into_leading_system() {
+        let adapted = bridge_adapt(json!({
+            "model": "m",
+            "instructions": "base rules",
+            "input": [
+                {"role": "developer", "content": [{"type": "input_text", "text": "permissions"}]},
+                {"role": "user", "content": [{"type": "input_text", "text": "hi"}]}
+            ]
+        }));
+        let messages = adapted["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 2, "got {messages:?}");
+        assert_eq!(messages[0]["role"].as_str(), Some("system"));
+        assert_eq!(
+            messages[0]["content"].as_str(),
+            Some("base rules\n\npermissions")
+        );
+        assert_eq!(messages[1]["role"].as_str(), Some("user"));
+    }
+
+    #[test]
+    fn test_responses_to_chat_no_second_system() {
+        let adapted = bridge_adapt(json!({
+            "model": "m",
+            "instructions": "base rules",
+            "input": [
+                {"role": "developer", "content": "permissions"},
+                {"role": "system", "content": "inline system"},
+                {"role": "user", "content": "hi"}
+            ]
+        }));
+        let messages = adapted["messages"].as_array().unwrap();
+        let systems: Vec<usize> = messages
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| m["role"].as_str() == Some("system"))
+            .map(|(i, _)| i)
+            .collect();
+        assert!(
+            systems.len() <= 1,
+            "at most one leading system message allowed, got {:?} in {messages:?}",
+            systems
+        );
+    }
+
+    #[test]
+    fn test_responses_to_chat_input_text_part_mapped() {
+        let adapted = bridge_adapt(json!({
+            "model": "m",
+            "input": [
+                {"role": "user", "content": [{"type": "input_text", "text": "hi"}]}
+            ]
+        }));
+        assert_eq!(
+            adapted["messages"][0]["content"][0]["type"].as_str(),
+            Some("text")
+        );
+        assert_eq!(
+            adapted["messages"][0]["content"][0]["text"].as_str(),
+            Some("hi")
+        );
+    }
+
+    /// End-to-end regression: a real Codex CLI request body must not 400.
+    /// Captured from Codex 0.157.1 (`wire_api = "responses"`) — the exact shape
+    /// that previously failed with "tool type 'namespace' is not supported".
+    #[test]
+    fn test_responses_to_chat_codex_fixture_end_to_end() {
+        let body = json!({
+            "model": "tokenhub/deepseek-v4-flash",
+            "instructions": "You are a coding agent running in the Codex CLI.",
+            "input": [
+                {"type": "message", "role": "developer",
+                 "content": [{"type": "input_text", "text": "<permissions instructions>"}]},
+                {"type": "message", "role": "user",
+                 "content": [{"type": "input_text", "text": "hi"}]}
+            ],
+            "tools": [
+                {"type": "function", "name": "exec_command", "description": "run", "strict": false,
+                 "parameters": {"type": "object", "properties": {"cmd": {"type": "string"}}}},
+                {"type": "function", "name": "write_stdin", "description": "stdin", "strict": false,
+                 "parameters": {"type": "object", "properties": {}}},
+                {"type": "namespace", "name": "multi_agent_v1", "description": "Sub-agents.",
+                 "tools": [
+                     {"type": "function", "name": "spawn_agent", "strict": false,
+                      "parameters": {"type": "object", "properties": {}}},
+                     {"type": "function", "name": "close_agent", "strict": false,
+                      "parameters": {"type": "object", "properties": {}}}
+                 ]},
+                {"type": "web_search", "external_web_access": false}
+            ],
+            "tool_choice": "auto",
+            "parallel_tool_calls": true,
+            "stream": true
+        });
+
+        let adapted = bridge_adapt(body);
+
+        // Must not 400 — every tool is either converted or dropped.
+        let tool_names: Vec<&str> = adapted["tools"]
+            .as_array()
+            .expect("tools present")
+            .iter()
+            .filter_map(|t| t["function"]["name"].as_str())
+            .collect();
+        assert_eq!(
+            tool_names,
+            vec![
+                "exec_command",
+                "write_stdin",
+                "multi_agent_v1__spawn_agent",
+                "multi_agent_v1__close_agent"
+            ]
+        );
+        // No flat `type`/`name` may leak; every tool is nested.
+        for tool in adapted["tools"].as_array().unwrap() {
+            assert_eq!(tool["type"].as_str(), Some("function"));
+            assert!(tool.get("function").is_some());
+        }
+        // developer folded into the single leading system message.
+        let messages = adapted["messages"].as_array().unwrap();
+        assert_eq!(messages[0]["role"].as_str(), Some("system"));
+        assert_eq!(
+            messages.len(),
+            2,
+            "instructions + developer merge into one system: {messages:?}"
+        );
+        assert_eq!(messages[1]["content"][0]["type"].as_str(), Some("text"));
+        // tool_choice "auto" survives; stream_options injected.
+        assert_eq!(adapted["tool_choice"].as_str(), Some("auto"));
+        assert_eq!(
+            adapted["stream_options"]["include_usage"].as_bool(),
+            Some(true)
+        );
     }
 
     // ── Legacy tests ──
@@ -3469,6 +4182,7 @@ mod tests {
             model_group: None,
             custom_llm_provider: None,
             chat_template_compat: Some("loose".to_string()),
+            developer_role_passthrough: None,
             modal_pricing: None,
             weight: None,
             rpm: None,
@@ -3526,6 +4240,7 @@ mod tests {
             model_group: None,
             custom_llm_provider: None,
             chat_template_compat: None,
+            developer_role_passthrough: None,
             modal_pricing: None,
             weight: None,
             rpm: None,
@@ -3568,6 +4283,7 @@ mod tests {
             model_group: None,
             custom_llm_provider: None,
             chat_template_compat: Some("loose".to_string()),
+            developer_role_passthrough: None,
             modal_pricing: None,
             weight: None,
             rpm: None,
@@ -3604,6 +4320,7 @@ mod tests {
             model_group: Some("claude-sonnet-4".into()),
             custom_llm_provider: Some("anthropic".into()),
             chat_template_compat: None,
+            developer_role_passthrough: None,
             modal_pricing: None,
             weight: None,
             rpm: None,
@@ -3997,7 +4714,8 @@ mod tests {
     fn make_strict_deployment() -> Deployment {
         Deployment {
             upstream_model: "qwen/qwen3.5-9b".into(),
-            chat_template_compat: None, // auto-sniff detects qwen → Strict
+            chat_template_compat: None,
+            developer_role_passthrough: None, // auto-sniff detects qwen → Strict
             ..anthropic_deployment()
         }
     }
@@ -4226,6 +4944,7 @@ mod tests {
         });
         let deployment = Deployment {
             chat_template_compat: Some("loose".to_string()),
+            developer_role_passthrough: None,
             ..make_strict_deployment()
         };
         let adapted = AnthropicPassthrough
