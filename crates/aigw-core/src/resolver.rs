@@ -93,6 +93,7 @@ impl ModelResolver {
                     custom_llm_provider: None,
                     chat_template_compat: None,
                     developer_role_passthrough: None,
+                    supported_standard_types: Vec::new(),
                     modal_pricing: None,
                     weight: None,
                     rpm: None,
@@ -296,6 +297,7 @@ impl ModelResolver {
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
             let developer_role_passthrough = extract_developer_role_passthrough(&m.model_info);
+            let supported_standard_types = extract_supported_standard_types(&m.model_info);
             let modal_pricing = extract_modal_pricing(&m.model_info);
             // Stage 118: weighted/usage/latency/priority routing fields from
             // litellm_params (weight/rpm/tpm/priority).
@@ -346,6 +348,7 @@ impl ModelResolver {
                 custom_llm_provider: custom_llm_provider.clone(),
                 chat_template_compat,
                 developer_role_passthrough,
+                supported_standard_types,
                 modal_pricing,
                 weight,
                 rpm,
@@ -387,6 +390,7 @@ impl ModelResolver {
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
             let developer_role_passthrough = extract_developer_role_passthrough(&m.model_info);
+            let supported_standard_types = extract_supported_standard_types(&m.model_info);
             let modal_pricing = extract_modal_pricing(&m.model_info);
 
             // When proxy_models has api_key=None (encrypted/empty), fall back to env vars.
@@ -420,6 +424,7 @@ impl ModelResolver {
                 custom_llm_provider,
                 chat_template_compat,
                 developer_role_passthrough,
+                supported_standard_types,
                 modal_pricing,
                 weight,
                 rpm,
@@ -460,6 +465,21 @@ fn extract_developer_role_passthrough(model_info: &Value) -> Option<bool> {
     model_info
         .get("developer_role_passthrough")
         .and_then(|v| v.as_bool())
+}
+
+/// Extract `model_info.supported_standard_types` — the wire protocols the
+/// upstream declares (e.g. `["responses"]`, `["completions"]`, `["messages"]`).
+/// Empty when absent, which callers read as "unknown" (keep the bridge).
+fn extract_supported_standard_types(model_info: &Value) -> Vec<String> {
+    model_info
+        .get("supported_standard_types")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Extract pricing — primary from model_info, fallback to litellm_params.

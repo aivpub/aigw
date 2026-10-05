@@ -20,7 +20,7 @@
 use super::chat::resolve_key_model_list;
 pub use super::chat::ChatAuth;
 
-use aigw_core::adapter::{select_adapter, ClientProtocol};
+use aigw_core::adapter::{select_responses_adapter, ClientProtocol};
 use aigw_core::metrics::RequestSummary;
 use aigw_core::models::{DailySpendKind, DailySpendLog, SpendLog};
 use axum::{
@@ -588,22 +588,21 @@ pub async fn responses_handler(
             .unwrap());
     }
 
-    let adapter =
-        select_adapter(ClientProtocol::Responses, &deployment.provider_type).ok_or_else(|| {
-            (
-                StatusCode::BAD_REQUEST,
-                Json(json!({
-                    "error": {
-                        "message": format!(
-                            "Unsupported provider type for Responses API with model '{}'",
-                            _model
-                        ),
-                        "type": "invalid_request_error",
-                        "code": "unsupported_provider"
-                    }
-                })),
-            )
-        })?;
+    let adapter = select_responses_adapter(&deployment).ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": {
+                    "message": format!(
+                        "Unsupported provider type for Responses API with model '{}'",
+                        _model
+                    ),
+                    "type": "invalid_request_error",
+                    "code": "unsupported_provider"
+                }
+            })),
+        )
+    })?;
     drop(_resolve_enter);
 
     // Adapt request
@@ -626,10 +625,21 @@ pub async fn responses_handler(
             )
         })?;
 
-    // Upstream URL — Stage 102: bridge converts to Chat Completions, so use chat/completions path
-    let upstream_path = match deployment.provider_type {
-        aigw_core::deployment::ProviderType::AnthropicNative => "messages",
-        _ => "chat/completions",
+    // Upstream URL — a Responses-native upstream (declared via
+    // `supported_standard_types`) is hit at /v1/responses; the bridge converts
+    // to Chat Completions, so chat-only upstreams use /v1/chat/completions.
+    // Anthropic-native uses /v1/messages.
+    let upstream_path = if deployment
+        .supported_standard_types
+        .iter()
+        .any(|t| t.eq_ignore_ascii_case("responses"))
+    {
+        "responses"
+    } else {
+        match deployment.provider_type {
+            aigw_core::deployment::ProviderType::AnthropicNative => "messages",
+            _ => "chat/completions",
+        }
     };
     let upstream_url = format!(
         "{}/{}",

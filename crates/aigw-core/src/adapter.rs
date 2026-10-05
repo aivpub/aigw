@@ -88,6 +88,28 @@ pub fn select_adapter(
     }
 }
 
+/// Pick the adapter for a Responses client request, honouring the deployment's
+/// declared wire protocols.
+///
+/// A deployment that declares `"responses"` in `supported_standard_types` gets
+/// the native passthrough — bridging it down to Chat Completions would discard
+/// server-side tool support and force the client through the conversion path.
+///
+/// This is where the capability check lives rather than in `select_adapter`:
+/// `ProviderType` describes the chat/messages wire family, while
+/// `supported_standard_types` is a per-deployment declaration that may add
+/// Responses on top of it (see `proxy_models.model_info`).
+pub fn select_responses_adapter(deployment: &Deployment) -> Option<&'static dyn MessageAdapter> {
+    if deployment
+        .supported_standard_types
+        .iter()
+        .any(|t| t.eq_ignore_ascii_case("responses"))
+    {
+        return Some(&ResponsesPassthrough);
+    }
+    select_adapter(ClientProtocol::Responses, &deployment.provider_type)
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Legacy ProviderAdapter trait
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -153,6 +175,44 @@ impl StreamAdapter for PassthroughStream {
     }
     fn finish(&mut self) -> Option<Vec<u8>> {
         None
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ResponsesPassthrough
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//
+// Client (Responses API) → upstream (Responses API), no conversion.
+//
+// Used when the deployment declares `supported_standard_types: [responses]`:
+// the upstream already speaks the Responses wire protocol (including its SSE
+// event sequence and server-side tool handling), so rewriting to Chat
+// Completions would only lose fidelity.
+
+pub struct ResponsesPassthrough;
+
+impl MessageAdapter for ResponsesPassthrough {
+    fn client_protocol(&self) -> ClientProtocol {
+        ClientProtocol::Responses
+    }
+
+    fn adapt_request(
+        &self,
+        mut body: Value,
+        deployment: &Deployment,
+    ) -> Result<Value, AdapterError> {
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert("model".to_string(), json!(deployment.upstream_model));
+        }
+        Ok(body)
+    }
+
+    fn adapt_response(&self, body: Value) -> Result<Value, AdapterError> {
+        Ok(body)
+    }
+
+    fn stream_adapter(&self) -> Option<Box<dyn StreamAdapter>> {
+        Some(Box::new(PassthroughStream))
     }
 }
 
@@ -2851,30 +2911,55 @@ impl MessageAdapter for ResponsesToChatCompletions {
 //
 // Converts Chat Completions SSE delta chunks → Responses API SSE events.
 //
-// State machine:
-//   First chunk (role)         → response.created
-//   delta.content              → response.output_text.delta
-//   delta.tool_calls           → response.function_call_arguments.delta
-//   finish_reason + usage      → response.completed
-//   [DONE]                     → marks upstream end; `finish()` then emits
-//                                response.completed followed by data: [DONE]
+// The client (Codex) dispatches on the `type` field inside the `data:`
+// payload, not on the `event:` line, and requires the full item lifecycle:
+// a delta is rejected with "OutputTextDelta without active item" unless the
+// item was announced first. So the emitted sequence is:
+//
+//   response.created
+//   response.in_progress
+//   response.output_item.added      (message item, when text arrives)
+//   response.content_part.added
+//   response.output_text.delta      (repeated)
+//   response.output_text.done       ┐
+//   response.content_part.done      │ finish()
+//   response.output_item.done       ┘
+//   response.output_item.added      (function_call item, per tool call)
+//   response.function_call_arguments.delta (repeated)
+//   response.function_call_arguments.done ┐ finish()
+//   response.output_item.done             ┘
+//   response.completed
+//   data: [DONE]
 
 struct ResponsesToChatCompletionsStream {
     response_id: String,
     model: String,
     created_sent: bool,
     done: bool,
-    content_index: usize,
+    /// Monotonic `sequence_number` carried by every event payload.
+    seq: u64,
+    /// Set once the assistant message item has been announced.
+    text_item_id: Option<String>,
+    content_part_open: bool,
+    text_accum: String,
     pending_usage: Option<Value>,
     tool_call_buf: Vec<ToolCallState>,
 }
 
 struct ToolCallState {
+    /// Stable item id carrying the call through its lifecycle.
+    item_id: String,
     call_id: String,
     name: String,
     arguments: String,
+    /// Whether `response.output_item.added` has been emitted for this call.
+    item_open: bool,
     done: bool,
 }
+
+/// Output index reserved for the assistant message item. Tool calls take the
+/// indices after it, so an absent message item never shifts a call's index.
+const TEXT_OUTPUT_INDEX: usize = 0;
 
 impl ResponsesToChatCompletionsStream {
     fn new() -> Self {
@@ -2883,14 +2968,82 @@ impl ResponsesToChatCompletionsStream {
             model: String::new(),
             created_sent: false,
             done: false,
-            content_index: 0,
+            seq: 1,
+            text_item_id: None,
+            content_part_open: false,
+            text_accum: String::new(),
             pending_usage: None,
             tool_call_buf: Vec::new(),
         }
     }
 
-    fn emit_sse(&self, event: &str, data: &str) -> Vec<u8> {
-        format!("event: {}\ndata: {}\n\n", event, data).into_bytes()
+    /// Serialize one event, stamping `type` and `sequence_number` into the
+    /// payload — clients read the type from there, not from the `event:` line.
+    fn sse(&mut self, event: &str, mut payload: Value) -> Vec<u8> {
+        if let Some(obj) = payload.as_object_mut() {
+            obj.insert("type".to_string(), json!(event));
+            obj.insert("sequence_number".to_string(), json!(self.seq));
+        }
+        self.seq += 1;
+        format!("event: {}\ndata: {}\n\n", event, payload).into_bytes()
+    }
+
+    fn output_index_for_tool(&self, idx: usize) -> usize {
+        TEXT_OUTPUT_INDEX + 1 + idx
+    }
+
+    /// Announce the assistant message item + its first content part, once.
+    fn ensure_text_item(&mut self, out: &mut Vec<u8>) {
+        if self.content_part_open {
+            return;
+        }
+        let item_id = self
+            .text_item_id
+            .get_or_insert_with(|| format!("msg_{}", uuid::Uuid::new_v4().simple()))
+            .clone();
+        let added = json!({
+            "output_index": TEXT_OUTPUT_INDEX,
+            "item": {
+                "id": item_id,
+                "type": "message",
+                "status": "in_progress",
+                "role": "assistant",
+                "content": [],
+            }
+        });
+        out.extend_from_slice(&self.sse("response.output_item.added", added));
+
+        let part_added = json!({
+            "item_id": item_id,
+            "output_index": TEXT_OUTPUT_INDEX,
+            "content_index": 0,
+            "part": {"type": "output_text", "text": "", "annotations": []},
+        });
+        out.extend_from_slice(&self.sse("response.content_part.added", part_added));
+        self.content_part_open = true;
+    }
+
+    /// Announce `response.output_item.added` for a function_call, once.
+    fn ensure_tool_item(&mut self, idx: usize, out: &mut Vec<u8>) {
+        let output_index = self.output_index_for_tool(idx);
+        let buf = &self.tool_call_buf[idx];
+        if buf.item_open {
+            return;
+        }
+        let (item_id, call_id, name) = (buf.item_id.clone(), buf.call_id.clone(), buf.name.clone());
+        let added = json!({
+            "output_index": output_index,
+            "item": {
+                "id": item_id,
+                "type": "function_call",
+                "status": "in_progress",
+                "call_id": call_id,
+                "name": name,
+                "arguments": "",
+            }
+        });
+        out.extend_from_slice(&self.sse("response.output_item.added", added));
+        self.tool_call_buf[idx].item_open = true;
     }
 }
 
@@ -2935,21 +3088,28 @@ impl StreamAdapter for ResponsesToChatCompletionsStream {
                 }
             }
 
-            // Emit response.created on first non-empty chunk
+            // Emit response.created + response.in_progress on first chunk
             if !self.created_sent {
                 self.created_sent = true;
-                let created_event = json!({
-                    "response": {
-                        "id": self.response_id,
-                        "object": "response",
-                        "status": "in_progress",
-                        "model": self.model,
-                        "output": []
-                    }
+                let response = json!({
+                    "id": self.response_id,
+                    "object": "response",
+                    "status": "in_progress",
+                    "model": self.model,
+                    "output": [],
                 });
-                out.extend_from_slice(&self.emit_sse(
-                    "response.created",
-                    &serde_json::to_string(&created_event).unwrap(),
+                out.extend_from_slice(&self.sse("response.created", json!({"response": response})));
+                out.extend_from_slice(&self.sse(
+                    "response.in_progress",
+                    json!({
+                        "response": {
+                            "id": self.response_id,
+                            "object": "response",
+                            "status": "in_progress",
+                            "model": self.model,
+                            "output": [],
+                        }
+                    }),
                 ));
             }
 
@@ -2966,17 +3126,17 @@ impl StreamAdapter for ResponsesToChatCompletionsStream {
                         .and_then(|v| v.as_str())
                     {
                         if !content.is_empty() {
-                            let idx = self.content_index;
-                            self.content_index += 1;
-                            let text_delta = json!({
+                            self.ensure_text_item(&mut out);
+                            self.text_accum.push_str(content);
+                            let item_id = self.text_item_id.clone().unwrap_or_default();
+                            let event = json!({
+                                "item_id": item_id,
+                                "output_index": TEXT_OUTPUT_INDEX,
+                                "content_index": 0,
                                 "delta": content,
-                                "content_index": idx,
-                                "output_index": 0
+                                "logprobs": [],
                             });
-                            out.extend_from_slice(&self.emit_sse(
-                                "response.output_text.delta",
-                                &serde_json::to_string(&text_delta).unwrap(),
-                            ));
+                            out.extend_from_slice(&self.sse("response.output_text.delta", event));
                         }
                     }
 
@@ -3006,34 +3166,47 @@ impl StreamAdapter for ResponsesToChatCompletionsStream {
                             // id+name on the first chunk, then args-only).
                             while self.tool_call_buf.len() <= idx {
                                 self.tool_call_buf.push(ToolCallState {
+                                    item_id: format!("fc_{}", uuid::Uuid::new_v4().simple()),
                                     call_id: String::new(),
                                     name: String::new(),
                                     arguments: String::new(),
+                                    item_open: false,
                                     done: false,
                                 });
                             }
-                            let buf = &mut self.tool_call_buf[idx];
 
                             // New tool call (id + name present) → register
                             if let (Some(id), Some(name)) = (tc_id, tc_name) {
+                                let buf = &mut self.tool_call_buf[idx];
                                 if !buf.done && buf.call_id.is_empty() {
                                     buf.call_id = id;
                                     buf.name = name;
                                 }
                             }
+
+                            // Announce the item before any argument delta —
+                            // clients reject a delta with no active item.
+                            if !self.tool_call_buf[idx].call_id.is_empty() {
+                                self.ensure_tool_item(idx, &mut out);
+                            }
+
                             // Argument delta (may arrive with null id/name —
                             // use the stored call_id from the first chunk)
                             if !tc_args.is_empty() {
+                                let output_index = self.output_index_for_tool(idx);
+                                let buf = &mut self.tool_call_buf[idx];
                                 buf.arguments.push_str(tc_args);
-                                let arg_delta = json!({
+                                let item_id = buf.item_id.clone();
+                                let call_id = buf.call_id.clone();
+                                let event = json!({
+                                    "item_id": item_id,
+                                    "output_index": output_index,
                                     "delta": tc_args,
-                                    "call_id": buf.call_id,
-                                    "output_index": idx
+                                    "call_id": call_id,
                                 });
-                                out.extend_from_slice(&self.emit_sse(
-                                    "response.function_call_arguments.delta",
-                                    &serde_json::to_string(&arg_delta).unwrap(),
-                                ));
+                                out.extend_from_slice(
+                                    &self.sse("response.function_call_arguments.delta", event),
+                                );
                             }
                         }
                     }
@@ -3056,20 +3229,86 @@ impl StreamAdapter for ResponsesToChatCompletionsStream {
     fn finish(&mut self) -> Option<Vec<u8>> {
         let mut out = Vec::new();
 
-        // Send function_call_arguments.done for each tool call
-        for (idx, tc) in self.tool_call_buf.iter().enumerate() {
-            if !tc.done && !tc.call_id.is_empty() {
-                let done_event = json!({
-                    "call_id": tc.call_id,
-                    "name": tc.name,
-                    "arguments": tc.arguments,
-                    "output_index": idx
-                });
-                out.extend_from_slice(&self.emit_sse(
-                    "response.function_call_arguments.done",
-                    &serde_json::to_string(&done_event).unwrap(),
-                ));
+        // Close the assistant message item, if one was opened. The accumulated
+        // text is taken once and reused below for completed.output.
+        let mut final_text = String::new();
+        if self.content_part_open {
+            let item_id = self.text_item_id.clone().unwrap_or_default();
+            let text = std::mem::take(&mut self.text_accum);
+            final_text = text.clone();
+
+            let text_done = json!({
+                "item_id": item_id,
+                "output_index": TEXT_OUTPUT_INDEX,
+                "content_index": 0,
+                "text": text,
+                "logprobs": [],
+            });
+            out.extend_from_slice(&self.sse("response.output_text.done", text_done));
+
+            let part_done = json!({
+                "item_id": item_id,
+                "output_index": TEXT_OUTPUT_INDEX,
+                "content_index": 0,
+                "part": {"type": "output_text", "text": text, "annotations": []},
+            });
+            out.extend_from_slice(&self.sse("response.content_part.done", part_done));
+
+            let item_done = json!({
+                "output_index": TEXT_OUTPUT_INDEX,
+                "item": {
+                    "id": item_id,
+                    "type": "message",
+                    "status": "completed",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": text, "annotations": []}],
+                }
+            });
+            out.extend_from_slice(&self.sse("response.output_item.done", item_done));
+        }
+
+        // Close each function_call item, if one was opened.
+        let tool_count = self.tool_call_buf.len();
+        for idx in 0..tool_count {
+            let output_index = self.output_index_for_tool(idx);
+            let (item_id, call_id, name, arguments, opened) = {
+                let tc = &self.tool_call_buf[idx];
+                (
+                    tc.item_id.clone(),
+                    tc.call_id.clone(),
+                    tc.name.clone(),
+                    tc.arguments.clone(),
+                    tc.item_open,
+                )
+            };
+            if !opened {
+                continue;
             }
+            if !call_id.is_empty() {
+                let done_event = json!({
+                    "item_id": item_id,
+                    "output_index": output_index,
+                    "call_id": call_id,
+                    "name": name,
+                    "arguments": arguments,
+                });
+                out.extend_from_slice(
+                    &self.sse("response.function_call_arguments.done", done_event),
+                );
+            }
+            let item_done = json!({
+                "output_index": output_index,
+                "item": {
+                    "id": item_id,
+                    "type": "function_call",
+                    "status": "completed",
+                    "call_id": call_id,
+                    "name": name,
+                    "arguments": arguments,
+                }
+            });
+            out.extend_from_slice(&self.sse("response.output_item.done", item_done));
+            self.tool_call_buf[idx].done = true;
         }
 
         // Emit response.completed with usage
@@ -3078,23 +3317,64 @@ impl StreamAdapter for ResponsesToChatCompletionsStream {
             "output_tokens": 0,
             "total_tokens": 0
         }));
+        let input_tokens = usage
+            .get("prompt_tokens")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let output_tokens = usage
+            .get("completion_tokens")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let total_tokens = usage
+            .get("total_tokens")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+
+        // `response.completed.output` must mirror the items that were announced:
+        // clients (Codex) read the final assistant turn from here.
+        let mut output: Vec<Value> = Vec::new();
+        if let Some(item_id) = self.text_item_id.clone() {
+            output.push(json!({
+                "id": item_id,
+                "type": "message",
+                "status": "completed",
+                "role": "assistant",
+                "content": [{
+                    "type": "output_text",
+                    "text": final_text,
+                    "annotations": [],
+                }],
+            }));
+        }
+        for idx in 0..tool_count {
+            let tc = &self.tool_call_buf[idx];
+            output.push(json!({
+                "id": tc.item_id,
+                "type": "function_call",
+                "status": "completed",
+                "call_id": tc.call_id,
+                "name": tc.name,
+                "arguments": tc.arguments,
+            }));
+        }
+
         let completed = json!({
             "response": {
                 "id": self.response_id,
                 "object": "response",
                 "status": "completed",
                 "model": self.model,
+                "output": output,
                 "usage": {
-                    "input_tokens": usage.get("prompt_tokens").and_then(|v| v.as_i64()).unwrap_or(0),
-                    "output_tokens": usage.get("completion_tokens").and_then(|v| v.as_i64()).unwrap_or(0),
-                    "total_tokens": usage.get("total_tokens").and_then(|v| v.as_i64()).unwrap_or(0),
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "total_tokens": total_tokens,
+                    "input_tokens_details": {"cached_tokens": 0},
+                    "output_tokens_details": {"reasoning_tokens": 0},
                 }
             }
         });
-        out.extend_from_slice(&self.emit_sse(
-            "response.completed",
-            &serde_json::to_string(&completed).unwrap(),
-        ));
+        out.extend_from_slice(&self.sse("response.completed", completed));
 
         // [DONE]
         out.extend_from_slice(b"data: [DONE]\n\n");
@@ -3159,6 +3439,7 @@ mod tests {
             custom_llm_provider: Some("openai".into()),
             chat_template_compat: None,
             developer_role_passthrough: None,
+            supported_standard_types: Vec::new(),
             modal_pricing: None,
             weight: None,
             rpm: None,
@@ -3360,6 +3641,7 @@ mod tests {
             custom_llm_provider: None,
             chat_template_compat: None,
             developer_role_passthrough: None,
+            supported_standard_types: Vec::new(),
             modal_pricing: None,
             weight: None,
             rpm: None,
@@ -3428,6 +3710,7 @@ mod tests {
             custom_llm_provider: None,
             chat_template_compat: None,
             developer_role_passthrough: None,
+            supported_standard_types: Vec::new(),
             modal_pricing: None,
             weight: None,
             rpm: None,
@@ -3465,6 +3748,7 @@ mod tests {
             custom_llm_provider: None,
             chat_template_compat: None,
             developer_role_passthrough: None,
+            supported_standard_types: Vec::new(),
             modal_pricing: None,
             weight: None,
             rpm: None,
@@ -3616,6 +3900,192 @@ mod tests {
         );
         assert!(out.contains("\"name\":\"get_weather\""));
         assert!(out.contains("\"arguments\":\"{\\\"city\\\":\\\"NYC\\\"}\""));
+    }
+
+    // ── Stage 133 Responses SSE conformance (codex client) ──
+
+    /// Every event payload must carry `type` (clients dispatch on it) and a
+    /// monotonically increasing `sequence_number`.
+    fn sse_events_of(raw: &str) -> Vec<(String, serde_json::Value)> {
+        raw.split("\n\n")
+            .filter(|b| !b.trim().is_empty())
+            .filter_map(|block| {
+                let mut name = String::new();
+                let mut data = String::new();
+                for line in block.lines() {
+                    if let Some(v) = line.strip_prefix("event: ") {
+                        name = v.to_string();
+                    } else if let Some(v) = line.strip_prefix("data: ") {
+                        data = v.to_string();
+                    }
+                }
+                if name.is_empty() {
+                    return None; // e.g. the trailing data: [DONE]
+                }
+                let parsed: serde_json::Value =
+                    serde_json::from_str(&data).unwrap_or(serde_json::Value::Null);
+                Some((name, parsed))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_responses_sse_every_event_carries_type_and_sequence() {
+        let mut s = ResponsesToChatCompletionsStream::new();
+        let mut raw = String::new();
+        let chunk = br#"data: {"id":"1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"role":"assistant","content":"Hi"},"finish_reason":null}]}
+
+data: [DONE]
+
+"#;
+        if let Some(o) = s.next(chunk) {
+            raw.push_str(&String::from_utf8_lossy(&o));
+        }
+        if let Some(o) = s.finish() {
+            raw.push_str(&String::from_utf8_lossy(&o));
+        }
+
+        let events = sse_events_of(&raw);
+        assert!(!events.is_empty(), "no events emitted:\n{raw}");
+
+        // Every payload type must equal its event name (clients read the
+        // payload, not the `event:` line).
+        for (name, payload) in &events {
+            assert_eq!(
+                payload.get("type").and_then(|v| v.as_str()),
+                Some(name.as_str()),
+                "payload for '{name}' lacks a matching type field: {payload}"
+            );
+            assert!(
+                payload.get("sequence_number").is_some(),
+                "event '{name}' lacks sequence_number: {payload}"
+            );
+        }
+
+        // sequence_number must increase monotonically.
+        let seqs: Vec<u64> = events
+            .iter()
+            .filter_map(|(_, p)| p.get("sequence_number").and_then(|v| v.as_u64()))
+            .collect();
+        for w in seqs.windows(2) {
+            assert!(w[0] < w[1], "sequence_number not monotonic: {seqs:?}");
+        }
+
+        // The full item lifecycle must be present, in order.
+        let names: Vec<&str> = events.iter().map(|(n, _)| n.as_str()).collect();
+        let expected_prefix = [
+            "response.created",
+            "response.in_progress",
+            "response.output_item.added",
+            "response.content_part.added",
+            "response.output_text.delta",
+        ];
+        assert_eq!(
+            &names[..expected_prefix.len()],
+            &expected_prefix,
+            "wrong event order: {names:?}"
+        );
+        for required in [
+            "response.output_text.done",
+            "response.content_part.done",
+            "response.output_item.done",
+            "response.completed",
+        ] {
+            assert!(names.contains(&required), "missing {required}: {names:?}");
+        }
+
+        // response.completed must precede data: [DONE] in the raw bytes.
+        let completed_at = raw.find("response.completed").expect("completed");
+        let done_at = raw.find("data: [DONE]").expect("[DONE]");
+        assert!(
+            completed_at < done_at,
+            "response.completed must precede [DONE]: completed={completed_at} done={done_at}"
+        );
+    }
+
+    #[test]
+    fn test_responses_sse_completed_output_mirrors_deltas() {
+        let mut s = ResponsesToChatCompletionsStream::new();
+        let _ = s.next(br#"data: {"id":"1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"content":"He"},"finish_reason":null}]}
+
+"#);
+        let _ = s.next(br#"data: {"id":"1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"content":"llo"},"finish_reason":null}]}
+
+"#);
+        let _ = s.next(b"data: [DONE]\n\n");
+        let final_raw = String::from_utf8(s.finish().expect("finish")).unwrap();
+
+        let events = sse_events_of(&final_raw);
+        let completed = events
+            .iter()
+            .find(|(n, _)| n == "response.completed")
+            .expect("response.completed");
+        let output = completed.1["response"]["output"]
+            .as_array()
+            .expect("completed.output must be an array");
+        assert_eq!(output.len(), 1, "one message item: {output:?}");
+        assert_eq!(output[0]["type"].as_str(), Some("message"));
+        assert_eq!(
+            output[0]["content"][0]["text"].as_str(),
+            Some("Hello"),
+            "accumulated text must be echoed in completed.output"
+        );
+    }
+
+    #[test]
+    fn test_responses_sse_tool_call_lifecycle() {
+        let mut s = ResponsesToChatCompletionsStream::new();
+        let mut raw = String::new();
+        // Announce the call (id+name), then stream its arguments.
+        if let Some(o) = s.next(br#"data: {"id":"1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"exec","arguments":""}}]},"finish_reason":null}]}
+
+"#) {
+            raw.push_str(&String::from_utf8_lossy(&o));
+        }
+        if let Some(o) = s.next(br#"data: {"id":"1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"cmd\":\"ls\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":3,"completion_tokens":4,"total_tokens":7}}
+
+"#) {
+            raw.push_str(&String::from_utf8_lossy(&o));
+        }
+        if let Some(o) = s.finish() {
+            raw.push_str(&String::from_utf8_lossy(&o));
+        }
+
+        let events = sse_events_of(&raw);
+        let names: Vec<&str> = events.iter().map(|(n, _)| n.as_str()).collect();
+        for required in [
+            "response.output_item.added",
+            "response.function_call_arguments.delta",
+            "response.function_call_arguments.done",
+            "response.output_item.done",
+            "response.completed",
+        ] {
+            assert!(names.contains(&required), "missing {required}: {names:?}");
+        }
+        // The function_call item must be announced before its argument delta.
+        let item_added = names
+            .iter()
+            .position(|n| *n == "response.output_item.added")
+            .unwrap();
+        let arg_delta = names
+            .iter()
+            .position(|n| *n == "response.function_call_arguments.delta")
+            .unwrap();
+        assert!(item_added < arg_delta, "item must precede delta: {names:?}");
+
+        // completed.output carries the function_call item.
+        let completed = events
+            .iter()
+            .find(|(n, _)| n == "response.completed")
+            .expect("completed");
+        let output = completed.1["response"]["output"].as_array().unwrap();
+        let call = output
+            .iter()
+            .find(|i| i["type"] == "function_call")
+            .expect("function_call in completed.output");
+        assert_eq!(call["call_id"].as_str(), Some("call_1"));
+        assert_eq!(call["name"].as_str(), Some("exec"));
+        assert_eq!(call["arguments"].as_str(), Some("{\"cmd\":\"ls\"}"));
     }
 
     // ── Stage 131 Responses→Chat bridge — tools/role/part normalization ──
@@ -4739,6 +5209,7 @@ mod tests {
             custom_llm_provider: None,
             chat_template_compat: Some("loose".to_string()),
             developer_role_passthrough: None,
+            supported_standard_types: Vec::new(),
             modal_pricing: None,
             weight: None,
             rpm: None,
@@ -4797,6 +5268,7 @@ mod tests {
             custom_llm_provider: None,
             chat_template_compat: None,
             developer_role_passthrough: None,
+            supported_standard_types: Vec::new(),
             modal_pricing: None,
             weight: None,
             rpm: None,
@@ -4840,6 +5312,7 @@ mod tests {
             custom_llm_provider: None,
             chat_template_compat: Some("loose".to_string()),
             developer_role_passthrough: None,
+            supported_standard_types: Vec::new(),
             modal_pricing: None,
             weight: None,
             rpm: None,
@@ -4877,6 +5350,7 @@ mod tests {
             custom_llm_provider: Some("anthropic".into()),
             chat_template_compat: None,
             developer_role_passthrough: None,
+            supported_standard_types: Vec::new(),
             modal_pricing: None,
             weight: None,
             rpm: None,
@@ -5501,6 +5975,7 @@ mod tests {
         let deployment = Deployment {
             chat_template_compat: Some("loose".to_string()),
             developer_role_passthrough: None,
+            supported_standard_types: Vec::new(),
             ..make_strict_deployment()
         };
         let adapted = AnthropicPassthrough

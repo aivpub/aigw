@@ -4134,6 +4134,7 @@ mod tests {
             custom_llm_provider: Some("openai".into()),
             chat_template_compat: None,
             developer_role_passthrough: None,
+            supported_standard_types: Vec::new(),
             modal_pricing: None,
             weight: None,
             rpm: None,

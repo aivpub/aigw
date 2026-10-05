@@ -49,6 +49,11 @@ pub struct Deployment {
     /// means map (the safe default — most non-OpenAI upstreams reject `developer`).
     /// Sourced from `model_info.developer_role_passthrough`.
     pub developer_role_passthrough: Option<bool>,
+    /// `model_info.supported_standard_types` — the wire protocols this upstream
+    /// declares. When it contains `"responses"`, a Responses client request is
+    /// forwarded natively (`/v1/responses`) instead of being bridged down to
+    /// Chat Completions. Absent means "unknown" → keep the bridge.
+    pub supported_standard_types: Vec<String>,
     /// Per-modality input pricing (TD-012b), extracted from model_info
     /// `modal_pricing: {image, audio, video}` (USD per 1M tokens, e.g. Gemini
     /// embeddings image $0.45 / audio $6.50 / video $12.00). None when the
@@ -200,6 +205,7 @@ mod tests {
             custom_llm_provider: Some("openai".to_string()),
             chat_template_compat: None,
             developer_role_passthrough: None,
+            supported_standard_types: Vec::new(),
             modal_pricing: None,
             weight: None,
             rpm: None,
