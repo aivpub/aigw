@@ -1,11 +1,52 @@
 # aigw -- 下一步行动
 
-**上次更新**: 2026-08-24
-**当前阶段**: **Phase 51 ✅ 全部完成（Stage 126-130）— 134/134 ALL STAGES COMPLETE**
+**上次更新**: 2026-10-05
+**当前阶段**: **Phase 52（Stage 131）⏳ 规划待实施 — Codex Responses 桥接修复**（Phase 51 ✅ 134/134 已交付）
 
 ---
 
-## 当前状态：Phase 51 全部完成（Stage 126-130 ✅）
+## 当前状态：Phase 52 规划（Stage 131 ⏳）
+
+**2026-10-05（Codex 兼容缺陷调研 + Stage 131 规划）**: Codex CLI 0.157.1（`wire_api = "responses"`）接 aigw `/v1/responses` **首个请求即 400**：
+
+```
+Unsupported: tool type 'namespace' is not supported in Responses→Chat bridge.
+Only 'function' tools are supported.
+```
+
+**根因**：`ResponsesToChatCompletions::adapt_request`（`adapter.rs:2005-2019`）对工具是「非 function 一律 `return Err`」硬拒绝，而 Codex 原生发送 `namespace`（`multi_agent_v1`，含 5 个嵌套 function）+ `web_search` + `role="developer"` 消息。
+
+**行业调研结论**（`docs/research/2026-10-05-codex-responses-bridge-gap.md`，直接读源码 + 生产网关实测）：**aigw 是 litellm / new-api / sub2api 四家中唯一「硬拒绝」的**——三家全部「转换或降级」，零失败路径。
+
+**另发现 3 处既存缺口被 mock BDD 掩盖**（实测确认为真实 400，非理论风险）：
+
+| # | 缺口 | 定位 | 实测 |
+|---|------|------|------|
+| D | 扁平 function 工具**从未转嵌套** | `adapter.rs:2009`（`"function" => {}` 只校验不转换） | 扁平→400 / 嵌套→200 |
+| B | `role="developer"` **零处理** | `grep -rn '"developer"' crates/**/*.rs` 无命中 | 单条 developer → 400 |
+| E | `input_text` content part 未映射 | `adapter.rs:1974-1980` 原样 `cloned()` | `input_text`→400 / `text`→200 |
+
+**关键交互（设计要点）**：Codex 消息形状恒为 `[system(instructions), developer, user...]`。**朴素 `developer→system` 重命名会产出两个 system**——实测在 deepseek/glm 上游**不报错**（`两个 system 开头 -> 200`），但在 Qwen 严格模板（Phase 21 / Stage 60 已处理过）必 400。**故须合并进首位 system，而非折叠进 user turn（后者会降权为 `<system-reminder>`）。**
+
+**降级 Codex 到 chat wire 已实测排除**：0.92.0（最后一个支持 `wire_api="chat"` 的版本）直连 `/v1/chat/completions` **同样** 400（同根因 `role="developer"`）；官方 discussion #7782 确认 chat wire 2026-02 移除。**→ 修复点必须在网关。**
+
+**服务端工具（web_search 等）处置定案**：调研 `docs/research/2026-10-05-websearch-server-tool-support.md`（litellm 派生 `web_search_options` + 内建 agentic loop 子系统 / sub2api 丢弃 / new-api 透传）。**本环境实测**：`web_search`/`web_search_preview`/`code_interpreter`/`computer_use_preview`/`mcp` 透传**全部 400**；`web_search_options` 参数被收下（200）但**不执行搜索**（模型回复「我无法联网」）。→ 选「**丢弃 + 告警**」（与派生实效相同，但诚实且便于统计）；**内建真实搜索列为独立 Phase**（需搜索后端 + 多轮 agentic loop + SSE 交互）。
+
+**`developer` 映射设计**：**默认启用，但提供 `model_info.developer_role_passthrough` 开关**（与 `chat_template_compat` 同构）——确认后端原生支持 `developer` 的上游可设为 `true` 透传。依据 litellm 已用「provider 覆写」实现同等语义（`translate_developer_role_to_system_role` base 映射、OpenAI/Azure 覆写为不映射）；aigw 无 provider 能力注册表（`ProviderType::infer` 把所有非 `anthropic` 归 `OpenAICompatible`），无法自动区分真 OpenAI，故用显式配置。
+
+| Phase | Stage | 主题 | 预估 | 状态 |
+|-------|-------|------|------|------|
+| **52** | 131 | Responses→Chat 桥接修复（工具归一化 + role 归一 + part 映射） | 12h | ⏳ 规划 |
+
+**Stage 131 范围**: ① 工具归一化（`function` 扁平转嵌套 / `namespace` 拍平 `{ns}__{child}` 含重名报错 / `custom`+`tool_search` 降级 / 服务端工具与 `mcp` 丢弃带告警 / `tool_choice` 同步清理）；② `developer` 合并进首位 system（默认映射 + `developer_role_passthrough` 开关）；③ `input_text`→`text`；④ 12 个适配器 UT（含 **Codex 抓包 fixture 端到端回归**）+ BDD 改写 2 条 + 新增 4 条 + mock 请求体断言能力。
+
+**遗留**: `input[].type` 分派（`function_call` / `function_call_output`，多轮 Codex 必需）→ TD-017 独立立项（**多轮 tool call 验证已移出本 Stage 验收范围**，避免半吊子实现）；内建搜索执行（若要）独立 Phase。
+
+**规划文档**: `docs/stages/stage-131.md` + `docs/research/2026-10-05-codex-responses-bridge-gap.md` + `docs/research/2026-10-05-websearch-server-tool-support.md`
+
+---
+
+## 已完成：Phase 51（Stage 126-130 ✅，134/134）
 
 **2026-08-24（Stage 130 收尾 + 安全审计 ✅，134/134）**: real BDD 三后端 OAuth 凭证 CRUD + 加密落库直读断言 + in-use 守卫（**58/58 × 3 全绿**）。**安全审计 8 项全部通过**。两个关键修复：
 - **`/credential/new` OAuth 凭证逐字段加密落库**：`anthropic_oauth` 凭证的 access/refresh/session_key 之前以明文经通用创建路径落库（exchange 已加密但 new 遗漏）——新增 `aigw-core::crypto::encrypt_litellm_value_gcm`（AES-256-GCM `v2:gcm:`）+ `credential_new` 加密接线 + 2 UT。real BDD DB 直读探针三后端验证无明文。

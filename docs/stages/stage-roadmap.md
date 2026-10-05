@@ -1,7 +1,7 @@
 # aigw — AI Gateway Stagemap
 
 **项目**: aigw (litellm Rust 最小兼容替代)
-**最后更新**: 2026-08-24
+**最后更新**: 2026-10-05
 
 ---
 
@@ -9,7 +9,7 @@
 
 - **当前 Phase**: **Phase 51 ✅ 全部完成（Stage 126-130）**。Claude OAuth 订阅反代五 Stage 全部交付：凭证交换引擎 + Token 三层自愈 + 反代管线 + 前端入口 + 收尾安全审计。
 - **状态**: **134/134 Stages 交付（ALL STAGES COMPLETE）**。Stage 126-127（2026-08-19）：credentials 表 OAuth 结构化扩展 + Cookie→Token 3 步交换（PKCE S256 经代理）+ `claude_token.rs` TokenProvider 三层自愈 + needs_reauth 告警。**Stage 128（2026-08-20）**：OAuth 反代管线（`oauth_pipeline.rs` billing 指纹字节对齐 sub2api/Parrot + 协议转换 + CC 伪装 + 401 刷新重试 + count_tokens + embeddings 400 + 代理出口）+ 四入口接线。**Stage 129（2026-08-24）**：CredentialsTab OAuth 前端入口 + `POST /credential/oauth/refresh`。**Stage 130（2026-08-24 ✅，134/134）**：real BDD 三后端 OAuth 凭证 CRUD + 加密落库直读断言 + in-use 守卫（**58/58 × 3 全绿**）+ 安全审计 8 项全部通过 + **`/credential/new` OAuth 凭证逐字段 AES-256-GCM 加密落库**（新增 `aigw-core::crypto::encrypt_litellm_value_gcm`）+ **TD-015a 全库收窄**（`chat::upstream_error_message` 接线 4 handler）+ ADR-034 收尾。验证：aigw-core **502** + aigw-server **157** UT、mock BDD **278（265 pass / 13 skip）**、real BDD 三端 **58/58 × 3**、fmt + lint green。详见 `docs/stages/stage-126.md` ~ `stage-130.md` + `stage-130-review-log.md`。
-- **下一里程碑**: 中期 M1 guardrails / M2 Redis 分布式层;OAuth 后续候选 TD-015d 响应侧转换 / TD-015e count_tokens 双认证。
+- **下一里程碑**: **Phase 52（Stage 131）Codex Responses 桥接修复 ⏳ 规划**——Codex CLI 原生 `namespace` 工具 / `developer` role / 扁平 function 工具三重 400，A 类阻塞（首请求即失败）。中期 M1 guardrails / M2 Redis 分布式层;OAuth 后续候选 TD-015d 响应侧转换 / TD-015e count_tokens 双认证。
 
 ### 整体进度
 
@@ -110,6 +110,32 @@ Phase 51:   ████████████████████ 100% (5
 - **全协议统一反代**（用户决策）——任何入站协议（messages/chat/responses/count_tokens）解析到 OAuth 凭证即统一走反代管线;非 OAuth 部署原样不动;embeddings → 400。
 - **凭证存 `credentials` 表（零新表）**——proxy_models 经现有 `litellm_credential_name` 引用;resolver 判定 type==anthropic_oauth。
 - **TLS 指纹模拟推迟**（用户决策）——HTTP 层伪装已够初步可用;uTLS/rquest 登记长期路线。
+
+---
+
+## Phase 52：Codex 客户端兼容 — Responses 桥接修复 ⏳（Stage 131 规划）
+
+**背景**: Codex CLI 0.157.1（`wire_api = "responses"`）接 aigw 首个请求即 400 `Unsupported: tool type 'namespace' ... Only 'function' tools are supported`，**完全不可用**。根因是 `ResponsesToChatCompletions::adapt_request` 的工具处理是「非 function 一律拒绝」，而 Codex 原生发送 `namespace`（`multi_agent_v1`，含 5 个嵌套 function）+ `web_search` + `role="developer"` 消息。此外实测发现**既存的 function 工具路径本身就 400**（扁平未转嵌套）、`input_text` part 未映射——被 mock BDD 掩盖。
+
+行业调研（`docs/research/2026-10-05-codex-responses-bridge-gap.md`，直接读源码 + 生产网关实测）：litellm / new-api / sub2api **三家全部是「转换或降级」，aigw 是四家里唯一「硬拒绝」的**。
+
+| Stage | 状态 | 目标 | 类型 | 预估 |
+|-------|------|------|------|------|
+| Stage 131 | ⏳ 待开始 | **Responses→Chat 桥接兼容性修复** — ① 工具归一化（`function` 扁平转嵌套 / `namespace` 拍平为 `{ns}__{child}` 含重名报错 / `custom` 与 `tool_search` 降级 / 服务端工具丢弃带告警 / `tool_choice` 同步清理）；② `developer` role → 合并进首位 system（保持 system 级优先级，避免产生第二个 system）；③ `input_text` part → `text`；④ 11 个适配器 UT（含 **Codex 抓包 fixture 端到端回归**）+ BDD 改写 2 条 + 新增 3 条 + mock 请求体断言能力。TDD: 11 UT + 5 BDD 场景 | 后端+测试 | 12h |
+
+**依赖关系**: 无（独立缺陷修复），复用 Phase 21 / Stage 60 已有的 `ChatTemplateCompat` 机制。
+
+**关键决策**:
+
+- **丢弃而非透传服务端工具**（`web_search` / `code_interpreter` / `computer_use` / `image_generation` / `shell`）——对齐 litellm / sub2api；new-api 的「透传」路线会把失败推给上游（用户看到上游 400 而非网关降级），体验更差。丢弃带 `tracing::warn`。
+- **`namespace` 拍平命名 `{ns}__{child}`，重名必须报错**——与 litellm / sub2api **逐字符一致**；静默覆盖会让模型调用落到错误工具（正确性事故）。
+- **`developer` 合并进首位 system（非折叠进 user turn）**——OpenAI 文档明确 `developer` 与 `instructions` 语义等价，前者是权限/沙箱策略指令（高优先级）；折叠进 user turn 会降权为 `<system-reminder>`，且产生「两个 system」的 Qwen 严格模板雷点。**默认启用映射，但提供 `model_info.developer_role_passthrough` 开关**（与 `chat_template_compat` 同构）——确认后端原生支持 `developer` 的上游可透传不映射。
+- **降级 Codex 到 chat wire 已排除**——实测 0.92.0（最后一个支持 chat wire 的版本）**同样** 400（同根因），且跨 65 个版本；官方 discussion #7782 确认 chat wire 2026-02 移除。
+- **服务端工具（web_search 等）选「丢弃 + 告警」**——实测本环境上游对 `web_search`/`code_interpreter`/`computer_use`/`mcp` **全部 400**（透传不可用），而 `web_search_options` 派生参数**被收下但不执行搜索**（模型回复「我无法联网」）；故丢弃与派生实效相同，选诚实丢弃 + `warn` 日志。**内建真实搜索需搜索后端 + agentic loop，独立 Phase**（调研见 `docs/research/2026-10-05-websearch-server-tool-support.md`）。
+
+**遗留**: `input[].type` 分派（`function_call` / `function_call_output` 等，多轮 Codex 必需）登记 TD-017 独立立项；内建搜索执行（若要）独立 Phase。
+
+**规划文档**: `docs/stages/stage-131.md` + `docs/research/2026-10-05-codex-responses-bridge-gap.md` + `docs/research/2026-10-05-websearch-server-tool-support.md`
 
 ---
 
@@ -1020,3 +1046,5 @@ Phase 51:   ████████████████████ 100% (5
 | v60.1 | 2026-08-24 | **Phase 51 Stage 129 完成（✅，总进度 133/134）**：CredentialsTab OAuth 前端入口 + 后端手动 refresh 端点。Stage 129：`POST /credential/oauth/refresh`（`credentials.rs oauth_refresh`——`invalidate_and_refresh`；非 OAuth 400；cookie/refresh 均失效 409 `kind=oauth_refresh_failed`；响应 redact）+ `OAuthCredentialDialog.tsx`（粘贴 sk-ant-sid + 代理下拉 `/admin/proxies` + inject_prompt + 名称 → exchange）+ OAuth 独立行（active/needs_reauth 徽章 + 到期时间 + 绑定代理 + last_error + Refresh/Re-auth/编辑/删除）+ `claudeOAuth` i18n（en+zh-CN）。**修复**：`claude_token.rs cookie_self_heal` 对已解密 `session_key` 二次解密（base64 Invalid padding）→ 自愈永远不可达，改用明文。验证：mock BDD 278（265 pass / 13 skip）、aigw-core 500 + aigw-server 154 UT、fe-bdd 387 pass / 3 skip（0 fail）、fmt + lint + fe-build + fe-lint green。ADR-035 Accepted + TD-016a/b。下一里程碑 Stage 130 收尾安全审计（real BDD OAuth CRUD + 安全审计 8 项 + TD-015a + ADR-034 收尾）。 |
 | v59.0 | 2026-08-19 | **Phase 51 前二 Stage 完成（Stage 126-127 ✅，总进度 131/134）**：Claude OAuth 订阅反代交换引擎 + Token 三层自愈交付。Stage 126（`22c7f61`）：`claude_oauth.rs` 交换引擎（OauthClient 经绑定代理 60s 超时 + 浏览器 UA + fetch_orgs/authorize/exchange_code/refresh/exchange 3 步全流程 + select_org 优先 team + parse_redirect_code + classify_oauth_error + pkce_s256）+ `build_oauth_credential_values` 敏感字段 AES-GCM 单独加密 + crypto `OAUTH_SENSITIVE_KEYS`/`redact_oauth_credential_values` + `POST /credential/oauth/exchange` 端点 + credential_info/list 统一 redact + MockUpstream OAuth 三端点 + `AIGW_OAUTH_MOCK_BASE` 测试端点重映射（生产零影响）。Stage 127（`1bd649c`）：`claude_token.rs` TokenProvider（HashMap 缓存 + per-credential async Mutex 防并发刷新 + get_access_token 缓存命中→临期 3min 刷新→invalid_grant cookie 自愈→needs_reauth）+ `alerts::dispatch_oauth_reauth_alert`（webhook oauth_needs_reauth）+ `invalidate_and_refresh`（Stage 128 管线 401 重试入口）+ AppState 注入 token_provider（30+ 构造器）+ 3 个 BDD 步骤文件补 token_provider 字段。基线：aigw-core 493 + aigw-server 154 UT、mock BDD 271（258 pass / 13 skip body_archive）、fmt + lint green。下一里程碑 Stage 128 反代管线（billing 注入 + 全协议转换 + 代理出口 + 401 刷新重试接线）。 |
 | v57.1 | 2026-08-16 | **文档写回修正（总进度 125/125 不变）**：Phase 21（Stage 59-60）与 Phase 22（Stage 61-62）明细表此前仍标 `⏳ 待开始`，git log 取证确认 4 个 Stage 代码早已落在 main（`49a5f1c` Stage 59 multi tool_result 修复 + `f385bc0` Stage 60 System Message Normalization + `b892fc4` Stage 61-62 AnthropicPassthrough/OpenAIToAnthropic，均 2026-07-16 交付；adapter.rs 中 `ChatTemplateCompat`/`AnthropicPassthrough` 现存）。本次仅修正状态为 ✅ 并补 commit 哈希与完成日期，无代码变更，顶部 "125/125" 计数原本即正确。 |
+| v62.0 | 2026-10-05 | **Phase 52 规划（新增 Stage 131）**：Codex CLI 0.157.1 接 aigw `/v1/responses` 首个请求即 400（`tool type 'namespace' ... Only 'function' tools are supported`），**Codex 完全不可用**。调研（`docs/research/2026-10-05-codex-responses-bridge-gap.md`，直接读 litellm `168a0055a2` / new-api `a63364d1` / sub2api `f8f0f07f6` 源码 + 生产网关 `9.135.87.221:4001` 实测）确认 **aigw 是四家中唯一「非 function 工具硬拒绝」的**——litellm（`transformation.py:1851-1912`）/ sub2api（`chatcompletions_responses_bridge.go:800-860`）均「拍平 namespace + 丢弃服务端工具 + 扁平转嵌套」。**另发现 3 处既存缺口被 mock BDD 掩盖**：① 扁平 function 工具从未转嵌套（实测真实上游 400，`adapter.rs:2009` 只校验不转换）；② `role="developer"` 零处理（`grep` 无命中，上游 MaaS 拒收）；③ `input_text` part 未映射（实测 400）。**关键交互**：Codex 消息形状恒为 `[system, developer, user...]`，朴素 `developer→system` 会产出**两个 system**，在 deepseek/glm 上游不报错（实测 200）但在 Qwen 严格模板必 400——故须合并进首位 system 而非折叠。**降级 Codex 到 chat wire 已实测排除**：0.92.0（最后一个支持 chat 的版本）同样 400（同根因），官方 discussion #7782 确认 chat wire 2026-02 移除。Stage 131（12h）：工具归一化（flatten/drop/嵌套）+ role 归一 + part 映射 + 11 UT（含 Codex 抓包 fixture 端到端回归）+ BDD 改写 2 新增 3 + mock 请求体断言能力。总进度 134 交付 + 1 规划（Stage 131）。设计文档：`docs/stages/stage-131.md`。 |
+| v62.1 | 2026-10-05 | **Phase 52 设计增补（Stage 131 决策细化，未改范围）**：① **服务端工具策略定案**——新增 `docs/research/2026-10-05-websearch-server-tool-support.md`（业界 web_search 支持调研：litellm 派 `web_search_options` + 内建 `WebSearchInterceptionLogger` agentic loop 子系统 / sub2api 丢弃 / new-api 透传），实测确认本环境上游对 `web_search`/`code_interpreter`/`computer_use`/`mcp` 全部 400 且 `web_search_options` 被收下但不执行搜索 → 定案「丢弃 + 告警」，内建真实搜索列为独立 Phase（不入 Stage 131）。② **`developer` 映射改为可配置默认启用**——新增 `model_info.developer_role_passthrough`（与 `chat_template_compat` 同构；缺省=映射，`true`=透传），依据 litellm 已用「provider 覆写」实现同等语义（base 映射 / OpenAI-Azure 覆写为不映射）；aigw 无 provider 能力注册表（`ProviderType::infer` 把所有非 anthropic 归 OpenAICompatible），故用显式配置替代自动嗅探。③ UT 由 11 增至 12（+passthrough UT），BDD 新增由 3 增至 4（+passthrough 场景）。④ **多轮 tool call 移出本 Stage 验收范围**（依赖 TD-017a item type 分派；代码侧不做半吊子实现），TD-017e 记录缺口。⑤ `mcp` 由「透传」改「丢弃」（实测 400）。 |
