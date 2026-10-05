@@ -428,9 +428,32 @@ async fn when_post_codex_shaped_request(world: &mut TestWorld, alias: String) {
     .await;
 }
 
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// Stage 131: upstream body assertions
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#[when(expr = "使用 key {string} 发送带 tool 历史的 \\/v1\\/responses 请求")]
+async fn when_post_responses_with_tool_history(world: &mut TestWorld, alias: String) {
+    send_responses_request(
+        world,
+        &alias,
+        serde_json::json!({
+            "model": "gpt-4o",
+            "instructions": "You are a coding agent.",
+            "input": [
+                {"type":"message","role":"developer","content":[{"type":"input_text","text":"<permissions>"}]},
+                {"type":"message","role":"user","content":[{"type":"input_text","text":"run echo hello"}]},
+                {"type":"function_call","id":"fc_1","call_id":"call_abc123",
+                 "name":"exec_command","arguments":"{\"cmd\":\"echo hello\"}"},
+                {"type":"function_call_output","id":"fco_1","call_id":"call_abc123",
+                 "output":"Process exited with code 0\nOutput:\nhello\n"}
+            ],
+            "tools": [
+                {"type":"function","name":"exec_command","strict":false,
+                 "parameters":{"type":"object","properties":{"cmd":{"type":"string"}}}},
+                {"type":"web_search","external_web_access":false}
+            ],
+            "tool_choice": "auto"
+        }),
+    )
+    .await;
+}
 
 /// Body of the most recent request the mock upstream received.
 async fn last_upstream_request_body() -> serde_json::Value {

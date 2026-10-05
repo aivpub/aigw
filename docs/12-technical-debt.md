@@ -203,14 +203,27 @@
 
 | Sub-ID | 条目 | 优先级 | 描述 |
 |--------|------|--------|------|
-| TD-017a | **`input[].type` item 分派缺失** | P2 | Responses `input[]` 元素自带 `type`（`"message"` / `"function_call"` / `"function_call_output"` / `"reasoning"` / `"local_shell_call"` 等），`input_to_messages`（`adapter.rs:1964-1987`）**完全忽略 type**，一律按 message 处理。**单轮不触发；多轮 tool 回填会走偏**——Codex 多轮必需。参考 sub2api `buildChatMessagesFromItems`（`chatcompletions_responses_bridge.go:187-215`）的 item 分派 + `normalizeChatMessages`（`:576-640`）的 tool_call/tool 配对清理（孤立 tool reply 丢弃、未应答 tool_call 剪除）。 |
+| TD-017a | ~~**`input[].type` item 分派缺失**~~ | P2 | ✅ **Resolved 2026-10-05（Stage 132）** — `input_to_messages` 改为 `items_to_messages` 按 `type` 分派（`message` / `reasoning` / `function_call` / `custom_tool_call` / `tool_search_call` / `*_output` / 裸 content part / 未知类型跳过）+ `normalize_tool_pairing` 强制 Chat tool-call 不变量。见 Resolved Items。 |
 | TD-017b | `tool_choice` 的 `{type:"namespace"}` 形态 | P3 | Codex 会发 `tool_choice: {type:"function", name, namespace}`（带 namespace 限定）；Stage 131 只处理 `{type:"function"\|"namespace", name}` 的具名选择项随工具进出的清理，未做命名空间字段的剥离与降级。 |
 | TD-017c | 服务端工具真实支持（`web_search` 等） | P3 | Stage 131 对无 chat 对应能力的服务端工具（`web_search` / `web_search_preview` / `code_interpreter` / `computer_use` / `image_generation` / `shell` / `mcp`）**丢弃 + 告警**。若产品需要**真实搜索能力**，需内建搜索执行（搜索后端 + 多轮 agentic loop + SSE 交互），是独立子系统——参考 litellm `WebSearchInterceptionLogger` + `max_agentic_loops`（`types/integrations/websearch_interception.py`）。调研：`docs/research/2026-10-05-websearch-server-tool-support.md` §3.2。**注意**：litellm 的「派生 `web_search_options`」路线在本环境**无实效**（参数被收下但不执行搜索，实测）。 |
-| TD-017d | Phase 41 遗留适配器 UT 缺口（剩余部分） | P3 | Phase 41 记录的「Stage 102 计划 19 个适配器 UT 未落地」——Stage 131 补 13 个（工具 + role + part + passthrough），剩余（streaming SSE 事件映射等）仍待补。 |
-| TD-017e | Codex 多轮端到端验证缺失 | P2 | Stage 131 验收覆盖单轮 `codex exec` + 抓包 fixture 回归；**多轮 tool call 回填的端到端验证**（依赖 TD-017a）待补。Stage 131 已明确将「多轮可用」移出验收范围，代码侧不做半吊子实现。 |
+| TD-017d | Phase 41 遗留适配器 UT 缺口（剩余部分） | P3 | Phase 41 记录的「Stage 102 计划 19 个适配器 UT 未落地」——Stage 131 补 13 个、Stage 132 再补 10 个（item 分派 + tool 配对），剩余（streaming SSE 事件映射等）仍待补。 |
+| TD-017e | ~~**Codex 多轮端到端验证缺失**~~ | P2 | ✅ **Resolved 2026-10-05（Stage 132）** — 用假上游驱动 Codex 0.160.0 完成真实一轮 tool 往返（`exec_command` → `echo hello` → 回填 → 收尾），抓包得真实 round-2 body（含 `function_call` / `function_call_output`），固化为 UT fixture + 变换后打真实上游 → 200。 |
 | TD-017f | `developer_role_passthrough` 无自动嗅探 | P3 | Stage 131 新增的 `model_info.developer_role_passthrough` 为**显式配置**（缺省=映射）。aigw 无 litellm 式 provider 能力注册表（`ProviderType::infer` 把所有非 `anthropic` 归 `OpenAICompatible`），无法自动区分「真 OpenAI」与「OpenAI 兼容」上游。若将来引入能力注册表（litellm `get_supported_openai_params` 等价物），可改为自动嗅探。 |
 
 ## Resolved Items
+
+### TD-017a: `input[].type` item 分派缺失（Resolved 2026-10-05, Stage 132）
+
+- `input_to_messages` 拆为 `items_to_messages`（按 `type` 分派）+ `normalize_tool_pairing`（强制 Chat tool-call 不变量）。
+- 分派表：`message`/无 type → 普通消息（content parts 归一）；`reasoning` → 暂存，附到下一条 assistant；`function_call`/`custom_tool_call`/`tool_search_call` → assistant 的 `tool_calls`（并行调用合并进同一条 assistant；`namespace` 字段按请求侧同一规则拍平；`custom` 的 free-form `input` 包成 `{"input": ...}`）；`function_call_output`/`custom_tool_call_output`/`tool_search_output` → `role="tool"`（对象/数组输出字符串化）；裸 `input_text`/`text` → user 消息；未知类型（`web_search_call`/`local_shell_call`/`file_search_call` …）跳过。
+- **归一化不变量**：未应答的 `tool_call` 剪除（中途重连残留）；孤立 `tool` 回复丢弃；answered `tool_calls` 后紧跟其 tool 回复（按调用顺序）——strict 上游（DeepSeek/OpenAI schema）硬要求。
+- 验证：aigw-core **527** UT（Stage 132 新增 10 + 既有）全绿；mock BDD **284 场景（271 pass / 13 skip）**；`task fmt`/`task lint` green。
+- **端到端验证**：用假 Responses-SSE 上游驱动 Codex 0.160.0 走完真实一轮 tool 往返，抓得 round-2 body → 变换后打真实上游 **200**（回复「`hello`」，即模型正确读到了 tool 结果）。
+
+### TD-017e: Codex 多轮端到端验证缺失（Resolved 2026-10-05, Stage 132）
+
+- 方法：远端 `/tmp/fake_upstream.py` 按 Responses SSE 协议返回一轮 `function_call`（`exec_command`），Codex 执行后发 round-2（含 `function_call` + `function_call_output`），抓包固化。
+- 结论：Codex 端到端一轮往返可跑通；变换后的 round-2 payload 被真实上游接受（200）。fixture 已固化为 `test_responses_to_chat_multiturn_codex_fixture_end_to_end`。
 
 ### TD-015a: 上游错误体原样透传客户端（Resolved 2026-08-24, Stage 130）
 

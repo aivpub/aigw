@@ -145,3 +145,12 @@ Feature: OpenAI Responses API Passthrough — /v1/responses
     When 使用 key "resp-codex" 发送 Codex 形状的 /v1/responses 请求
     Then 响应状态码为 200
     And 响应 JSON 中 "object" 为 "response"
+
+  Scenario: /v1/responses bridge multi-turn tool history
+    Given mock 上游已启动
+    And 已配置 model "gpt-4o" 指向 mock 上游
+    And 一个普通 key "resp-mturn" 已生成
+    When 使用 key "resp-mturn" 发送带 tool 历史的 /v1/responses 请求
+    Then 响应状态码为 200
+    And 上游收到的 messages 含 role "tool"
+    And 上游收到的 messages 含 role "assistant"

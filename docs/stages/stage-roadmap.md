@@ -9,8 +9,8 @@
 
 - **当前 Phase**: **Phase 51 ✅ 全部完成（Stage 126-130）**。Claude OAuth 订阅反代五 Stage 全部交付：凭证交换引擎 + Token 三层自愈 + 反代管线 + 前端入口 + 收尾安全审计。
 - **状态**: **134/134 Stages 交付（ALL STAGES COMPLETE）**。Stage 126-127（2026-08-19）：credentials 表 OAuth 结构化扩展 + Cookie→Token 3 步交换（PKCE S256 经代理）+ `claude_token.rs` TokenProvider 三层自愈 + needs_reauth 告警。**Stage 128（2026-08-20）**：OAuth 反代管线（`oauth_pipeline.rs` billing 指纹字节对齐 sub2api/Parrot + 协议转换 + CC 伪装 + 401 刷新重试 + count_tokens + embeddings 400 + 代理出口）+ 四入口接线。**Stage 129（2026-08-24）**：CredentialsTab OAuth 前端入口 + `POST /credential/oauth/refresh`。**Stage 130（2026-08-24 ✅，134/134）**：real BDD 三后端 OAuth 凭证 CRUD + 加密落库直读断言 + in-use 守卫（**58/58 × 3 全绿**）+ 安全审计 8 项全部通过 + **`/credential/new` OAuth 凭证逐字段 AES-256-GCM 加密落库**（新增 `aigw-core::crypto::encrypt_litellm_value_gcm`）+ **TD-015a 全库收窄**（`chat::upstream_error_message` 接线 4 handler）+ ADR-034 收尾。验证：aigw-core **502** + aigw-server **157** UT、mock BDD **278（265 pass / 13 skip）**、real BDD 三端 **58/58 × 3**、fmt + lint green。详见 `docs/stages/stage-126.md` ~ `stage-130.md` + `stage-130-review-log.md`。
-- **当前 Phase**: **Phase 52 ✅ 完成（Stage 131）**——Codex Responses→Chat 桥接兼容性修复（工具归一化 + role 合并 + content part 映射），Codex 首请求 400 已消除（真实上游形态验证 200）。
-- **下一里程碑**: 中期 M1 guardrails / M2 Redis 分布式层;OAuth 后续候选 TD-015d 响应侧转换 / TD-015e count_tokens 双认证;Codex 遗留 TD-017a（`input[].type` 分派，多轮必需）/ TD-017c（内建搜索）。
+- **当前 Phase**: **Phase 52 ✅ 完成（Stage 131-132，总进度 136）**——Codex Responses→Chat 桥接修复 + 多轮 tool 历史适配。首请求 400 与多轮残缺历史均已消除（真实端到端验证 200）。
+- **下一里程碑**: 中期 M1 guardrails / M2 Redis 分布式层;OAuth 后续候选 TD-015d 响应侧转换 / TD-015e count_tokens 双认证;Codex 遗留 TD-017b（`tool_choice` namespace 形态）/ TD-017c（内建搜索）。
 
 ### 整体进度
 
@@ -114,7 +114,7 @@ Phase 51:   ████████████████████ 100% (5
 
 ---
 
-## Phase 52：Codex 客户端兼容 — Responses 桥接修复 ✅（Stage 131 完成，2026-10-05）
+## Phase 52：Codex 客户端兼容 — Responses 桥接修复 ✅（Stage 131-132 完成，2026-10-05）
 
 **背景**: Codex CLI 0.157.1（`wire_api = "responses"`）接 aigw 首个请求即 400 `Unsupported: tool type 'namespace' ... Only 'function' tools are supported`，**完全不可用**。根因是 `ResponsesToChatCompletions::adapt_request` 的工具处理是「非 function 一律拒绝」，而 Codex 原生发送 `namespace`（`multi_agent_v1`，含 5 个嵌套 function）+ `web_search` + `role="developer"` 消息。此外实测发现**既存的 function 工具路径本身就 400**（扁平未转嵌套）、`input_text` part 未映射——被 mock BDD 掩盖。
 
@@ -122,7 +122,9 @@ Phase 51:   ████████████████████ 100% (5
 
 | Stage | 状态 | 目标 | 类型 | 预估 |
 |-------|------|------|------|------|
-| Stage 131 | ✅ 完成（2026-10-05） | **Responses→Chat 桥接兼容性修复** — ① 工具归一化（`function` 扁平转嵌套 / `namespace` 拍平为 `{ns}__{child}` 含重名报错 / `custom` 与 `tool_search` 降级 / 服务端工具与 `mcp` 丢弃带告警 / `tool_choice` 同步清理）；② `developer` 与内联 `system` 合并进唯一首位 system（保持优先级，不产生第二个 system）+ `model_info.developer_role_passthrough` 开关；③ `input_text`/`output_text` part → `text`；④ **13 个适配器 UT**（含 **Codex 抓包 fixture 端到端回归**）+ BDD 改写 2 条 + 新增 4 条 + mock 请求体断言能力。验证：aigw-core 517 UT / mock BDD 283 场景（270 pass / 13 skip）/ fmt+lint green。 | 后端+测试 | 12h |
+| Stage 131 | ✅ 完成（2026-10-05） | **Responses→Chat 桥接兼容性修复（单轮）** — ① 工具归一化（`function` 扁平转嵌套 / `namespace` 拍平为 `{ns}__{child}` 含重名报错 / `custom` 与 `tool_search` 降级 / 服务端工具与 `mcp` 丢弃带告警 / `tool_choice` 同步清理）；② `developer` 与内联 `system` 合并进唯一首位 system（保持优先级，不产生第二个 system）+ `model_info.developer_role_passthrough` 开关；③ `input_text`/`output_text` part → `text`；④ **13 个适配器 UT**（含 **Codex 抓包 fixture 端到端回归**）+ BDD 改写 2 条 + 新增 4 条 + mock 请求体断言能力。验证：aigw-core 517 UT / mock BDD 283 场景（270 pass / 13 skip）/ fmt+lint green。 | 后端+测试 | 12h |
+
+| Stage 132 | ✅ 完成（2026-10-05） | **多轮 tool 历史适配（TD-017a）** — `input[]` 按 `type` 分派（`message` / `reasoning` / `function_call`+`custom_tool_call`+`tool_search_call` → assistant `tool_calls`（并行合并、namespace 拍平、custom 包裹 input）/ `*_output` → `role=tool` / 未知类型跳过）+ `normalize_tool_pairing`（未应答调用剪除、孤立 tool 回复丢弃、回复紧随其 assistant）。**10 个 UT**（含真实 Codex round-2 抓包 fixture）+ BDD 1 条。端到端：假 Responses-SSE 上游驱动 Codex 0.160.0 走完一轮 tool 往返，变换后打真实上游 **200**。验证：aigw-core 527 UT / mock BDD 284 场景（271 pass / 13 skip）/ fmt+lint green。 | 后端+测试 | 6h |
 
 **依赖关系**: 无（独立缺陷修复），复用 Phase 21 / Stage 60 已有的 `ChatTemplateCompat` 机制。
 
@@ -134,9 +136,9 @@ Phase 51:   ████████████████████ 100% (5
 - **降级 Codex 到 chat wire 已排除**——实测 0.92.0（最后一个支持 chat wire 的版本）**同样** 400（同根因），且跨 65 个版本；官方 discussion #7782 确认 chat wire 2026-02 移除。
 - **服务端工具（web_search 等）选「丢弃 + 告警」**——实测本环境上游对 `web_search`/`code_interpreter`/`computer_use`/`mcp` **全部 400**（透传不可用），而 `web_search_options` 派生参数**被收下但不执行搜索**（模型回复「我无法联网」）；故丢弃与派生实效相同，选诚实丢弃 + `warn` 日志。**内建真实搜索需搜索后端 + agentic loop，独立 Phase**（调研见 `docs/research/2026-10-05-websearch-server-tool-support.md`）。
 
-**遗留**: `input[].type` 分派（`function_call` / `function_call_output` 等，多轮 Codex 必需）登记 TD-017 独立立项；内建搜索执行（若要）独立 Phase。
+**遗留**: `tool_choice` 的 `{type:"namespace"}` 形态（TD-017b）；内建搜索执行（TD-017c）；streaming SSE 事件映射 UT（TD-017d 剩余）。
 
-**规划文档**: `docs/stages/stage-131.md` + `docs/research/2026-10-05-codex-responses-bridge-gap.md` + `docs/research/2026-10-05-websearch-server-tool-support.md`
+**规划文档**: `docs/stages/stage-131.md` / `stage-132.md` + `docs/research/2026-10-05-codex-responses-bridge-gap.md` + `docs/research/2026-10-05-websearch-server-tool-support.md`
 
 ---
 
@@ -1050,3 +1052,4 @@ Phase 51:   ████████████████████ 100% (5
 | v62.0 | 2026-10-05 | **Phase 52 规划（新增 Stage 131）**：Codex CLI 0.157.1 接 aigw `/v1/responses` 首个请求即 400（`tool type 'namespace' ... Only 'function' tools are supported`），**Codex 完全不可用**。调研（`docs/research/2026-10-05-codex-responses-bridge-gap.md`，直接读 litellm `168a0055a2` / new-api `a63364d1` / sub2api `f8f0f07f6` 源码 + 生产网关 `9.135.87.221:4001` 实测）确认 **aigw 是四家中唯一「非 function 工具硬拒绝」的**——litellm（`transformation.py:1851-1912`）/ sub2api（`chatcompletions_responses_bridge.go:800-860`）均「拍平 namespace + 丢弃服务端工具 + 扁平转嵌套」。**另发现 3 处既存缺口被 mock BDD 掩盖**：① 扁平 function 工具从未转嵌套（实测真实上游 400，`adapter.rs:2009` 只校验不转换）；② `role="developer"` 零处理（`grep` 无命中，上游 MaaS 拒收）；③ `input_text` part 未映射（实测 400）。**关键交互**：Codex 消息形状恒为 `[system, developer, user...]`，朴素 `developer→system` 会产出**两个 system**，在 deepseek/glm 上游不报错（实测 200）但在 Qwen 严格模板必 400——故须合并进首位 system 而非折叠。**降级 Codex 到 chat wire 已实测排除**：0.92.0（最后一个支持 chat 的版本）同样 400（同根因），官方 discussion #7782 确认 chat wire 2026-02 移除。Stage 131（12h）：工具归一化（flatten/drop/嵌套）+ role 归一 + part 映射 + 11 UT（含 Codex 抓包 fixture 端到端回归）+ BDD 改写 2 新增 3 + mock 请求体断言能力。总进度 134 交付 + 1 规划（Stage 131）。设计文档：`docs/stages/stage-131.md`。 |
 | v62.1 | 2026-10-05 | **Phase 52 设计增补（Stage 131 决策细化，未改范围）**：① **服务端工具策略定案**——新增 `docs/research/2026-10-05-websearch-server-tool-support.md`（业界 web_search 支持调研：litellm 派 `web_search_options` + 内建 `WebSearchInterceptionLogger` agentic loop 子系统 / sub2api 丢弃 / new-api 透传），实测确认本环境上游对 `web_search`/`code_interpreter`/`computer_use`/`mcp` 全部 400 且 `web_search_options` 被收下但不执行搜索 → 定案「丢弃 + 告警」，内建真实搜索列为独立 Phase（不入 Stage 131）。② **`developer` 映射改为可配置默认启用**——新增 `model_info.developer_role_passthrough`（与 `chat_template_compat` 同构；缺省=映射，`true`=透传），依据 litellm 已用「provider 覆写」实现同等语义（base 映射 / OpenAI-Azure 覆写为不映射）；aigw 无 provider 能力注册表（`ProviderType::infer` 把所有非 anthropic 归 OpenAICompatible），故用显式配置替代自动嗅探。③ UT 由 11 增至 12（+passthrough UT），BDD 新增由 3 增至 4（+passthrough 场景）。④ **多轮 tool call 移出本 Stage 验收范围**（依赖 TD-017a item type 分派；代码侧不做半吊子实现），TD-017e 记录缺口。⑤ `mcp` 由「透传」改「丢弃」（实测 400）。 |
 | v63.0 | 2026-10-05 | **Phase 52（Stage 131）交付 ✅（总进度 135）**：Codex Responses→Chat 桥接兼容性修复。`ResponsesToChatCompletions::adapt_request` 从「非 function 工具硬拒绝」改为「归一化」——① `normalize_responses_tools`：`function` 扁平转嵌套 / `namespace` 拍平 `{ns}__{child}`（重名报错，对齐 litellm/sub2api）/ `custom` 降级为单字符串输入 function / `tool_search` 降级为同名 function 代理 / 服务端工具（`web_search`/`web_search_preview`/`file_search`/`code_interpreter`/`computer_use(_preview)`/`image_generation`/`shell`/`mcp`）丢弃 + `tracing::warn`；② `normalize_tool_choice`：指向已丢工具的具名选择项一并丢弃；③ `merge_developer_into_system` + `consolidate_system_messages`：`developer` 与内联 `system` 全部合并进**唯一首位 system**（不降权为 `<system-reminder>`、不产生第二个 system）；④ `normalize_content_parts`：`input_text`/`output_text` → `text`；⑤ 新增 `Deployment.developer_role_passthrough: Option<bool>`（`model_info` 解析，缺省=映射，`true`=透传）。**验证**：aigw-core **517** UT（+13）、mock BDD **283 场景（270 pass / 13 skip）/ 1436 steps**（改写 2 + 新增 4）、`task fmt`/`task lint` green；真实上游形态验证 → **200**（此前 400）。**实施差异**：新增 `consolidate_system_messages`（计划未预见 `input[]` 自带内联 system）；未复用 `fold_extra_systems_into_adjacent_user`（会降权），改为合并保真。遗留 TD-017a~f。设计文档：`docs/stages/stage-131.md`。 |
+| v64.0 | 2026-10-05 | **Phase 52 Stage 132 交付 ✅（总进度 136）**：Codex **多轮** tool 历史适配（TD-017a）。Stage 131 只修单轮——`input_to_messages` 忽略 item 的 `type`，一旦 Codex 调用工具就进入第二轮，`function_call`/`function_call_output` 被当普通消息处理，模型看到残缺历史。**修复**：`input_to_messages` 拆为 `items_to_messages`（按 `type` 分派：`message` / `reasoning`（暂存附到下条 assistant）/ `function_call`+`custom_tool_call`+`tool_search_call`（转 assistant `tool_calls`，并行合并、`namespace` 按请求侧同规则拍平、`custom` 的 free-form `input` 包成 `{"input":...}`）/ `*_output`（转 `role="tool"` + `tool_call_id`，对象输出字符串化）/ 裸 content part / 未知类型跳过）+ `normalize_tool_pairing`（强制 Chat tool-call 不变量：未应答调用剪除、孤立 tool 回复丢弃、回复紧随其 assistant）。**端到端验证**：用假 Responses-SSE 上游驱动 Codex 0.160.0 走完真实一轮 tool 往返（`exec_command` → `echo hello` → 回填 → 收尾），抓得 round-2 body 固化为 UT fixture；变换后打真实上游 → **200**（模型正确读到 tool 结果，回复「`hello`」）。**验证**：aigw-core **527** UT（+10）、mock BDD **284 场景（271 pass / 13 skip）/ 1443 steps**（+1）、fmt+lint green。TD-017a / TD-017e Resolved。设计文档：`docs/stages/stage-132.md`。 |

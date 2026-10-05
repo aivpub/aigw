@@ -1,11 +1,11 @@
 # aigw -- 下一步行动
 
 **上次更新**: 2026-10-05
-**当前阶段**: **Phase 52 ✅ 完成（Stage 131）— Codex Responses 桥接修复**（总进度 135）
+**当前阶段**: **Phase 52 ✅ 完成（Stage 131-132，总进度 136）— Codex Responses 桥接修复 + 多轮 tool 历史适配**
 
 ---
 
-## 当前状态：Phase 52 完成（Stage 131 ✅）
+## 当前状态：Phase 52 完成（Stage 131-132 ✅）
 
 **2026-10-05（Codex 兼容缺陷调研 + Stage 131 规划）**: Codex CLI 0.157.1（`wire_api = "responses"`）接 aigw `/v1/responses` **首个请求即 400**：
 
@@ -36,15 +36,18 @@ Only 'function' tools are supported.
 
 | Phase | Stage | 主题 | 预估 | 状态 |
 |-------|-------|------|------|------|
-| **52** | 131 | Responses→Chat 桥接修复（工具归一化 + role 归一 + part 映射） | 12h | ✅ 完成（2026-10-05） |
+| **52** | 131 | Responses→Chat 桥接修复（工具归一化 + role 归一 + part 映射，单轮） | 12h | ✅ 完成（2026-10-05） |
+| **52** | 132 | 多轮 tool 历史适配（item 分派 + tool 配对归一，TD-017a） | 6h | ✅ 完成（2026-10-05） |
 
 **Stage 131 交付**: ① 工具归一化（`function` 扁平转嵌套 / `namespace` 拍平 `{ns}__{child}` 含重名报错 / `custom`+`tool_search` 降级 / 服务端工具与 `mcp` 丢弃带告警 / `tool_choice` 同步清理）；② `developer` 与内联 `system` 合并进**唯一首位 system**（默认映射 + `developer_role_passthrough` 开关）；③ `input_text`/`output_text`→`text`；④ **13 个适配器 UT**（含 **Codex 抓包 fixture 端到端回归**）+ BDD 改写 2 条 + 新增 4 条 + mock 请求体断言能力。
 
 **验证**: aigw-core **517** UT（+13）、mock BDD **283 场景（270 pass / 13 skip）/ 1436 steps**、`task fmt`/`task lint` green；真实上游形态验证 → **200**（此前 400）。**未提交/未部署**（交用户）。
 
-**遗留**: `input[].type` 分派（`function_call` / `function_call_output`，多轮 Codex 必需）→ TD-017 独立立项（**多轮 tool call 验证已移出本 Stage 验收范围**，避免半吊子实现）；内建搜索执行（若要）独立 Phase。
+**Stage 132 交付（多轮）**: `input_to_messages` 拆为 `items_to_messages`（按 `type` 分派：`message` / `reasoning`（暂存附到下条 assistant）/ `function_call`+`custom_tool_call`+`tool_search_call`（→ assistant `tool_calls`，并行合并、`namespace` 按请求侧同规则拍平、`custom` free-form `input` 包成 `{"input":...}`）/ `*_output`（→ `role="tool"` + `tool_call_id`，对象输出字符串化）/ 裸 content part / 未知类型跳过）+ `normalize_tool_pairing`（未应答调用剪除、孤立 tool 回复丢弃、回复紧随其 assistant）。**端到端**：假 Responses-SSE 上游驱动 Codex 0.160.0 走完真实一轮 tool 往返（`exec_command` → `echo hello` → 回填 → 收尾），round-2 body 固化为 UT fixture；变换后打真实上游 **200**（模型正确读到 tool 结果）。验证：aigw-core **527** UT（+10）、mock BDD **284 场景（271 pass / 13 skip）/ 1443 steps**、fmt+lint green。
 
-**规划文档**: `docs/stages/stage-131.md` + `docs/research/2026-10-05-codex-responses-bridge-gap.md` + `docs/research/2026-10-05-websearch-server-tool-support.md`
+**遗留**: `tool_choice` 的 `{type:"namespace"}` 形态（TD-017b）；内建搜索执行（TD-017c）；streaming SSE 事件映射 UT（TD-017d 剩余）。
+
+**规划文档**: `docs/stages/stage-131.md` / `stage-132.md` + `docs/research/2026-10-05-codex-responses-bridge-gap.md` + `docs/research/2026-10-05-websearch-server-tool-support.md`
 
 ---
 

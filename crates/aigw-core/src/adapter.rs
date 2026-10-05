@@ -2050,6 +2050,12 @@ fn nested_function_tool(name: &str, description: &str, parameters: Value, strict
 
 impl ResponsesToChatCompletions {
     /// Convert Responses API `input` field to Chat Completions `messages`.
+    ///
+    /// `input[]` is a tagged union, not a plain message list: alongside
+    /// `message` items it carries `function_call` / `function_call_output` /
+    /// `reasoning` items that a multi-turn tool history needs. Dispatching on
+    /// `type` is what makes round 2+ work — treating every item as a message
+    /// would drop the assistant's tool call and misfile its output.
     fn input_to_messages(input: &Value) -> Result<Vec<Value>, AdapterError> {
         match input {
             Value::String(text) => Ok(vec![json!({"role": "user", "content": text})]),
@@ -2059,25 +2065,216 @@ impl ResponsesToChatCompletions {
                         "input array must not be empty".to_string(),
                     ));
                 }
-                // Map {role, content} directly; content parts are normalized
-                // (`input_text` / `output_text` → `text`).
-                let messages: Vec<Value> = items
-                    .iter()
-                    .map(|item| {
-                        let role = item.get("role").and_then(|v| v.as_str()).unwrap_or("user");
-                        let content = item
-                            .get("content")
-                            .map(normalize_content_parts)
-                            .unwrap_or(Value::Null);
-                        json!({"role": role, "content": content})
-                    })
-                    .collect();
-                Ok(messages)
+                let messages = Self::items_to_messages(items);
+                Ok(Self::normalize_tool_pairing(messages))
             }
             _ => Err(AdapterError::Unsupported(
                 "input must be a string or array".to_string(),
             )),
         }
+    }
+
+    /// Walk `input[]` items, dispatching each by its `type` tag.
+    fn items_to_messages(items: &[Value]) -> Vec<Value> {
+        let mut messages: Vec<Value> = Vec::with_capacity(items.len());
+        let mut pending_reasoning = String::new();
+
+        for item in items {
+            let item_type = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            match item_type {
+                "" | "message" => {
+                    let role = item.get("role").and_then(|v| v.as_str()).unwrap_or("user");
+                    let content = item
+                        .get("content")
+                        .map(normalize_content_parts)
+                        .unwrap_or_else(|| {
+                            // Some items carry the text directly (`text` field).
+                            item.get("text").cloned().unwrap_or(Value::Null)
+                        });
+                    if role != "assistant" {
+                        pending_reasoning.clear();
+                    }
+                    messages.push(json!({"role": role, "content": content}));
+                }
+                "reasoning" => {
+                    if let Some(text) = extract_responses_reasoning_text(item) {
+                        pending_reasoning = text;
+                    }
+                }
+                "function_call" | "custom_tool_call" | "tool_search_call" => {
+                    let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
+                    if call_id.is_empty() {
+                        tracing::debug!(item_type = %item_type, "dropping tool call without call_id");
+                        pending_reasoning.clear();
+                        continue;
+                    }
+                    let name = Self::tool_call_name(item);
+                    let arguments = Self::tool_call_arguments(item);
+                    append_assistant_tool_call(
+                        &mut messages,
+                        json!({
+                            "id": call_id,
+                            "type": "function",
+                            "function": {"name": name, "arguments": arguments}
+                        }),
+                        std::mem::take(&mut pending_reasoning),
+                    );
+                }
+                "function_call_output" | "custom_tool_call_output" | "tool_search_output" => {
+                    let call_id = item.get("call_id").and_then(|v| v.as_str()).unwrap_or("");
+                    let output = item
+                        .get("output")
+                        .map(responses_output_to_text)
+                        .unwrap_or_default();
+                    messages.push(json!({
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": output
+                    }));
+                    pending_reasoning.clear();
+                }
+                // Bare content parts (no wrapping message item).
+                "input_text" | "text" => {
+                    messages.push(json!({
+                        "role": "user",
+                        "content": item.get("text").cloned().unwrap_or(Value::Null)
+                    }));
+                    pending_reasoning.clear();
+                }
+                other => {
+                    // Server-side call items (`web_search_call`, `local_shell_call`,
+                    // `file_search_call`, ...) have no Chat equivalent. Converting
+                    // them would inject a stray message between an assistant's
+                    // tool_calls and its replies, which strict upstreams reject.
+                    tracing::debug!(item_type = %other, "skipping Responses item with no Chat equivalent");
+                    pending_reasoning.clear();
+                }
+            }
+        }
+
+        messages
+    }
+
+    /// Chat tool name for a call item, namespace-qualified when the item
+    /// carries a `namespace` (mirrors request-side flattening).
+    fn tool_call_name(item: &Value) -> String {
+        let cy_type = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        if cy_type == "tool_search_call" {
+            return TOOL_SEARCH_PROXY_NAME.to_string();
+        }
+        let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        match item.get("namespace").and_then(|v| v.as_str()) {
+            Some(ns) if !ns.is_empty() => flatten_namespace_tool_name(ns, name),
+            _ => name.to_string(),
+        }
+    }
+
+    /// Chat arguments string for a call item.
+    fn tool_call_arguments(item: &Value) -> String {
+        match item.get("arguments") {
+            Some(Value::String(s)) if !s.trim().is_empty() => s.clone(),
+            Some(Value::Object(_)) | Some(Value::Array(_)) => {
+                item.get("arguments").unwrap().to_string()
+            }
+            _ => {
+                // `custom` calls carry free-form `input`, which the degraded
+                // tool takes as a single `{"input": ...}` string.
+                if let Some(input) = item.get("input") {
+                    json!({"input": responses_output_to_text(input)}).to_string()
+                } else {
+                    "{}".to_string()
+                }
+            }
+        }
+    }
+
+    /// Enforce the Chat Completions tool-call invariant: an assistant message
+    /// carrying `tool_calls` must be followed immediately by one `tool` message
+    /// per `tool_call_id`. Codex histories violate this (a call left dangling by
+    /// a mid-execution reconnect, a reply whose announcing call was trimmed), and
+    /// strict upstreams reject the request outright.
+    ///
+    /// Unanswered `tool_calls` are dropped; an assistant left with neither
+    /// content nor calls is dropped; orphan `tool` replies are dropped.
+    fn normalize_tool_pairing(messages: Vec<Value>) -> Vec<Value> {
+        use std::collections::{HashMap, HashSet};
+
+        let mut replies: HashMap<String, Value> = HashMap::new();
+        for msg in &messages {
+            if msg.get("role").and_then(|v| v.as_str()) == Some("tool") {
+                if let Some(id) = msg.get("tool_call_id").and_then(|v| v.as_str()) {
+                    if !id.is_empty() {
+                        // Last wins on duplicates (matches sub2api).
+                        replies.insert(id.to_string(), msg.clone());
+                    }
+                }
+            }
+        }
+
+        let mut emitted: HashSet<String> = HashSet::new();
+        let mut out: Vec<Value> = Vec::with_capacity(messages.len());
+
+        for msg in messages {
+            let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("");
+            if role == "tool" {
+                let id = msg
+                    .get("tool_call_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                // A reply already emitted next to its assistant, or with no
+                // announcing call at all, would be an orphan upstream.
+                if id.is_empty() || !emitted.insert(id.to_string()) {
+                    continue;
+                }
+                continue;
+            }
+
+            let kept_calls: Vec<Value> = msg
+                .get("tool_calls")
+                .and_then(|v| v.as_array())
+                .map(|calls| {
+                    calls
+                        .iter()
+                        .filter(|c| {
+                            c.get("id")
+                                .and_then(|v| v.as_str())
+                                .map(|id| replies.contains_key(id))
+                                .unwrap_or(false)
+                        })
+                        .cloned()
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            if kept_calls.is_empty() {
+                let has_content = match msg.get("content") {
+                    Some(Value::String(s)) => !s.is_empty(),
+                    Some(Value::Array(a)) => !a.is_empty(),
+                    _ => false,
+                };
+                let had_calls = msg.get("tool_calls").is_some();
+                if had_calls && !has_content {
+                    continue; // assistant stripped of all calls and empty
+                }
+                out.push(msg);
+                continue;
+            }
+
+            let mut assistant = msg.clone();
+            if let Some(obj) = assistant.as_object_mut() {
+                obj.insert("tool_calls".to_string(), Value::Array(kept_calls.clone()));
+            }
+            out.push(assistant);
+            for call in &kept_calls {
+                if let Some(id) = call.get("id").and_then(|v| v.as_str()) {
+                    if let Some(reply) = replies.get(id) {
+                        out.push(reply.clone());
+                    }
+                }
+            }
+        }
+
+        out
     }
 
     /// Normalize `developer` messages into the leading system message.
@@ -2299,6 +2496,75 @@ impl ResponsesToChatCompletions {
 
         Ok((out, declared))
     }
+}
+
+/// Concatenate the `text` of every part in a reasoning item's `summary`
+/// (falling back to `content`), matching sub2api's extractor.
+fn extract_responses_reasoning_text(item: &Value) -> Option<String> {
+    let collect = |v: Option<&Value>| -> Vec<String> {
+        v.and_then(|x| x.as_array())
+            .map(|parts| {
+                parts
+                    .iter()
+                    .filter_map(|p| p.get("text").and_then(|t| t.as_str()).map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let mut texts = collect(item.get("summary"));
+    if texts.is_empty() {
+        texts = collect(item.get("content"));
+    }
+    if texts.is_empty() {
+        None
+    } else {
+        Some(texts.join("\n"))
+    }
+}
+
+/// Render a tool output value as the string a Chat `tool` message carries.
+/// Objects/arrays (e.g. a `tool_search` result list) are stringified whole.
+fn responses_output_to_text(output: &Value) -> String {
+    match output {
+        Value::Null => String::new(),
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    }
+}
+
+/// Append or extend an assistant `tool_calls` message. Parallel calls from one
+/// assistant turn merge into a single message (Chat schema requires one
+/// assistant message holding them all).
+fn append_assistant_tool_call(messages: &mut Vec<Value>, call: Value, reasoning: String) {
+    if let Some(last) = messages.last_mut() {
+        if last.get("role").and_then(|v| v.as_str()) == Some("assistant") {
+            if let Some(obj) = last.as_object_mut() {
+                let entry = obj
+                    .entry("tool_calls".to_string())
+                    .or_insert_with(|| Value::Array(Vec::new()));
+                if let Some(arr) = entry.as_array_mut() {
+                    arr.push(call);
+                }
+                if !reasoning.is_empty()
+                    && obj
+                        .get("reasoning_content")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.is_empty())
+                        .unwrap_or(true)
+                {
+                    obj.insert("reasoning_content".to_string(), json!(reasoning));
+                }
+                return;
+            }
+        }
+    }
+    let mut msg = json!({"role": "assistant", "content": Value::Null, "tool_calls": [call]});
+    if !reasoning.is_empty() {
+        if let Some(obj) = msg.as_object_mut() {
+            obj.insert("reasoning_content".to_string(), json!(reasoning));
+        }
+    }
+    messages.push(msg);
 }
 
 /// Children of a `namespace` tool — `tools` preferred, `children` as fallback.
@@ -3668,6 +3934,284 @@ mod tests {
             adapted["stream_options"]["include_usage"].as_bool(),
             Some(true)
         );
+    }
+
+    // ── Stage 132 item dispatch — multi-turn tool history (TD-017a) ──
+
+    #[test]
+    fn test_responses_to_chat_item_function_call_becomes_assistant_tool_calls() {
+        let adapted = bridge_adapt(json!({
+            "model": "m",
+            "input": [
+                {"type":"message","role":"user","content":[{"type":"input_text","text":"run echo"}]},
+                {"type":"function_call","id":"fc_1","call_id":"call_abc","name":"exec_command",
+                 "arguments":"{\"cmd\":\"echo hello\"}"},
+                {"type":"function_call_output","id":"fco_1","call_id":"call_abc",
+                 "output":"hello\n"},
+                {"type":"message","role":"user","content":[{"type":"input_text","text":"thanks"}]}
+            ]
+        }));
+        let messages = adapted["messages"].as_array().unwrap();
+        let roles: Vec<&str> = messages
+            .iter()
+            .map(|m| m["role"].as_str().unwrap_or(""))
+            .collect();
+        assert_eq!(
+            roles,
+            vec!["user", "assistant", "tool", "user"],
+            "got {messages:?}"
+        );
+        // assistant holds the call verbatim
+        assert_eq!(
+            messages[1]["tool_calls"][0]["id"].as_str(),
+            Some("call_abc")
+        );
+        assert_eq!(
+            messages[1]["tool_calls"][0]["function"]["name"].as_str(),
+            Some("exec_command")
+        );
+        assert_eq!(
+            messages[1]["tool_calls"][0]["function"]["arguments"].as_str(),
+            Some("{\"cmd\":\"echo hello\"}")
+        );
+        // tool reply carries the matching id
+        assert_eq!(messages[2]["tool_call_id"].as_str(), Some("call_abc"));
+        assert_eq!(messages[2]["content"].as_str(), Some("hello\n"));
+    }
+
+    #[test]
+    fn test_responses_to_chat_item_parallel_calls_merge_into_one_assistant() {
+        let adapted = bridge_adapt(json!({
+            "model": "m",
+            "input": [
+                {"type":"message","role":"user","content":"go"},
+                {"type":"function_call","call_id":"c1","name":"f1","arguments":"{}"},
+                {"type":"function_call","call_id":"c2","name":"f2","arguments":"{}"},
+                {"type":"function_call_output","call_id":"c1","output":"r1"},
+                {"type":"function_call_output","call_id":"c2","output":"r2"}
+            ]
+        }));
+        let messages = adapted["messages"].as_array().unwrap();
+        let roles: Vec<&str> = messages
+            .iter()
+            .map(|m| m["role"].as_str().unwrap_or(""))
+            .collect();
+        assert_eq!(
+            roles,
+            vec!["user", "assistant", "tool", "tool"],
+            "got {messages:?}"
+        );
+        let calls = messages[1]["tool_calls"].as_array().unwrap();
+        assert_eq!(calls.len(), 2, "parallel calls merge into one assistant");
+        // replies follow in call order
+        assert_eq!(messages[2]["tool_call_id"].as_str(), Some("c1"));
+        assert_eq!(messages[3]["tool_call_id"].as_str(), Some("c2"));
+    }
+
+    #[test]
+    fn test_responses_to_chat_item_unanswered_call_dropped() {
+        // A call whose reply never arrived (mid-execution reconnect) would be
+        // rejected by strict upstreams, so it is trimmed.
+        let adapted = bridge_adapt(json!({
+            "model": "m",
+            "input": [
+                {"type":"message","role":"user","content":"go"},
+                {"type":"function_call","call_id":"c1","name":"f1","arguments":"{}"},
+                {"type":"function_call","call_id":"c2","name":"f2","arguments":"{}"},
+                {"type":"function_call_output","call_id":"c1","output":"r1"},
+                {"type":"message","role":"user","content":"next"}
+            ]
+        }));
+        let messages = adapted["messages"].as_array().unwrap();
+        let roles: Vec<&str> = messages
+            .iter()
+            .map(|m| m["role"].as_str().unwrap_or(""))
+            .collect();
+        assert_eq!(
+            roles,
+            vec!["user", "assistant", "tool", "user"],
+            "got {messages:?}"
+        );
+        let calls = messages[1]["tool_calls"].as_array().unwrap();
+        assert_eq!(calls.len(), 1, "unanswered call trimmed");
+        assert_eq!(calls[0]["id"].as_str(), Some("c1"));
+    }
+
+    #[test]
+    fn test_responses_to_chat_item_orphan_tool_output_dropped() {
+        let adapted = bridge_adapt(json!({
+            "model": "m",
+            "input": [
+                {"type":"message","role":"user","content":"go"},
+                {"type":"function_call_output","call_id":"nowhere","output":"stray"},
+                {"type":"message","role":"user","content":"next"}
+            ]
+        }));
+        let messages = adapted["messages"].as_array().unwrap();
+        let roles: Vec<&str> = messages
+            .iter()
+            .map(|m| m["role"].as_str().unwrap_or(""))
+            .collect();
+        assert_eq!(
+            roles,
+            vec!["user", "user"],
+            "orphan reply dropped: {messages:?}"
+        );
+    }
+
+    #[test]
+    fn test_responses_to_chat_item_reasoning_attaches_to_assistant() {
+        let adapted = bridge_adapt(json!({
+            "model": "m",
+            "input": [
+                {"type":"message","role":"user","content":"go"},
+                {"type":"reasoning","summary":[{"type":"summary_text","text":"thinking..."}]},
+                {"type":"function_call","call_id":"c1","name":"f1","arguments":"{}"},
+                {"type":"function_call_output","call_id":"c1","output":"r1"}
+            ]
+        }));
+        let messages = adapted["messages"].as_array().unwrap();
+        assert_eq!(messages[1]["role"].as_str(), Some("assistant"));
+        assert_eq!(
+            messages[1]["reasoning_content"].as_str(),
+            Some("thinking...")
+        );
+    }
+
+    #[test]
+    fn test_responses_to_chat_item_unknown_type_skipped() {
+        // `web_search_call` etc. have no Chat equivalent; injecting a stray
+        // message between an assistant's tool_calls and its reply breaks upstreams.
+        let adapted = bridge_adapt(json!({
+            "model": "m",
+            "input": [
+                {"type":"message","role":"user","content":"go"},
+                {"type":"function_call","call_id":"c1","name":"f1","arguments":"{}"},
+                {"type":"web_search_call","id":"ws_1","status":"completed"},
+                {"type":"function_call_output","call_id":"c1","output":"r1"}
+            ]
+        }));
+        let messages = adapted["messages"].as_array().unwrap();
+        let roles: Vec<&str> = messages
+            .iter()
+            .map(|m| m["role"].as_str().unwrap_or(""))
+            .collect();
+        assert_eq!(
+            roles,
+            vec!["user", "assistant", "tool"],
+            "no stray message: {messages:?}"
+        );
+    }
+
+    #[test]
+    fn test_responses_to_chat_item_namespace_qualified_call_flattened() {
+        // A historical call to a namespace child must use the same flattened
+        // name the request-side tool declaration produced, or the model sees a
+        // call to a tool it was never offered.
+        let adapted = bridge_adapt(json!({
+            "model": "m",
+            "input": [
+                {"type":"message","role":"user","content":"go"},
+                {"type":"function_call","call_id":"c1","name":"spawn_agent","namespace":"multi_agent_v1","arguments":"{}"},
+                {"type":"function_call_output","call_id":"c1","output":"r1"}
+            ]
+        }));
+        let messages = adapted["messages"].as_array().unwrap();
+        assert_eq!(
+            messages[1]["tool_calls"][0]["function"]["name"].as_str(),
+            Some("multi_agent_v1__spawn_agent")
+        );
+    }
+
+    #[test]
+    fn test_responses_to_chat_item_custom_tool_call_wraps_input() {
+        let adapted = bridge_adapt(json!({
+            "model": "m",
+            "input": [
+                {"type":"message","role":"user","content":"go"},
+                {"type":"custom_tool_call","call_id":"c1","name":"exec","input":"freeform text"},
+                {"type":"custom_tool_call_output","call_id":"c1","output":"ok"}
+            ]
+        }));
+        let messages = adapted["messages"].as_array().unwrap();
+        assert_eq!(
+            messages[1]["tool_calls"][0]["function"]["name"].as_str(),
+            Some("exec")
+        );
+        let args: serde_json::Value = serde_json::from_str(
+            messages[1]["tool_calls"][0]["function"]["arguments"]
+                .as_str()
+                .unwrap(),
+        )
+        .expect("arguments must be JSON");
+        assert_eq!(args["input"].as_str(), Some("freeform text"));
+    }
+
+    #[test]
+    fn test_responses_to_chat_item_object_output_stringified() {
+        let adapted = bridge_adapt(json!({
+            "model": "m",
+            "input": [
+                {"type":"message","role":"user","content":"go"},
+                {"type":"function_call","call_id":"c1","name":"f1","arguments":"{}"},
+                {"type":"function_call_output","call_id":"c1","output":{"hits":[1,2]}}
+            ]
+        }));
+        let messages = adapted["messages"].as_array().unwrap();
+        let content = messages[2]["content"].as_str().expect("content string");
+        assert!(content.contains("\"hits\""), "got {content}");
+    }
+
+    /// Multi-turn end-to-end regression: a real Codex round-2 body (assistant
+    /// tool call + its output, captured from Codex 0.160.0) must bridge into a
+    /// valid Chat tool-call sequence.
+    #[test]
+    fn test_responses_to_chat_multiturn_codex_fixture_end_to_end() {
+        let body = json!({
+            "model": "tokenhub/deepseek-v4-flash",
+            "instructions": "You are a coding agent running in the Codex CLI.",
+            "input": [
+                {"type":"message","role":"developer","content":[{"type":"input_text","text":"<permissions>"}]},
+                {"type":"message","role":"user","content":[{"type":"input_text","text":"run echo hello"}]},
+                {"type":"function_call","id":"fc_1","call_id":"call_abc123",
+                 "name":"exec_command","arguments":"{\"cmd\":\"echo hello\"}"},
+                {"type":"function_call_output","id":"fco_1","call_id":"call_abc123",
+                 "output":"Chunk ID: 9a26e1\nProcess exited with code 0\nOutput:\nhello\n"}
+            ],
+            "tools": [
+                {"type":"function","name":"exec_command","strict":false,
+                 "parameters":{"type":"object","properties":{"cmd":{"type":"string"}}}},
+                {"type":"web_search","external_web_access":false}
+            ],
+            "tool_choice": "auto",
+            "parallel_tool_calls": true,
+            "stream": true
+        });
+
+        let adapted = bridge_adapt(body);
+        let messages = adapted["messages"].as_array().unwrap();
+        let roles: Vec<&str> = messages
+            .iter()
+            .map(|m| m["role"].as_str().unwrap_or(""))
+            .collect();
+        assert_eq!(
+            roles,
+            vec!["system", "user", "assistant", "tool"],
+            "got {messages:?}"
+        );
+        assert_eq!(
+            messages[2]["tool_calls"][0]["id"].as_str(),
+            Some("call_abc123")
+        );
+        assert_eq!(messages[3]["tool_call_id"].as_str(), Some("call_abc123"));
+        // developer folded away, function nested, web_search dropped.
+        assert!(messages[0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("<permissions>"));
+        let tools = adapted["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["function"]["name"].as_str(), Some("exec_command"));
     }
 
     // ── Legacy tests ──
