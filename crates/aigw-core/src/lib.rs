@@ -46,6 +46,7 @@ pub mod request_id;
 pub mod resolver;
 pub mod router;
 pub mod tenant;
+pub mod websearch;
 
 // Re-export commonly used types
 pub use async_task::{AsyncTask, JobLogEntry, NewStep, StepOutput};

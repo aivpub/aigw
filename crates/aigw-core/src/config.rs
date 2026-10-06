@@ -2,6 +2,7 @@
 
 use crate::body_archive::config::BodyArchiveConfig;
 use crate::otel_tracing::OtelConfig;
+use crate::websearch::config::WebSearchConfig;
 use serde::{Deserialize, Serialize};
 
 /// Budget reset configuration.
@@ -58,6 +59,10 @@ pub struct AigwConfig {
     /// (memory LRU, ttl 60s, 10k entries).
     #[serde(rename = "cache", skip_serializing_if = "Option::is_none")]
     pub cache: Option<CacheConfig>,
+
+    /// Built-in web search (Phase 53). Absent → disabled, zero behaviour change.
+    #[serde(rename = "web_search", skip_serializing_if = "Option::is_none")]
+    pub web_search: Option<WebSearchConfig>,
 }
 
 /// Response cache configuration (Stage 119 §3.5).

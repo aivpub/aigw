@@ -7,10 +7,11 @@
 
 ## 当前状态
 
-- **当前 Phase**: **Phase 51 ✅ 全部完成（Stage 126-130）**。Claude OAuth 订阅反代五 Stage 全部交付：凭证交换引擎 + Token 三层自愈 + 反代管线 + 前端入口 + 收尾安全审计。
-- **状态**: **134/134 Stages 交付（ALL STAGES COMPLETE）**。Stage 126-127（2026-08-19）：credentials 表 OAuth 结构化扩展 + Cookie→Token 3 步交换（PKCE S256 经代理）+ `claude_token.rs` TokenProvider 三层自愈 + needs_reauth 告警。**Stage 128（2026-08-20）**：OAuth 反代管线（`oauth_pipeline.rs` billing 指纹字节对齐 sub2api/Parrot + 协议转换 + CC 伪装 + 401 刷新重试 + count_tokens + embeddings 400 + 代理出口）+ 四入口接线。**Stage 129（2026-08-24）**：CredentialsTab OAuth 前端入口 + `POST /credential/oauth/refresh`。**Stage 130（2026-08-24 ✅，134/134）**：real BDD 三后端 OAuth 凭证 CRUD + 加密落库直读断言 + in-use 守卫（**58/58 × 3 全绿**）+ 安全审计 8 项全部通过 + **`/credential/new` OAuth 凭证逐字段 AES-256-GCM 加密落库**（新增 `aigw-core::crypto::encrypt_litellm_value_gcm`）+ **TD-015a 全库收窄**（`chat::upstream_error_message` 接线 4 handler）+ ADR-034 收尾。验证：aigw-core **502** + aigw-server **157** UT、mock BDD **278（265 pass / 13 skip）**、real BDD 三端 **58/58 × 3**、fmt + lint green。详见 `docs/stages/stage-126.md` ~ `stage-130.md` + `stage-130-review-log.md`。
-- **当前 Phase**: **Phase 52 ✅ 完成（Stage 131-133，总进度 137）**——Codex Responses→Chat 桥接修复 + 多轮 tool 历史适配 + 原生直通与合规 SSE 事件序列。首请求 400、多轮残缺历史、流式提前断流均已消除（真实 Codex 0.160.0 端到端零报错）。
-- **下一里程碑**: **Phase 53 内建 Web Search（Stage 134-138，规划态，~49h，TD-017c）**——设计 C（prompt 注入），**多 provider 架构 + 本期只实现 SearXNG（支持多实例）**，按次计费 + 独立 SpendLog 行 + provider/定价 DB 化与管理 UI。其后候选：中期 M1 guardrails / M2 Redis 分布式层;OAuth TD-015d 响应侧转换 / TD-015e count_tokens 双认证;Codex 遗留 TD-017b（`tool_choice` namespace 形态）。
+- **已完成 Phase**: **Phase 51 ✅（Stage 126-130）**Claude OAuth 订阅反代五 Stage 全部交付：凭证交换引擎 + Token 三层自愈 + 反代管线 + 前端入口 + 收尾安全审计。
+- **Phase 51 明细**（历史，总进度当时为 134）: Stage 126-127（2026-08-19）：credentials 表 OAuth 结构化扩展 + Cookie→Token 3 步交换（PKCE S256 经代理）+ `claude_token.rs` TokenProvider 三层自愈 + needs_reauth 告警。**Stage 128（2026-08-20）**：OAuth 反代管线（`oauth_pipeline.rs` billing 指纹字节对齐 sub2api/Parrot + 协议转换 + CC 伪装 + 401 刷新重试 + count_tokens + embeddings 400 + 代理出口）+ 四入口接线。**Stage 129（2026-08-24）**：CredentialsTab OAuth 前端入口 + `POST /credential/oauth/refresh`。**Stage 130（2026-08-24 ✅，134/134）**：real BDD 三后端 OAuth 凭证 CRUD + 加密落库直读断言 + in-use 守卫（**58/58 × 3 全绿**）+ 安全审计 8 项全部通过 + **`/credential/new` OAuth 凭证逐字段 AES-256-GCM 加密落库**（新增 `aigw-core::crypto::encrypt_litellm_value_gcm`）+ **TD-015a 全库收窄**（`chat::upstream_error_message` 接线 4 handler）+ ADR-034 收尾。验证：aigw-core **502** + aigw-server **157** UT、mock BDD **278（265 pass / 13 skip）**、real BDD 三端 **58/58 × 3**、fmt + lint green。详见 `docs/stages/stage-126.md` ~ `stage-130.md` + `stage-130-review-log.md`。
+- **当前 Phase**: **Phase 53 🔄 进行中（Stage 134 ✅ 完成 2026-10-06，135-138 ⏳；总进度 138）**——内建 web search 后端抽象层已落地（`aigw-core::websearch`，81 UT，刻意未接请求管线）。
+- **上一 Phase**: **Phase 52 ✅ 完成（Stage 131-133）**——Codex Responses→Chat 桥接修复 + 多轮 tool 历史适配 + 原生直通与合规 SSE 事件序列。首请求 400、多轮残缺历史、流式提前断流均已消除（真实 Codex 0.160.0 端到端零报错）。
+- **下一里程碑**: **Phase 53 内建 Web Search（Stage 134 ✅ / 135-138 ⏳，~49h，TD-017c）**——设计 C（prompt 注入），**多 provider 架构 + 本期只实现 SearXNG（支持多实例）**，按次计费 + 独立 SpendLog 行 + provider/定价 DB 化与管理 UI。其后候选：中期 M1 guardrails / M2 Redis 分布式层;OAuth TD-015d 响应侧转换 / TD-015e count_tokens 双认证;Codex 遗留 TD-017b（`tool_choice` namespace 形态）。
 
 ### 整体进度
 
@@ -61,7 +62,7 @@ Phase 49:   ████████████████████ 100% (1
 Phase 50:   ████████████████████ 100% (4/4 Stages) ✅ 代理服务管理 (Stage 122-125)
 Phase 51:   ████████████████████ 100% (5/5 Stages) ✅ Claude OAuth 订阅反代 (Stage 126-130)  — **134/134 ALL STAGES COMPLETE**
 Phase 52:   ████████████████████ 100% (3/3 Stages) ✅ Codex 客户端兼容 (Stage 131-133) — 总进度 137
-Phase 53:   ░░░░░░░░░░░░░░░░░░░░   0% (0/5 Stages) ⏳ 内建 Web Search (Stage 134-138，规划态)
+Phase 53:   ████░░░░░░░░░░░░░░░░  20% (1/5 Stages) 🔄 内建 Web Search (Stage 134 ✅ / 135-138 ⏳) — 总进度 138
 
 ---
 
@@ -174,7 +175,7 @@ Phase 53:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 | Stage | 状态 | 目标 | 类型 | 预估 |
 |-------|------|------|------|------|
-| Stage 134 | ⏳ 规划 | **搜索后端抽象层（多 provider 架构 + 仅 SearXNG 实现）** — `aigw-core::websearch` 模块（`SearchProvider` trait + **SearXNG 单实现** + `WebSearchRegistry`（N provider 配置 / `kind` 判别 / failover / per-provider `timeout_ms`）+ 统一结果形状 + `v2:gcm:` 密钥解密 + 出站 HTTP client + **test-only `StubProvider`** 证明多态/failover/非零计费）。provider 切成「纯函数 build_request / parse_response / map_error + 一层薄 IO」。服务端护栏（`max_results` 默认 5 / snippet-only / 超时 / 域名名单）在本层强制生效。**不实现 Tavily / 博查**（线格式研究保留为接入参考附录）。**刻意不接任何请求管线**。 | 后端 | ~7h |
+| Stage 134 | ✅ 完成（2026-10-06） | **搜索后端抽象层（多 provider 架构 + 仅 SearXNG 实现）** — `aigw-core::websearch` 模块（`SearchProvider` trait + **SearXNG 单实现** + `WebSearchRegistry`（N provider 配置 / `kind` 判别 / failover / per-provider `timeout_ms`）+ 统一结果形状 + `v2:gcm:` 密钥解密 + 出站 HTTP client + **test-only `StubProvider`** 证明多态/failover/非零计费）。provider 切成「纯函数 build_request / parse_response / map_error + 一层薄 IO」。服务端护栏（`max_results` 默认 5 / snippet-only / 超时 / 域名名单）在本层强制生效。**不实现 Tavily / 博查**（线格式研究保留为接入参考附录）。**刻意不接任何请求管线**。 | 后端 | ~7h（实际交付 81 UT，规划 45） |
 | Stage 135 | ⏳ 规划 | **prompt 注入接线** — 改两处丢弃点（`adapter.rs:2553-2559` 的 `other =>` 兜底臂、`:2210-2216` 历史 item）+ 三入口触发检测（Chat `web_search_options` / Responses `web_search` / Anthropic `web_search_20250305`，**与 provider 无关**）+ `search_context_size` → 1/3/5 条（照抄 Higress）+ **注入最后一条 user 消息**（非 system）+ **搜索失败降级放行**。顺带修 **TD-017g**（`ClaudeToolDef` 致 HTTP 500）。流式**零改动**。本期唯一后端是 SearXNG → **TTFT 恒增 ~2.4s 且无更快替代**。 | 后端+测试 | 12h |
 | Stage 136 | ⏳ 规划 | **按次计费 + SpendLog 独立行** — `calc_search_spend`（**aigw 首个非 token 计价函数**）+ 每次搜索一条 `call_type="search"` 行（零迁移，复用 `insert_spend_log`）+ `metadata.parent_call_id` 父子关联 + **独立 `increment_*_spend` 调用**（避免 litellm 实修过的「首轮花费被静默吞掉」bug）+ `usage.server_tool_use.web_search_requests` 三 surface 回传。⚠️ **本期生产金额恒为 0**（SearXNG 免费）→ 非零单价与精度正确性**只能由 StubProvider UT 覆盖**；且 0 元行必须照样插入、照样走 `increment_*`（**未来接入付费 provider 时零改动即生效**）。 | 后端+测试 | ~8h |
 | Stage 137 | ⏳ 规划 | **调用日志展现** — Spend Logs 识别 `call_type="search"` 行（徽章 + query + 结果数 + provider + spend）+ 父子跳转 UX + `call_type` 过滤 + **零 token 行对既有 Usage 聚合口径的影响审计** + i18n（en/zh-CN）+ fe-bdd。⚠️ 本期搜索行**同时 spend=0 且 token=0** → UI 必须把它渲染成「真实的零值（自建免费后端）」而非「缺失/坏数据」。 | 前端+测试 | 8h |

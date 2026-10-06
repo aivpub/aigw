@@ -3,7 +3,7 @@
 **所属**: Phase 53（内建 Web Search / TD-017c）
 **预估**: 10h（provider trait + 两级选择：实例级加权/冷却 + provider 级 failover + SearXNG 客户端 + test-only StubProvider + 配置装载 + 密钥解密 + HTTP client + 归一化 + UT）
 **依赖**: 无（独立新子系统，不触碰任何既有请求管线）
-**状态**: ⏳ 规划
+**状态**: ✅ 完成（2026-10-06）
 
 ---
 
@@ -21,18 +21,18 @@
 
 ### 验收标准
 
-- [ ] `SearchProvider` trait **object-safe**，可作 `Arc<dyn SearchProvider>` 存入 `WebSearchRegistry`；`SearxngProvider` 实现之，`cargo` 无新 warning
-- [ ] SearXNG 响应解析 UT 用**录制 fixture**（`docs/fixtures/searxng-search-response-2026-10-06.json`，真实抓取，非实网调用）通过
-- [ ] `web_search` 顶层 config section 可解析；`providers[]` 支持 **N 元数组**（不是单例特化），`kind` 为判别式；**每个 provider 下 `instances[]` 亦为 N 元数组**；缺省（absent）= 禁用，零行为变化
-- [ ] **未知 `kind` → 配置校验期报错，且错误信息列出当前支持的 kinds**（本期为 `searxng`）—— 这是「加 provider 是纯增量」的可验证证据
-- [ ] ⭐ **实例级选择按 `router.rs` 语义工作**：任一实例声明 `weight` → 加权随机（`weight: 0` 排除，全零/缺省 → 均匀随机）；连续失败 ≥ `allowed_fails` → 进入 `cooldown_until` 冷却并被过滤；全部冷却 → 取最早恢复者而非拒服务
-- [ ] `v2:gcm:` 密文形态的 `api_key` 装载时自动解密（**per-instance**）；明文 key 原样可用（SearXNG 免鉴权，该路径由 StubProvider UT 覆盖）
-- [ ] per-provider `timeout_ms` 覆盖生效，缺省回落全局值
-- [ ] `cost_per_query` **缺省默认 `0.01` USD/次**（= $10/1k，对齐 OpenAI 牌价与 sub2api `174_*.sql` 的 `0.01`），语义为「**部署方应按自建摊销成本改写的单价**」；配置注释须写明「该默认值是行业牌价占位，**不是 SearXNG 的真实自建成本**，不改会高估」
-- [ ] ⭐ **StubProvider UT 证明抽象可用**：trait 多态、registry 默认选择、provider 级 failover 顺序、4xx 不转移、5xx/timeout 转移、非零 `cost_per_query` 携带
-- [ ] `WebSearchConfig` / `WebSearchProviderConfig` / `WebSearchInstanceConfig` **与配置来源解耦** —— 装载函数接受已解析结构（不自己读文件），使 Stage 138 的 DB + admin CRUD 来源成为纯增量
-- [ ] 服务端护栏（`max_results` 默认 5 / snippet-only / 单次超时 / 域名白黑名单）在**本层**生效，不依赖调用方自觉
-- [ ] `task test` / `task fmt` / `task lint` 全绿；`task bdd` 场景数不变（本 Stage 无 BDD 面）
+- [x] `SearchProvider` trait **object-safe**，可作 `Arc<dyn SearchProvider>` 存入 `WebSearchRegistry`；`SearxngProvider` 实现之，`cargo` 无新 warning
+- [x] SearXNG 响应解析 UT 用**录制 fixture**（`docs/fixtures/searxng-search-response-2026-10-06.json`，真实抓取，非实网调用）通过
+- [x] `web_search` 顶层 config section 可解析；`providers[]` 支持 **N 元数组**（不是单例特化），`kind` 为判别式；**每个 provider 下 `instances[]` 亦为 N 元数组**；缺省（absent）= 禁用，零行为变化
+- [x] **未知 `kind` → 配置校验期报错，且错误信息列出当前支持的 kinds**（本期为 `searxng`）—— 这是「加 provider 是纯增量」的可验证证据
+- [x] ⭐ **实例级选择按 `router.rs` 语义工作**：任一实例声明 `weight` → 加权随机（`weight: 0` 排除，全零/缺省 → 均匀随机）；连续失败 ≥ `allowed_fails` → 进入 `cooldown_until` 冷却并被过滤；全部冷却 → 取最早恢复者而非拒服务
+- [x] `v2:gcm:` 密文形态的 `api_key` 装载时自动解密（**per-instance**）；明文 key 原样可用（SearXNG 免鉴权，该路径由 StubProvider UT 覆盖）
+- [x] per-provider `timeout_ms` 覆盖生效，缺省回落全局值
+- [x] `cost_per_query` **缺省默认 `0.01` USD/次**（= $10/1k，对齐 OpenAI 牌价与 sub2api `174_*.sql` 的 `0.01`），语义为「**部署方应按自建摊销成本改写的单价**」；配置注释须写明「该默认值是行业牌价占位，**不是 SearXNG 的真实自建成本**，不改会高估」
+- [x] ⭐ **StubProvider UT 证明抽象可用**：trait 多态、registry 默认选择、provider 级 failover 顺序、4xx 不转移、5xx/timeout 转移、非零 `cost_per_query` 携带
+- [x] `WebSearchConfig` / `WebSearchProviderConfig` / `WebSearchInstanceConfig` **与配置来源解耦** —— 装载函数接受已解析结构（不自己读文件），使 Stage 138 的 DB + admin CRUD 来源成为纯增量
+- [x] 服务端护栏（`max_results` 默认 5 / snippet-only / 单次超时 / 域名白黑名单）在**本层**生效，不依赖调用方自觉
+- [x] `task test` / `task fmt` / `task lint` 全绿；`task bdd` 场景数不变（本 Stage 无 BDD 面）
 
 ### 明确不做（边界）
 
@@ -667,10 +667,10 @@ pub fn build_search_client(
 
 ## 6. 回归验证
 
-1. `task test` 全绿，`aigw-core` UT 数净增 **41**（+ §4.3 的 4 个集成 stub 测试 = **45**）
-2. `task bdd` — **场景数与 Stage 132 基线（284 场景 / 271 pass / 13 skip）完全一致**，0 fail（证明新模块对既有行为零影响）
+1. `task test` 全绿，`aigw-core` UT **530 → 611（净增 81）**（规划 45，超额 36：多出的主要是错误分类、池行为、`config.example.yaml` 漂移防护与 4 个额外的集成 stub 场景）
+2. `task bdd` — 实测 **285 场景 / 272 pass / 13 skip / 0 fail**，与 **Stage 133** 基线逐字一致（本文件原写 Stage 132 的 284，那是 Stage 133 交付前的数字）。零 `.feature` 文件改动，证明新模块对既有行为零影响
 3. `task fmt` / `task lint` green，无新 clippy warning
-4. `task check` 通过（含 `--no-default-features` 情形不被破坏：`client.rs` 在 `#[cfg(feature = "reqwest")]` 之下）
+4. ⚠️ **`task check` 不存在于 Taskfile** → 用 `task doctor`（`cargo check --workspace` + clippy）替代，通过。`--no-default-features` 下 websearch 零错误零告警；但该 profile 本身有 **27 个既存错误**（`alerts.rs`/`claude_oauth.rs`/`probe.rs`），`git stash` 对照确认与本 Stage 无关
 5. `task doctor` 无新告警
 6. 人工：SearXNG 实网探针**已完成**（§4.3 第 3 条），无其余待做项（Tavily/博查 探针随接入 Stage 再做）
 
@@ -678,20 +678,67 @@ pub fn build_search_client(
 
 ## 7. 门禁
 
-- [ ] 41 个新 UT 先 fail 后 pass（TDD 红绿）
-- [ ] SearXNG 的 fixture 解析 UT 通过，且 fixture 逐字取自 `docs/fixtures/searxng-search-response-2026-10-06.json`（真实抓取，非手写）
-- [ ] ⭐ **`StubProvider` UT 全部通过** —— trait 多态 / provider 级 failover / 4xx 不转移 / `v2:gcm:` 解密 / 非零 `cost_per_query`，即「多 provider 就绪」的可验证证据
-- [ ] ⭐ **实例级 7 个 UT 通过**，且语义与 §2.8 的 `router.rs` 对照表逐项一致（加权判定 / `weight:0` 排除 / 冷却过滤 / 全冷却取最早恢复 / 4xx 不计数）
-- [ ] 未知 `kind` 的配置错误信息**同时包含非法值与支持列表**
-- [ ] 4 个集成 stub 测试（含多实例转移与超时路径）通过，证明 IO 薄壳与纯函数接缝正确
-- [ ] 配置缺省（absent）时 `build_websearch_registry` 返回 `None`，`task bdd` 场景数不变
-- [ ] `v2:gcm:` 密钥解密 UT 通过；明文 key 不被破坏
-- [ ] 配置非法值（未知 default_provider / 未知 kind / 空 instances / 域名列表互斥冲突）在加载期报错，不留到运行时
-- [ ] `build_websearch_registry` 只接受已解析结构、不读文件（Stage 138 的 DB 来源可零重写复用）
-- [ ] `task test` / `task bdd` / `task fmt` / `task lint` / `task check` 全绿
-- [ ] `config.example.yaml` 的 `cost_per_query` 注释写明「摊销单价而非采购价，留 0 则成本不可见」
-- [ ] `docs/11-next-steps.md` + `stage-roadmap.md` 回写（新增 Phase 53）
-- [ ] git commit（精确 add；`--signoff`）
+- [⚠️] **实际交付 81 个新 UT（规划 41 + §4.3 的 4 = 45，超额 36）**。⚠️ **未走严格 TDD 红绿**：测试与实现同批编写，改用**变异测试**反向证明断言有效——逐一注入 4 个缺陷（移除 score 重排 / 截断先于去重 / 4xx 改为可转移 / snippet 读 `snippet` 键而非 `content`），确认每个都被对应 UT 捕获后还原。该替代手段证明了断言非同义反复，但**不等于红绿流程**，如实记录。
+- [x] SearXNG 的 fixture 解析 UT 通过，且 fixture 逐字取自 `docs/fixtures/searxng-search-response-2026-10-06.json`（真实抓取，非手写）
+- [x] ⭐ **`StubProvider` UT 全部通过** —— trait 多态 / provider 级 failover / 4xx 不转移 / `v2:gcm:` 解密 / 非零 `cost_per_query`，即「多 provider 就绪」的可验证证据
+- [x] ⭐ **实例级 7 个 UT 通过**，且语义与 §2.8 的 `router.rs` 对照表逐项一致（加权判定 / `weight:0` 排除 / 冷却过滤 / 全冷却取最早恢复 / 4xx 不计数）
+- [x] 未知 `kind` 的配置错误信息**同时包含非法值与支持列表**
+- [x] 集成 stub 测试 **7 个**（规划 4）：端到端 / 多实例转移 / 全实例挂 / 4xx 不外扩 / HTML-200 转移 / 超时 / 空 query 短路。⚠️ 其中 3 个最初因「实例选择是随机的」而 flaky（断言了「每实例恰一次」，但健康实例先被选中时故障实例根本不会被访问）——已改为断言**与顺序无关的不变量**（多轮循环 + 「故障实例确实在池中」+ 「每轮都由健康实例服务完成」），连跑 5 次稳定。
+- [x] 配置缺省（absent）时 `build_websearch_registry` 返回 `None`，`task bdd` 场景数不变
+- [x] `v2:gcm:` 密钥解密 UT 通过；明文 key 不被破坏
+- [x] 配置非法值（未知 default_provider / 未知 kind / 空 instances / 域名列表互斥冲突）在加载期报错，不留到运行时
+- [x] `build_websearch_registry` 只接受已解析结构、不读文件（Stage 138 的 DB 来源可零重写复用）
+- [x] `task test`（**611 pass**，aigw-core 530→611）/ `task bdd`（**285 场景 272 pass 13 skip，与 Stage 133 基线逐字一致**）/ `task fmt` / `task lint` 全绿。⚠️ **`task check` 在 Taskfile 中不存在**（CLAUDE.md 与本文件 §6 均引用了它）——改用 `task doctor`（内含 `cargo check --workspace` + clippy）。建议补 `check` task 或订正文档。
+- [x] `cargo check -p aigw-core --no-default-features`：**websearch 零错误零告警**（`client.rs` 与 `searxng.rs` 的 reqwest 相关 import 已 `#[cfg(feature = "reqwest")]` 门控）。⚠️ 该 profile **本身早已损坏**（`alerts.rs` / `claude_oauth.rs` / `probe.rs` 共 **27 个** `unresolved crate reqwest` 错误）——已用 `git stash` 对照确认为**既存问题，与本 Stage 无关**，登记 §8.2。
+- [x] `config.example.yaml` 的 `cost_per_query` 注释写明「摊销单价而非采购价，默认值高估约 50 倍需改写，留 0 则成本不可见」。**另加一条 UT** `test_config_example_yaml_block_parses_into_this_struct`——把注释块反注释后真实反序列化进 `WebSearchConfig` 并跑 `validate()`，防止文档示例与结构漂移（运维唯一的拷贝来源若不可用，比没有更糟）。
+- [x] `docs/11-next-steps.md` + `stage-roadmap.md` + `docs/12-technical-debt.md`（TD-017c）回写
+- [x] git commit（精确 add；`--signoff`）
+
+---
+
+## 7a. 实施记录（2026-10-06 完成）
+
+### 交付物
+
+| 文件 | 行为 | UT |
+|------|------|----|
+| `websearch/mod.rs` | `WebSearchRegistry`（provider 级 pick + failover）+ `build_provider`（**唯一的 `kind` 分派点**）+ test-only `StubProvider` | 13 + 7 集成 |
+| `websearch/types.rs` | 三个值类型 + `Guardrails` + `normalize`（6 步流水线） | 16 |
+| `websearch/provider.rs` | `SearchProvider` trait（object-safe）+ `SearchError`（含 `is_retriable` / `provider` / `status`） | 2 |
+| `websearch/instance.rs` | `pick_instance_with_roll`（纯函数）+ `InstancePool`（共享状态封装）+ `report_*` | 14 |
+| `websearch/config.rs` | 三层配置结构 + `validate()` + `attempt_order()` | 12 |
+| `websearch/client.rs` | `build_search_client`（代理 ⊕ 重试 ⊕ 超时） | 3 |
+| `websearch/searxng.rs` | `build_url` / `parse_response` / `map_error` 三纯函数 + IO 薄壳 | 10 |
+| `config_loader.rs` | `build_websearch_registry`（校验 + per-instance 解密 + client + pool） | 6 |
+
+### 与规划的偏差（均为增量，无缩减）
+
+1. **新增 `InstancePool`（规划未设计）** —— 规划只给了 `pick_instance` / `report_*` 自由函数，但 provider 需要**跨 await 持有可变实例状态**。若让每个 provider 自己管 `Mutex<Vec<State>>`，「加一家 provider = 1 文件」的承诺就会漏掉实例管理这块。`InstancePool` 把它收进 `instance.rs`，新 provider 只需持有一个 pool 并循环 `pick_excluding` / `report_*`。
+2. **新增 `pick_excluding(tried)`** —— 规划的两级图里，「实例耗尽 → 向上抛触发 provider 级 failover」没有说明单次查询如何遍历多个实例。该方法让一次查询走完所有健康实例后才交给 provider 级。
+3. **`SearchError` 多一个 `EmptyQuery` 变体** —— §3.3.1 实测要求「发请求**之前**拒绝空 query（省一次 RTT）」，但规划的枚举里没有能表达它的变体（硬塞进 `Http{400}` 会谎称发生过网络往返）。
+4. **`SearchError::Parse` 判定为可转移** —— 规划未明确。理由：SearXNG 的「200 + HTML」本质是**该实例配置错误**（`format=json` 未开），兄弟实例可能是对的，所以应当换实例而非整体失败。已由 `test_searxng_html_200_is_a_parse_error_then_tries_next` 锁定。
+5. **`SearchRequest` 不含 `allowed_domains` / `blocked_domains`** —— 规划 §3.2 把它们放进请求结构，但 §3.5 同时要求这两项是**客户端不可触及的服务端护栏**。放在请求里等于给了调用方一个入口，与护栏意图冲突。改为只存在于 `Guardrails`（由 registry 持有），请求结构里**没有这个字段可填**——结构性地不可绕过，优于靠纪律。
+6. **`urlencode` / `url_host` 手写而非引入 `url` crate** —— `websearch` 需在 `--no-default-features` 下编译，而 `url` 随 `reqwest` 进来。两个函数各约 10 行，均有 UT。
+
+### 两个新发现（规划未预见）
+
+| # | 发现 | 处理 |
+|---|------|------|
+| 1 | ⚠️ **`task check` 在 `Taskfile.yml` 中不存在** —— CLAUDE.md 的「纪律红线」与本文件 §6/§7 都引用了它，照做会直接失败。实际等价物是 `task doctor`（`cargo check --workspace` + clippy） | 本次用 `task doctor`。建议补一个 `check` task 或订正 CLAUDE.md，否则后续每个 Stage 都会撞一次 |
+| 2 | ⚠️ **`cargo check -p aigw-core --no-default-features` 早已损坏** —— `alerts.rs` / `claude_oauth.rs` / `probe.rs` 共 **27 个** `unresolved crate reqwest` 错误，即 `reqwest` 已是事实必选依赖。用 `git stash` 移除本 Stage 改动后错误数不变，确认为既存问题 | websearch 自身已做到该 profile 下零错误零告警（import 全部 `#[cfg]` 门控）。既存 27 个错误登记 §8.2，不在本 Stage 范围 |
+
+### 验证方式的替代（须知）
+
+**未执行严格的 TDD 红绿**：测试与实现同批编写。为补偿，做了**变异测试**——注入 4 个针对性缺陷并确认各自被捕获：
+
+| 注入的缺陷 | 被捕获的 UT |
+|-----------|-----------|
+| 删除 `normalize` 的 score 重排 | `test_normalize_sorts_by_score_desc_before_truncate` + `..._none_score_as_lowest` |
+| 把 `truncate` 提到去重之前 | `test_normalize_dedup_before_truncate` + 上条 |
+| 把 4xx 改为可转移 | 4 个（`provider` / `registry_no_failover_on_4xx` / `searxng_4xx_*` / `map_error_403`） |
+| `snippet` 改读 `snippet` 键而非 `content` | `test_searxng_parse_response_snippet_from_content` + `..._tolerates_empty_content` |
+
+全部还原后复跑绿。这证明断言**非同义反复**，但**不等同于红绿流程**。
 
 ---
 
@@ -750,6 +797,11 @@ pub fn build_search_client(
 |------|------|-------|
 | **设计 A（短路）** | tools 只含 web_search 时不调模型，网关搜完直接合成 `server_tool_use` + `web_search_tool_result` + `text` 返回。**唯一能让 Claude Code 的 WebSearch 真正可用**（那是独立的 `/v1/messages` 子请求，设计 C 对它不适用） | 必须合成 Anthropic 服务端工具块 → 踩 `encrypted_content` 不可伪造（调研 §4.4）+ 历史投毒须按 id 前缀剥离（§5.7）两个坑 |
 | **设计 B（agentic loop）** | 把 web_search 换成内部 function 工具 → 模型回 tool_call → 搜索 → 回灌 → 再请求，上限 3 轮 | **硬前提未实测：上游 MaaS 是否支持网关*注入*的 function 工具往返**（调研 §5.9 第 1 项 / §6.3 第 7 项）。Stage 132 只验证了「Codex 客户端声明的工具」可用，**网关注入**的工具是否被模型正确调用**尚无证据** → 立项前必须先做这一项实测 |
+
+**本 Stage 发现的既存缺陷（不在本 Stage 范围）**：
+
+- ⚠️ **`cargo check -p aigw-core --no-default-features` 有 27 个编译错误** —— `alerts.rs` / `claude_oauth.rs` / `probe.rs` 直接引用 `reqwest::` 而未做 feature 门控，即 `reqwest` 已是事实必选依赖，`[features] default = ["reqwest"]` 的可选性只是名义上的。`git stash` 对照确认与 Phase 53 无关。两种收尾方式：① 给三个文件补 `#[cfg(feature = "reqwest")]`，恢复该 profile；② 承认现实，把 `reqwest` 从 optional 改为必选依赖并删掉该 feature。**建议 ②**（没有消费者在用无 reqwest 的 aigw-core，维护一个没人跑的 profile 是净成本）。
+- ⚠️ **`task check` 不存在于 `Taskfile.yml`** —— 但 CLAUDE.md 的纪律红线把它列为必用命令，多个 Stage 文档的门禁也引用它。应补 task 或订正文档。
 
 **本层的功能性遗留**：
 

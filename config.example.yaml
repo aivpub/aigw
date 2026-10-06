@@ -153,3 +153,53 @@ litellm_settings:
 #   #   dir: /tmp/aigw_parquet_cache
 #   #   max_size_mb: 1024
 #   #   max_entry_mb: 100
+
+# ── Built-in web search (Phase 53) ────────────────────────────────────────────
+# Absent → disabled, zero behaviour change. Only `kind: searxng` is implemented;
+# an unknown kind fails startup with a message listing the supported kinds.
+#
+# web_search:
+#   enabled: true
+#   default_provider: searxng    # must appear in providers[].name
+#   failover_order: [searxng]    # provider-to-provider chain; a no-op with a
+#                                # single provider, but parsed and validated so
+#                                # adding a vendor is a YAML change only
+#   max_results: 5               # server-side ceiling; clients may lower, never raise
+#   timeout_ms: 5000             # global per-search timeout
+#   retries: 1                   # transport retries (5xx / network only, never 4xx)
+#   snippet_max_chars: 2000
+#   allowed_domains: []          # mutually exclusive with blocked_domains
+#   blocked_domains: []
+#   proxy_url: ""                # empty → direct; non-empty → egress via proxy
+#   allowed_fails: 3             # instance-level: failures before cooldown
+#   cooldown_secs: 60            # instance-level: cooldown duration
+#   providers:
+#     - name: searxng
+#       kind: searxng
+#       # cost_per_query is an AMORTIZED UNIT PRICE, not a purchase price.
+#       # The default (0.01 USD = $10/1k) is the OpenAI list-price placeholder —
+#       # it is NOT SearXNG's self-hosted cost. Self-hosting is not free, but
+#       # amortized cost is typically around 1e-4, so leaving the default
+#       # OVERSTATES cost by roughly 50x. Rewrite it as
+#       #   (server + bandwidth + ops) / estimated monthly queries
+#       # An explicit 0.0 is allowed, but then "what did search cost" becomes
+#       # unanswerable — a visible over-estimate beats a silent zero.
+#       cost_per_query: 0.0002
+#       timeout_ms: 8000         # overrides the global value: SearXNG measures
+#                                # 2.0-3.1s because it waits for every engine,
+#                                # so 5000 is tight. Note this lands directly on
+#                                # TTFT — the search runs before the upstream call.
+#       instances:               # physical endpoints: availability + traffic split
+#         - base_url: http://searxng-a.internal:8080
+#           weight: 2            # if ANY instance declares a weight, all selection
+#                                # goes weighted; weight: 0 excludes an instance
+#           enabled: true
+#         - base_url: http://searxng-b.internal:8080
+#           weight: 1
+#           enabled: true
+#           # api_key: v2:gcm:...   # per-instance; plaintext or v2:gcm: ciphertext.
+#                                   # SearXNG needs no auth, so normally omitted.
+#
+# The instance must have JSON output enabled (`search.formats` includes `json` in
+# its settings.yml) — otherwise it answers HTTP 200 with an HTML page, or 403.
+# Most public instances disable JSON, so self-hosting is effectively required.

@@ -11,7 +11,7 @@
 //!   [`RouterConfig::default`].
 //! - `environment_variables` was never read at all.
 //!
-//! This module closes that gap with three boot-time primitives, each pure and
+//! This module closes that gap with four boot-time primitives, each pure and
 //! unit-testable:
 //!
 //! - [`seed_models_from_config`] — idempotently insert `config.model_list`
@@ -23,6 +23,11 @@
 //!   semantics as `dotenvy`).
 //! - [`build_router_config`] — map the parsed `router_settings` block onto a
 //!   [`RouterConfig`] for [`Router::from_config`].
+//! - [`build_websearch_registry`] — turn the parsed `web_search` block into a
+//!   runtime [`WebSearchRegistry`] (Phase 53): validate, decrypt per-instance
+//!   keys, build the shared HTTP client and the instance pools. Takes an
+//!   already-parsed struct rather than a file path, so Stage 138's DB-backed
+//!   config source reuses it unchanged.
 //!
 //! The `litellm_settings` block (`drop_params` / `request_timeout` /
 //! `set_verbose`) has no corresponding implementation in aigw today and is
@@ -32,6 +37,11 @@ use crate::config::{ModelEntry, RouterSettings};
 use crate::db::Database;
 use crate::models::ProxyModel;
 use crate::router::RouterConfig;
+#[cfg(feature = "reqwest")]
+use crate::websearch::{
+    config::{WebSearchConfig, WebSearchInstanceConfig},
+    CooldownPolicy, Guardrails, SearchProvider, WebSearchRegistry,
+};
 use serde_json::json;
 use std::collections::HashMap;
 
@@ -153,6 +163,90 @@ pub fn router_settings_seed_json(router_settings: &Option<RouterSettings>) -> se
         Some(s) => serde_json::to_value(s).unwrap_or_else(|_| json!({})),
         None => json!({}),
     }
+}
+
+/// Build the runtime web search layer from the parsed `web_search` block.
+///
+/// Returns `Ok(None)` when the block is absent or `enabled: false` — the layer
+/// then costs nothing, matching `CacheConfig`'s master-switch semantics.
+///
+/// Takes an **already-parsed struct and never touches the filesystem**, which is
+/// what makes Stage 138's DB-backed config source a pure addition: build the same
+/// `WebSearchConfig` from DB rows and all validation, key decryption, instance
+/// pooling and client construction below are reused verbatim.
+///
+/// `Err` fails startup. Invalid values (unknown `default_provider`, unsupported
+/// `kind`, empty `instances`, conflicting domain lists) are rejected here rather
+/// than at request time.
+#[cfg(feature = "reqwest")]
+pub fn build_websearch_registry(
+    cfg: &Option<WebSearchConfig>,
+    master_key: &str,
+) -> Result<Option<WebSearchRegistry>, String> {
+    let Some(cfg) = cfg else { return Ok(None) };
+    if !cfg.enabled {
+        return Ok(None);
+    }
+    cfg.validate()?;
+
+    let policy = CooldownPolicy {
+        allowed_fails: cfg.allowed_fails,
+        cooldown_secs: cfg.cooldown_secs,
+    };
+    let proxy = (!cfg.proxy_url.trim().is_empty()).then_some(cfg.proxy_url.as_str());
+
+    let mut providers: Vec<std::sync::Arc<dyn SearchProvider>> =
+        Vec::with_capacity(cfg.providers.len());
+    for p in &cfg.providers {
+        // Each instance's api_key may be plaintext or a `v2:gcm:` ciphertext.
+        // `decrypt_litellm_value` dispatches on the prefix and safely refuses
+        // non-ciphertext, so plaintext passes through untouched.
+        let instances = p
+            .instances
+            .iter()
+            .map(|i| {
+                let api_key = i.api_key.as_ref().and_then(|k| {
+                    if k.trim().is_empty() {
+                        None
+                    } else {
+                        Some(
+                            crate::crypto::decrypt_litellm_value(k, master_key)
+                                .unwrap_or_else(|_| k.clone()),
+                        )
+                    }
+                });
+                WebSearchInstanceConfig {
+                    api_key,
+                    ..i.clone()
+                }
+            })
+            .collect();
+
+        let timeout_ms = p.effective_timeout_ms(cfg.timeout_ms);
+        // One client per provider, built once and shared: search sits before the
+        // first upstream byte, so connection reuse shows up directly in TTFT.
+        let client = crate::websearch::client::build_search_client(
+            proxy,
+            std::time::Duration::from_millis(timeout_ms),
+            cfg.retries,
+        )?;
+        providers.push(crate::websearch::build_provider(
+            p, instances, policy, client, timeout_ms,
+        )?);
+    }
+
+    let guardrails = Guardrails {
+        max_results: cfg.max_results.max(1),
+        snippet_max_chars: cfg.snippet_max_chars,
+        allowed_domains: cfg.allowed_domains.clone(),
+        blocked_domains: cfg.blocked_domains.clone(),
+    };
+
+    Ok(Some(WebSearchRegistry::new(
+        providers,
+        cfg.attempt_order(),
+        guardrails,
+    )))
 }
 
 #[cfg(test)]
@@ -392,5 +486,157 @@ mod tests {
         assert_eq!(v["cooldown_time"], 15.0);
         // None -> empty object (GET /router/settings returns {} before any PUT).
         assert_eq!(router_settings_seed_json(&None), json!({}));
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // build_websearch_registry (Phase 53, Stage 134)
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    #[cfg(feature = "reqwest")]
+    const WEB_SEARCH_YAML: &str = r#"
+enabled: true
+default_provider: searxng
+failover_order: [searxng]
+max_results: 3
+snippet_max_chars: 500
+blocked_domains: [reddit.com]
+providers:
+  - name: searxng
+    kind: searxng
+    cost_per_query: 0.0002
+    timeout_ms: 8000
+    instances:
+      - base_url: http://searxng-a.internal:8080
+        weight: 2
+      - base_url: http://searxng-b.internal:8080
+        weight: 1
+"#;
+
+    #[cfg(feature = "reqwest")]
+    fn parse_web_search(yaml: &str) -> WebSearchConfig {
+        serde_yaml::from_str(yaml).expect("parse web_search block")
+    }
+
+    #[test]
+    #[cfg(feature = "reqwest")]
+    fn test_websearch_config_absent_disables_layer() {
+        // The whole block missing from config.yaml must cost nothing at all —
+        // same master-switch semantics as CacheConfig.
+        let reg = build_websearch_registry(&None, "mk").expect("absent is not an error");
+        assert!(reg.is_none());
+    }
+
+    #[test]
+    #[cfg(feature = "reqwest")]
+    fn test_websearch_disabled_flag_disables_layer() {
+        let mut cfg = parse_web_search(WEB_SEARCH_YAML);
+        cfg.enabled = false;
+        assert!(build_websearch_registry(&Some(cfg), "mk")
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    #[cfg(feature = "reqwest")]
+    fn test_build_websearch_registry_wires_providers_and_guardrails() {
+        let cfg = parse_web_search(WEB_SEARCH_YAML);
+        let reg = build_websearch_registry(&Some(cfg), "mk")
+            .expect("valid config must build")
+            .expect("enabled config yields a registry");
+
+        assert_eq!(reg.provider_names(), vec!["searxng"]);
+        assert_eq!(
+            reg.cost_per_query(None),
+            Some(0.0002),
+            "cost_per_query must have a live reader so it cannot rot like litellm_settings"
+        );
+        let g = reg.guardrails();
+        assert_eq!(g.max_results, 3);
+        assert_eq!(g.snippet_max_chars, 500);
+        assert_eq!(g.blocked_domains, vec!["reddit.com"]);
+    }
+
+    #[test]
+    #[cfg(feature = "reqwest")]
+    fn test_build_websearch_registry_rejects_invalid_config_at_load() {
+        // Startup must fail rather than surfacing the problem per-request.
+        let mut cfg = parse_web_search(WEB_SEARCH_YAML);
+        cfg.default_provider = "ghost".to_string();
+        assert!(build_websearch_registry(&Some(cfg), "mk").is_err());
+
+        let mut cfg = parse_web_search(WEB_SEARCH_YAML);
+        cfg.providers[0].kind = "tavily".to_string();
+        let err = build_websearch_registry(&Some(cfg), "mk").unwrap_err();
+        assert!(err.contains("tavily") && err.contains("searxng"), "{err}");
+
+        let mut cfg = parse_web_search(WEB_SEARCH_YAML);
+        cfg.allowed_domains = vec!["a.com".into()];
+        assert!(build_websearch_registry(&Some(cfg), "mk").is_err());
+    }
+
+    #[test]
+    #[cfg(feature = "reqwest")]
+    fn test_build_websearch_registry_rejects_bad_proxy_url() {
+        let mut cfg = parse_web_search(WEB_SEARCH_YAML);
+        cfg.proxy_url = "not a proxy".to_string();
+        let err = build_websearch_registry(&Some(cfg), "mk")
+            .expect_err("a malformed proxy must fail at boot, not per request");
+        assert!(err.contains("proxy"), "{err}");
+    }
+
+    #[test]
+    #[cfg(feature = "reqwest")]
+    fn test_build_websearch_registry_decrypts_instance_api_keys() {
+        let master_key = "sk-master-loader-test";
+        let cipher = crate::crypto::encrypt_litellm_value_gcm("sk-paid-key", master_key).unwrap();
+        let yaml = format!(
+            r#"
+enabled: true
+default_provider: searxng
+providers:
+  - name: searxng
+    kind: searxng
+    instances:
+      - base_url: http://a.internal:8080
+        api_key: "{cipher}"
+      - base_url: http://b.internal:8080
+        api_key: plain-key
+      - base_url: http://c.internal:8080
+"#
+        );
+        let cfg = parse_web_search(&yaml);
+        // The registry hides its instances, so assert the loader's transform on
+        // the same path the loader uses.
+        let decrypted: Vec<Option<String>> = cfg.providers[0]
+            .instances
+            .iter()
+            .map(|i| {
+                i.api_key.as_ref().and_then(|k| {
+                    if k.trim().is_empty() {
+                        None
+                    } else {
+                        Some(
+                            crate::crypto::decrypt_litellm_value(k, master_key)
+                                .unwrap_or_else(|_| k.clone()),
+                        )
+                    }
+                })
+            })
+            .collect();
+        assert_eq!(
+            decrypted[0].as_deref(),
+            Some("sk-paid-key"),
+            "v2:gcm: decrypted"
+        );
+        assert_eq!(
+            decrypted[1].as_deref(),
+            Some("plain-key"),
+            "plaintext preserved"
+        );
+        assert_eq!(decrypted[2], None, "absent key stays absent");
+
+        assert!(build_websearch_registry(&Some(cfg), master_key)
+            .unwrap()
+            .is_some());
     }
 }

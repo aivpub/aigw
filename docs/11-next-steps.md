@@ -1,11 +1,50 @@
 # aigw -- 下一步行动
 
 **上次更新**: 2026-10-06
-**当前阶段**: **Phase 53 ⏳ 规划完成（Stage 134-138，待实施）— 内建 Web Search（TD-017c）**；Phase 52 ✅ 完成（Stage 131-133，总进度 137）
+**当前阶段**: **Phase 53 🔄 进行中 — 内建 Web Search（TD-017c）：Stage 134 ✅ 完成，135-138 ⏳；总进度 138**
 
 ---
 
-## 当前状态：Phase 53 规划完成，待实施（Stage 134-138 ⏳）
+## 当前状态：Phase 53 Stage 134 ✅ 完成，下一步 Stage 135
+
+### Stage 134 交付（2026-10-06）
+
+`aigw-core::websearch` 搜索后端抽象层落地 —— **多 provider 架构，本期唯一实现 SearXNG**，**刻意未接任何请求管线**（接线归 Stage 135），因此本层正确性完全由 UT 锁定、不牵连三条协议路径的回归面。
+
+| 文件 | 交付 |
+|------|------|
+| `websearch/mod.rs` | `WebSearchRegistry`（provider 级 pick + failover）+ `build_provider`（**唯一 `kind` 分派点**）+ test-only `StubProvider` |
+| `websearch/types.rs` | 三值类型 + `Guardrails` + `normalize` 六步流水线（过滤 → 域名 → 去重 → **score 重排** → 截断 → snippet 截断） |
+| `websearch/provider.rs` | `SearchProvider` trait（object-safe）+ `SearchError`（`is_retriable` 区分 4xx 不转移 / 5xx·timeout·parse 转移） |
+| `websearch/instance.rs` | `pick_instance_with_roll`（纯函数，可注入随机数）+ **`InstancePool`**（规划外新增，见下）+ `report_*`，语义逐字照 `router.rs` |
+| `websearch/config.rs` | 三层配置（global → provider → instances）+ `validate()`（未知 kind 报错并列出支持列表）+ `attempt_order()` |
+| `websearch/client.rs` | `build_search_client`（代理 ⊕ 重试 ⊕ 超时，组合 `probe.rs` 与 `router.rs` 两边的能力） |
+| `websearch/searxng.rs` | `build_url` / `parse_response` / `map_error` 三纯函数 + IO 薄壳；fixture 为 2026-10-06 真实抓取 |
+| `config_loader.rs` | `build_websearch_registry`（**只接已解析结构、不读文件** → Stage 138 的 DB 来源零重写复用） |
+
+**验证**: aigw-core UT **530 → 611（+81）**；mock BDD **285 场景（272 pass / 13 skip / 0 fail）——与 Stage 133 基线逐字一致**，零 `.feature` 改动；`task fmt` / `task lint` green。
+
+**规划外的增量（4 项，均非缩减）**:
+
+1. **`InstancePool`** —— 规划只给了自由函数，但 provider 需跨 await 持有可变实例状态；若让每个 provider 自管 `Mutex<Vec<State>>`，「加一家 provider = 1 文件」的承诺就漏掉了实例管理。收进 `instance.rs` 后，新 provider 只需持有 pool 并循环 `pick_excluding` / `report_*`。
+2. **`SearchError::EmptyQuery`** —— 实测要求「发请求前就拒绝空 query」，但规划枚举无法表达它（塞进 `Http{400}` 会谎称发生过网络往返）。
+3. **`Parse` 判为可转移** —— SearXNG 的「200 + HTML」本质是**单实例配置错误**，兄弟实例可能正常，应换实例而非整体失败。
+4. **域名名单从 `SearchRequest` 移除** —— 规划 §3.2 把它放进请求结构，但 §3.5 要求它是客户端不可触及的护栏；放在请求里等于给调用方开了入口。改为只存在于 registry 持有的 `Guardrails`，**结构上无字段可填**，优于靠纪律约束。
+
+**⚠️ 验证方式的替代（须知）**: **未走严格 TDD 红绿**（测试与实现同批编写）。补偿手段是**变异测试** —— 注入 4 个针对性缺陷（删除 score 重排 / 截断先于去重 / 4xx 改为可转移 / snippet 读错键），确认每个都被对应 UT 捕获后还原。这证明断言非同义反复，**但不等同于红绿流程**。另：3 个集成测试最初因「实例选择随机」而 flaky，已改为断言与顺序无关的不变量，连跑 5 次稳定。
+
+### ⚠️ 本 Stage 发现的两个既存问题（与 Phase 53 无关，待决策）
+
+1. **`task check` 在 `Taskfile.yml` 中不存在** —— 但 CLAUDE.md 的「纪律红线」把它列为必用命令，多个 Stage 文档的门禁也引用它。实际等价物是 `task doctor`（`cargo check --workspace` + clippy）。**后续每个 Stage 都会撞一次** → 应补 task 或订正 CLAUDE.md。
+2. **`cargo check -p aigw-core --no-default-features` 已有 27 个编译错误** —— `alerts.rs` / `claude_oauth.rs` / `probe.rs` 直接用 `reqwest::` 而无 feature 门控，即 `reqwest` 已是事实必选依赖。`git stash` 对照确认与本 Stage 无关（websearch 自身在该 profile 下零错误零告警）。**建议**：承认现实，把 `reqwest` 改为必选并删掉该 feature（没有消费者在用无 reqwest 的 aigw-core，维护无人跑的 profile 是净成本）。
+
+### 下一步：Stage 135（prompt 注入接线，12h）
+
+改两处丢弃点（`adapter.rs:2553-2559` 兜底臂、`:2210-2216` 历史 item）+ 三入口触发检测 + 注入最后一条 user 消息 + 搜索失败降级放行；顺带修 **TD-017g**（`ClaudeToolDef.input_schema` 致 HTTP 500）。⚠️ 注意 `responses.rs` 流式管线是**高风险区**（已有三次独立修复 `c3f360c` / `4bd85c7` / `8cf8c12` 落在同一处）。
+
+---
+
+## Phase 53 规划（Stage 135-138 ⏳）
 
 **2026-10-06（内建 Web Search 调研 + Phase 53 规划）**: Stage 131 对服务端工具采取「丢弃 + 告警」——诚实但**客户端的联网能力实际不可用**。本环境实测：上游 MaaS 对 `web_search` 等服务端工具透传**全部 400**，而 litellm 的「派生 `web_search_options`」路线**被收下但不执行搜索**（模型回复「我无法联网」）。**→ 要真正可用，必须由网关自己执行搜索。**
 
@@ -38,13 +77,13 @@
 
 | Phase | Stage | 主题 | 预估 | 状态 |
 |-------|-------|------|------|------|
-| **53** | 134 | 搜索后端抽象层（trait + registry + **仅 SearXNG 实现** + 多实例选择 + StubProvider + 配置 + 密钥 + HTTP client） | ~10h | ⏳ 规划 |
+| **53** | 134 | 搜索后端抽象层（trait + registry + **仅 SearXNG 实现** + 多实例选择 + StubProvider + 配置 + 密钥 + HTTP client） | ~10h | ✅ 完成（2026-10-06，81 UT） |
 | **53** | 135 | prompt 注入接线（两处丢弃点 + 三入口触发 + 注入模板 + 降级）+ 修 TD-017g | 12h | ⏳ 规划 |
 | **53** | 136 | 按次计费 + SpendLog 独立行（**aigw 首个非 token 计价**）+ usage 回传 | ~8h | ⏳ 规划 |
 | **53** | 137 | 调用日志展现（搜索行渲染 + 父子跳转 + 聚合口径审计 + i18n + fe-bdd） | 8h | ⏳ 规划 |
 | **53** | 138 | **provider / 实例 / 定价 DB 化 + 管理 UI**（028 三方言两表 + CRUD + 实例子资源 + 连通性探测 + 定价编辑 + 改价不重启生效） | 14h | ⏳ 规划 |
 
-**依赖**：134 → 135 → 136 → 137 严格串行；**138 依赖 134 + 136，与 137 无依赖可并行**。
+**依赖**：134 ✅ → 135 → 136 → 137 严格串行；**138 依赖 134 + 136，与 137 无依赖可并行**（134 已完成 → 138 现仅等 136）。
 
 **关键设计决策**:
 
@@ -56,7 +95,7 @@
 6. **单价只做全局 provider 级，不做 key/team 覆写** —— 单价是「采购成本」（事实），覆写表达「加价/折扣策略」（产品概念），aigw 目前无售卖加价机制，引入即超范围。但**单价必须可运营修改**（Stage 138）而非改码重启。
 
 
-**✅ 实施阻塞项已清空 —— 可直接开工 Stage 134**:
+**✅ 实施阻塞项已清空（Stage 134 已消费）**:
 
 - **搜索后端**：✅ **SearXNG 已就绪并实测通过** —— `http://30.184.60.216:9099`，`format=json` 已开启，2026-10-06 实测 HTTP 200 / 延迟 2.0–3.1s / 中文可用。真实响应已固化为 fixture：`docs/fixtures/searxng-search-response-2026-10-06.json`（35 条，28KB），Stage 134 的解析 UT 直接内联该文件。**实测推翻 5 项原假设，已全部回写 Stage 134 §3.3.2/§3.4/§8.1**（详见下「实测关键发现」）。**本期不需要任何付费厂商账号。**
 - **单价**：`cost_per_query` **缺省 `0.01` USD/次**（= $10/1k 牌价占位），开箱即可跑且金额非零。⚠️ **该默认值不是 SearXNG 的自建成本**——应按「(服务器 + 带宽 + 运维) ÷ 月搜索次数」改写（自建典型 `1e-4` 量级，不改约高估 50 倍）。Stage 134 走 yaml，Stage 138 后可在 UI 改且不重启生效。**不是开工前必须定好的数字。**
@@ -349,8 +388,8 @@ Phase 45:   ████████████████████ 100% (3
 
 | 层 | 当前 |
 |---|------|
-| 后端单元 | ≥ 300 tests（aigw-server 145+152 含 embeddings 6 UT + openapi 8 + health probe 1；aigw-core 432 等全 workspace ~861） |
-| mock BDD | ≥ 246 scenarios（233 pass / 13 @skip body_archive，Phase 47 收尾基线；含 rate_limit/soft_budget/router/cache 新场景） |
+| 后端单元 | aigw-core **611**（Stage 134 后：530 + 81 websearch）；aigw-server 160+167；全 workspace **1052 pass / 0 fail** |
+| mock BDD | **285 scenarios（272 pass / 13 @skip body_archive / 0 fail）** — Stage 133 起基线，Stage 134 未改变 |
 | 前端 BDD | ≥ 342 passed（Stage 114 全量回归；含 3 压缩场景 × 3 viewports + i18n-switcher 9） |
 | real BDD | ≥ 47 SQLite / ≥ 47 PG / ≥ 47 MySQL（Phase 47 三后端全绿） |
 
@@ -384,5 +423,8 @@ Phase 45:   ████████████████████ 100% (3
 | ✅ | **Phase 51 Stage 126-128 完成**（凭证扩展 + Cookie→Token 交换 + Token 三层自愈 + 反代管线） | ✅ 完成（2026-08-20，11 commits beffd97~2fc1d89） |
 | ✅ | **Phase 51 Stage 129 前端 OAuth 入口 + 手动 refresh** | ✅ 完成（2026-08-24，ADR-035 + TD-016a/b） |
 | ✅ | **Phase 51 Stage 130 收尾 + 安全审计（134/134 ALL STAGES COMPLETE）** | ✅ 完成（2026-08-24，real BDD 58/58 × 3 + 审计 8 项 + TD-015a Resolved + ADR-034 收尾） |
+| ✅ | **Phase 53 Stage 134 搜索后端抽象层**（`aigw-core::websearch` 六文件 + 装载 + 配置 section + 81 UT） | ✅ 完成（2026-10-06） |
+| P1 | **Phase 53 Stage 135 prompt 注入接线** + 修 TD-017g | 下一步 |
+| P2 | `task check` 缺失（CLAUDE.md 纪律红线引用了不存在的 task）/ `--no-default-features` 既存 27 错误 | 待决策（Stage 134 发现） |
 | P2 | TD-008c/d 后端错误多语言 + RTL、TD-009e 外链缩略图、TD-011a 视频 token 估算（剩余） | 待处理（视使用量） |
 | P2 | Phase 41 测试缺口（适配器 UT + 流式接线） | ✅ 关闭（2026-08-09） |
