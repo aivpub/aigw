@@ -1,11 +1,108 @@
 # aigw -- 下一步行动
 
-**上次更新**: 2026-10-05
-**当前阶段**: **Phase 52 ✅ 完成（Stage 131-132，总进度 136）— Codex Responses 桥接修复 + 多轮 tool 历史适配**
+**上次更新**: 2026-10-06
+**当前阶段**: **Phase 53 ⏳ 规划完成（Stage 134-138，待实施）— 内建 Web Search（TD-017c）**；Phase 52 ✅ 完成（Stage 131-133，总进度 137）
 
 ---
 
-## 当前状态：Phase 52 完成（Stage 131-132 ✅）
+## 当前状态：Phase 53 规划完成，待实施（Stage 134-138 ⏳）
+
+**2026-10-06（内建 Web Search 调研 + Phase 53 规划）**: Stage 131 对服务端工具采取「丢弃 + 告警」——诚实但**客户端的联网能力实际不可用**。本环境实测：上游 MaaS 对 `web_search` 等服务端工具透传**全部 400**，而 litellm 的「派生 `web_search_options`」路线**被收下但不执行搜索**（模型回复「我无法联网」）。**→ 要真正可用，必须由网关自己执行搜索。**
+
+### 三份调研（13 网关横向 + 20+ 厂商选型 + 代码落点测绘）
+
+| 文档 | 内容 |
+|------|------|
+| `docs/research/2026-10-06-gateway-websearch-architecture.md` | 13 个网关横向 + litellm 拦截子系统深潜 + 线格式附录（OpenAI `annotations` / Responses `web_search_call` / Anthropic `server_tool_use`）+ **四种 SpendLog 计费方案** |
+| `docs/research/2026-10-06-web-search-providers.md` | 20+ 厂商（含 Tavily / Serper / Brave / Exa / Yandex / DDG / SearXNG / Jina / 博查 / 智谱）的 curl + 响应形状 + 免费额度 + 注册方式 + ToS |
+| `docs/research/2026-10-06-aigw-websearch-codebase-map.md` | aigw 代码落点（丢弃点 / SpendLog schema / 计费链路 / 配置层 / 流式管线） |
+
+**关键结论**:
+
+- **「网关自执行搜索」已是主流** —— 13 家中 **7 家**有该能力，不止 litellm。
+- **三种形态而非两种** —— 除 litellm 的 (A) 短路 与 (B) agentic loop，**Higress `ai-search` 与 Portkey `exa/online` 各自独立实现了 (C)「搜索 → 改写 prompt → 单次调用」**。
+- **两个硬约束把 A/B 封顶** —— Anthropic 的 `encrypted_content` 是服务端签发的不透明 blob，网关**无法伪造**，且多轮重放时**逐字节比对**（否则 400）；自造块会**投毒历史**，必须按 id 前缀剥离（sub2api `srvtoolu_ws_` 的血泪教训：「第一轮正常，第二轮整个会话 400」）。**形态 C 完全绕开这两个坑。**
+- **三处常识更正** —— OpenAI 现价 **$10/1k**（$25/1k 只残存于 `web_search_preview` + 非推理模型）；OpenRouter 的 `plugins:[{id:"web"}]` 与 `:online` **均已弃用**；旧文档「sub2api 只丢弃」仅对其 Responses 桥接成立——它的 Anthropic 路径有完整模拟子系统（含迁移 `174_group_web_search_price_per_call.sql`，**即按次计费先例**）。
+- **厂商四否决**（经实测 / 官方页核实）—— Google Custom Search JSON API **已不对新客户开放且 2027-01-01 停服**；DuckDuckGo **无官方 web-results API**（Instant Answer 仅返消歧义条目；`html.duckduckgo.com` 实测返 **202 + 反爬挑战页**）；Bing Search API v7 **已退役**；替代品 Grounding with Bing **$14/1k、无免费额度、强制展示 citations**。
+- **aigw 侧三个缺口** —— ① **agentic loop 完全不存在**（全链唯一 `.send()` 在 `chat.rs:1743`；注释声称的 fallback loop 无对应重发代码）；② **按次（非 token）计费完全不存在**（`calc_spend` 纯 token，`ModalPricing` 实为 per-1M-token）；③ **Anthropic 服务端工具触发 HTTP 500**（`ClaudeToolDef` 的 `input_schema` 非 Option 且无 `type` → 反序列化即炸，已跨三路由核实 → 新增 **TD-017g**）。
+
+### 用户决策
+
+- **架构 = 形态 C（prompt 注入）** —— 上游零能力依赖、流式几无改动、不触碰两个硬约束。
+- **Provider = 多 provider 架构 + 本期只实现 SearXNG（支持多实例）** —— Tavily（1000/mo 免费）与博查（中文，Bing 兼容形状）**本期不实现**，抽象与 `kind` 已就位，接入是纯增量；Serper / ScrapingDog / 智谱 / 百度千帆登记为后备候选。**SearXNG 非零成本**，`cost_per_query` 填自建摊销值。
+- **新增 Stage 138**：provider / 实例 / 定价的 DB 化 + 管理 UI（对齐模型定价与代理服务的既有治理方式）。
+
+### Phase 53 五 Stage（~49h，**规划态未实施**）
+
+> **范围定调（2026-10-06，两轮用户决策）**：**① 多 provider 架构保留，本期只实现 SearXNG**（Tavily/博查不落地，接入 = 加一文件 + 一个 `kind` 分支；多态/failover/非零计费由 test-only `StubProvider` 证明）；**② 一个 provider 支持多实例**（provider = 逻辑后端 + 定价 → instances[] = 物理端点，实例选择照抄 `router.rs` 的 `cooldown_until` + `weighted_pick`，形成「实例级加权+冷却」与「provider 级 failover」两级结构）；**③ SearXNG 不是零成本** —— `cost_per_query` **缺省 `0.01` USD/次**（= $10/1k，对齐 OpenAI 牌价与 sub2api `174_*.sql`），**缺省即非零故生产默认有真实金额**；但该默认值是牌价占位，自建摊销典型在 `1e-4` 量级，**不改约高估 50 倍**，应按「(服务器+带宽+运维) ÷ 月查询量」改写；**④ 新增 Stage 138** 做 provider/实例/定价的 DB 化与管理 UI（补齐与模型定价、代理服务的治理一致性）。
+
+| Phase | Stage | 主题 | 预估 | 状态 |
+|-------|-------|------|------|------|
+| **53** | 134 | 搜索后端抽象层（trait + registry + **仅 SearXNG 实现** + 多实例选择 + StubProvider + 配置 + 密钥 + HTTP client） | ~10h | ⏳ 规划 |
+| **53** | 135 | prompt 注入接线（两处丢弃点 + 三入口触发 + 注入模板 + 降级）+ 修 TD-017g | 12h | ⏳ 规划 |
+| **53** | 136 | 按次计费 + SpendLog 独立行（**aigw 首个非 token 计价**）+ usage 回传 | ~8h | ⏳ 规划 |
+| **53** | 137 | 调用日志展现（搜索行渲染 + 父子跳转 + 聚合口径审计 + i18n + fe-bdd） | 8h | ⏳ 规划 |
+| **53** | 138 | **provider / 实例 / 定价 DB 化 + 管理 UI**（028 三方言两表 + CRUD + 实例子资源 + 连通性探测 + 定价编辑 + 改价不重启生效） | 14h | ⏳ 规划 |
+
+**依赖**：134 → 135 → 136 → 137 严格串行；**138 依赖 134 + 136，与 137 无依赖可并行**。
+
+**关键设计决策**:
+
+1. **注入最后一条 user 消息，不注入 system** —— 决定性理由：system 注入与 Stage 131 建立的「有且仅有一条前导 system」不变量**正面冲突**（`consolidate_system_messages` 按出现顺序 `join("\n\n")`，顺序不可控；注入在 adapt 之后则等于在无人看守的第二处重复实现该不变量）；且 Anthropic 的 `system` 是顶层 untagged 二形态枚举 → **system 注入需 3 条代码路径，user 注入 1 条 `messages.last_mut()` 通吃**。附带收益：system 前缀逐字稳定，不击穿上游 prefix cache。
+2. **计费选「独立行」而非「附加费并入同行」** —— 可独立聚合 + 零迁移（`call_type` 已有 `"embedding"` 作为第三取值先例）+ **绕开 `8cf8c12` 修过的「流式按 chunk 重建覆盖落库」陷阱**（搜索行有独立 `call_id`，Phase 2 UPDATE 物理上触不到）+ 未来设计 A（短路）无宿主行可挂，现在选方案 2 等于埋返工。
+3. **`model_group` 与 `mcp_namespaced_tool_name` 禁止挪用** —— litellm 把 `model_group` 占用为搜索工具名，但 aigw 的「Spend by Model Group」图直接消费该列；`mcp_namespaced_tool_name` 已是 `daily_spend_queue` 聚合复合键的一部分，填值会裂开日聚合分组。
+4. **搜索失败降级放行**（不带搜索继续调上游 + `warn` + metadata 标记），与既有「诚实降级」立场一致。
+5. **两级实例/provider 选择照抄 `router.rs`，不自创** —— `:26` `cooldown_until`、`:79-84` 冷却过滤、`:366-377` `has_weight` 判定、`:419` `weighted_pick`。实例级解决「同一后端多端点的可用性与分流」，provider 级解决「换一家厂商」，职责不混。
+6. **单价只做全局 provider 级，不做 key/team 覆写** —— 单价是「采购成本」（事实），覆写表达「加价/折扣策略」（产品概念），aigw 目前无售卖加价机制，引入即超范围。但**单价必须可运营修改**（Stage 138）而非改码重启。
+
+
+**✅ 实施阻塞项已清空 —— 可直接开工 Stage 134**:
+
+- **搜索后端**：✅ **SearXNG 已就绪并实测通过** —— `http://30.184.60.216:9099`，`format=json` 已开启，2026-10-06 实测 HTTP 200 / 延迟 2.0–3.1s / 中文可用。真实响应已固化为 fixture：`docs/fixtures/searxng-search-response-2026-10-06.json`（35 条，28KB），Stage 134 的解析 UT 直接内联该文件。**实测推翻 5 项原假设，已全部回写 Stage 134 §3.3.2/§3.4/§8.1**（详见下「实测关键发现」）。**本期不需要任何付费厂商账号。**
+- **单价**：`cost_per_query` **缺省 `0.01` USD/次**（= $10/1k 牌价占位），开箱即可跑且金额非零。⚠️ **该默认值不是 SearXNG 的自建成本**——应按「(服务器 + 带宽 + 运维) ÷ 月搜索次数」改写（自建典型 `1e-4` 量级，不改约高估 50 倍）。Stage 134 走 yaml，Stage 138 后可在 UI 改且不重启生效。**不是开工前必须定好的数字。**
+
+**⏳ 已降级为「接入时再处理」（不阻塞本期）**:
+
+- **Tavily / 博查注册** —— 本期不实现其客户端，抽象与 `kind` 已就位，接入 = 加一文件 + 一个 `kind` 分支。
+- **博查汇率决策** —— 仅因博查以 CNY 计价（¥36/1k）而 `SpendLog.spend` 恒为 USD 且无货币字段。**博查接入前必须落地该决策，落地前其金额不得用于对外出账**（三候选见 Stage 136 §8）。
+- 调研中标 `未验证（请复核）` 的字段（Serper 的 `X-API-KEY` header 名、Jina 的 $/1M token 价、Yandex v2 `rawData` 细节等）—— 对应厂商接入时再实网探测。
+
+**⚠️ 实现期须先核实的两件事**（Stage 138）:
+
+- **`ON DELETE CASCADE` 的三方言一致性** —— SQLite 需 `PRAGMA foreign_keys=ON` 才生效，须先核实仓内连接是否开启；未开启则改应用层级联删除 + UT 锁定。
+- **`probe_result` 的 JSONB/JSON 方言** —— Stage 125 已踩过并修过（roadmap v58.0），照 `proxies` 的三方言写法即可。
+
+
+### SearXNG 实测关键发现（2026-10-06，5 项推翻原假设）
+
+| # | 发现 | 对设计的影响 |
+|---|------|------------|
+| 1 | ⚠️⚠️ **`results[]` 按「每引擎各自 position」交错，不是全局 score 降序** —— 实测 score 序列 `1.0,1.0,0.5,0.5,0.33,0.33,0.33,0.25,0.25,`**`1.0`**`,…`（第 10 条跳回 1.0 = 第三引擎第 1 名） | **归一化必须「截断前按 score 全局稳定重排」**（Stage 134 §3.4 新增规则 5）。否则 `truncate(5)` 拿到的是「三引擎各自头部混合」，且**第三引擎的最佳结果会被整条丢掉**。纯看文档不可能发现 |
+| 2 | ⚠️⚠️ **不支持服务端限条数** —— `&results=5` / `&limit=5` 均被忽略（仍返 31 条） | `max_results` clamp 只能在网关侧做（已覆盖），但**网络与解析成本无法节省**（恒收 ~30KB）。与 Tavily 的 `chunks_per_source`（厂商侧压缩）成本模型完全不同 |
+| 3 | ⚠️ **无「零结果」语义** —— 乱码 query 仍返 35 条无关结果（Subway 门店、Google 首页…） | 网关**无法靠结果数判断「搜不到」**。Stage 135 注入模板的「资料与问题无关时直接忽略」由礼貌措辞**升级为必需的防噪音护栏**，不得精简删除 |
+| 4 | ⚠️ **`format` 参数静默降级** —— `format=xml` / 省略 → **HTTP 200 + HTML**（非 4xx） | `parse_response` 对「200 但非 JSON」须给带排查提示的 `Parse` 错误，而非裸 serde 报错 |
+| 5 | **延迟 2.0–3.1s（mean 2.43s）** —— 要等 bing+yandex+sogou 三引擎全部回包 | 设计 C 下**搜索耗时全额计入 TTFT**。全局 `timeout_ms=5000` 对它偏紧 → 改为 **per-provider `timeout_ms`**（SearXNG 档 8000）。**本期 SearXNG 是唯一后端，故该 TTFT 增量无可替代**；Tavily（~1s）接入后才可用「把它设为 `default_provider`、SearXNG 作 failover」这一手段 |
+
+另确认（原标「未验证」）：`score` 35/35 非空、`publishedDate` 仅 7/35 非空（80% 缺失 → 前端排序不可依赖）、`content` 33/35 非空（2 条空 snippet 须容忍不丢弃）、空 query → HTTP 400、未启 limiter、中文可用。
+
+
+**遗留（后续 Phase 候选）**: 设计 A（短路，**唯一能让 Claude Code 的 WebSearch 按钮真正可用**）；设计 B（agentic loop，硬前提「上游是否认网关**自行注入**的 function tools」**未实测**——Stage 132 只证明了客户端声明的工具可往返）；方案 3（`search_count` 专列）待「上游原生搜索次数」也需落库时启用。
+
+**规划文档**: `docs/stages/stage-134.md` ~ `stage-138.md`
+
+---
+
+## 已完成：Phase 52（Stage 131-133 ✅，总进度 137）
+
+**2026-10-06 计数校正**: commit `c7cd1f4`（Responses 原生直通 + 补齐 Codex 合规 SSE 事件序列）交付时**未写 stage 文档**，导致 `docs/stages/` 缺 133 且总进度计数失真（记 136，实为 **137**）。已补 `stage-133.md`。
+
+**Stage 133 交付**: ① `Deployment.supported_standard_types` + `select_responses_adapter()`（声明含 `responses` → `ResponsesPassthrough` 原生直通，否则回落 Chat 转换）；② SSE 事件序列合规化——实测 **Codex 按 payload 的 `type` 分派、不认 `event:` 行**，且 delta 必须挂在已声明的 item 上，故补 `type` + 单调 `sequence_number` + 完整 item 生命周期。验证：aigw-core **530** UT、mock BDD **285 场景（272 pass / 13 skip）/ 1452 steps**、**真实 Codex 0.160.0 端到端零报错**。遗留：直通路径仅单元层验证（环境无声明该能力的可达上游）。
+
+**注意**: 三次独立修复（`c3f360c` 死循环、`4bd85c7` 提前 `[DONE]`、`8cf8c12` 流式 SpendLog）全部落在 `responses.rs` 同一流式管线 → **高风险区**，Stage 135 已登记该警示。
+
+---
+
+## 已完成：Phase 52 前二 Stage（131-132）
 
 **2026-10-05（Codex 兼容缺陷调研 + Stage 131 规划）**: Codex CLI 0.157.1（`wire_api = "responses"`）接 aigw `/v1/responses` **首个请求即 400**：
 
