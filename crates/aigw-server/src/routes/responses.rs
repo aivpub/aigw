@@ -86,7 +86,7 @@ pub async fn responses_handler(
     OptionalClientIp(client_ip): OptionalClientIp,
     headers: axum::http::HeaderMap,
     http::request::Parts { extensions, .. }: http::request::Parts,
-    Json(body): Json<Value>,
+    Json(mut body): Json<Value>,
 ) -> Result<axum::response::Response, (StatusCode, Json<Value>)> {
     let request_id = extensions
         .get::<RequestId>()
@@ -250,11 +250,6 @@ pub async fn responses_handler(
     // Messages format, billing-injected, and sent through the pipeline (Bearer
     // + proxy egress + 401 refresh-retry).
     if let Some(ref oauth) = deployment.oauth {
-        // Drop the resolve span guard before the OAuth branch's long awaits
-        // (token pipeline + reqwest) — same sharded.rs cross-thread drop risk
-        // as chat/v1_messages.
-        drop(_resolve_enter);
-
         let token_provider = state.token_provider.clone();
         let mk = state.aigw_master_key.clone().unwrap_or_default();
         let is_stream = body
@@ -588,6 +583,25 @@ pub async fn responses_handler(
             .unwrap());
     }
 
+    // Take ownership of the model name so `body` is free for the search layer
+    // to mutate below.
+    let _model: String = _model.to_string();
+
+    // Stage 135: run the web search layer before adapting. The OAuth branch above
+    // is the native Anthropic passthrough and is deliberately not wired (§3.6a).
+    // There is no exact-match cache on this route, so nothing to opt out of.
+    // Release the resolve span guard before the search await (see chat.rs).
+    drop(_resolve_enter);
+    let search_status = crate::routes::web_search_wire::maybe_serve(
+        state.web_search.as_deref(),
+        ClientProtocol::Responses,
+        crate::routes::web_search_wire::upstream_handles_search(
+            ClientProtocol::Responses,
+            &deployment,
+        ),
+        &mut body,
+    )
+    .await;
     let adapter = select_responses_adapter(&deployment).ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,
@@ -603,7 +617,6 @@ pub async fn responses_handler(
             })),
         )
     })?;
-    drop(_resolve_enter);
 
     // Adapt request
     let adapt_span = tracing::info_span!("adapt_request");
@@ -1498,7 +1511,7 @@ pub async fn responses_handler(
         }
 
         // Adapt response (passthrough)
-        let adapted_resp = adapter.adapt_response(resp_body.clone()).map_err(|e| {
+        let mut adapted_resp = adapter.adapt_response(resp_body.clone()).map_err(|e| {
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({
@@ -1678,6 +1691,9 @@ pub async fn responses_handler(
         // TD-006: write the gateway call id (== SpendLog.call_id) to the response
         // so clients can reconcile directly from the header without a DB lookup.
         response = response.header("x-call-id", &request_id);
+        if let Some(st) = search_status.as_ref() {
+            crate::routes::web_search_wire::attach_status(&mut adapted_resp, st);
+        }
         Ok(response
             .body(axum::body::Body::from(
                 serde_json::to_string(&adapted_resp).unwrap(),
@@ -1719,6 +1735,7 @@ mod tests {
             otel_active: false,
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
+            web_search: None,
             metrics: None,
         })
     }

@@ -1,7 +1,7 @@
 # aigw — AI Gateway Stagemap
 
 **项目**: aigw (litellm Rust 最小兼容替代)
-**最后更新**: 2026-10-06
+**最后更新**: 2026-10-07
 
 ---
 
@@ -9,9 +9,9 @@
 
 - **已完成 Phase**: **Phase 51 ✅（Stage 126-130）**Claude OAuth 订阅反代五 Stage 全部交付：凭证交换引擎 + Token 三层自愈 + 反代管线 + 前端入口 + 收尾安全审计。
 - **Phase 51 明细**（历史，总进度当时为 134）: Stage 126-127（2026-08-19）：credentials 表 OAuth 结构化扩展 + Cookie→Token 3 步交换（PKCE S256 经代理）+ `claude_token.rs` TokenProvider 三层自愈 + needs_reauth 告警。**Stage 128（2026-08-20）**：OAuth 反代管线（`oauth_pipeline.rs` billing 指纹字节对齐 sub2api/Parrot + 协议转换 + CC 伪装 + 401 刷新重试 + count_tokens + embeddings 400 + 代理出口）+ 四入口接线。**Stage 129（2026-08-24）**：CredentialsTab OAuth 前端入口 + `POST /credential/oauth/refresh`。**Stage 130（2026-08-24 ✅，134/134）**：real BDD 三后端 OAuth 凭证 CRUD + 加密落库直读断言 + in-use 守卫（**58/58 × 3 全绿**）+ 安全审计 8 项全部通过 + **`/credential/new` OAuth 凭证逐字段 AES-256-GCM 加密落库**（新增 `aigw-core::crypto::encrypt_litellm_value_gcm`）+ **TD-015a 全库收窄**（`chat::upstream_error_message` 接线 4 handler）+ ADR-034 收尾。验证：aigw-core **502** + aigw-server **157** UT、mock BDD **278（265 pass / 13 skip）**、real BDD 三端 **58/58 × 3**、fmt + lint green。详见 `docs/stages/stage-126.md` ~ `stage-130.md` + `stage-130-review-log.md`。
-- **当前 Phase**: **Phase 53 🔄 进行中（Stage 134 ✅ 完成 2026-10-06，135-138 ⏳；总进度 138）**——内建 web search 后端抽象层已落地（`aigw-core::websearch`，81 UT，刻意未接请求管线）。
+- **当前 Phase**: **Phase 53 🔄 进行中（Stage 134 ✅ 2026-10-06 / 135 ✅ 2026-10-07，136-138 ⏳；总进度 138）**——搜索后端抽象层 + 三入口接线（触发检测 + prompt 注入 + `ClaudeToolDef` 500 修复）已落地，搜索已真正可用；计费/日志展现/DB 化待做。
 - **上一 Phase**: **Phase 52 ✅ 完成（Stage 131-133）**——Codex Responses→Chat 桥接修复 + 多轮 tool 历史适配 + 原生直通与合规 SSE 事件序列。首请求 400、多轮残缺历史、流式提前断流均已消除（真实 Codex 0.160.0 端到端零报错）。
-- **下一里程碑**: **Phase 53 内建 Web Search（Stage 134 ✅ / 135-138 ⏳，~49h，TD-017c）**——设计 C（prompt 注入），**多 provider 架构 + 本期只实现 SearXNG（支持多实例）**，按次计费 + 独立 SpendLog 行 + provider/定价 DB 化与管理 UI。其后候选：中期 M1 guardrails / M2 Redis 分布式层;OAuth TD-015d 响应侧转换 / TD-015e count_tokens 双认证;Codex 遗留 TD-017b（`tool_choice` namespace 形态）。
+- **下一里程碑**: **Phase 53 内建 Web Search（Stage 134-135 ✅ / 136-138 ⏳，~49h，TD-017c）**——设计 C（prompt 注入），**多 provider 架构 + 本期只实现 SearXNG（支持多实例）**，按次计费 + 独立 SpendLog 行 + provider/定价 DB 化与管理 UI。其后候选：中期 M1 guardrails / M2 Redis 分布式层;OAuth TD-015d 响应侧转换 / TD-015e count_tokens 双认证;Codex 遗留 TD-017b（`tool_choice` namespace 形态）。
 
 ### 整体进度
 
@@ -62,7 +62,7 @@ Phase 49:   ████████████████████ 100% (1
 Phase 50:   ████████████████████ 100% (4/4 Stages) ✅ 代理服务管理 (Stage 122-125)
 Phase 51:   ████████████████████ 100% (5/5 Stages) ✅ Claude OAuth 订阅反代 (Stage 126-130)  — **134/134 ALL STAGES COMPLETE**
 Phase 52:   ████████████████████ 100% (3/3 Stages) ✅ Codex 客户端兼容 (Stage 131-133) — 总进度 137
-Phase 53:   ████░░░░░░░░░░░░░░░░  20% (1/5 Stages) 🔄 内建 Web Search (Stage 134 ✅ / 135-138 ⏳) — 总进度 138
+Phase 53:   ████████░░░░░░░░░░░░  40% (2/5 Stages) 🔄 内建 Web Search (Stage 134-135 ✅ / 136-138 ⏳) — 总进度 138
 
 ---
 
@@ -176,7 +176,7 @@ Phase 53:   ████░░░░░░░░░░░░░░░░  20% (1
 | Stage | 状态 | 目标 | 类型 | 预估 |
 |-------|------|------|------|------|
 | Stage 134 | ✅ 完成（2026-10-06） | **搜索后端抽象层（多 provider 架构 + 仅 SearXNG 实现）** — `aigw-core::websearch` 模块（`SearchProvider` trait + **SearXNG 单实现** + `WebSearchRegistry`（N provider 配置 / `kind` 判别 / failover / per-provider `timeout_ms`）+ 统一结果形状 + `v2:gcm:` 密钥解密 + 出站 HTTP client + **test-only `StubProvider`** 证明多态/failover/非零计费）。provider 切成「纯函数 build_request / parse_response / map_error + 一层薄 IO」。服务端护栏（`max_results` 默认 5 / snippet-only / 超时 / 域名名单）在本层强制生效。**不实现 Tavily / 博查**（线格式研究保留为接入参考附录）。**刻意不接任何请求管线**。 | 后端 | ~7h（实际交付 81 UT，规划 45） |
-| Stage 135 | ⏳ 规划 | **prompt 注入接线** — 改两处丢弃点（`adapter.rs:2553-2559` 的 `other =>` 兜底臂、`:2210-2216` 历史 item）+ 三入口触发检测（Chat `web_search_options` / Responses `web_search` / Anthropic `web_search_20250305`，**与 provider 无关**）+ `search_context_size` → 1/3/5 条（照抄 Higress）+ **注入最后一条 user 消息**（非 system）+ **搜索失败降级放行**。顺带修 **TD-017g**（`ClaudeToolDef` 致 HTTP 500）。流式**零改动**。本期唯一后端是 SearXNG → **TTFT 恒增 ~2.4s 且无更快替代**。 | 后端+测试 | 12h |
+| Stage 135 | ✅ 完成（2026-10-07） | **prompt 注入接线** — 改两处丢弃点（`adapter.rs:2553-2559` 的 `other =>` 兜底臂、`:2210-2216` 历史 item）+ 三入口触发检测（Chat `web_search_options` / Responses `web_search` / Anthropic `web_search_20250305`，**与 provider 无关**）+ `search_context_size` → 1/3/5 条（照抄 Higress）+ **注入最后一条 user 消息**（非 system）+ **搜索失败降级放行**。顺带修 **TD-017g**（`ClaudeToolDef` 致 HTTP 500）。流式**零改动**。本期唯一后端是 SearXNG → **TTFT 恒增 ~2.4s 且无更快替代**。 | 后端+测试 | 12h |
 | Stage 136 | ⏳ 规划 | **按次计费 + SpendLog 独立行** — `calc_search_spend`（**aigw 首个非 token 计价函数**）+ 每次搜索一条 `call_type="search"` 行（零迁移，复用 `insert_spend_log`）+ `metadata.parent_call_id` 父子关联 + **独立 `increment_*_spend` 调用**（避免 litellm 实修过的「首轮花费被静默吞掉」bug）+ `usage.server_tool_use.web_search_requests` 三 surface 回传。⚠️ **本期生产金额恒为 0**（SearXNG 免费）→ 非零单价与精度正确性**只能由 StubProvider UT 覆盖**；且 0 元行必须照样插入、照样走 `increment_*`（**未来接入付费 provider 时零改动即生效**）。 | 后端+测试 | ~8h |
 | Stage 137 | ⏳ 规划 | **调用日志展现** — Spend Logs 识别 `call_type="search"` 行（徽章 + query + 结果数 + provider + spend）+ 父子跳转 UX + `call_type` 过滤 + **零 token 行对既有 Usage 聚合口径的影响审计** + i18n（en/zh-CN）+ fe-bdd。⚠️ 本期搜索行**同时 spend=0 且 token=0** → UI 必须把它渲染成「真实的零值（自建免费后端）」而非「缺失/坏数据」。 | 前端+测试 | 8h |
 | Stage 138 | ⏳ 规划 | **provider / 实例 / 定价的 DB 化 + 管理 UI** — `028_web_search_providers.sql` × 三方言（`web_search_providers` + `web_search_instances` 两表）+ CRUD / 实例子资源 / 启停 / **单实例连通性探测**（跑完整 `parse_response`，能抓到 SearXNG「HTTP 200 + HTML」静默降级）+ 前端管理页（含**定价编辑**）+ i18n + real BDD 三后端加密落库断言。**配置源单一来源 + 优先级**（DB 优先 → yaml 回落 → 皆空禁用），**改价不重启生效**。照 `proxies`（`027_proxies.sql` / `proxies.rs:184-625` / `pages/proxies/`）全套照抄。 | 后端+前端+测试 | 14h |
@@ -1051,6 +1051,7 @@ Phase 53:   ████░░░░░░░░░░░░░░░░  20% (1
 
 | 版本 | 日期 | 修订内容 |
 |------|------|----------|
+| v68.0 | 2026-10-07 | **Phase 53 Stage 135 交付 ✅（总进度 138，Phase 53 2/5）**：内建 web search **接线三入口**（设计 C / prompt 注入）。新增 `aigw-core::websearch::{trigger,inject}`（三 surface 触发检测 + Higress 模板渲染 + **追加式**注入最后一条 user 消息，保住 tool_result blocks 不切断工具往返）+ `aigw-server::routes::web_search_wire`（`maybe_serve` / `upstream_handles_search` / `attach_status`）+ `ClaudeToolDef` 修复（`input_schema` → `Option` + 新增 `tool_type`/`max_uses`；带 `web_search_20250305` 的请求 **500 → 200**，TD-017g Resolved）。**关键边界**：① `web_search_options` 被**消费并移除**（此前静默透传给上游）；② 触发搜索的请求**绕过 exact-match 缓存**（缓存键取自注入前 body，命中会白搜且返回无结果的陈旧体）；③ **OAuth 反代分支与非 OAuth 原生直通（AnthropicNative / 声明 `responses`）整段豁免** —— 上游原生跑搜索，网关再搜一次会双重计费；④ 原生直通下 `_resolve_enter` span guard 跨搜索 await 的 **Critical 缺陷**（跨线程 drop panic）已修（三路由均在搜索前 `drop`）；⑤ query 长度双点封顶 512（防长文档把数百 KB URL 发给搜索后端 → 414）；⑥ `normalize` 把结果全过滤时不注入空模板（改判 `no_target`）。验证：aigw-core **643** UT（611→643）、mock BDD **292 场景（279 pass / 13 skip）**（+7 条 `web_search.feature`）、real BDD sqlite **58/58**、`fmt`/`lint`/`doctor` green。设计评审 5 findings（`stage-135-review-log.md` F1-F5）+ 代码评审 6 findings（C1-C6，5 修 1 不成立）。**残留**：真实上游端到端未执行。设计文档：`docs/stages/stage-135.md`。 |
 | v1.0-v14.0 | 2026-07-03~11 | 初始版本 ~ Phase 17 规划 |
 | v15.0 | 2026-07-14 | **架构重构规划**：修正 Phase 14-16 状态为已完成；移除旧 Stage 50-51（Usage 多视角聚合移入长期路线）；Phase 17 替换为代理转发架构重构（Stage 50-52: ModelResolver + MessageAdapter + Handler 瘦身）；每个 Stage 内置 TDD+BDD 测试；Stage 51 新增 tool_use/tool_calls 双向转换 |
 | v16.0 | 2026-07-15 | **Spend Logs & Usage 质量修复规划**：Phase 17 Stage 50-52 已全部完成，状态更新为 ✅；新增 Phase 18（Stage 53: 时间过滤+Usage 当天数据修复，Stage 54: end_user 提取+复制按钮反馈），共 2 Stage，预估 11h |

@@ -290,7 +290,7 @@ pub async fn messages_handler(
         })?;
 
     // 3. Parse request body
-    let body_val: Value = serde_json::from_str(&body).map_err(|e| {
+    let mut body_val: Value = serde_json::from_str(&body).map_err(|e| {
         anthropic_error(
             StatusCode::BAD_REQUEST,
             "invalid_request_error",
@@ -546,11 +546,6 @@ pub async fn messages_handler(
     // Bearer + proxy egress + 401 refresh-retry). The adapter path below is
     // bypassed entirely; the upstream Anthropic response is returned as-is.
     if let Some(ref oauth) = resolved_deployment.oauth {
-        // Drop the resolve span guard before the OAuth branch's long awaits
-        // (token pipeline + reqwest) — same sharded.rs cross-thread drop risk
-        // as the non-OAuth path (fixed in 77dc2eb).
-        drop(_resolve_enter);
-
         let token_provider = state.token_provider.clone();
         let mk = state.aigw_master_key.clone().unwrap_or_default();
         let is_stream = body_val
@@ -841,7 +836,19 @@ pub async fn messages_handler(
     }
 
     // Select adapter based on client protocol + provider type
+    //
+    // Stage 135: run the web search layer first. The OAuth branch above is the
+    // native Anthropic passthrough — the upstream performs `web_search_20250305`
+    // itself, so it is deliberately not wired (see stage-135 §3.6a).
+    // Release the resolve span guard before the search await (see chat.rs).
     drop(_resolve_enter);
+    let search_status = crate::routes::web_search_wire::maybe_serve(
+        state.web_search.as_deref(),
+        aigw_core::adapter::ClientProtocol::Anthropic,
+        provider_type == aigw_core::deployment::ProviderType::AnthropicNative,
+        &mut body_val,
+    )
+    .await;
     let adapt_span = tracing::info_span!("adapt_request");
     let _adapt_enter = adapt_span.enter();
     let adapter = select_adapter(ClientProtocol::Anthropic, &provider_type).ok_or_else(|| {
@@ -1519,7 +1526,7 @@ pub async fn messages_handler(
 
         // Convert upstream OpenAI response to Claude format via the adapter
         // (handles tool_calls → tool_use conversion correctly)
-        let claude_response = adapter.adapt_response(resp_body.clone()).map_err(|e| {
+        let mut claude_response = adapter.adapt_response(resp_body.clone()).map_err(|e| {
             anthropic_error(
                 StatusCode::BAD_GATEWAY,
                 "upstream_error",
@@ -1527,6 +1534,9 @@ pub async fn messages_handler(
                 &request_id,
             )
         })?;
+        if let Some(st) = search_status.as_ref() {
+            crate::routes::web_search_wire::attach_status(&mut claude_response, st);
+        }
 
         // Record spend log
         let now = chrono::Utc::now();
@@ -1955,6 +1965,7 @@ mod tests {
             otel_active: false,
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
+            web_search: None,
             metrics: None,
         });
 

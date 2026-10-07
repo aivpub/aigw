@@ -918,19 +918,34 @@ impl ProviderAdapter for DefaultAdapter {
             messages.extend(claude_message_to_openai(msg));
         }
 
-        // Map Claude tools → OpenAI tools
-        let tools = req.tools.as_ref().map(|claude_tools| {
-            claude_tools
+        // Map Claude tools → OpenAI tools. Server-side tools (no input_schema)
+        // are dropped, matching the Responses path's `other =>` arm: an upstream
+        // that speaks Chat Completions has no equivalent to forward them to.
+        // An all-dropped list becomes `None` so no empty `tools: []` is emitted.
+        let tools = req.tools.as_ref().and_then(|claude_tools| {
+            let mapped: Vec<crate::models::ToolDef> = claude_tools
                 .iter()
+                .filter(|ct| {
+                    if ct.input_schema.is_none() {
+                        tracing::warn!(
+                            tool_name = %ct.name,
+                            tool_type = %ct.tool_type.as_deref().unwrap_or(""),
+                            "dropping server-side tool: no Chat Completions equivalent"
+                        );
+                        return false;
+                    }
+                    true
+                })
                 .map(|ct| crate::models::ToolDef {
                     tool_type: "function".to_string(),
                     function: crate::models::ToolDefFunction {
                         name: ct.name.clone(),
                         description: ct.description.clone(),
-                        parameters: Some(ct.input_schema.clone()),
+                        parameters: ct.input_schema.clone(),
                     },
                 })
-                .collect()
+                .collect();
+            (!mapped.is_empty()).then_some(mapped)
         });
 
         // Convert Claude tool_choice → OpenAI tool_choice:
@@ -4177,6 +4192,122 @@ data: [DONE]
             )
             .expect_err("flatten collision must be rejected");
         assert!(matches!(err, AdapterError::Unsupported(_)), "got {err:?}");
+    }
+
+    // ── Stage 135 — ClaudeToolDef server-tool tolerance + Responses trigger marker ──
+
+    #[test]
+    fn claude_tool_def_server_tool_deserializes_without_input_schema() {
+        // Red before Phase 53: `input_schema` was a required `Value`, so this
+        // exact payload failed deserialization and surfaced as HTTP 500 on
+        // /v1/messages, /v1/chat/completions and /v1/responses alike.
+        let raw = json!({"type": "web_search_20250305", "name": "web_search", "max_uses": 5});
+        let def: crate::models::ClaudeToolDef =
+            serde_json::from_value(raw).expect("server tools carry no input_schema");
+        assert_eq!(def.tool_type.as_deref(), Some("web_search_20250305"));
+        assert!(def.input_schema.is_none());
+        assert_eq!(def.max_uses, Some(5));
+    }
+
+    #[test]
+    fn claude_tool_def_client_tool_still_deserializes() {
+        let raw = json!({
+            "name": "get_weather",
+            "description": "w",
+            "input_schema": {"type": "object", "properties": {}}
+        });
+        let def: crate::models::ClaudeToolDef = serde_json::from_value(raw).unwrap();
+        assert!(def.tool_type.is_none());
+        assert!(def.input_schema.is_some());
+        assert_eq!(def.max_uses, None);
+    }
+
+    #[test]
+    fn anthropic_request_with_web_search_tool_no_longer_errors() {
+        let body = json!({
+            "model": "m",
+            "max_tokens": 10,
+            "messages": [{"role": "user", "content": "hi"}],
+            "tools": [{"type": "web_search_20250305", "name": "web_search", "max_uses": 5}]
+        });
+        let adapted = AnthropicToOpenAI
+            .adapt_request(body, &test_deployment())
+            .expect("server tool must no longer abort the whole request");
+        assert!(
+            adapted.get("tools").is_none(),
+            "the dropped server tool must not leave an empty tools array"
+        );
+    }
+
+    #[test]
+    fn anthropic_other_server_tool_dropped_with_warn() {
+        let body = json!({
+            "model": "m",
+            "max_tokens": 10,
+            "messages": [{"role": "user", "content": "hi"}],
+            "tools": [{"type": "code_execution_20250101", "name": "code_execution"}]
+        });
+        let adapted = AnthropicToOpenAI
+            .adapt_request(body, &test_deployment())
+            .expect("unknown server tools drop, mirroring the Responses path");
+        assert!(adapted.get("tools").is_none());
+    }
+
+    #[test]
+    fn claude_tool_without_schema_maps_to_none_parameters() {
+        // Client tool that legitimately has no "parameters" is unaffected; the
+        // point is that the mapping no longer wraps a Value in Some().
+        let body = json!({
+            "model": "m",
+            "max_tokens": 10,
+            "messages": [{"role": "user", "content": "hi"}],
+            "tools": [{"name": "f", "input_schema": {"type": "object"}}]
+        });
+        let adapted = AnthropicToOpenAI
+            .adapt_request(body, &test_deployment())
+            .unwrap();
+        let tools = adapted["tools"].as_array().unwrap();
+        assert_eq!(
+            tools[0]["function"]["parameters"]["type"].as_str(),
+            Some("object")
+        );
+    }
+
+    #[test]
+    fn client_tools_survive_alongside_server_tool() {
+        let body = json!({
+            "model": "m",
+            "max_tokens": 10,
+            "messages": [{"role": "user", "content": "hi"}],
+            "tools": [
+                {"type": "web_search_20250305", "name": "web_search"},
+                {"name": "keep_me", "input_schema": {"type": "object"}}
+            ]
+        });
+        let adapted = AnthropicToOpenAI
+            .adapt_request(body, &test_deployment())
+            .unwrap();
+        let tools = adapted["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["function"]["name"].as_str(), Some("keep_me"));
+    }
+
+    #[test]
+    fn responses_web_search_tool_is_visible_to_trigger_detection() {
+        // The trigger reads raw client tools before normalize_responses_tools
+        // drops them, so both spellings must be present in the input.
+        let tools = vec![
+            json!({"type": "web_search"}),
+            json!({"type": "web_search_preview"}),
+        ];
+        assert!(crate::websearch::trigger::detect_responses(&tools).is_some());
+        // And the drop-with-warn path still owns removal from the forwarded set.
+        let adapted = bridge_adapt(json!({
+            "model": "m",
+            "input": "hi",
+            "tools": [{"type": "web_search"}]
+        }));
+        assert!(adapted.get("tools").is_none());
     }
 
     #[test]

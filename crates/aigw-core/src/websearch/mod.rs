@@ -28,16 +28,22 @@
 
 pub mod client;
 pub mod config;
+pub mod inject;
 pub mod instance;
 pub mod provider;
 pub mod searxng;
+pub mod trigger;
 pub mod types;
 
 pub use config::{
     WebSearchConfig, WebSearchInstanceConfig, WebSearchProviderConfig, SUPPORTED_KINDS,
 };
+pub use inject::{
+    has_target, inject_into_last_user, question_query, render, InjectionOutcome, PROMPT_TEMPLATE,
+};
 pub use instance::{CooldownPolicy, InstancePool, WebSearchInstanceState};
 pub use provider::{SearchError, SearchProvider};
+pub use trigger::{SearchTrigger, TriggerSurface};
 pub use types::{
     normalize, Guardrails, SearchRequest, SearchResponse, SearchResult, DEFAULT_MAX_RESULTS,
     DEFAULT_SNIPPET_MAX_CHARS,
@@ -88,6 +94,14 @@ impl WebSearchRegistry {
 
     pub fn provider_names(&self) -> Vec<&str> {
         self.providers.iter().map(|p| p.name()).collect()
+    }
+
+    /// The provider that serves a request naming none.
+    pub fn default_provider_name(&self) -> String {
+        self.resolve_order(None)
+            .into_iter()
+            .next()
+            .unwrap_or_default()
     }
 
     fn get(&self, name: &str) -> Option<&Arc<dyn SearchProvider>> {
@@ -202,11 +216,127 @@ pub fn build_provider(
     }
 }
 
+/// What happened when a detected trigger was served.
+///
+/// Mirrors the response metadata marker (Stage 135 §3.9) so callers can report
+/// honestly whether search results actually reached the upstream.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SearchServeOutcome {
+    /// Searched and folded the results into the request body.
+    Injected { provider: String, results: usize },
+    /// The trigger hit but the search failed; the request proceeds unmodified.
+    Degraded { provider: String, error: String },
+    /// The trigger hit but there was no user message to inject into. No search
+    /// is performed — `has_target` is checked first so a request that cannot
+    /// use results is never charged for one.
+    NoTarget { provider: String },
+}
+
+impl SearchServeOutcome {
+    /// The status the response metadata carries. `NoTarget` gets its own value
+    /// rather than folding into `ok`: the client asked for search and got none,
+    /// and reporting `ok` with `results: 0` would hide that.
+    pub fn status(&self) -> &'static str {
+        match self {
+            SearchServeOutcome::Injected { .. } => "ok",
+            SearchServeOutcome::Degraded { .. } => "degraded",
+            SearchServeOutcome::NoTarget { .. } => "no_target",
+        }
+    }
+
+    pub fn provider(&self) -> &str {
+        match self {
+            SearchServeOutcome::Injected { provider, .. }
+            | SearchServeOutcome::Degraded { provider, .. }
+            | SearchServeOutcome::NoTarget { provider } => provider,
+        }
+    }
+}
+
+/// Run one search for a detected trigger and fold the results into `body`.
+///
+/// Search failure degrades rather than failing the request: search is an
+/// enhancement, and the backend (a self-hosted scraper, or a quota-limited
+/// vendor) is more fragile than the upstream model. Letting the weaker
+/// dependency veto the request would drag overall availability to the worst
+/// link. This is also the only safety net in the single-provider period, where
+/// a systemic backend failure hits every instance at once.
+pub async fn serve_trigger(
+    registry: &WebSearchRegistry,
+    trigger: &SearchTrigger,
+    body: &mut serde_json::Value,
+    now: &chrono::DateTime<chrono::Utc>,
+) -> SearchServeOutcome {
+    let provider = registry.default_provider_name();
+
+    let query = inject::question_query(body, trigger.surface);
+    if !inject::has_target(body, trigger.surface) || query.trim().is_empty() {
+        // Either there is no user message, or the one there is carries no text
+        // (image-only / tool-result-only content). Both mean there is nothing to
+        // search for, so no search is issued — and the client is told that,
+        // rather than being handed a `degraded` that implies a backend fault.
+        tracing::warn!(
+            surface = trigger.surface.as_str(),
+            "web search triggered but no searchable user text; proceeding without search"
+        );
+        return SearchServeOutcome::NoTarget { provider };
+    }
+
+    let req = SearchRequest {
+        query,
+        max_results: Some(trigger.requested_results),
+    };
+
+    match registry.search(&req, None).await {
+        Ok(resp) if resp.results.is_empty() => {
+            // The backend answered but every hit was filtered out (no url/title,
+            // domain list, dedup). Injecting the bare template would tell the
+            // client search contributed when it did not.
+            tracing::warn!(
+                surface = trigger.surface.as_str(),
+                provider = %resp.provider,
+                "web search returned no usable results; proceeding without injection"
+            );
+            SearchServeOutcome::NoTarget {
+                provider: resp.provider,
+            }
+        }
+        Ok(resp) => {
+            let outcome = inject::inject_into_last_user(body, trigger, &resp, now);
+            let results = match outcome {
+                inject::InjectionOutcome::Injected { results } => results,
+                inject::InjectionOutcome::NoTarget => 0,
+            };
+            tracing::info!(
+                surface = trigger.surface.as_str(),
+                provider = %resp.provider,
+                results,
+                "web search injected into request"
+            );
+            SearchServeOutcome::Injected {
+                provider: resp.provider,
+                results,
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                surface = trigger.surface.as_str(),
+                provider = %provider,
+                error = %e,
+                "web search failed; proceeding without search results"
+            );
+            SearchServeOutcome::Degraded {
+                provider,
+                error: e.to_string(),
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
-
     /// Test-only second provider.
     ///
     /// Stands in for the vendors deliberately left unimplemented, and is the only

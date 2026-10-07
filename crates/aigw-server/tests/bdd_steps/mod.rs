@@ -38,3 +38,4 @@ pub mod spend_models_providers_steps;
 pub mod spend_rankings_steps;
 pub mod spend_steps;
 pub mod spend_sum_cluster_steps;
+pub mod web_search_steps;

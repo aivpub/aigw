@@ -64,15 +64,21 @@ impl SearxngProvider {
         }
     }
 
+    /// Longest query accepted into the GET URL. Non-ASCII expands ~3x under
+    /// percent-encoding, so an unbounded pasted document would produce a
+    /// multi-hundred-KB URL that nginx/SearXNG answer with 414.
+    pub const MAX_QUERY_CHARS: usize = 512;
+
     /// Request URL for one query against one instance.
     ///
     /// Pure. Deliberately omits `results` / `limit` (ignored by SearXNG) so the
     /// wire stays free of params that do nothing.
     pub fn build_url(base_url: &str, query: &str) -> String {
+        let capped: String = query.chars().take(Self::MAX_QUERY_CHARS).collect();
         format!(
             "{}/search?q={}&format=json",
             base_url.trim_end_matches('/'),
-            urlencode(query)
+            urlencode(&capped)
         )
     }
 }

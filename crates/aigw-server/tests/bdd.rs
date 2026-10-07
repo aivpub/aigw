@@ -81,6 +81,7 @@ impl TestWorld {
                     token_provider: std::sync::Arc::new(
                         aigw_core::claude_token::TokenProvider::new(),
                     ),
+                    web_search: None,
                     metrics: None,
                 });
             self.master_key = mk;

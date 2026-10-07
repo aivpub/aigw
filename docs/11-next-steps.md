@@ -1,11 +1,34 @@
 # aigw -- 下一步行动
 
-**上次更新**: 2026-10-06
-**当前阶段**: **Phase 53 🔄 进行中 — 内建 Web Search（TD-017c）：Stage 134 ✅ 完成，135-138 ⏳；总进度 138**
+**上次更新**: 2026-10-07
+**当前阶段**: **Phase 53 🔄 进行中 — 内建 Web Search（TD-017c）：Stage 134-135 ✅ 完成，136-138 ⏳；总进度 138**
 
 ---
 
-## 当前状态：Phase 53 Stage 134 ✅ 完成，下一步 Stage 135
+## 当前状态：Phase 53 Stage 135 ✅ 完成，下一步 Stage 136
+
+### Stage 135 交付（2026-10-07）
+
+搜索**接线三入口**（设计 C / prompt 注入）—— 内建 web search 从「可测试的后端」变成「真正可用」。
+
+| 文件 | 交付 |
+|------|------|
+| `websearch/trigger.rs` | 三 surface 触发检测 + `search_context_size` → 1/3/5 映射（纯函数） |
+| `websearch/inject.rs` | Higress 模板渲染 + **追加式**注入最后一条 user 消息 + `has_target`/`question_query` |
+| `websearch/mod.rs` | `serve_trigger`（detect → search → inject 统一序列）+ `SearchServeOutcome` 四态 |
+| `routes/web_search_wire.rs` | `maybe_serve` / `upstream_handles_search` / `attach_status` |
+| `models.rs` + `adapter.rs` | `ClaudeToolDef` 修复（500 → 200）+ 服务端工具丢弃 + warn |
+| `routes/{chat,responses,v1_messages}.rs` | 三入口接线 + chat 缓存 bypass + OAuth/原生直通豁免 |
+
+**验证**: aigw-core **643** UT、mock BDD **292 场景（279 pass / 13 skip）**、real BDD sqlite **58/58**、`fmt`/`lint`/`doctor` green。
+
+**⚠️ 未执行项**: 真实上游端到端一次（确认模板的 markdown 引用指令对本环境模型有效）—— 属门禁项但未做，登记在此。
+
+**⚠️ 未走严格 TDD 红绿**: UT 与实现同批编写（与 Stage 134 同类登记）。2 个测试确实先红后绿（`inject_skips_tool_result_only_user_message` / `inject_responses_skips_function_call_output`）。
+
+### 下一步：Stage 136（按次计费 + SpendLog 独立行，~8h）
+
+`calc_search_spend`（aigw 首个非 token 计价）+ 每次搜索一条 `call_type="search"` 行（零 migration）+ `metadata.parent_call_id` 父子关联 + 独立 `increment_*_spend`（避免 litellm 实修过的「首轮花费被静默吞掉」）+ `usage.server_tool_use.web_search_requests` 三 surface 回传。**Stage 135 已在 `serve_trigger` 拿到了 provider 名与结果数，接线已就绪。**
 
 ### Stage 134 交付（2026-10-06）
 
@@ -49,7 +72,7 @@ Stage 134 执行期间暴露了「Agent 绕过 Taskfile 跑裸命令」的问题
 
 ---
 
-## Phase 53 规划（Stage 135-138 ⏳）
+## Phase 53 规划（Stage 136-138 ⏳）
 
 **2026-10-06（内建 Web Search 调研 + Phase 53 规划）**: Stage 131 对服务端工具采取「丢弃 + 告警」——诚实但**客户端的联网能力实际不可用**。本环境实测：上游 MaaS 对 `web_search` 等服务端工具透传**全部 400**，而 litellm 的「派生 `web_search_options`」路线**被收下但不执行搜索**（模型回复「我无法联网」）。**→ 要真正可用，必须由网关自己执行搜索。**
 

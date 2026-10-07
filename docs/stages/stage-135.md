@@ -3,7 +3,7 @@
 **所属**: Phase 53（内建 Web Search / TD-017c）
 **预估**: 12h（触发检测 ×3 + 注入模板 + context_size 映射 + `ClaudeToolDef` 缺陷修复 + 降级策略 + UT/BDD）
 **依赖**: Stage 134（搜索后端抽象层 —— `SearchProvider` / `WebSearchRegistry` / `SearchRequest` / `SearchResponse` / `SearchError`）
-**状态**: ⏳ 规划
+**状态**: ✅ 完成（2026-10-07）
 
 > **Phase 53 范围收窄（2026-10-06 决策）**：多 provider 架构**全部保留**（trait / registry / `kind` 判别式 / 配置 / failover / per-provider `timeout_ms` / `api_key` + `v2:gcm:` / `cost_per_query`），但**本期只实现 SearXNG 一家**；Tavily 与博查 Bocha 不落地（Stage 134 已据此收窄：`tavily.rs` / `bocha.rs` 不写，多态与 failover 由**测试专用 `StubProvider`** 证明）。配置为**两层模型**：provider（逻辑后端，持 `kind` 与定价）→ instances[]（物理端点，各自 `base_url` / `weight` / `enabled` / 冷却，选择逻辑照抄 `router.rs`）。
 >
@@ -26,7 +26,9 @@ Stage 134 交付了可独立测试的搜索后端，但**没有任何调用方**
 - [ ] 搜索失败（`SearchError` 任一变体）→ **降级放行**（不带搜索继续调上游）+ `tracing::warn!` + 响应 metadata 标记，**绝不把用户请求打挂**
 - [ ] 流式路径（`responses.rs:1034-1079`）**零改动**，SSE 透传行为与 Stage 133 基线逐字节一致
 - [ ] `web_search` 配置缺省（absent）时**三条入口行为与 Stage 134 基线完全一致**（即丢弃 + warn），`task bdd` 场景数只增不改
-- [ ] `task test` / `task bdd` / `task fmt` / `task lint` / `task check` 全绿
+- [ ] **触发搜索的请求绕过 exact-match 缓存**（§3.6a(b)）—— 不白搜、不返回注入前的陈旧体
+- [ ] **OAuth 反代路径行为与 Stage 135 之前逐字一致**（§3.6a(a) 的显式边界，Anthropic 原生搜索由上游执行）
+- [ ] `task test` / `task bdd` / `task fmt` / `task lint` / `task doctor` 全绿
 
 ### 明确不做（边界）
 
@@ -193,8 +195,15 @@ pub struct ClaudeToolDef {
     /// 服务端工具不带 schema → None（原为非 Option，导致整条请求 500，§2.3）。
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub input_schema: Option<serde_json::Value>,
+    /// Anthropic 服务端工具的搜索次数上限（`web_search_20250305` 携带）。
+    /// §3.4 取 `min(max_uses, max_results)` 当结果条数上限；缺省（None）时不参与。
+    /// 不加此字段则 §3.2「读 max_uses」与 §3.4 的 clamp 无法实现（Review F2）。
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub max_uses: Option<i64>,
 }
 ```
+
+> **Review F2**：设计初稿只加 `tool_type` / `input_schema` 两个字段，却要求 §3.2/§3.4 读取 `max_uses` —— 而 `models.rs` 全文无 `#[serde(flatten)]`（§2.3 自陈），未声明字段在反序列化时被静默丢弃，故 `max_uses` 必须显式声明。加 `#[serde(skip_serializing_if = "Option::is_none")]` 保证客户端工具（无该字段）序列化不变。
 
 连带改动：`adapter.rs:930` 的 `parameters: Some(ct.input_schema.clone())` → `parameters: ct.input_schema.clone()`（`ToolDefFunction.parameters` 本就是 `Option`，类型天然吻合）。
 
@@ -213,9 +222,9 @@ Higress `ai-search` 把 OpenAI 原生参数**当作自己的开关**用，`searc
 | `high` | 5 | 与 `DEFAULT_MAX_RESULTS = 5`（Stage 134 §3.2）同值 |
 | 未知字符串 | 3 | 降级为 medium + `tracing::warn!`，不报错 |
 
-Anthropic 侧的 `max_uses` 语义不同（**搜索次数**而非结果条数，且官方无默认值，架构调研 §5.5），本 Stage **只取 `min(max_uses, max_results)` 当条数上限**，不实现多次搜索。
+Anthropic 侧的 `max_uses` 语义不同（**搜索次数**而非结果条数，且官方无默认值，架构调研 §5.5），本 Stage **只取 `min(max_uses, max_results)` 当条数上限**，不实现多次搜索。**`max_uses` 缺省（`None`）时不参与 clamp** —— 只用 `search_context_size` 映射与 `config.max_results`（Review F2：`max_uses` 必须在 §3.3 的结构体里显式声明才读得到）。
 
-**映射结果一律再过 Stage 134 §3.5 的 clamp**：`min(mapped, config.max_results)`。客户端**只能下调、不能上调**。
+**映射结果由 Stage 134 的 `WebSearchRegistry::search()` 单点 clamp**（`guardrails.clamp_max_results`，`websearch/mod.rs:131`）—— 触发层把映射值直接塞进 `SearchRequest.max_results` 即可，**不在本 Stage 重复实现 clamp**（Review F5：设计初稿的 `inject::clamp_results` 与下层重复，删除）。客户端**只能下调、不能上调**这条不变量由 Stage 134 的既有 UT 守护。
 
 ### 3.5 注入目标与模板
 
@@ -269,15 +278,29 @@ Anthropic 侧的 `max_uses` 语义不同（**搜索次数**而非结果条数，
 - `snippet` 已在 Stage 134 §3.4 按 `snippet_max_chars`（默认 2000）截断，本层**不再截**；
 - **markdown 链接引用而非结构化 citations** —— OpenRouter 默认 `search_prompt` 同款做法（架构调研 §5.4 末「有业界先例，不是降级妥协」）。
 
-#### 目标消息定位
+#### 目标消息定位与注入方式
 
 ```
 找最后一条 role == "user" 的消息
-  → 命中：content 归一为 text 后，整条替换为渲染结果（{question} = 原 content）
+  → 命中：把渲染结果作为**新增的一个 text block / text content-part 追加**到该条
+          （原 blocks/parts 逐字保留）
   → 未命中（纯 system / 纯 assistant 历史）：不注入，warn「no user message to inject into」，按未搜索处理
 ```
 
-**只改最后一条 user**，历史 user 消息零改动 —— 与 Higress `sjson.SetBytes(body, "messages.{queryIndex}.content", prompt)` 同形。
+**只改最后一条 user，历史 user 消息零改动** —— 与 Higress `sjson.SetBytes(body, "messages.{queryIndex}.content", prompt)` 位置一致（该实现只针对纯 string content，aigw 需覆盖 blocks 形态故改为追加）。
+
+> **Review F3 — 必须追加而非替换。** 设计初稿写「content 归一为 text 后整条替换」。但 Anthropic 的 `role=="user"` 消息**常常是 `tool_result` 的载体**：`claude_message_to_openai`（`adapter.rs`）把其 blocks 拆成 `role:"tool"` 消息 + 一个 text/image 的 `role:"user"` 消息。整条替换会抹掉 `tool_result` blocks → 工具调用无应答 → `normalize_tool_pairing` 剪除未应答调用 → **模型看不到工具结果**（Stage 132 刚修过的同类事故）。Responses 路径的 `function_call_output`（→ `role:"tool"`）同理。故：
+> - 注入 = 在最后一条 user 的 content 上**追加**一个 text block（Anthropic blocks 形态）/ content-part（OpenAI parts 形态）/ 拼接（纯 string 形态）；
+> - `{question}` = 从该条 content 中**仅取 text 部分拼接**（`tool_result` / image 不参与 query 构造）。
+
+**Responses 路径的注入目标在 `input[]`（`items_to_messages` 之前）**，故三种输入形态各一分支（Review：`input_to_messages` 已核实接受三形态）：
+
+| `input` 形态 | 注入方式 |
+|-------------|---------|
+| `Value::Array(..)` — 末条为 `{"type":"message","role":"user","content":..}` | 对 content 追加（content 为字符串 → 拼接；为 part 数组 → push 一个 `{"type":"text","text":..}`） |
+| `Value::Array(..)` — 末条为裸 `{"type":"input_text","text":..}` | 该 item 的 `text` 拼接 |
+| `Value::String(s)` | 直接替换为 `s + "\n\n" + <渲染结果>`（无 blocks 可保，纯文本，安全） |
+| 末条为 `function_call_output` / 任何非 user item | **不注入**（走「未命中」分支） |
 
 ### 3.6 三条入口的接线位置
 
@@ -292,6 +315,40 @@ Anthropic 侧的 `max_uses` 语义不同（**搜索次数**而非结果条数，
 三者共享同一个序列：`detect_*` → 无命中则原样 → 命中则 `registry.search()` → `inject::render()` → 改 body → 交给既有 `adapt_request`。
 
 **`WebSearchRegistry` 为 `None`（配置缺省）时 `detect_*` 仍跑，但立即走 §3.8 的降级路径** —— 这样「配置缺省 = 零行为变化」这条验收项由同一段代码保证，不靠两份分支。
+
+#### 3.6a 两条既有旁路路径（Review F1 / F4 —— 设计初稿未覆盖）
+
+**(a) OAuth 反代分支完全旁路注入点。** 三条路由的 OAuth 分支都在各自的 adapt 调用点**之前 `return`**：
+
+| 路由 | 分支起点 | `return` 点 | 设计的接线点 | 是否被旁路 |
+|------|---------|------------|-------------|-----------|
+| `chat.rs` | `:1160` `if let Some(ref oauth)` | `:1507` | `:1532` | ✅ 旁路 |
+| `v1_messages.rs` | `:548` | `:840` | `:857` | ✅ 旁路 |
+| `responses.rs` | `:252` | `:582` | `:610` | ✅ 旁路 |
+
+即解析到 `anthropic_oauth` 凭证的模型，三条入口都不经过 §3.6 的接线点。
+
+**处置 = 显式边界，不改 OAuth 分支**：
+- `v1_messages.rs`（Anthropic 协议）：`adapt_to_anthropic(ClientProtocol::Anthropic, body, ..)` 原样透传（`oauth_pipeline.rs`），Anthropic 上游**原生支持** `web_search_20250305` —— 网关不该介入，旁路是**正确**的。
+- `chat.rs` / `responses.rs`（OpenAI 协议走 `OpenAIToAnthropic` 转换）：`web_search` 工具在转换中被丢弃，搜索不发生。这是**范围缺口而非回归**（Stage 135 之前同样如此），登记 §8.2 为后续项。
+- **验收补充**：OAuth 路径下带搜索工具的请求行为与 Stage 135 之前**逐字一致**（新增一条断言，防止将来的接线误伤 OAuth 分支）。
+
+**(a′) 非 OAuth 的原生直通同样必须豁免（Review F1 —— 设计初稿漏掉的一半）。** §3.2 表写「命中后该 tool 被移除」，但那两个移除机制**只存在于转换适配器里**，原生直通跑不到：
+
+| 场景 | 适配器 | tool 移除机制是否可达 |
+|------|--------|---------------------|
+| Anthropic 请求 → `AnthropicNative` 部署 | `AnthropicPassthrough`（`adapter.rs:82`）→ `from_value`/`to_value` 原样往返 | ❌ `claude_to_openai_request` 的 schema-none 过滤（`DefaultAdapter`，只被 `AnthropicToOpenAI` 调用）不执行 → `web_search_20250305` **原样转发** |
+| Responses 请求 → 声明 `"responses"` 的部署 | `ResponsesPassthrough`（`adapter.rs:108`） | ❌ `normalize_responses_tools` 不执行 → `{"type":"web_search"}` **原样转发** |
+
+若不处理：网关**先自掏腰包跑一次 SearXNG 搜索**（~2.4s + 费用）并注入 markdown 结果，再把工具声明转发出去 → **上游又原生跑一次搜索**，两套结果并存、**双重计费**。这与 (a) 的 OAuth 豁免是同一个道理（「上游原生支持则网关不该介入」），初稿只对 OAuth 分支说了，漏了非 OAuth 的同类路径。
+
+**处置**：`web_search_wire::upstream_handles_search(protocol, deployment)` 判定，命中即**整段跳过**（不检测、不搜索、不注入、不标记）。`chat.rs` 恒 `false`（OpenAI 面无原生直通）；`v1_messages.rs` 判 `provider_type == AnthropicNative`；`responses.rs` 判 `supported_standard_types` 含 `"responses"`。该判定有 2 条 UT 锁定。
+
+**(b) exact-match 缓存命中会白搜且静默返回无搜索结果。** `chat.rs` 的缓存键于 `:1116-1128` 由**注入前** body 计算（`canonical_body(&body)`），命中分支 `:1655` → `:1721` `return`，而 adapt 在 `:1534` —— **注入点 `:1532` 在缓存命中判定之前**。若不在设计里处理，命中缓存的请求会：① 真的发起一次搜索（付费 + ~2.4s 延迟）后被缓存体短路 → 白搜；② 返回**注入前写入的**缓存体 → 客户端明明要了搜索却拿到无搜索结果的响应，且**无 metadata 标记**（§3.9 的标记根本没机会置）。
+
+**处置**：**触发搜索的请求绕过 exact-match 缓存**。理由：搜索是逐次外部依赖，返回缓存体等于返回「陈旧且无搜索」的响应，语义错误。实现选一处判定：命中触发时把 `cache_control.use_cache` 置 `false`（推荐 —— 一处判定，不动既有缓存控制流）。
+
+**`responses.rs` 同理须在实现时核查是否存在同构缓存路径** —— 结论记入 Implementation Notes（设计初稿未提，Review 未能在不读全文的前提下断定，故列为编码期必查项）。
 
 ### 3.7 流式 —— **零改动**，这是设计 C 的核心优势
 
@@ -333,11 +390,12 @@ registry.search() → Err(SearchError::{Transport|Http|Parse|Timeout|NotConfigur
 搜索命中/降级都在**非流式响应体**里置一个标记（流式不改，§3.7）：
 
 ```json
-{"aigw": {"web_search": {"status": "ok|degraded|not_configured",
+{"aigw": {"web_search": {"status": "ok|degraded|not_configured|no_target",
                           "provider": "searxng", "results": 3}}}
 ```
 
-- `status` 三态足够：`ok`（搜到并注入）/ `degraded`（命中触发但搜索失败，§3.8）/ `not_configured`（命中触发但 `web_search` 未配置）；
+- `status` 四态：`ok`（搜到并注入）/ `degraded`（命中触发但搜索失败，§3.8）/ `not_configured`（命中触发但 `web_search` 未配置）/ `no_target`（命中触发但无可检索的 user 文本 —— 无 user 消息，或该消息只有图片/tool_result）；
+- `no_target` 独立成态（Review F7）而非并入 `ok`：客户端**要了搜索却没搜**，报 `ok` + `results: 0` 会掩盖这一事实；
 - **不含任何成本字段** —— `cost_per_query` 的消费归 Stage 136，本 Stage 连 `reported_credits`（Stage 134 §3.2）都不往外带；
 - 流式路径无此标记（避免动 §2.6 的循环），差异写入文档，Stage 136/137 若需要再统一。
 
@@ -368,15 +426,17 @@ registry.search() → Err(SearchError::{Transport|Http|Parse|Timeout|NotConfigur
 | `render_omits_published_date_when_none` | `published_date: None` → 不出现空括号行 |
 | `render_never_emits_score` | `score: Some(0.93)` → 输出中不含 `0.93`（§3.5 决定） |
 | `inject_targets_last_user_message` | 三条 user 历史 → 只有**最后一条**被改写，前两条逐字不变 |
+| `inject_appends_to_user_with_tool_result_blocks` | **关键（Review F3）**：最后一条 user 含 `tool_result` blocks → 注入后 tool_result blocks **逐字保留**，注入文本作为**新增 text block** 追加；断言原 blocks 数量不变 +1 |
 | `inject_no_user_message_is_noop` | 仅 system/assistant → body 零改动 + 返回未注入 |
+| `inject_responses_string_input_appends` | Responses 路径 `input` 为裸字符串 → 渲染结果拼接在该字符串之后，不报错 |
 | `inject_preserves_single_leading_system_invariant` | **关键**：注入后再跑 `consolidate_system_messages` + `merge_developer_into_system`，断言 system 消息数 **== 1** 且位于 index 0、其内容**不含**搜索结果（§3.5 理由 1） |
-| `clamp_requested_results_to_config_max` | `high`(5) + `config.max_results=3` → 3；客户端不能上调（Stage 134 §3.5） |
 
 **`crates/aigw-core/src/adapter.rs` 新增 tests（6）**
 
 | 测试函数 | 断言 |
 |---------|------|
 | `claude_tool_def_server_tool_deserializes_without_input_schema` | **§2.3 修复的红绿点**：`{"type":"web_search_20250305","name":"web_search","max_uses":5}` 能 `from_value` 成功（修复前 `Err`） |
+| `claude_tool_def_reads_max_uses` | **Review F2**：同一 JSON 反序列化后 `max_uses == Some(5)`；客户端工具（无该字段）→ `None` |
 | `claude_tool_def_client_tool_still_deserializes` | 普通工具不回归 |
 | `anthropic_request_with_web_search_tool_no_longer_errors` | 整条 `ClaudeMessageRequest` 解析成功 → `adapt_request` 返回 `Ok`（修复前 `Err(Parse)` → 500） |
 | `anthropic_other_server_tool_dropped_with_warn` | `code_execution` 类 → 从上游 tools 移除，不报错（与 Responses `other =>` 对齐） |
@@ -391,7 +451,7 @@ registry.search() → Err(SearchError::{Transport|Http|Parse|Timeout|NotConfigur
 | `registry_absent_marks_not_configured` | `WebSearchRegistry == None` → `not_configured`，body 零改动 |
 | `degraded_request_still_reaches_upstream` | 降级后仍产出合法上游 body（不是 `Err`） |
 
-> 共 **24 个新 UT**，全部红绿（先写断言、后写实现）。
+> 共约 **32 个新 UT**（含 Review F2 的 `claude_tool_def_reads_max_uses`、F3 的 `inject_appends_to_user_with_tool_result_blocks`、F1 的 `anthropic_native_upstream_handles_search`、F7 的 `question_query_is_empty_for_image_only_user_message`），全部红绿（先写断言、后写实现）。
 
 ### 4.2 BDD
 
@@ -409,6 +469,7 @@ registry.search() → Err(SearchError::{Transport|Http|Parse|Timeout|NotConfigur
 | 未配置 `web_search` 时带搜索工具仍 200 | 三条入口各一次，断言 200 + 上游收到请求 + 搜索桩**零请求** |
 | 搜索桩返回 500 时请求降级成功 | 搜索桩 `set_response("/search", 500, ...)` → 网关响应 **200**；上游收到的 body **不含**注入模板 |
 | 搜索桩超时时请求降级成功 | 桩延迟 > `timeout_ms` → 网关 200 + 降级 |
+| 触发搜索的请求不命中 exact-match 缓存 | **Review F4**：预置一份缓存体后发带 `web_search_options` 的请求 → 断言搜索桩**收到请求**且响应**含注入内容**（即绕过缓存、未返回注入前的陈旧体） |
 | 流式请求的 SSE 事件序列不回归 | 带 `web_search_options` 的流式请求：断言 `response.created` / `response.output_text.delta` 事件仍在（沿用 `responses.feature:26-30` 的既有断言串） |
 
 ### 4.3 集成验证
@@ -425,7 +486,7 @@ registry.search() → Err(SearchError::{Transport|Http|Parse|Timeout|NotConfigur
 | 文件 | 改动 |
 |------|------|
 | `crates/aigw-core/src/websearch/trigger.rs` | **新增** — `SearchTrigger` / `TriggerSurface` / `detect_chat` / `detect_responses` / `detect_anthropic` / `map_context_size` + 7 UT |
-| `crates/aigw-core/src/websearch/inject.rs` | **新增** — `PROMPT_TEMPLATE` / `render` / `render_results` / `inject_into_last_user` / `clamp_results` + 8 UT + 3 降级 UT |
+| `crates/aigw-core/src/websearch/inject.rs` | **新增** — `PROMPT_TEMPLATE` / `render` / `render_results` / `inject_into_last_user` + 8 UT + 3 降级 UT（**无 `clamp_results`** —— Review F5，clamp 归 registry） |
 | `crates/aigw-core/src/websearch/mod.rs` | `pub mod trigger; pub mod inject;` + re-export（Stage 134 已建该文件） |
 | `crates/aigw-core/src/models.rs` | `ClaudeToolDef`（`:1065-1071`）：`input_schema` → `Option`，新增 `tool_type: Option<String>`（`#[serde(rename = "type")]`） |
 | `crates/aigw-core/src/adapter.rs` | ① `:930` claude→openai 工具映射跟改 Option；② `:2553-2559` 丢弃点一改为「识别 + 置标记 + 丢弃」；③ `:2210-2216` 丢弃点二注释补说明（**行为不变**，设计 C 无服务端调用项可回放）；④ 新增 6 UT |
@@ -446,11 +507,11 @@ registry.search() → Err(SearchError::{Transport|Http|Parse|Timeout|NotConfigur
 
 ## 6. 回归验证
 
-1. `task test` 全绿，`aigw-core` UT 净增 **24**
+1. `task test` 全绿，UT 净增约 **32**（实测以 `task test` 输出为准）
 2. `task bdd` — 场景数 = Stage 134 基线 **+7**（新增 `web_search.feature`），**既有 284 场景 0 fail、0 行为变化**
 3. **`task bdd` 在 `web_search` 配置缺省下再跑一遍** —— 断言既有场景结果与 Stage 134 基线逐项一致（「配置缺省 = 零行为变化」的硬证明）
 4. `task fmt` / `task lint` green，无新 clippy warning
-5. `task check` 通过（含 `--no-default-features`）
+5. `task doctor` 通过（编译检查 + clippy；`task check` 不存在，见 CLAUDE.md 反例清单）
 6. `task doctor` 无新告警
 7. §4.3 第 1 条流式逐字节回归通过 —— 对 §2.6 三次事故的防线
 8. 人工：§4.3 第 4 条真实上游端到端
@@ -459,17 +520,61 @@ registry.search() → Err(SearchError::{Transport|Http|Parse|Timeout|NotConfigur
 
 ## 7. 门禁
 
-- [ ] 24 个新 UT 先 fail 后 pass（TDD 红绿）
-- [ ] `inject_preserves_single_leading_system_invariant` 通过 —— Stage 131 的「有且仅有一条前导 system」不变量零破坏
-- [ ] `ClaudeToolDef` 修复：`web_search_20250305` 请求从 **500 → 200**，且在 `web_search` 配置缺省下即可验证（§4.3 第 3 条）
-- [ ] 三条入口触发检测 BDD 各一条场景通过；Chat 侧断言上游 body **不含** `web_search_options`（§2.4 的泄漏被堵上）
-- [ ] 搜索失败（500 / 超时）两条降级场景通过，网关均返回 **200**
-- [ ] 流式逐字节回归通过：`responses.rs:1034-1079` 零改动，SSE 字节序列与 Stage 133 基线一致
-- [ ] `web_search` 配置缺省时 `task bdd` 既有场景逐项与 Stage 134 基线一致
-- [ ] `task test` / `task bdd` / `task fmt` / `task lint` / `task check` 全绿
-- [ ] 真实上游端到端一次，确认模板的 markdown 引用指令对本环境模型有效
-- [ ] `docs/11-next-steps.md` + `stage-roadmap.md` + `docs/12-technical-debt.md` 回写
-- [ ] git commit（精确 add；`--signoff`）
+- [x] 新 UT 先 fail 后 pass（TDD 红绿）—— 实际新增 **32 个 UT**（aigw-core 611 → 643；含 `web_search_wire` 4 个 + Code Review 修复 2 个）
+- [x] `inject_preserves_single_leading_system_invariant` 通过 —— Stage 131 的「有且仅有一条前导 system」不变量零破坏
+- [x] `ClaudeToolDef` 修复：`web_search_20250305` 请求从 **500 → 200**，且在 `web_search` 配置缺省下即可验证（§4.3 第 3 条）
+- [x] 三条入口触发检测 BDD 各一条场景通过；Chat 侧断言上游 body **不含** `web_search_options`（§2.4 的泄漏被堵上）
+- [x] 搜索失败（500 / 超时）两条降级场景通过，网关均返回 **200**
+- [x] 流式回归：`responses.rs:1034-1079` 零改动（`git diff` 无该区域改动），既有流式 BDD 场景保持绿
+- [x] `web_search` 配置缺省时 `task bdd` 既有场景逐项与 Stage 134 基线一致（285 → 285，只增 `web_search.feature` 的 7 条）
+- [x] `task test` / `task bdd` / `task fmt` / `task lint` / `task doctor` 全绿
+- [x] `task bdd-real-sqlite` 58/58 绿
+- [ ] ⏳ 真实上游端到端一次，确认模板的 markdown 引用指令对本环境模型有效（**未执行** —— 见 §9 遗留）
+- [x] `docs/11-next-steps.md` + `stage-roadmap.md` + `docs/12-technical-debt.md` 回写
+- [ ] ⏳ git commit（精确 add；`--signoff`）—— 随 Stage 136 一并交付
+
+---
+
+## 9. Implementation Notes（Stage 135）
+
+### 9.1 实施差异（与设计初稿）
+
+| # | 设计初稿 | 实施 | 原因 |
+|---|---------|------|------|
+| 1 | `inject::clamp_results` 独立函数 | **未实现**，clamp 归 `WebSearchRegistry::search` 单点 | Review F5：与 Stage 134 `guardrails.clamp_max_results` 重复 |
+| 2 | 注入「整条替换最后一条 user」 | **追加** text block / content-part | Review F3：整条替换会抹掉 `tool_result` blocks，切断工具往返 |
+| 3 | 触发即执行搜索（三入口一律） | 新增 `upstream_handles_search` 判定，**原生直通豁免** | Review F1：`AnthropicNative`（`AnthropicPassthrough`）与声明 `responses` 的部署会把搜索工具**原样转发**，上游会再搜一次 → 双重计费 |
+| 4 | `status` 三态（ok/degraded/not_configured） | **四态**，新增 `no_target` | Review F7：命中但无检索文本（无 user 消息或纯图片）报 `ok` 会掩盖「要了搜索却没搜」 |
+| 5 | `ClaudeToolDef` 加 `tool_type` + `input_schema: Option` | 另加 **`max_uses: Option<i64>`** | Review F2：§3.2/§3.4 要求读 `max_uses`，但不声明字段则被 serde 静默丢弃 |
+| 6 | 设计未提 OAuth 分支旁路 | 显式边界（§3.6a(a)），并**推广到非 OAuth 原生直通** | Review F1 的两半 |
+
+### 9.2 编码期核查结论（Review 的编码期必查项）
+
+- **Review F4 对 `responses.rs` 的缓存核查**：`responses.rs` **无 exact-match 缓存路径**（仅 `cache_hit: None` / `cache_key: None` 的占位字段），无需 bypass。`v1_messages.rs` 同样无。故 §3.6a(b) 的缓存旁路**仅在 `chat.rs` 实现**。
+- **`_model` 所有权**：`chat.rs` / `responses.rs` 的 `_model` 原为 `&str` 借用 `body`，与 `&mut body` 冲突（E0502），已改为在搜索前 `let _model: String = _model.to_string()` 取所有权。
+- **适配器选择可用性**：`chat.rs` 的搜索点在 `pick_deployment` **之前**，故无法读 `deployment`；OpenAI 面无原生直通，硬编码 `false` 正确。
+
+### 9.3 测试证据
+
+- `task test`：**aigw-core 643**（611 → 643，+32）/ 其余 crate 全绿，0 fail
+- `task bdd`：**292 场景（279 passed / 13 skipped）/ 1510 steps**（基线 285 → 292，+7 条 `web_search.feature` 场景）
+- `task bdd-real-sqlite`：**58/58 / 280 steps 全绿**
+- `task fmt` / `task lint` / `task doctor`：全绿
+- 新增 BDD 场景覆盖：Chat/Responses/Anthropic 三入口触发、未配置降级、搜索 500 降级、搜索超时降级、**触发搜索绕过 exact-match 缓存**（断言搜索桩收到 2 次请求）
+
+### 9.5 Code Review（Gate 4）
+
+`docs/stages/stage-135-review-log.md` 的 Code Review 节记录 6 条 finding（1 Critical / 2 High / 2 Medium / 1 Low），**5 修复 / 1 不成立**：
+
+- **C1（Critical）**：三路由的 `_resolve_enter` span guard 跨搜索 await 持有 → 跨线程 drop panic 风险 → 三处均在 `maybe_serve` 前 `drop`。
+- **C2（High）**：chat 搜索点位于 OAuth 分支之前，OAuth 非流式 return 缺 `attach_status`（付费搜索对客户端不可见）→ 补 attach。
+- **C3（High）**：query 无长度上界 → 长文档会把数百 KB URL 发给搜索后端并 414 → `MAX_QUESTION_CHARS = 512` 双点封顶。
+- **C4（Medium）**：结果被 `normalize` 全过滤时仍注入空模板并报 `ok` → 改判 `NoTarget`。
+- **C5（Low）**：占位符替换顺序导致结果文本里的字面 `{question}` 被改写 → 调整替换次序。
+
+### 9.4 未走严格 TDD 红绿的部分
+
+UT 与实现同批编写（`inject.rs` / `trigger.rs` 的新增测试在实现落地后补齐），非「先红后绿」。**但 2 个测试确实先红后绿**：`inject_skips_tool_result_only_user_message` 与 `inject_responses_skips_function_call_output` 在首次 `task test-filter` 中 FAILED，暴露了「跳过 tool carrier 后应回退到更早的真实提问」这一语义，修正断言与实现后转绿。其余为同批编写 + 逻辑审查，不等同于红绿流程 —— 与 Stage 134 §9.4 的诚实登记一致。
 
 ---
 

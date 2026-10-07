@@ -1062,12 +1062,26 @@ pub struct ClaudeMessageRequest {
 }
 
 /// Anthropic tool definition (request)
+///
+/// Client tools carry `name` + `description` + `input_schema`. Server-side
+/// tools (`web_search_20250305`, `code_execution_*`, ...) carry `type` and
+/// `max_uses` instead and have no schema at all — hence every field past
+/// `name` is optional. Before Phase 53 a missing `input_schema` failed
+/// deserialization and surfaced as HTTP 500 on all three routes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClaudeToolDef {
+    /// Server-tool discriminant. Absent on client tools.
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none", default)]
+    pub tool_type: Option<String>,
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    pub input_schema: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub input_schema: Option<serde_json::Value>,
+    /// Search count ceiling on `web_search_20250305`. Read as an upper bound on
+    /// the result count (`websearch::trigger::detect_anthropic`).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub max_uses: Option<i64>,
 }
 
 /// System message content type — string or structured content blocks

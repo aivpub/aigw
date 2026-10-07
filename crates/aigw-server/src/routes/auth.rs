@@ -161,6 +161,7 @@ mod tests {
             otel_active: false,
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
+            web_search: None,
             metrics: None,
         })
     }

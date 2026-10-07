@@ -359,6 +359,32 @@ async fn main() -> anyhow::Result<()> {
     };
     let router = AigwRouter::from_config(&router_config).with_cache(cache_backend);
 
+    // Stage 135: build the built-in web search layer. `None` when the
+    // `web_search` block is absent or disabled, in which case the three request
+    // entries behave exactly as before. Invalid config fails startup.
+    let web_search = {
+        let ws_config = config.as_ref().and_then(|c| c.web_search.clone());
+        match aigw_core::config_loader::build_websearch_registry(
+            &ws_config,
+            aigw_master_key.as_deref().unwrap_or_default(),
+        ) {
+            Ok(reg) => {
+                if let Some(r) = &reg {
+                    tracing::info!(
+                        providers = ?r.provider_names(),
+                        max_results = r.guardrails().max_results,
+                        "built-in web search enabled"
+                    );
+                }
+                reg.map(std::sync::Arc::new)
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "invalid web_search config");
+                std::process::exit(1);
+            }
+        }
+    };
+
     let state: SharedState = Arc::new(AppState {
         db: (*db_arc).clone(),
         master_key: Some(master_key.clone()),
@@ -377,6 +403,7 @@ async fn main() -> anyhow::Result<()> {
         otel_active,
         body_archiver: body_archiver_arc.clone(),
         token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
+        web_search,
     });
 
     // Seed `config.model_list` into proxy_models (idempotent; DB-first — rows

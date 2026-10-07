@@ -917,7 +917,7 @@ pub async fn chat_completions(
     OptionalClientIp(client_ip): OptionalClientIp,
     headers: axum::http::HeaderMap,
     http::request::Parts { extensions, .. }: http::request::Parts,
-    Json(body): Json<Value>,
+    Json(mut body): Json<Value>,
 ) -> Result<axum::response::Response, (StatusCode, Json<Value>)> {
     // Extract the unified request ID from the SetRequestIdLayer (UUID v7).
     // This ID is used consistently for: tracing span, SpendLog DB record,
@@ -1109,16 +1109,40 @@ pub async fn chat_completions(
         .router
         .from_merged(key_settings.as_ref(), team_settings.as_ref());
 
+    // Take ownership of the model name so `body` is free for the search layer
+    // to mutate below.
+    let _model: String = _model.to_string();
+
     // Stage 119: exact-match response cache. Parse per-request cache control
     // and consult the cache before hitting upstream. On HIT we short-circuit
     // with the cached body + `X-Cache-Status: HIT` and a zero-cost SpendLog.
+    //
+    // Stage 135: a request carrying `web_search_options` opts out. The cache
+    // key is derived from this pre-injection body and entries are stored after
+    // upstream returns, so a hit would both waste the search we just ran and
+    // hand back a result-less answer while the client asked for search.
+    //
+    // The resolve span guard must be released before the search await: search
+    // covers a provider timeout plus instance failover and retries (seconds),
+    // and a guard held across a suspension can be dropped on a different tokio
+    // worker thread — the sharded-registry panic the OAuth branch below also
+    // guards against (see 77dc2eb).
+    drop(_resolve_enter);
+    let search_status = crate::routes::web_search_wire::maybe_serve(
+        state.web_search.as_deref(),
+        aigw_core::adapter::ClientProtocol::OpenAI,
+        false, // OpenAI surface has no native passthrough that runs web_search itself
+        &mut body,
+    )
+    .await;
     let cache_control = aigw_core::cache::CacheControl::parse(&body);
-    let cache_key = if cache_control.use_cache && !cache_control.no_store {
+    let cache_key = if cache_control.use_cache && !cache_control.no_store && search_status.is_none()
+    {
         effective_router.cache().map(|_backend| {
             aigw_core::cache::cache_key(
                 &deployment_provider_label(&deployments),
                 "/v1/chat/completions",
-                _model,
+                &_model,
                 &auth.token_hash,
                 &aigw_core::cache::canonical_body(&body),
             )
@@ -1155,12 +1179,6 @@ pub async fn chat_completions(
     // credential's bound proxy with CC disguise headers + `Authorization: Bearer
     // <access_token>`, and retries once on a 401 (token refresh).
     if let Some(ref oauth) = deployment.oauth {
-        // Drop the resolve span guard before the OAuth branch's long awaits
-        // (token pipeline + reqwest). Leaving an entered guard across an await
-        // risks a cross-thread drop panic in tracing-subscriber's sharded
-        // registry (see 77dc2eb for the same fix on the non-OAuth path).
-        drop(_resolve_enter);
-
         let token_provider = state.token_provider.clone();
         let mk = state.aigw_master_key.clone().unwrap_or_default();
         let is_stream = body
@@ -1422,7 +1440,7 @@ pub async fn chat_completions(
                 })),
             ));
         }
-        let resp_body: Value = upstream_resp.json().await.map_err(|e| {
+        let mut resp_body: Value = upstream_resp.json().await.map_err(|e| {
             (
                 StatusCode::BAD_GATEWAY,
                 Json(json!({
@@ -1430,6 +1448,12 @@ pub async fn chat_completions(
                 })),
             )
         })?;
+        // Stage 135: report the search status on the OAuth non-streaming return
+        // too. Without this a paid search would be invisible to the client here
+        // — the one branch that does not fall through to the shared return.
+        if let Some(st) = search_status.as_ref() {
+            crate::routes::web_search_wire::attach_status(&mut resp_body, st);
+        }
         let now = chrono::Utc::now();
         let usage = resp_body.get("usage");
         let prompt_tokens = usage
@@ -1528,7 +1552,6 @@ pub async fn chat_completions(
         })?;
 
     // Build upstream request body via adapter
-    drop(_resolve_enter); // release the resolve span before the adapter + upstream awaits
     let adapt_span = tracing::info_span!("adapt_request");
     let _adapt_enter = adapt_span.enter();
     let upstream_body_val = adapter.adapt_request(body.clone(), &deployment).map_err(|e| {
@@ -2777,6 +2800,10 @@ pub async fn chat_completions(
             }
         }
 
+        let mut resp_body = resp_body;
+        if let Some(st) = search_status.as_ref() {
+            crate::routes::web_search_wire::attach_status(&mut resp_body, st);
+        }
         // Stage 119: store the assembled non-streaming response in the cache
         // (respecting per-request cache control — skip when no-store or the
         // cache is disabled). Emit X-Cache-Status: MISS for observability.
@@ -2943,6 +2970,7 @@ mod tests {
             otel_active: false,
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
+            web_search: None,
             metrics: None,
         });
 
@@ -3123,6 +3151,7 @@ mod tests {
             otel_active: false,
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
+            web_search: None,
             metrics: None,
         });
 
@@ -3271,6 +3300,7 @@ mod tests {
             otel_active: false,
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
+            web_search: None,
             metrics: None,
         });
 
@@ -3336,6 +3366,7 @@ mod tests {
             otel_active: false,
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
+            web_search: None,
             metrics: None,
         });
 
@@ -3444,6 +3475,7 @@ mod tests {
             otel_active: false,
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
+            web_search: None,
             metrics: None,
         });
 
@@ -3496,6 +3528,7 @@ mod tests {
             otel_active: false,
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
+            web_search: None,
             metrics: None,
         })
     }
@@ -3785,6 +3818,7 @@ mod tests {
             otel_active: false,
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
+            web_search: None,
             metrics: None,
         });
 
@@ -4060,6 +4094,7 @@ mod tests {
             otel_active: false,
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
+            web_search: None,
             metrics: None,
         });
         let app = Router::new()

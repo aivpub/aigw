@@ -3,6 +3,10 @@
 ## [未发布]
 
 ### 新增
+- Stage 135: 内建 web search 接线 —— 三入口触发检测 + prompt 注入（`aigw-core::websearch::trigger` / `inject` + `aigw-server::routes::web_search_wire`）：Chat `web_search_options`（消费并移除，堵住静默透传给上游）/ Responses `web_search(`_preview`)` / Anthropic `web_search_20250305`；结果按 Higress 模板注入**最后一条 user 消息**（追加而非替换，保住 tool_result blocks）；`search_context_size` low/medium/high → 1/3/5；搜索失败降级放行；触发搜索的请求绕过 exact-match 缓存；原生直通上游（`AnthropicNative` / 声明 `responses`）豁免以免双重计费
+- Stage 135: 修复 `ClaudeToolDef`（`models.rs`）—— `input_schema` 改 `Option` + 新增 `tool_type`（`#[serde(rename="type")]`）与 `max_uses`；此前带 `web_search_20250305` 的 Anthropic 请求在反序列化即失败 → 三条路由均 **HTTP 500**（TD-017g 解决）；服务端工具现按 Responses 侧同款「丢弃 + warn」处理
+- Stage 135: 响应 metadata 标记 `{"aigw":{"web_search":{"status":"ok|degraded|not_configured|no_target","provider","results"}}}`（仅非流式）
+- Stage 135: `web_search.feature` 7 场景（三入口触发 + 未配置降级 + 500/超时降级 + 缓存 bypass）
 - Stage 130: `/credential/new` OAuth 凭证逐字段 AES-256-GCM 加密落库（`encrypt_oauth_credential_values` 经 `aigw-core::crypto::encrypt_litellm_value_gcm`——`v2:gcm:` 信封，与 exchange 一致）——安全审计第 1/2 项
 - Stage 130: `aigw-core::crypto::encrypt_litellm_value_gcm`（litellm `v2:gcm:` AES-256-GCM 加密信封，PBKDF2-HMAC-SHA256 600k） + roundtrip UT
 - Stage 130: `chat::upstream_error_message`（只提取上游 `error.message`，parse 失败退化 `Upstream returned HTTP {status}`）接线 chat/v1_messages/responses/embeddings 四处 handler——TD-015a 解决
