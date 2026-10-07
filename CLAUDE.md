@@ -18,18 +18,20 @@
 ```yaml
 # 正确 ✅
 task test              # 运行单元测试
-task test-bdd          # Mock BDD 测试
+task bdd               # Mock BDD 测试
 task bdd-real-sqlite   # SQLite 真实 BDD
 task bdd-real-pg       # PostgreSQL 真实 BDD
 task bdd-real-mysql    # MySQL 真实 BDD
-task check             # 编译检查
+task doctor            # 编译检查（cargo check --workspace + clippy）+ 项目健康状态
 task build             # 构建 release 二进制
-task doctor            # 检查项目健康状态
+task fmt               # 格式检查
+task lint              # clippy -D warnings
 
 # 错误 ❌
 cargo test --test bdd        # 缺少 AIGW_TEST_START_SERVER 等环境变量
 AIGW_REAL_API=1 cargo test   # 缺少完整配置链
-cargo check                   # 应使用 task check
+cargo check                   # 应使用 task doctor（Taskfile 中无 check task）
+task check                    # ⚠️ 此 task 不存在，会报 "Task not found" 错误
 ```
 
 Agent 在处理任何需要执行命令的任务时，必须先查阅 `Taskfile.yml` 找到对应 task，使用 `task <name>` 执行。如果 Taskfile 中没有对应 task，需要先和用户讨论是否添加，而不是自作主张跑裸命令。
@@ -37,9 +39,9 @@ Agent 在处理任何需要执行命令的任务时，必须先查阅 `Taskfile.
 ## 快速命令
 
 ```bash
-task doctor      # 检查项目健康状态
-task test        # 运行测试
-task test-bdd    # Mock BDD 测试
+task doctor      # 编译检查（cargo check --workspace + clippy）+ 项目健康状态
+task test        # 运行单元测试
+task bdd         # Mock BDD 测试
 task status      # 显示状态
 ```
 
