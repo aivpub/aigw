@@ -1,20 +1,21 @@
-current_state: developing
-previous_state: complete
+current_state: complete
+previous_state: developing
 last_command: /rdd-loop --to --stage 136
 last_updated: 2026-10-07T00:00:00Z
 
 current_stage: 136
-current_gate: 0
+current_gate: 5
 
 history:
-  - state: complete
-    timestamp: 2026-10-07T00:00:00Z
-    command: /rdd-loop (Stage 135 delivered, commit e341c6b)
   - state: developing
     timestamp: 2026-10-07T00:00:00Z
-    command: /rdd-loop (Stage 136 start)
+    command: /rdd-loop (Stage 136 implementation)
+  - state: complete
+    timestamp: 2026-10-07T00:00:00Z
+    command: /rdd-loop (Stage 136 delivered, commit c622b17)
 
 next_steps:
-  - "Stage 135 ✅ 完成（commit e341c6b）：内建 web search 接线三入口（trigger + inject + ClaudeToolDef 500→200）。aigw-core 643 UT / mock BDD 292 场景 / real BDD sqlite 58/58 / fmt lint doctor green。"
-  - "Stage 136 进行中：按次计费 calc_search_spend + call_type=\"search\" 独立 SpendLog 行 + metadata.parent_call_id + 四级 increment_*_spend + usage.server_tool_use.web_search_requests 回传。"
-  - "残留：Stage 135 的真实上游端到端（模板 markdown 引用指令有效性）未执行。"
+  - "Stage 135 ✅ 完成（e341c6b + a65000e）：内建 web search 接线三入口（trigger + inject + ClaudeToolDef 500→200 + 二轮评审 D1-D3）。"
+  - "Stage 136 ✅ 完成（c622b17）：搜索按次计费（calc_search_spend）+ call_type=\"search\" 独立 SpendLog 行 + 四级 increment + 非流式 usage 回传 + Empty/NoTarget 计费区分。"
+  - "Phase 53 进度 3/5。下一步 Stage 137（调用日志展现，9h）：Spend Logs 识别 search 行 + 父子跳转 + call_type 过滤 + 零 token 行对 Usage 聚合口径的影响审计 + i18n + fe-bdd。"
+  - "残留：真实 provider 端到端未执行；bdd-real-pg/mysql 未跑（本机无服务）；多实例 api_base 端到端未覆盖；流式 usage 回传范围收窄。"
