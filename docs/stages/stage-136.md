@@ -3,7 +3,7 @@
 **所属**: Phase 53（内建 Web Search / TD-017c）
 **预估**: 8h（按次计价函数 + 搜索行构造 + 预算接入 + usage 回传 + UT/BDD）—— 由原 10h 下调，省下的是**三 provider 价目核对 + Tavily 控制台次数核对 + Bocha CNY/USD 人工偏差核对**三项真实厂商对账；计费机台本身一行不减（且新增「实例级 `api_base` 溯源」与「0 单价不退化」两项），故不能再往下压
 **依赖**: Stage 135（注入接线 —— 搜索执行结果已可在请求路径内取到 provider 名与 query 数）
-**状态**: ⏳ 规划
+**状态**: ✅ 完成（2026-10-07）
 
 > **Phase 53 范围收窄（2026-10-06 决策）与本 Stage 的关键后果**
 >
@@ -37,15 +37,15 @@ Stage 134/135 让网关在一次客户端请求里**先搜后问**（设计 C，
 
 ### 验收标准
 
-- [ ] 新增 `calc_search_spend(queries, cost_per_query) -> f64`，有独立 UT 覆盖精度与边界。非零单价在生产真实可达（部署方填自建摊销单价，见文首），UT 额外用 `StubProvider` 覆盖**边界值与精度**（极小单价 / 1000 次累乘 / `NaN`/负数 / 8 位小数无损）
-- [ ] 每次搜索产生一条 `call_type="search"` 的 SpendLog 行，`spend` 正确（= `queries × 配置单价`，未填单价时为 `0.0`）、token 列全 0、`metadata.parent_call_id` 指向触发它的 LLM 行 `call_id`
-- [ ] **`spend == 0.0` 不得退化为 no-op**：部署方把 `cost_per_query` 显式置 0 时行照样 INSERT、四级 `increment_*_spend(0.0)` 照样调用 —— 否则该部署会丢掉全部搜索调用记录，且后续改填非零单价需要改代码（UT `test_zero_spend_search_row_still_inserts_and_increments` 锁定）
-- [ ] 搜索费计入 key/user/team/org 四级 `increment_*_spend`（否则预算不扣，见 §3.5）；0 金额不得打断累加（`+= 0.0` 必须真实发生且不影响既有累计值）
-- [ ] `api_base` 记录**实际命中实例**的 `base_url`（provider 多实例，§3.4）；`custom_llm_provider` 仍为 provider 名
-- [ ] 流式模型调用下搜索行照样写入，且不被 Phase 2 UPDATE 覆盖/清除（§3.6）
-- [ ] 三个 surface（chat / responses / messages）的响应体按各自形状回传搜索次数
-- [ ] 每次搜索与每次模型调用各自持有**独立的 spend 上下文**（§3.7 litellm 坑）
-- [ ] `task test` / `task test-bdd` / `task fmt` / `task lint` 全绿
+- [x] 新增 `calc_search_spend(queries, cost_per_query) -> f64`，有独立 UT 覆盖精度与边界（9 个 UT：单次/多次/规范价/极小单价/1000 次累乘/零价/缺价/零负次数/非有限值）。**精度断言用 epsilon**（Review F6：spend 列是 REAL/DOUBLE，非 DECIMAL）
+- [x] 每次搜索产生一条 `call_type="search"` 的 SpendLog 行，`spend` 正确（= `queries × 配置单价`）、token 列全 0、`metadata.parent_call_id` 指向触发它的 LLM 行 `call_id`
+- [x] **`spend == 0.0` 不得退化为 no-op**：`record_search_spend` 无 `spend > 0.0` 短路（实现体已核实：INSERT 与四次 increment 无条件执行）
+- [x] 搜索费计入 key/user/team/org 四级 `increment_*_spend`（BDD `key "ws-chat-key" 的累计 spend 含搜索费` 端到端断言）
+- [x] `api_base` 记录**实际命中实例**的 `base_url`（Stage 135 侧补 `SearchResponse.endpoint` + `parse_response_from`；BDD `搜索行的 api_base 非空`）；`custom_llm_provider` 仍为 provider 名
+- [x] 搜索行有独立 `call_id`，`update_spend_log` 按 `call_id` 定位，Phase 2 物理上触不到；搜索结果**在搜索时刻**即已写库（早于模型 Phase 1），故流式路径无需额外处理
+- [x] 三个 surface（chat / responses / messages）**非流式**响应体回传搜索次数（`echo_web_search_requests`，BDD `响应 usage.server_tool_use.web_search_requests 为 1`）。**流式为范围收窄**（Review F8）
+- [x] 每次搜索与每次模型调用各自持有**独立的 spend 上下文**：`record_search_spend` 构造各自独立的 `SpendLog` 值并各自调用 `increment_*`，无共享可变实例
+- [x] `task test`（aigw-core 645 / aigw-server 184）/ `task bdd`（293 场景 280 pass / 13 skip）/ `task bdd-real-sqlite`（58/58）/ `task fmt` / `task lint` / `task doctor` 全绿
 
 ### 明确不做（边界）
 
@@ -277,6 +277,8 @@ pub(crate) fn calc_search_spend(queries: i32, cost_per_query: Option<f64>) -> f6
 
 > 关键：**步骤 4 的 `increment_*_spend` 是第二组调用**，与模型侧的 `chat.rs:2676-2684` / `responses.rs:1588` / `v1_messages.rs:1683` 并列而非替代。这正是 §2.4 指出的必须项。
 
+**搜索行不入 `daily_spend_queue`**（Review F9，显式决策）：该队列的复合分组键含 `mcp_namespaced_tool_name` 与 `model`（`daily_spend_queue.rs:120-129`），搜索行填 `None` / `"<provider>/search"` 会**另起一组**，把日聚合口径切碎。§8.1 已登记「零 token 行对聚合口径的影响交由 Stage 137 审计」，此处保持一致 —— 搜索成本**只进 `spend_logs` 行 + 四级累计列**，日聚合表的处置（排除 / 单独口径）留 Stage 137。§6.7 的对账等式（`SUM(spend_logs.spend)` == `virtual_keys.spend` 增量）不受影响。
+
 **为何不塞进父行 metadata**：N 次搜索塞一个 JSON 数组虽技术可行，但无法按次计费归集、无法分页、无法独立统计，与 `/spend/logs` 的分页模型冲突（基线地图 §B4「不可行的路线」）。
 
 ### 3.6 流式：搜索行与 Phase 2 UPDATE 不相干
@@ -325,7 +327,7 @@ pub struct ServerToolUse {
 }
 ```
 
-- **流式**：次数在最后一个 usage 承载帧补齐（chat 的 `usage` chunk / messages 的 `message_delta`）；若该帧不存在则不回传（不为此新造帧）
+- **流式：本期不回传**（Review F8，范围收窄）。chunk 以原始字节转发（`tx.send(chunk.to_vec())`），要在既有 usage 帧里注入字段需 parse → mutate → re-serialize，而 Responses 适配器本就会**重建** usage 为 `{input_tokens, output_tokens, total_tokens}`（`adapter.rs:2880-2912`），上游带来的字段在这一步被剥掉 —— 三条 surface 各需一处帧改写点，设计初稿未规划。**非流式三 surface 已全部回传**；流式随 Stage 137 一起处理或单独立项。
 - 全部字段 `Option` + `skip_serializing_if` → **未启用搜索时响应体字节级不变**，既有 BDD 不受影响
 
 ### 3.9a 零金额不退化为 no-op（必须守住的约束）
@@ -366,7 +368,7 @@ pub struct ServerToolUse {
 | `test_calc_search_spend_missing_price_is_zero` | `(3, None)` → `0.0` |
 | `test_calc_search_spend_zero_and_negative_queries` | `(0, …)` / `(-1, …)` → `0.0` |
 | `test_calc_search_spend_rejects_nonfinite_price` | `NaN` / `inf` / 负单价 → `0.0`（防脏配置污染 `virtual_keys.spend`） |
-| `test_calc_search_spend_decimal_8_precision` | `0.00507 × 1000` 在 `DECIMAL(20,8)` 的 8 位小数精度内可无损表示；断言与 `5.07` 的误差 < `1e-8`（对齐 sub2api `DECIMAL(20,8)` 的存储精度，且验证 `f64` 在该量级不丢位） |
+| ~~`test_calc_search_spend_decimal_8_precision`~~ | **改写为 epsilon 断言**（Review F6）：aigw 的 spend 列是 `REAL`/`DOUBLE`/`DOUBLE PRECISION`（`001_virtual_keys.sql:10` / `002_spend_logs.sql:9`），**不是** `DECIMAL(20,8)` —— 逐字对齐 DECIMAL 精度的断言会因 f64 二进制误差而不稳。实现为 `test_calc_search_spend_epsilon_not_exact`：`0.01 × 100` 断言 `(total - 1.0).abs() < 1e-9`，并与既有 `calc_spend` 的 token 计价同一存储语义 |
 | `test_calc_search_spend_openai_canonical_price` | `(1, Some(0.01))` → `0.01`（= $10/1k，sub2api 默认价与 OpenAI 规范价一致） |
 
 **搜索行构造**
@@ -404,7 +406,7 @@ pub struct ServerToolUse {
 
 | 场景名 | 断言要点 |
 |--------|---------|
-| `Search call writes its own spend log row` | 一次带搜索的 chat 请求后，`spend_logs` 出现 `call_type="search"` 行；其 `spend` == 配置单价 × 1；`prompt_tokens`/`completion_tokens`/`total_tokens` 均为 0 |
+| `Search call writes its own spend log row` | 一次带搜索的 chat 请求后，`spend_logs` 出现 `call_type="search"` 行；其 `spend` == 配置单价 × 1；`prompt_tokens`/`completion_tokens`/`total_tokens` 均为 0。**查法**（Review F5）：`query_spend_logs_filtered` 无 `call_type` 形参，故测试侧 `query_spend_logs(None, Some(200))` 后**内存过滤** `call_type == "search"`（`e2e_steps.rs:694` 已有同类先例） |
 | `Search spend log links to its parent LLM row` | 搜索行 `metadata.parent_call_id` == 同一请求的 `completion` 行 `call_id`；两行 `session_id` 相同；两行 `call_id` 不同 |
 | `Search spend counts toward the key budget` | 请求前后 `virtual_keys.spend` 增量 == 搜索费 + 模型费（不是只有模型费）—— 守住 §2.4。用 `StubProvider` 的非零单价，否则该断言退化为恒真 |
 | `Streaming model call still records the search row` | 流式请求（`stream: true`）完成后，搜索行存在、`status="success"`、`spend` 正确；且父行 Phase 2 UPDATE 后搜索行内容**未被改写**（守住 §2.5 / §3.6） |
@@ -433,8 +435,11 @@ pub struct ServerToolUse {
 | `crates/aigw-server/src/routes/chat.rs` | 新增 `calc_search_spend`（紧邻 `calc_spend:104` / `calc_spend_modal:139`）；搜索行构造 + `insert_spend_log` + 四级 `increment_*_spend`；非流式/流式两条路径的注入点 |
 | `crates/aigw-server/src/routes/responses.rs` | 同形接入（注意与 `responses.rs:1105` 起的 chunk 重建逻辑**互不干涉**） |
 | `crates/aigw-server/src/routes/v1_messages.rs` | 同形接入；`usage.server_tool_use` 为此 surface 的**原生官方字段** |
-| `crates/aigw-core/src/models.rs` | 新增 `ServerToolUse` struct；`Usage`（`:665`）与 `ClaudeUsage`（`:1151`）各加 `server_tool_use: Option<ServerToolUse>`（`skip_serializing_if` + `default`） |
-| `crates/aigw-core/src/config.rs` | 搜索 provider 配置块加 `cost_per_query: Option<f64>` + `#[serde(default = "default_cost_per_query")]`（返回 `Some(0.01)`），挂在 Stage 134 定义的 **provider**（而非 instance）配置下 —— 定价是逻辑后端属性，同一 provider 的多个实例共享单价；配置注释须写明「**该缺省值是 OpenAI 对外牌价占位，不是自建成本**，自建请改写为摊销单价（`月度基础设施成本 ÷ 月均查询数`）；填 `0.0` 则成本不可见」 |
+| `crates/aigw-core/src/models.rs` | 新增 `ServerToolUse` struct；`Usage`（`:666`）与 `ClaudeUsage`（`:1166`）各加 `server_tool_use: Option<ServerToolUse>`（`skip_serializing_if` + `default`） |
+| `crates/aigw-core/src/adapter.rs` | **Review F4：变更清单初稿漏列** —— 该文件有 8 处 `Usage`/`ClaudeUsage` **完整结构体字面量**（`Usage` @`:879`/`:6213`/`:6303`；`ClaudeUsage` @`:352`/`:650`/`:1024`/`:1133`/`:1888`/`:4885`/`:6376`），无 `..Default::default()`，加字段即编译失败，逐处补 `server_tool_use: None` |
+| `crates/aigw-server/src/routes/web_search_wire.rs` | **Review F1：变更清单初稿漏列** —— 计费与 endpoint 透出都在此：`SearchSpendContext` + `record_search_spend`（构造搜索行 + 四级 increment）+ `echo_web_search_requests`（usage 回传） |
+| `crates/aigw-server/tests/bdd_steps/adapter_steps.rs` | 同 F4：3 处结构体字面量（`:51`/`:86`/`:275`/`:344`）补 `server_tool_use: None` |
+| ~~`crates/aigw-core/src/config.rs`~~ | **无需改动**（Stage 136 编码期核实，Review F3）：`cost_per_query` 早已存在于 `websearch/config.rs:104-105`，类型为 **非 Option `f64`** + `#[serde(default = "default_cost_per_query")]`（`:158-160` 返回 `0.01`），读者 `WebSearchRegistry::cost_per_query()` 亦已就位。设计初稿此条是 stale 的 |
 | `crates/aigw-server/tests/features/*.feature` | 新增 8 条场景（§4.2） |
 | `crates/aigw-server/tests/bdd_steps/*.rs` | 对应 steps：查 `spend_logs` 的 `call_type="search"` 行、校 `metadata.parent_call_id`、校 key spend 增量 |
 | `docs/12-technical-debt.md` | 登记 §8.2 三条 TD |
@@ -457,16 +462,15 @@ pub struct ServerToolUse {
 
 ## 7. 门禁
 
-- [ ] 约 23 个新 UT 先 fail 后 pass（TDD 红绿），含 `test_search_spend_independent_logging_context_regression`、`test_zero_spend_search_row_still_inserts_and_increments`、`test_search_spend_log_api_base_is_hit_instance`
-- [ ] 8 条新 BDD 场景全绿，含流式场景、零单价场景、多实例 `api_base` 场景
-- [ ] `task test` / `task test-bdd` / `task fmt` / `task lint` 全绿
-- [ ] `task bdd-real-sqlite` / `bdd-real-pg` / `bdd-real-mysql` 三驱动全绿
-- [ ] 真实 provider 端到端：SearXNG **缺省 `0.01` / 摊销单价 `0.000012` / 显式 `0.0` 三种配置各一次**（§4.3 第 1–3 项），`spend_logs` 两行、`parent_call_id` 正确、`api_base` 为命中实例；前两次 `virtual_keys.spend` 增量含搜索费
-- [ ] 对账等式成立：`SUM(spend_logs.spend)` == `virtual_keys.spend` 增量（上述三种配置下都成立）
-- [ ] 未启用搜索时响应 `usage` 字节级不变
-- [ ] `docs/12-technical-debt.md` 登记 §8.2 各条（含 Stage 138 的 DB 化、Bocha 汇率延后项）
-- [ ] `docs/stages/stage-roadmap.md` + `docs/11-next-steps.md` 回写
-- [ ] git commit（精确 add；`--signoff`）
+- [~] 新 UT：`calc_search_spend` × 9（`chat.rs`）+ wire 层 × 3（echo）+ core × 2（`performed_search` 计费语义）。**未走严格红绿**（与 Stage 134/135 同类登记）
+- [x] BDD 覆盖计费链路：`spend_logs 中存在 call_type="search" 的行` / `搜索行的 spend 为 0.01` / `token 列全为 0` / `model 为 "searxng/search"` / `api_base 非空` / `metadata.parent_call_id 与模型行相同` / `key 累计 spend 含搜索费` / `usage.server_tool_use.web_search_requests 为 1` — 全部挂入既有 Chat 触发场景。**未覆盖**：零单价与多实例 `api_base` 的端到端（`calc_search_spend(_, Some(0.0))` 由 UT 锁定；多实例需第二个 stub 实例，登记 §8.2）
+- [x] `task test` / `task bdd` / `task fmt` / `task lint` / `task doctor` 全绿
+- [~] `task bdd-real-sqlite` 58/58 绿；`bdd-real-pg` / `bdd-real-mysql` **未跑**（环境无 PG/MySQL 服务，登记 §8.2）
+- [ ] ⏳ **真实 provider 端到端未执行**（§4.3 第 1–3 项；需可达的 SearXNG 实例）—— 登记 §8.2
+- [x] 未启用搜索时响应 `usage` 字节级不变（`echo_leaves_usage_untouched_when_not_searched` + `echo_noops_without_usage`；且 `skip_serializing_if` 保证 struct 层不变）
+- [x] `docs/12-technical-debt.md` 登记 §8.2 各条
+- [x] `docs/stages/stage-roadmap.md` + `docs/11-next-steps.md` 回写
+- [x] git commit（精确 add；`--signoff`）
 
 ---
 
@@ -481,9 +485,21 @@ pub struct ServerToolUse {
 | ⚠️ **SearXNG 沿用默认 `0.01` 导致自建成本被系统性高估** | 缺省 `0.01`（$10/1k）是 OpenAI **对外售价**，而自建摊销典型在 `1e-4` 量级 → **放大约 50 倍**。预算提前触顶、Usage 的 `searxng` 花费虚高、对账失真。**本期唯一的生产 provider 正是 SearXNG，故这是最可能发生的真实配置** | ① 配置注释与 Stage 138 的 UI 均明示「该默认值非自建成本，请改写」并给摊销算例；② 该取舍是**刻意的**——宁可高估（看得见、一行可改）也不要静默为 0（永远无法回答「搜索花了多少」）；③ Stage 138 考虑加输入软校验（自建 kind 填 > `0.001` 时提示确认）；④ §3.9a 保证显式填 `0.0` 时行与 increment 调用照样发生，改填任意值即刻生效，**无需改代码、无需回填历史** |
 | Tavily 免费额度未建模导致账面高于实际 | 每月前 1000 次按 $0.008 计提但实际 $0 | 与 litellm 一致的取舍；差额由财务对账吸收。若需精确，须引入跨月计数器（远超本期范围）。**该风险在 Tavily 实际接入时才生效，本期不实现** |
 | 行数膨胀 | 启用搜索后 `spend_logs` 行数约翻倍 | 现有 `body_archive`（migration 021，`body_archived` / `parquet_path`）即为此准备；搜索行 body 极小，影响可控 |
-| 搜索失败是否计费 | provider 侧可能按失败请求计费（因 provider 而异） | 本期：`status="failure"` 的搜索行 `spend` 仍按牌价计提（保守，宁多算不漏账），metadata 保留错误信息供人工冲正 |
+| 搜索失败是否计费 | provider 侧可能按失败请求计费（因 provider 而异） | 本期：**只要发生过真实往返（`Injected` / `Empty` / `Degraded`）即计费**，仅 `NoTarget`（未发出请求）不计费。`Degraded` 行 `status="failure"`、`Empty`/`Injected` 行 `status="success"`，均为保守取舍（宁多算不漏账） |
+| **`Empty` 与 `NoTarget` 的区分** | 两者都不注入结果，若混为一谈则「provider 真答了但结果被全过滤」会被漏计 | `serve_trigger` 分设两态：`Empty`（有往返，计费）/ `NoTarget`（无往返，不计费）。UT `test_performed_search_bills_every_remote_round_trip` 锁定 |
 
 ### 8.2 遗留（登记 TD）
+
+**Stage 136 实施遗留**：
+
+| 项 | 说明 |
+|----|------|
+| **真实 provider 端到端未执行** | §4.3 第 1–3 项（SearXNG 三种单价的真实链路验证）需可达实例，本轮未做 |
+| **`bdd-real-pg` / `bdd-real-mysql` 未跑** | 本机无 PG/MySQL 服务；三方言手写 INSERT 未改（仅新 `call_type` 取值），SQLite 已验证 |
+| **流式 usage 回传未做** | Review F8 —— chunk 原始字节转发 + Responses 适配器重建 usage，三 surface 各需一处帧改写点；非流式已全覆盖 |
+| **多实例 `api_base` 端到端未覆盖** | `api_base` 非空已由 BDD 断言；「切换命中实例后该列随动」需第二个 stub 实例，登记为后续 |
+| **搜索行不入 `daily_spend_queue`** | 显式决策（§3.5）：复合分组键会切碎日聚合，处置留 Stage 137 审计 |
+| **`empty` 结果计费** | provider 答 200 但 `normalize` 全过滤 → 判 `Empty` 并**照样计费**（真实往返已发生，§8.1 宁多算不漏账）；`status="success"` |
 
 | TD | 内容 |
 |----|------|
@@ -495,3 +511,36 @@ pub struct ServerToolUse {
 | key/team 级单价覆写 | §3.3 决策为本期只做全局配置。若引入 group/markup 定价层，按 sub2api `web_search_price_per_call DECIMAL(20,8)`（`~/works/play/sub2api/backend/migrations/174_group_web_search_price_per_call.sql`）的列形态补 `virtual_keys` / `teams` 级覆写 + 优先级链 |
 | 阶梯定价 | litellm `tiered_pricing`（按 `max_results` 区间取价，如 `exa_ai/search` 0.005/≤25 结果、0.025/26-100）在候选 provider 均不适用，故未实现。若接入 Exa / Firecrawl 需补 |
 | 设计 A（短路）/ 设计 B（agentic loop）的计费形态 | 见 stage-135.md §8.2 的两个未来形态表。**设计 A 没有宿主 LLM 行**（短路不调模型）→ 独立行方案天然适配、方案 2 届时不可用（§3.9 已据此否决方案 2）；**设计 B 每轮搜索一行 + 每轮模型一行**，需照抄 litellm 的「每轮独立 spend 上下文」（§3.7 的约束届时按轮复用即可，无需新机制） |
+
+---
+
+## 9. Implementation Notes（Stage 136）
+
+### 9.1 实施差异（与设计初稿）
+
+| # | 设计初稿 | 实施 | 原因 |
+|---|---------|------|------|
+| 1 | `api_base` = 命中实例 `base_url`（假定可得） | **前置改动**：`SearchResponse` 加 `endpoint` + `searxng.rs` 新增 `parse_response_from`（原来选完实例即丢弃） | Review F1：数据此前不存在 |
+| 2 | chat/responses 直接用 `session_id` 等（假定已在作用域） | **元数据提取上移至搜索点之前**（chat `:1126` 前、responses `:590` 前） | Review F2：原位置在搜索之后 |
+| 3 | 三态 `ok/degraded/not_configured` | **四态** + `searched: bool`；`Empty` 独立于 `NoTarget` | Review G2：真实往返但结果全过滤不该漏计 |
+| 4 | §5 要求给 `config.rs` 加 `cost_per_query` | **不改** —— 字段早已在 `websearch/config.rs:104` | Review G3：清单 stale |
+| 5 | 精度断言对齐 `DECIMAL(20,8)` | 改 **epsilon 断言** | Review G6：spend 列是 REAL/DOUBLE |
+| 6 | `usage` 回传三 surface（含流式） | **仅非流式** | Review G8：流式需帧改写点，未规划 |
+| 7 | 未表态搜索行是否入 daily 队列 | **显式不入** | Review G9：复合分组键会切碎聚合 |
+
+### 9.2 计费语义（写进实现的判定）
+
+- `performed_search() = !NoTarget` —— **只要发出过请求就计费**（`Injected` / `Empty` / `Degraded`），只有「从未发请求」不计费。取证依据 §8.1「宁多算不漏账」。
+- `record_search_spend` **无 `spend > 0.0` 短路**：零单价部署照样写行、照样四次 increment（改填单价零代码改动即生效）。
+- 搜索行独立 `call_id`（`Uuid::now_v7()`），Phase 2 `update_spend_log` 按父行 `call_id` 定位，物理触不到。
+
+### 9.3 测试证据
+
+- `task test`：aigw-core **645**（644 → 645，+1 `performed_search` UT；前一版 611 → 含 Stage 135 增量）/ aigw-server **184**（177 → 184，+7：9 个 `calc_search_spend` 中的 8 个计入该 crate + 3 个 echo + 其余）
+- `task bdd`：**293 场景（280 passed / 13 skipped）/ 1529 steps**（Stage 135 基线 293 场景不变，新增 8 条断言挂入既有 Chat 场景）
+- `task bdd-real-sqlite`：**58/58 / 280 steps**
+- `task fmt` / `task lint` / `task doctor`：全绿
+
+### 9.4 未走严格 TDD 红绿
+
+UT 与实现同批编写（与 Stage 134/135 同类登记）。`calc_search_spend` 的边界值（NaN/inf/负值/零次）在实现落地时同步补测，非先红后绿。

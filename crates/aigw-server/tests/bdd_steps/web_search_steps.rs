@@ -10,6 +10,20 @@ use std::sync::{Arc, Mutex};
 
 use crate::TestWorld;
 
+/// A search row always inherits its parent's identity, so tests find it by
+/// `call_type` (no query API filters on that column).
+async fn search_rows(world: &mut TestWorld) -> Vec<aigw_core::models::SpendLog> {
+    let state = world.ensure_state().await;
+    state
+        .db
+        .query_spend_logs(None, Some(200))
+        .await
+        .expect("query spend logs")
+        .into_iter()
+        .filter(|l| l.call_type == "search")
+        .collect()
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Search stub
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -427,4 +441,119 @@ async fn then_upstream_tools_excludes(_world: &mut TestWorld, needle: String) {
         !s.contains(&needle),
         "upstream tools must not contain {needle:?}: {s}"
     );
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Then — Stage 136 search billing
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#[then(expr = "spend_logs 中存在 call_type=\"search\" 的行")]
+async fn then_search_row_exists(world: &mut TestWorld) {
+    let rows = search_rows(world).await;
+    assert!(!rows.is_empty(), "no call_type=search row written");
+}
+
+#[then(expr = "搜索行的 spend 为 {float}")]
+async fn then_search_row_spend(world: &mut TestWorld, expected: f64) {
+    let rows = search_rows(world).await;
+    let last = rows.last().expect("no search row");
+    assert!(
+        (last.spend - expected).abs() < 1e-9,
+        "search spend {} != {expected}",
+        last.spend
+    );
+}
+
+#[then(expr = "搜索行的 token 列全为 0")]
+async fn then_search_row_tokens_zero(world: &mut TestWorld) {
+    let rows = search_rows(world).await;
+    let last = rows.last().expect("no search row");
+    assert_eq!(
+        (
+            last.prompt_tokens,
+            last.completion_tokens,
+            last.total_tokens
+        ),
+        (0, 0, 0),
+        "search rows must not carry token usage"
+    );
+}
+
+#[then(expr = "搜索行的 model 为 {string}")]
+async fn then_search_row_model(world: &mut TestWorld, expected: String) {
+    let rows = search_rows(world).await;
+    let last = rows.last().expect("no search row");
+    assert_eq!(last.model, expected);
+}
+
+#[then(expr = "搜索行的 api_base 非空")]
+async fn then_search_row_api_base_present(world: &mut TestWorld) {
+    let rows = search_rows(world).await;
+    let last = rows.last().expect("no search row");
+    assert!(
+        last.api_base.as_deref().is_some_and(|b| !b.is_empty()),
+        "search row lost the serving instance's base_url"
+    );
+}
+
+#[then(expr = "搜索行的 metadata.parent_call_id 与同一请求的模型行相同")]
+async fn then_search_parent_linkage(world: &mut TestWorld) {
+    let state = world.ensure_state().await;
+    let logs = state
+        .db
+        .query_spend_logs(None, Some(200))
+        .await
+        .expect("query spend logs");
+    let search = logs
+        .iter()
+        .rev()
+        .find(|l| l.call_type == "search")
+        .expect("no search row");
+    let parent_id = search
+        .metadata
+        .as_ref()
+        .and_then(|m| m.get("parent_call_id"))
+        .and_then(|v| v.as_str())
+        .expect("search row has no metadata.parent_call_id");
+    let parent = logs
+        .iter()
+        .find(|l| l.call_id == parent_id)
+        .expect("parent call_id does not resolve to a spend_logs row");
+    assert_ne!(parent.call_type, "search", "parent must be the LLM row");
+}
+
+#[then(expr = "key {string} 的累计 spend 含搜索费")]
+async fn then_key_spend_includes_search(world: &mut TestWorld, alias: String) {
+    let state = world.ensure_state().await;
+    let search_total: f64 = search_rows(world).await.iter().map(|r| r.spend).sum();
+    assert!(search_total > 0.0, "no search spend recorded to verify");
+    let raw = world
+        .created_keys
+        .get(&alias)
+        .unwrap_or_else(|| panic!("key '{alias}' not found"))
+        .clone();
+    let key = state
+        .db
+        .get_key_by_token(&aigw_core::crypto::hash_token(&raw))
+        .await
+        .expect("query key")
+        .expect("key row missing");
+    assert!(
+        key.spend >= search_total - 1e-9,
+        "key spend {} is below the {search_total} of search cost recorded — the \
+         four-level increment did not run",
+        key.spend
+    );
+}
+
+#[then(expr = "响应 usage.server_tool_use.web_search_requests 为 {int}")]
+async fn then_usage_echoes_search_count(world: &mut TestWorld, expected: i64) {
+    let body = world.last_body.as_ref().expect("no response body");
+    let actual = body
+        .get("usage")
+        .and_then(|u| u.get("server_tool_use"))
+        .and_then(|s| s.get("web_search_requests"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or_else(|| panic!("no usage.server_tool_use.web_search_requests in {body}"));
+    assert_eq!(actual, expected);
 }

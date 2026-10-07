@@ -1,11 +1,34 @@
 # aigw -- 下一步行动
 
 **上次更新**: 2026-10-07
-**当前阶段**: **Phase 53 🔄 进行中 — 内建 Web Search（TD-017c）：Stage 134-135 ✅ 完成，136-138 ⏳；总进度 138**
+**当前阶段**: **Phase 53 🔄 进行中 — 内建 Web Search（TD-017c）：Stage 134-136 ✅ 完成，137-138 ⏳；总进度 138**
 
 ---
 
-## 当前状态：Phase 53 Stage 135 ✅ 完成，下一步 Stage 136
+## 当前状态：Phase 53 Stage 136 ✅ 完成，下一步 Stage 137
+
+### Stage 136 交付（2026-10-07）
+
+搜索**按次计费**（aigw 首个非 token 计价）—— 搜索从「跑得通」变成「算得清、扣得动预算」。
+
+| 文件 | 交付 |
+|------|------|
+| `routes/chat.rs` | `calc_search_spend(queries, cost_per_query)`（9 UT；非有限/非正值归零） |
+| `routes/web_search_wire.rs` | `SearchSpendContext` + `record_search_spend`（搜索行 + 四级 increment）+ `echo_web_search_requests` |
+| `websearch/types.rs` + `searxng.rs` | `SearchResponse.endpoint` + `parse_response_from`（命中实例 `base_url` 此前被丢弃） |
+| `websearch/mod.rs` | `SearchServeOutcome::Empty`（真实往返但结果全过滤，计费）vs `NoTarget`（未发请求，不计费）；`performed_search() = !NoTarget` |
+| `models.rs` | `ServerToolUse` + `Usage`/`ClaudeUsage` 加 `server_tool_use`；13 处结构体字面量跟上 |
+| `routes/{chat,responses,v1_messages}.rs` | 元数据提取上移至搜索点之前（F2）+ 三处 usage 回传接线 |
+
+**验证**: aigw-core **645** UT / aigw-server **184**、mock BDD **293 场景（280 pass / 13 skip）/ 1529 steps**、real BDD sqlite **58/58**、`fmt`/`lint`/`doctor` green。BDD 端到端断言了搜索行的 `spend`/`model`/`api_base`/`parent_call_id`/token 归零/key 累计/usage 回传。
+
+**⚠️ 未执行项**: ①真实 provider 端到端（需可达 SearXNG）；②`bdd-real-pg` / `bdd-real-mysql`（本机无服务）；③多实例 `api_base` 端到端。
+
+**范围收窄**: 流式 usage 回传不做（chunk 原始字节转发 + Responses 适配器重建 usage，三 surface 各需帧改写点）。
+
+### 下一步：Stage 137（调用日志展现，9h）
+
+Spend Logs 识别 `call_type="search"` 行（徽章 + query + 结果数 + provider + spend）+ 父子跳转 UX + `call_type` 过滤 + **零 token 行对既有 Usage 聚合口径的影响审计** + i18n + fe-bdd。⚠️ 搜索行入不入 `daily_spend_queue` 的处置也在此定（Stage 136 显式不入）。
 
 ### Stage 135 交付（2026-10-07）
 
@@ -72,7 +95,7 @@ Stage 134 执行期间暴露了「Agent 绕过 Taskfile 跑裸命令」的问题
 
 ---
 
-## Phase 53 规划（Stage 136-138 ⏳）
+## Phase 53 规划（Stage 137-138 ⏳）
 
 **2026-10-06（内建 Web Search 调研 + Phase 53 规划）**: Stage 131 对服务端工具采取「丢弃 + 告警」——诚实但**客户端的联网能力实际不可用**。本环境实测：上游 MaaS 对 `web_search` 等服务端工具透传**全部 400**，而 litellm 的「派生 `web_search_options`」路线**被收下但不执行搜索**（模型回复「我无法联网」）。**→ 要真正可用，必须由网关自己执行搜索。**
 

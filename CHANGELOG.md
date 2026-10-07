@@ -3,6 +3,11 @@
 ## [未发布]
 
 ### 新增
+- Stage 136: 搜索**按次计费**（aigw 首个非 token 计价）—— `calc_search_spend(queries, cost_per_query)`（非有限值/非正值归零，防脏配置污染 `virtual_keys.spend`）+ 每次搜索一条 `call_type="search"` 的独立 SpendLog 行（`model="<provider>/search"`、token 列全 0、`api_base`=**实际命中实例**的 `base_url`、`metadata.parent_call_id` 父子关联、**单价快照** `cost_per_query`）+ 四级 `increment_{key,user,team,org}_spend`
+- Stage 136: `SearchResponse.endpoint` + `SearxngProvider::parse_response_from` —— 命中实例的 `base_url` 此前在 `search()` 内被就地丢弃，无处溯源（多实例部署无法定位「哪台 SearXNG 在拖慢/报错」）
+- Stage 136: `SearchServeOutcome::Empty` 独立态（provider 真答了但结果被 `normalize` 全过滤）—— 与 `NoTarget`（从未发出请求）区分，前者计费后者不计费；`performed_search()` = `!NoTarget`
+- Stage 136: `usage.server_tool_use.web_search_requests` 三 surface（chat/responses/messages）**非流式**回传（`echo_web_search_requests`）；新增 `ServerToolUse` struct
+- Stage 136: `SearchSpendContext` —— 搜索行继承父 LLM 行的 `session_id`/`end_user`/`requester_ip`/四级归属；chat/responses 的元数据提取上移至搜索点之前
 - Stage 135: 内建 web search 接线 —— 三入口触发检测 + prompt 注入（`aigw-core::websearch::trigger` / `inject` + `aigw-server::routes::web_search_wire`）：Chat `web_search_options`（消费并移除，堵住静默透传给上游）/ Responses `web_search(`_preview`)` / Anthropic `web_search_20250305`；结果按 Higress 模板注入**最后一条 user 消息**（追加而非替换，保住 tool_result blocks）；`search_context_size` low/medium/high → 1/3/5；搜索失败降级放行；触发搜索的请求绕过 exact-match 缓存；原生直通上游（`AnthropicNative` / 声明 `responses`）豁免以免双重计费
 - Stage 135: 修复 `ClaudeToolDef`（`models.rs`）—— `input_schema` 改 `Option` + 新增 `tool_type`（`#[serde(rename="type")]`）与 `max_uses`；此前带 `web_search_20250305` 的 Anthropic 请求在反序列化即失败 → 三条路由均 **HTTP 500**（TD-017g 解决）；服务端工具现按 Responses 侧同款「丢弃 + warn」处理
 - Stage 135: 响应 metadata 标记 `{"aigw":{"web_search":{"status":"ok|degraded|not_configured|no_target","provider","results"}}}`（仅非流式）

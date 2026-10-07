@@ -53,6 +53,7 @@ async fn given_claude_response(world: &mut TestWorld) {
             output_tokens: 5,
             cache_read_input_tokens: None,
             cache_creation_input_tokens: None,
+            server_tool_use: None,
         },
     };
     world.last_body = Some(serde_json::to_value(&resp).expect("serialize"));
@@ -89,6 +90,7 @@ async fn given_openai_response(world: &mut TestWorld) {
             total_tokens: 10,
             prompt_tokens_details: None,
             completion_tokens_details: None,
+            server_tool_use: None,
         },
         system_fingerprint: None,
     };
@@ -278,6 +280,7 @@ async fn given_openai_with_reasoning(world: &mut TestWorld) {
             total_tokens: 150,
             prompt_tokens_details: None,
             completion_tokens_details: None,
+            server_tool_use: None,
         },
         system_fingerprint: None,
     };
@@ -359,6 +362,7 @@ async fn given_usage_with_details(world: &mut TestWorld) {
             accepted_prediction_tokens: None,
             rejected_prediction_tokens: None,
         }),
+        server_tool_use: None,
     };
     world.last_body = Some(serde_json::to_value(&usage).expect("serialize usage"));
 }

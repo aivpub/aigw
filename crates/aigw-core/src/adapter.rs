@@ -354,6 +354,7 @@ fn oai_response_to_claude_messages(resp: &ChatCompletionResponse) -> ClaudeMessa
             output_tokens: resp.usage.completion_tokens,
             cache_read_input_tokens: None,
             cache_creation_input_tokens: None,
+            server_tool_use: None,
         },
     }
 }
@@ -651,6 +652,7 @@ impl StreamAdapter for AnthropicToOpenAIStream {
                                 output_tokens: 0,
                                 cache_read_input_tokens: None,
                                 cache_creation_input_tokens: None,
+                                server_tool_use: None,
                             },
                         }),
                         usage: None,
@@ -882,6 +884,7 @@ impl ProviderAdapter for DefaultAdapter {
                 total_tokens: resp.usage.input_tokens + resp.usage.output_tokens,
                 prompt_tokens_details: None,
                 completion_tokens_details: None,
+                server_tool_use: None,
             },
             system_fingerprint: None,
         }
@@ -1023,6 +1026,7 @@ impl ProviderAdapter for DefaultAdapter {
                 output_tokens: resp.usage.completion_tokens,
                 cache_read_input_tokens: None,
                 cache_creation_input_tokens: None,
+                server_tool_use: None,
             },
         }
     }
@@ -1131,6 +1135,7 @@ impl ProviderAdapter for DefaultAdapter {
                             output_tokens: 0,
                             cache_read_input_tokens: None,
                             cache_creation_input_tokens: None,
+                            server_tool_use: None,
                         },
                     }),
                     usage: None,
@@ -1885,6 +1890,7 @@ impl StreamAdapter for OpenAIToAnthropicStream {
                                 output_tokens: 0,
                                 cache_read_input_tokens: None,
                                 cache_creation_input_tokens: None,
+                                server_tool_use: None,
                             },
                         }),
                         usage: None,
@@ -4881,6 +4887,7 @@ data: [DONE]
                 output_tokens: 1,
                 cache_read_input_tokens: None,
                 cache_creation_input_tokens: None,
+                server_tool_use: None,
             },
         };
         let oai = DefaultAdapter::claude_to_openai_response(&cr, "claude");
@@ -6216,6 +6223,7 @@ data: [DONE]
                 total_tokens: 150,
                 prompt_tokens_details: None,
                 completion_tokens_details: None,
+                server_tool_use: None,
             },
             system_fingerprint: None,
         };
@@ -6318,6 +6326,7 @@ data: [DONE]
                 accepted_prediction_tokens: None,
                 rejected_prediction_tokens: None,
             }),
+            server_tool_use: None,
         };
         let json_val = serde_json::to_value(&usage).unwrap();
         let pt = json_val["prompt_tokens_details"].as_object().unwrap();
@@ -6370,6 +6379,7 @@ data: [DONE]
             output_tokens: 500,
             cache_read_input_tokens: Some(800),
             cache_creation_input_tokens: Some(200),
+            server_tool_use: None,
         };
         let json_val = serde_json::to_value(&usage).unwrap();
         assert_eq!(json_val["cache_read_input_tokens"].as_i64(), Some(800));

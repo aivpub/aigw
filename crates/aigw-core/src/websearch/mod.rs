@@ -220,7 +220,7 @@ pub fn build_provider(
 ///
 /// Mirrors the response metadata marker (Stage 135 §3.9) so callers can report
 /// honestly whether search results actually reached the upstream.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum SearchServeOutcome {
     /// Searched and folded the results into the request body.
     Injected {
@@ -229,10 +229,28 @@ pub enum SearchServeOutcome {
         /// as the search row's `api_base`). `None` when the provider does not
         /// track instances.
         endpoint: Option<String>,
+        /// The query actually sent (Stage 136 stores it in the search row's
+        /// `messages` so the call log has something to render).
+        query: String,
         results: usize,
+        /// The normalized hits, for the search row's `response` column
+        /// (Stage 137 renders them in the call detail drawer). Snippets only.
+        results_detail: Vec<types::SearchResult>,
+    },
+    /// The provider answered, but every hit was filtered out by `normalize`
+    /// (no url/title, domain lists, dedup). A real round-trip happened, so this
+    /// is billed — unlike `NoTarget`, which never reached a provider.
+    Empty {
+        provider: String,
+        endpoint: Option<String>,
+        query: String,
     },
     /// The trigger hit but the search failed; the request proceeds unmodified.
-    Degraded { provider: String, error: String },
+    Degraded {
+        provider: String,
+        query: String,
+        error: String,
+    },
     /// The trigger hit but there was no user message to inject into. No search
     /// is performed — `has_target` is checked first so a request that cannot
     /// use results is never charged for one.
@@ -246,6 +264,7 @@ impl SearchServeOutcome {
     pub fn status(&self) -> &'static str {
         match self {
             SearchServeOutcome::Injected { .. } => "ok",
+            SearchServeOutcome::Empty { .. } => "empty",
             SearchServeOutcome::Degraded { .. } => "degraded",
             SearchServeOutcome::NoTarget { .. } => "no_target",
         }
@@ -254,6 +273,7 @@ impl SearchServeOutcome {
     pub fn provider(&self) -> &str {
         match self {
             SearchServeOutcome::Injected { provider, .. }
+            | SearchServeOutcome::Empty { provider, .. }
             | SearchServeOutcome::Degraded { provider, .. }
             | SearchServeOutcome::NoTarget { provider } => provider,
         }
@@ -262,19 +282,37 @@ impl SearchServeOutcome {
     /// `base_url` of the instance that served the query, when known.
     pub fn endpoint(&self) -> Option<&str> {
         match self {
-            SearchServeOutcome::Injected { endpoint, .. } => endpoint.as_deref(),
+            SearchServeOutcome::Injected { endpoint, .. }
+            | SearchServeOutcome::Empty { endpoint, .. } => endpoint.as_deref(),
             _ => None,
         }
     }
 
+    /// The normalized hits that were injected, once a search succeeded.
+    pub fn results_detail(&self) -> &[types::SearchResult] {
+        match self {
+            SearchServeOutcome::Injected { results_detail, .. } => results_detail,
+            _ => &[],
+        }
+    }
+
+    /// The query sent to the provider, once one was sent.
+    pub fn query(&self) -> Option<&str> {
+        match self {
+            SearchServeOutcome::Injected { query, .. }
+            | SearchServeOutcome::Empty { query, .. }
+            | SearchServeOutcome::Degraded { query, .. } => Some(query),
+            SearchServeOutcome::NoTarget { .. } => None,
+        }
+    }
+
     /// Whether a search request actually went out — i.e. whether this outcome
-    /// is billable. `NoTarget` never reached a provider, so charging for it
-    /// would be billing for work that did not happen (Stage 136 §3.5).
+    /// is billable. Only `NoTarget` never reached a provider: charging for it
+    /// would bill for work that did not happen (Stage 136 §3.5). A round-trip
+    /// that failed (`Degraded`) or came back empty (`Empty`) still cost the
+    /// provider's time and is billed, matching §8.1's "宁多算不漏账".
     pub fn performed_search(&self) -> bool {
-        matches!(
-            self,
-            SearchServeOutcome::Injected { .. } | SearchServeOutcome::Degraded { .. }
-        )
+        !matches!(self, SearchServeOutcome::NoTarget { .. })
     }
 }
 
@@ -311,6 +349,7 @@ pub async fn serve_trigger(
         query,
         max_results: Some(trigger.requested_results),
     };
+    let sent_query = req.query.clone();
 
     match registry.search(&req, None).await {
         Ok(resp) if resp.results.is_empty() => {
@@ -322,8 +361,10 @@ pub async fn serve_trigger(
                 provider = %resp.provider,
                 "web search returned no usable results; proceeding without injection"
             );
-            SearchServeOutcome::NoTarget {
+            SearchServeOutcome::Empty {
                 provider: resp.provider,
+                endpoint: resp.endpoint,
+                query: resp.query,
             }
         }
         Ok(resp) => {
@@ -341,7 +382,9 @@ pub async fn serve_trigger(
             SearchServeOutcome::Injected {
                 provider: resp.provider,
                 endpoint: resp.endpoint,
+                query: sent_query,
                 results,
+                results_detail: resp.results,
             }
         }
         Err(e) => {
@@ -353,6 +396,7 @@ pub async fn serve_trigger(
             );
             SearchServeOutcome::Degraded {
                 provider,
+                query: sent_query,
                 error: e.to_string(),
             }
         }
@@ -944,6 +988,37 @@ mod tests {
         assert_eq!(resp.results[0].score, Some(1.0), "highest score survives");
         assert_eq!(reg.provider_names(), vec!["searxng"]);
         assert_eq!(reg.cost_per_query(None), Some(0.0002));
+    }
+
+    #[test]
+    fn test_performed_search_bills_every_remote_round_trip() {
+        // Only NoTarget never reached a provider — a failed or empty round-trip
+        // still cost the provider's time and must be billed (§8.1 宁多算不漏账).
+        assert!(!SearchServeOutcome::NoTarget {
+            provider: "p".into()
+        }
+        .performed_search());
+        for o in [
+            SearchServeOutcome::Injected {
+                provider: "p".into(),
+                endpoint: None,
+                query: "q".into(),
+                results: 1,
+                results_detail: Vec::new(),
+            },
+            SearchServeOutcome::Empty {
+                provider: "p".into(),
+                endpoint: None,
+                query: "q".into(),
+            },
+            SearchServeOutcome::Degraded {
+                provider: "p".into(),
+                query: "q".into(),
+                error: "boom".into(),
+            },
+        ] {
+            assert!(o.performed_search(), "{o:?} must be billable");
+        }
     }
 
     #[test]

@@ -673,6 +673,20 @@ pub struct Usage {
     /// Completion token details (reasoning_tokens, audio_tokens, etc.)
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub completion_tokens_details: Option<TokenDetails>,
+    /// Server-side tool counters. Without a field here the upstream's
+    /// `server_tool_use` is silently dropped on deserialization.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub server_tool_use: Option<ServerToolUse>,
+}
+
+/// Server-side tool usage counters (`usage.server_tool_use`).
+///
+/// Anthropic defines this shape; aigw echoes it on all three surfaces so a
+/// client can tell how many searches its request caused.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ServerToolUse {
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub web_search_requests: Option<i32>,
 }
 
 /// Detailed token breakdown (OpenAI/DeepSeek usage details)
@@ -1172,6 +1186,9 @@ pub struct ClaudeUsage {
     /// Anthropic prompt caching: cache creation tokens
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub cache_creation_input_tokens: Option<i32>,
+    /// Server-side tool counters — the native Anthropic field aigw echoes.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub server_tool_use: Option<ServerToolUse>,
 }
 
 /// Claude SSE stream event

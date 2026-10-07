@@ -14,6 +14,14 @@ Feature: 内建 web search 接线 — 三入口触发 + prompt 注入 + 降级�
     And mock 上游收到的请求 body 含 "Rust Async Book"
     And mock 上游收到的请求 body 不含 "web_search_options"
     And 响应 aigw.web_search.status 为 "ok"
+    And spend_logs 中存在 call_type="search" 的行
+    And 搜索行的 spend 为 0.01
+    And 搜索行的 token 列全为 0
+    And 搜索行的 model 为 "searxng/search"
+    And 搜索行的 api_base 非空
+    And 搜索行的 metadata.parent_call_id 与同一请求的模型行相同
+    And key "ws-chat-key" 的累计 spend 含搜索费
+    And 响应 usage.server_tool_use.web_search_requests 为 1
 
   Scenario: Responses web_search tool 触发搜索并注入
     Given 已配置 model "ws-resp" 指向 mock 上游
@@ -41,6 +49,8 @@ Feature: 内建 web search 接线 — 三入口触发 + prompt 注入 + 降级�
     When 使用 key "ws-none-key" 发送带 web_search_options 但不带 web_search 配置的 POST /chat/completions 请求用 model "ws-none"
     Then 响应状态码为 200
     And mock 上游收到请求
+    And 响应 aigw.web_search.status 为 "not_configured"
+    And 搜索后端收到 0 次请求
 
   Scenario: 搜索后端 500 时请求降级成功
     Given 已配置 model "ws-500" 指向 mock 上游

@@ -122,6 +122,20 @@ pub(crate) fn calc_spend(
         + completion_tokens as f64 * output_cost.unwrap_or(0.0)
 }
 
+/// Per-call (non-token) cost — aigw's first flat-fee pricing unit.
+///
+/// Mirrors litellm `search_provider_cost_per_query`: total = queries × unit,
+/// with no output-side cost. Non-finite, negative and non-positive units all
+/// collapse to 0.0 so a bad config cannot poison `virtual_keys.spend` (that
+/// column has no CHECK constraint).
+pub(crate) fn calc_search_spend(queries: i32, cost_per_query: Option<f64>) -> f64 {
+    let unit = cost_per_query.unwrap_or(0.0);
+    if queries <= 0 || !unit.is_finite() || unit <= 0.0 {
+        return 0.0;
+    }
+    queries as f64 * unit
+}
+
 /// Per-modality input cost (TD-012b): price a multimodal input whose tokens are
 /// broken down by modality (image/audio/video) against `modal_pricing` (USD per
 /// 1M tokens), falling back to the deployment's scalar `input_cost_per_token`
@@ -1127,12 +1141,41 @@ pub async fn chat_completions(
     // and a guard held across a suspension can be dropped on a different tokio
     // worker thread — the sharded-registry panic the OAuth branch below also
     // guards against (see 77dc2eb).
+    // Stage 136: the metadata the search SpendLog row must inherit from the
+    // LLM row is extracted here, before the search runs — the search row is
+    // written inside `maybe_serve` and needs the same session_id / end_user /
+    // requester_ip as its parent.
+    let end_user = body
+        .get("metadata")
+        .and_then(|m| m.get("user_id"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let session_id = end_user.as_ref().and_then(|eu| {
+        serde_json::from_str::<Value>(eu).ok().and_then(|v| {
+            v.get("session_id")
+                .and_then(|id| id.as_str())
+                .map(|s| s.to_string())
+        })
+    });
+    let requester_ip: Option<String> = client_ip.map(|cip| cip.0.to_string());
+
     drop(_resolve_enter);
     let search_status = crate::routes::web_search_wire::maybe_serve(
         state.web_search.as_deref(),
         aigw_core::adapter::ClientProtocol::OpenAI,
         false, // OpenAI surface has no native passthrough that runs web_search itself
         &mut body,
+        &crate::routes::web_search_wire::SearchSpendContext {
+            db: &state.db,
+            parent_call_id: &request_id,
+            token_hash: &auth.token_hash,
+            user_id: auth.user_id.as_deref(),
+            team_id: auth.team_id.as_deref(),
+            organization_id: auth.organization_id.as_deref(),
+            end_user: end_user.as_deref(),
+            requester_ip: requester_ip.as_deref(),
+            session_id: session_id.as_deref(),
+        },
     )
     .await;
     let cache_control = aigw_core::cache::CacheControl::parse(&body);
@@ -1455,6 +1498,7 @@ pub async fn chat_completions(
         // — the one branch that does not fall through to the shared return.
         if let Some(st) = search_status.as_ref() {
             crate::routes::web_search_wire::attach_status(&mut resp_body, st);
+            crate::routes::web_search_wire::echo_web_search_requests(&mut resp_body, st);
         }
         let now = chrono::Utc::now();
         let usage = resp_body.get("usage");
@@ -1574,23 +1618,7 @@ pub async fn chat_completions(
         upstream_path
     );
 
-    // Extract end_user from metadata.user_id (Anthropic protocol convention)
-    let end_user = body
-        .get("metadata")
-        .and_then(|m| m.get("user_id"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-
-    // Try to parse session_id from JSON blob (Claude Code convention)
-    let session_id = end_user.as_ref().and_then(|eu| {
-        serde_json::from_str::<Value>(eu).ok().and_then(|v| {
-            v.get("session_id")
-                .and_then(|id| id.as_str())
-                .map(|s| s.to_string())
-        })
-    });
-
-    let requester_ip: Option<String> = client_ip.map(|cip| cip.0.to_string());
+    // end_user / session_id / requester_ip are computed above, before the search.
 
     // Extract User-Agent from HTTP header (align with litellm: store in metadata.user_agent)
     let user_agent: Option<String> = headers
@@ -2805,6 +2833,7 @@ pub async fn chat_completions(
         let mut resp_body = resp_body;
         if let Some(st) = search_status.as_ref() {
             crate::routes::web_search_wire::attach_status(&mut resp_body, st);
+            crate::routes::web_search_wire::echo_web_search_requests(&mut resp_body, st);
         }
         // Stage 119: store the assembled non-streaming response in the cache
         // (respecting per-request cache control — skip when no-store or the
@@ -3871,6 +3900,64 @@ mod tests {
         // regular = 100 * 0.01 = 1.0, cache_read = 500 * 0.01 = 5.0, total = 6.0
         let spend = calc_spend(600, 0, Some(0.01), None, 500, 0, None, None);
         assert!((spend - 6.0).abs() < 0.0001, "expected 6.0, got {}", spend);
+    }
+
+    // ── Stage 136: per-call (non-token) pricing ──
+
+    #[test]
+    fn test_calc_search_spend_single_query() {
+        assert!((calc_search_spend(1, Some(0.008)) - 0.008).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_calc_search_spend_multiple_queries() {
+        assert!((calc_search_spend(3, Some(0.008)) - 0.024).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_calc_search_spend_openai_canonical_price() {
+        // $10/1k — the OpenAI list price, and sub2api's 174_*.sql default.
+        assert!((calc_search_spend(1, Some(0.01)) - 0.01).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_calc_search_spend_amortized_micro_unit_price() {
+        // Self-hosted amortized cost is ~1e-4; 1000 queries must not lose it.
+        assert!((calc_search_spend(1, Some(0.000012)) - 0.000012).abs() < 1e-15);
+        assert!((calc_search_spend(1000, Some(0.000012)) - 0.012).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_calc_search_spend_free_provider_is_zero() {
+        assert_eq!(calc_search_spend(5, Some(0.0)), 0.0);
+    }
+
+    #[test]
+    fn test_calc_search_spend_missing_price_is_zero() {
+        assert_eq!(calc_search_spend(3, None), 0.0);
+    }
+
+    #[test]
+    fn test_calc_search_spend_zero_and_negative_queries() {
+        assert_eq!(calc_search_spend(0, Some(0.01)), 0.0);
+        assert_eq!(calc_search_spend(-1, Some(0.01)), 0.0);
+    }
+
+    #[test]
+    fn test_calc_search_spend_rejects_nonfinite_price() {
+        // virtual_keys.spend has no CHECK constraint — a dirty config must not
+        // reach it.
+        assert_eq!(calc_search_spend(1, Some(f64::NAN)), 0.0);
+        assert_eq!(calc_search_spend(1, Some(f64::INFINITY)), 0.0);
+        assert_eq!(calc_search_spend(1, Some(-0.01)), 0.0);
+    }
+
+    #[test]
+    fn test_calc_search_spend_epsilon_not_exact() {
+        // Spend columns are REAL/DOUBLE, not DECIMAL — 0.01 * N accumulates
+        // binary-float error, so assertions must be epsilon-based.
+        let total = calc_search_spend(100, Some(0.01));
+        assert!((total - 1.0).abs() < 1e-9, "got {total}");
     }
 
     #[test]

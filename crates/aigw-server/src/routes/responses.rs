@@ -590,6 +590,22 @@ pub async fn responses_handler(
     // Stage 135: run the web search layer before adapting. The OAuth branch above
     // is the native Anthropic passthrough and is deliberately not wired (§3.6a).
     // There is no exact-match cache on this route, so nothing to opt out of.
+    // Stage 136: metadata the search SpendLog row inherits from its parent LLM
+    // row — extracted before the search runs (see chat.rs).
+    let end_user = body
+        .get("metadata")
+        .and_then(|m| m.get("user_id"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let session_id = end_user.as_ref().and_then(|eu| {
+        serde_json::from_str::<Value>(eu).ok().and_then(|v| {
+            v.get("session_id")
+                .and_then(|id| id.as_str())
+                .map(|s| s.to_string())
+        })
+    });
+    let requester_ip: Option<String> = client_ip.map(|cip| cip.0.to_string());
+
     // Release the resolve span guard before the search await (see chat.rs).
     drop(_resolve_enter);
     let search_status = crate::routes::web_search_wire::maybe_serve(
@@ -600,6 +616,17 @@ pub async fn responses_handler(
             &deployment,
         ),
         &mut body,
+        &crate::routes::web_search_wire::SearchSpendContext {
+            db: &state.db,
+            parent_call_id: &request_id,
+            token_hash: &auth.token_hash,
+            user_id: auth.user_id.as_deref(),
+            team_id: auth.team_id.as_deref(),
+            organization_id: auth.organization_id.as_deref(),
+            end_user: end_user.as_deref(),
+            requester_ip: requester_ip.as_deref(),
+            session_id: session_id.as_deref(),
+        },
     )
     .await;
     let adapter = select_responses_adapter(&deployment).ok_or_else(|| {
@@ -661,22 +688,7 @@ pub async fn responses_handler(
     );
     drop(_adapt_enter);
 
-    // ── Metadata extraction (same as chat.rs) ──
-    let end_user = body
-        .get("metadata")
-        .and_then(|m| m.get("user_id"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-
-    let session_id = end_user.as_ref().and_then(|eu| {
-        serde_json::from_str::<Value>(eu).ok().and_then(|v| {
-            v.get("session_id")
-                .and_then(|id| id.as_str())
-                .map(|s| s.to_string())
-        })
-    });
-
-    let requester_ip: Option<String> = client_ip.map(|cip| cip.0.to_string());
+    // ── end_user / session_id / requester_ip extracted above, before the search ──
 
     let user_agent: Option<String> = headers
         .get("user-agent")
@@ -1693,6 +1705,7 @@ pub async fn responses_handler(
         response = response.header("x-call-id", &request_id);
         if let Some(st) = search_status.as_ref() {
             crate::routes::web_search_wire::attach_status(&mut adapted_resp, st);
+            crate::routes::web_search_wire::echo_web_search_requests(&mut adapted_resp, st);
         }
         Ok(response
             .body(axum::body::Body::from(

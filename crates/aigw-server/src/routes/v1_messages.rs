@@ -847,6 +847,17 @@ pub async fn messages_handler(
         aigw_core::adapter::ClientProtocol::Anthropic,
         provider_type == aigw_core::deployment::ProviderType::AnthropicNative,
         &mut body_val,
+        &crate::routes::web_search_wire::SearchSpendContext {
+            db: &state.db,
+            parent_call_id: &request_id,
+            token_hash: &auth_token_hash,
+            user_id: auth_user_id.as_deref(),
+            team_id: auth_team_id.as_deref(),
+            organization_id: auth_org_id.as_deref(),
+            end_user: end_user.as_deref(),
+            requester_ip: requester_ip.as_deref(),
+            session_id: session_id.as_deref(),
+        },
     )
     .await;
     let adapt_span = tracing::info_span!("adapt_request");
@@ -1536,6 +1547,7 @@ pub async fn messages_handler(
         })?;
         if let Some(st) = search_status.as_ref() {
             crate::routes::web_search_wire::attach_status(&mut claude_response, st);
+            crate::routes::web_search_wire::echo_web_search_requests(&mut claude_response, st);
         }
 
         // Record spend log
