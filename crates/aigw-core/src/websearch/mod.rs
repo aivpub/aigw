@@ -223,7 +223,14 @@ pub fn build_provider(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SearchServeOutcome {
     /// Searched and folded the results into the request body.
-    Injected { provider: String, results: usize },
+    Injected {
+        provider: String,
+        /// `base_url` of the instance that served this query (Stage 136 logs it
+        /// as the search row's `api_base`). `None` when the provider does not
+        /// track instances.
+        endpoint: Option<String>,
+        results: usize,
+    },
     /// The trigger hit but the search failed; the request proceeds unmodified.
     Degraded { provider: String, error: String },
     /// The trigger hit but there was no user message to inject into. No search
@@ -250,6 +257,24 @@ impl SearchServeOutcome {
             | SearchServeOutcome::Degraded { provider, .. }
             | SearchServeOutcome::NoTarget { provider } => provider,
         }
+    }
+
+    /// `base_url` of the instance that served the query, when known.
+    pub fn endpoint(&self) -> Option<&str> {
+        match self {
+            SearchServeOutcome::Injected { endpoint, .. } => endpoint.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// Whether a search request actually went out — i.e. whether this outcome
+    /// is billable. `NoTarget` never reached a provider, so charging for it
+    /// would be billing for work that did not happen (Stage 136 §3.5).
+    pub fn performed_search(&self) -> bool {
+        matches!(
+            self,
+            SearchServeOutcome::Injected { .. } | SearchServeOutcome::Degraded { .. }
+        )
     }
 }
 
@@ -315,6 +340,7 @@ pub async fn serve_trigger(
             );
             SearchServeOutcome::Injected {
                 provider: resp.provider,
+                endpoint: resp.endpoint,
                 results,
             }
         }
@@ -422,6 +448,7 @@ mod tests {
                     query: self.api_key.clone().unwrap_or_else(|| req.query.clone()),
                     provider: self.name.clone(),
                     reported_credits: None,
+                    endpoint: Some(format!("https://{}.test", self.name)),
                 }),
                 StubOutcome::Http(status) => Err(SearchError::Http {
                     provider: self.name.clone(),

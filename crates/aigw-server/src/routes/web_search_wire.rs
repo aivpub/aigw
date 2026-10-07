@@ -24,6 +24,11 @@ use serde_json::{json, Value};
 /// fired and nothing should be reported.
 #[derive(Debug, Clone)]
 pub struct SearchStatus {
+    /// `true` when a search request actually reached a provider (status `ok` or
+    /// `degraded`). `not_configured` and `no_target` never searched, so they must
+    /// not opt a request out of the exact-match cache — they consume the trigger
+    /// field but perform no work.
+    pub searched: bool,
     pub status: &'static str,
     pub provider: String,
     pub results: usize,
@@ -103,6 +108,7 @@ pub async fn maybe_serve(
             "web search requested but web_search is not configured; dropping"
         );
         return Some(SearchStatus {
+            searched: false,
             status: "not_configured",
             provider: String::new(),
             results: 0,
@@ -116,6 +122,7 @@ pub async fn maybe_serve(
         _ => 0,
     };
     Some(SearchStatus {
+        searched: outcome.performed_search(),
         status: outcome.status(),
         provider: outcome.provider().to_string(),
         results,
@@ -223,6 +230,7 @@ mod tests {
         attach_status(
             &mut body,
             &SearchStatus {
+                searched: true,
                 status: "ok",
                 provider: "searxng".into(),
                 results: 3,

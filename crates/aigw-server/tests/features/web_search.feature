@@ -13,6 +13,7 @@ Feature: 内建 web search 接线 — 三入口触发 + prompt 注入 + 降级�
     And 搜索后端收到 1 次请求
     And mock 上游收到的请求 body 含 "Rust Async Book"
     And mock 上游收到的请求 body 不含 "web_search_options"
+    And 响应 aigw.web_search.status 为 "ok"
 
   Scenario: Responses web_search tool 触发搜索并注入
     Given 已配置 model "ws-resp" 指向 mock 上游
@@ -57,6 +58,15 @@ Feature: 内建 web search 接线 — 三入口触发 + prompt 注入 + 降级�
     When 使用 key "ws-to-key" 发送带 web_search_options 的 POST /chat/completions 请求用 model "ws-to"
     Then 响应状态码为 200
     And mock 上游收到的请求 body 不含 "Rust Async Book"
+
+  Scenario: 仅含图片的 user 消息不发起搜索且标记 no_target
+    Given 已配置 model "ws-img" 指向 mock 上游
+    And 一个普通 key "ws-img-key" 已生成且绑定模型 "ws-img"
+    And mock 搜索后端已启动且 web_search 已配置
+    When 使用 key "ws-img-key" 发送仅含图片消息的 web_search_options POST /chat/completions 请求用 model "ws-img"
+    Then 响应状态码为 200
+    And 搜索后端收到 0 次请求
+    And 响应 aigw.web_search.status 为 "no_target"
 
   Scenario: 触发搜索的请求不命中 exact-match 缓存
     Given 已配置 model "ws-cache" 指向 mock 上游

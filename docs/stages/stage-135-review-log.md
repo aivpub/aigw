@@ -131,9 +131,26 @@
 - `task bdd`：**292 场景（279 pass / 13 skip）/ 1510 steps** 不变
 - `task fmt` / `task lint` / `task doctor`：全绿
 
+### 补充评审（第二轮，Late Code Review）
+
+首轮 Code Review 后由第二个评审 agent 复核，另报 7 条（1 Medium-High + 3 Medium + 3 Low）。**其中 3 条已在首轮修复**（渲染顺序 / OAuth 非流式 attach / span guard 释放），核实后新增修复 2 条：
+
+| # | 严重度 | 位置 | 缺陷 | 处置 |
+|---|-------|------|------|------|
+| D1 | Medium | `chat.rs` 缓存 bypass 谓词 | `search_status.is_none()` 把「触发但未搜」（`not_configured` / `no_target`）也当作 bypass，与 `web_search_wire` doc 声称的「配置缺省 = 零行为变化」矛盾 —— 运营方移除 `web_search` 配置后，仍带 `web_search_options` 的请求会**静默失去 exact-match 缓存** | ✅ **修复**：`SearchStatus` 增 `searched: bool`（= `outcome.performed_search()`），缓存谓词改为 `!search_status.as_ref().is_some_and(|s| s.searched)`；doc 同步订正 |
+| D2 | Medium | 测试缺口 | `no_target` 分支**零覆盖**；`attach_status` 的**响应体标记从未被 BDD 断言** | ✅ **修复**：新增 BDD 场景「仅含图片的 user 消息不发起搜索且标记 no_target」（断言搜索桩 0 次 + `aigw.web_search.status == "no_target"`）+ 步骤 `响应 aigw.web_search.status 为 {string}`，并把 Chat 触发场景也加上该断言 |
+| D3 | Low | `trigger.rs` `detect_anthropic` | `max_uses: 0`（Anthropic 语义 = 禁用工具）被 `filter(>0)` 吞掉后回落 medium → **客户端明确关掉的搜索仍会执行** | ✅ **修复**：`Some(0) => return None`；UT `detect_anthropic_max_uses_zero_suppresses_trigger` |
+| D4 | Low | `web_search_wire.rs:107` | `not_configured` 标记 `"provider": ""` | ❌ 保留（形状一致，空串即「无 provider」，无需特殊值） |
+
 ### Resolution Summary
 
-**Total Findings**: 6（Critical 1 / High 2 / Medium 1 / Low 2）
-**Fixed**: 5 **Wont Fix**: 1（C6 事实不成立）
+**Total Findings**: 10（两轮合计；Critical 1 / High 2 / Medium-High 1 / Medium 3 / Low 4）
+**Fixed**: 9 **Wont Fix**: 1（C6 事实不成立；D4 保留）
 **All Critical Fixed**: Yes
 **All High Priority Addressed**: Yes
+
+### 门禁（补充评审后复跑）
+
+- `task test`：aigw-core **644**（643 → +1 `max_uses:0` UT）
+- `task bdd`：**293 场景（280 pass / 13 skip）/ 1519 steps**（+1 图片消息场景）
+- `task fmt` / `task lint` / `task doctor`：全绿

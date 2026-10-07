@@ -111,16 +111,18 @@ pub fn detect_responses(tools: &[Value]) -> Option<SearchTrigger> {
 /// `max_uses` counts *searches*, not results, and Anthropic defines no default
 /// for it. This Stage performs exactly one search, so `max_uses` serves only as
 /// an upper bound on the result count; absent, it falls back to medium.
+///
+/// An explicit `max_uses: 0` disables the tool in Anthropic's semantics, so it
+/// suppresses the trigger entirely rather than falling through to the default.
 pub fn detect_anthropic(tools: &[Value]) -> Option<SearchTrigger> {
     let hit = tools
         .iter()
         .find(|t| t.get("type").and_then(|v| v.as_str()) == Some("web_search_20250305"))?;
-    let requested = hit
-        .get("max_uses")
-        .and_then(|v| v.as_u64())
-        .filter(|n| *n > 0)
-        .map(|n| n as usize)
-        .unwrap_or_else(|| map_context_size(None));
+    let requested = match hit.get("max_uses").and_then(|v| v.as_u64()) {
+        Some(0) => return None,
+        Some(n) => n as usize,
+        None => map_context_size(None),
+    };
     Some(SearchTrigger {
         surface: TriggerSurface::Anthropic,
         requested_results: requested,
@@ -196,6 +198,15 @@ mod tests {
     fn detect_anthropic_without_max_uses_defaults_medium() {
         let tools = vec![json!({"type": "web_search_20250305", "name": "web_search"})];
         assert_eq!(detect_anthropic(&tools).unwrap().requested_results, 3);
+    }
+
+    #[test]
+    fn detect_anthropic_max_uses_zero_suppresses_trigger() {
+        // Anthropic semantics: max_uses: 0 disables the tool. Treating it as
+        // "unset" would run a search the client explicitly opted out of.
+        let tools =
+            vec![json!({"type": "web_search_20250305", "name": "web_search", "max_uses": 0})];
+        assert!(detect_anthropic(&tools).is_none());
     }
 
     #[test]

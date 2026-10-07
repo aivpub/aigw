@@ -196,7 +196,7 @@ pub(crate) fn calc_search_spend(queries: i32, cost_per_query: Option<f64>) -> f6
 设计点：
 - `cost_per_query: Option<f64>`。**配置层缺省填充 `0.01`**（Stage 134 的 `#[serde(default = "default_cost_per_query")]`，对齐 sub2api `174_*.sql` 的 `0.01`）；函数签名保留 `Option` 以与 `calc_spend` 风格一致，`None` 兜底为 `0.0`（仅当配置被显式置空时可达）。**显式 `0.0` 只让金额为 0，不让落库与预算调用消失**（§3.9a）
 - 负数 / `NaN` / `inf` 一律归零，防止脏配置污染 `virtual_keys.spend`（该列无约束）
-- `queries` 来自 Stage 135 的搜索执行结果（设计 C 下恒为 1，但函数按 N 设计，为后续 loop 留口）
+- `queries` **不是**从 `SearchServeOutcome` 的字段读到的（该变体无此字段）—— 而是「**发生过真实搜索**」的判定：`Injected` / `Degraded` → `1`；`NoTarget` / `not_configured` → **不写行、不计费**（`NoTarget` 表示**根本没发搜索请求**，计费会是凭空收钱）。同理 `NoTarget` 也没有 `provider` 之外的计费数据。设计 C 下恒为 1，函数按 N 设计仅为后续 loop 留口（Review F3）
 
 ### 3.2 provider 单价（USD/query）
 
@@ -246,7 +246,7 @@ pub(crate) fn calc_search_spend(queries: i32, cost_per_query: Option<f64>) -> f6
 | `model_id` | `models.rs:159` | `None` | 无 deployment |
 | `model_group` | `models.rs:160` | `None` | ⚠️ **不复用为搜索工具名**。litellm 把 `model_group` 占用为搜索工具名（架构调研 §2.8），但 aigw 的 `aggregate_spend_by_model_group`（`db.rs:3787`）与前端「Spend by Model Group」图直接消费该列，塞工具名会污染既有图表 |
 | `custom_llm_provider` | `models.rs:161` | **provider 名**（本期恒为 `"searxng"`；后续 `"tavily"` / `"bocha"`） | `spend_providers`（`crates/aigw-server/src/routes/spend.rs:839`）可据此出「搜索厂商花费」。**是 provider 名而非实例名** —— 聚合维度必须跨实例稳定 |
-| `api_base` | `models.rs:162` | **实际命中实例的 `base_url`** | ⚠️ Stage 134 已改为 provider→instances[] 两层模型（实例选择照抄 `router.rs` 的 `cooldown_until:26` / `has_weight:366-377` / `weighted_pick:419`）。此列必须记**本次真正打中的那个物理端点**，而非 provider 名或配置里的第一个实例 —— 否则多实例部署下无法按实例对账、无法定位「哪台 SearXNG 在拖慢/报错」。与 `custom_llm_provider` 分工：**provider 名做聚合，`api_base` 做实例溯源** |
+| `api_base` | `models.rs:162` | **实际命中实例的 `base_url`** | ⚠️ Stage 134 已改为 provider→instances[] 两层模型（实例选择照抄 `router.rs` 的 `cooldown_until:26` / `has_weight:366-377` / `weighted_pick:419`）。此列必须记**本次真正打中的那个物理端点**，而非 provider 名或配置里的第一个实例 —— 否则多实例部署下无法按实例对账、无法定位「哪台 SearXNG 在拖慢/报错」。与 `custom_llm_provider` 分工：**provider 名做聚合，`api_base` 做实例溯源**。**⚠️ Review F1 前置改动**：该数据当前**不可得** —— `SearchResponse`（`websearch/types.rs:66-75`）只有 `results`/`query`/`provider`/`reported_credits`，`SearxngProvider::search` 选中实例后**把 `instance.base_url` 就地丢弃**（`searxng.rs:234` 用完即弃，成功分支 `:157-166` 不回填）。故本 Stage 必须先扩 `SearchResponse`：新增 `endpoint: Option<String>`，在 `searxng.rs` 成功分支填 `instance.base_url.clone()`，并经 `SearchServeOutcome` 透出（现仅 `provider: String`）。**该改动触及已提交的 Stage 135 代码**（`types.rs` / `searxng.rs` / `mod.rs`），已列入 §5 变更清单，不得视为「Stage 134 已交付」 |
 | `user` | `models.rs:163` | 同父行 | |
 | `metadata` | `models.rs:164` | `{"search_query_count": N, "parent_call_id": "<父行 call_id>", "search_provider": "<provider>", "cost_per_query": <unit>}` | 单价快照进 metadata，便于历史对账（配置改价后旧行仍可复算） |
 | `cache_hit` / `cache_key` | `models.rs:165-166` | `None` / `None` | |
@@ -268,10 +268,12 @@ pub(crate) fn calc_search_spend(queries: i32, cost_per_query: Option<f64>) -> f6
 **链路**（设计 C 下时序明确：搜索在模型调用之前）：
 
 1. 请求入口先生成 LLM 行的 `call_id`（即现有 `request_id` 变量，chat 侧 `chat.rs:2580` 处 `call_id: request_id.clone()`）—— **此值在搜索发生前就已存在**，无需重排时序
-2. 搜索执行 → 得到 `queries` / `provider` / 耗时 / 结果
+2. 搜索执行 → 得到 `provider` / **命中实例 endpoint** / 耗时 / 结果
 3. 构造搜索行，`metadata.parent_call_id = <步骤 1 的 call_id>`，`session_id = <父行 session_id>`
 4. `insert_spend_log(搜索行)` + `increment_{key,user,team,org}_spend(搜索 spend)`
 5. 模型调用照常走现有路径（其自身的 `insert_spend_log` + `increment_*` 一字不改）
+
+**⚠️ Review F2 前置改动 —— chat / responses 的元数据提取必须上移。** 搜索点（chat `:1131` / responses `:595`）**早于**两处 `end_user`/`session_id`/`requester_ip` 的计算（chat `:1576`/`:1583`/`:1591`，responses `:666`/`:671`/`:679`）—— 若不动，搜索行只能填 `None`，违反 §3.4「四级归属必须与父行一致」。`v1_messages.rs` 无此问题（元数据在 `:404-419`，早于搜索点 `:845`）。故实施第一步是把这两处的元数据提取块**上移到 `maybe_serve` 之前**（纯搬移，不改语义）。`request_id`（= `call_id`）三条路由在 handler 入口即可用（chat `:925` / responses `:91` / v1_messages `:173`）；`auth`（`token_hash`/`user_id`/`team_id`/`organization_id`）为 handler 参数，全部可用。
 
 > 关键：**步骤 4 的 `increment_*_spend` 是第二组调用**，与模型侧的 `chat.rs:2676-2684` / `responses.rs:1588` / `v1_messages.rs:1683` 并列而非替代。这正是 §2.4 指出的必须项。
 

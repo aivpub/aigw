@@ -1,23 +1,20 @@
-current_state: complete
-previous_state: reviewing
-last_command: /rdd-stage-auto
-last_updated: 2026-08-24T00:00:00Z
+current_state: developing
+previous_state: complete
+last_command: /rdd-loop --to --stage 136
+last_updated: 2026-10-07T00:00:00Z
 
-current_stage: 130
-current_gate: 5
+current_stage: 136
+current_gate: 0
 
 history:
-  - state: developing
-    timestamp: 2026-08-24T00:00:00Z
-    command: /rdd-stage-auto (Stage 130 real BDD + security audit)
-  - state: reviewing
-    timestamp: 2026-08-24T00:00:00Z
-    command: /rdd-stage-auto (Gate 4 code review)
   - state: complete
-    timestamp: 2026-08-24T00:00:00Z
-    command: /rdd-stage-auto (Gate 5 docs writeback)
+    timestamp: 2026-10-07T00:00:00Z
+    command: /rdd-loop (Stage 135 delivered, commit e341c6b)
+  - state: developing
+    timestamp: 2026-10-07T00:00:00Z
+    command: /rdd-loop (Stage 136 start)
 
 next_steps:
-  - "Stage 130 ✅ 完成（v61.0，134/134 — ALL STAGES COMPLETE）。real BDD 三后端 OAuth 凭证 CRUD + 加密落库直读断言 + in-use 守卫（58/58 × 3）;安全审计 8 项全部通过;`/credential/new` OAuth 凭证逐字段 AES-256-GCM 加密落库（encrypt_litellm_value_gcm）;TD-015a Resolved（upstream_error_message 全库收窄）;ADR-034 收尾 + 长期路线 LT-OAuthResponseAdapt/LT-CountTokensAuth"
-  - "下一里程碑：中期 M1 guardrails / M2 Redis 分布式层;OAuth 后续候选 TD-015d/e（响应侧转换 / count_tokens 双认证）"
-  - "产品决策待定：H4 响应侧协议转换 / M1 count_tokens 认证语义（TD-015d/e）"
+  - "Stage 135 ✅ 完成（commit e341c6b）：内建 web search 接线三入口（trigger + inject + ClaudeToolDef 500→200）。aigw-core 643 UT / mock BDD 292 场景 / real BDD sqlite 58/58 / fmt lint doctor green。"
+  - "Stage 136 进行中：按次计费 calc_search_spend + call_type=\"search\" 独立 SpendLog 行 + metadata.parent_call_id + 四级 increment_*_spend + usage.server_tool_use.web_search_requests 回传。"
+  - "残留：Stage 135 的真实上游端到端（模板 markdown 引用指令有效性）未执行。"

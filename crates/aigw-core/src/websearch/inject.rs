@@ -413,6 +413,7 @@ mod tests {
             query: "rust async".to_string(),
             provider: "searxng".to_string(),
             reported_credits: None,
+            endpoint: None,
         }
     }
 
@@ -692,7 +693,7 @@ mod tests {
     fn search_error_degrades_without_injection() {
         // The degrade path is caller-side: it simply never calls inject. This
         // asserts the body is byte-identical when no injection happens.
-        let mut body = json!({"messages": [{"role": "user", "content": "q"}]});
+        let body = json!({"messages": [{"role": "user", "content": "q"}]});
         let before = body.clone();
         let _ = InjectionOutcome::NoTarget; // degraded callers skip injection entirely
         assert_eq!(body, before);

@@ -73,6 +73,12 @@ pub struct SearchResponse {
     /// Vendor self-reported consumption (Tavily `usage.credits`). `None` for
     /// SearXNG. Carried only — no billing happens in this Stage.
     pub reported_credits: Option<f64>,
+    /// `base_url` of the physical instance that actually served this query.
+    /// `None` when the provider does not track instances (test stubs).
+    /// Stage 136 records it as the search SpendLog row's `api_base`, so
+    /// multi-instance deployments can attribute latency and failures.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
 }
 
 /// Server-side guardrails. Clients and models can lower `max_results` but can
@@ -250,6 +256,7 @@ mod tests {
             query: "q".to_string(),
             provider: "stub".to_string(),
             reported_credits: None,
+            endpoint: None,
         }
     }
 

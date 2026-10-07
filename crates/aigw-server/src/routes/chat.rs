@@ -1136,7 +1136,9 @@ pub async fn chat_completions(
     )
     .await;
     let cache_control = aigw_core::cache::CacheControl::parse(&body);
-    let cache_key = if cache_control.use_cache && !cache_control.no_store && search_status.is_none()
+    let cache_key = if cache_control.use_cache
+        && !cache_control.no_store
+        && !search_status.as_ref().is_some_and(|s| s.searched)
     {
         effective_router.cache().map(|_backend| {
             aigw_core::cache::cache_key(

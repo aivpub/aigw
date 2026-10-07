@@ -361,6 +361,37 @@ async fn then_search_query_contains(_world: &mut TestWorld, needle: String) {
     );
 }
 
+#[then(expr = "响应 aigw.web_search.status 为 {string}")]
+async fn then_marker_status(_world: &mut TestWorld, expected: String) {
+    let body = _world.last_body.as_ref().expect("no response body");
+    let actual = body
+        .get("aigw")
+        .and_then(|v| v.get("web_search"))
+        .and_then(|v| v.get("status"))
+        .and_then(|v| v.as_str())
+        .unwrap_or_else(|| panic!("no aigw.web_search.status in {body}"));
+    assert_eq!(actual, expected);
+}
+
+#[when(
+    expr = "使用 key {string} 发送仅含图片消息的 web_search_options POST \\/chat\\/completions 请求用 model {string}"
+)]
+async fn when_chat_image_only_with_search(world: &mut TestWorld, alias: String, model: String) {
+    run_request(
+        world,
+        "/chat/completions",
+        &alias,
+        json!({
+            "model": model,
+            "messages": [{"role": "user", "content": [
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="}}
+            ]}],
+            "web_search_options": {}
+        }),
+    )
+    .await;
+}
+
 #[then(expr = "mock 上游收到的请求 body 含 {string}")]
 async fn then_upstream_body_contains(_world: &mut TestWorld, needle: String) {
     let mu = crate::bdd_steps::e2e_steps::mock_upstream().lock().await;

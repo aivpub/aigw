@@ -107,6 +107,16 @@ pub fn parse_response(
     query: &str,
     bytes: &[u8],
 ) -> Result<SearchResponse, SearchError> {
+    parse_response_from(provider, query, bytes, None)
+}
+
+/// [`parse_response`] with the serving instance's `base_url` attached.
+pub fn parse_response_from(
+    provider: &str,
+    query: &str,
+    bytes: &[u8],
+    endpoint: Option<&str>,
+) -> Result<SearchResponse, SearchError> {
     let parsed: serde_json::Value =
         serde_json::from_slice(bytes).map_err(|e| SearchError::Parse {
             provider: provider.to_string(),
@@ -169,6 +179,7 @@ pub fn parse_response(
             .to_string(),
         provider: provider.to_string(),
         reported_credits: None,
+        endpoint: endpoint.map(str::to_string),
     })
 }
 
@@ -253,7 +264,12 @@ impl SearchProvider for SearxngProvider {
                         last_err = Some(err);
                         continue;
                     }
-                    match parse_response(&self.name, &req.query, &bytes) {
+                    match parse_response_from(
+                        &self.name,
+                        &req.query,
+                        &bytes,
+                        Some(&instance.base_url),
+                    ) {
                         Ok(resp) => {
                             self.pool.report_success(idx);
                             return Ok(resp);
