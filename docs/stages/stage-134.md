@@ -670,7 +670,7 @@ pub fn build_search_client(
 1. `task test` 全绿，`aigw-core` UT **530 → 611（净增 81）**（规划 45，超额 36：多出的主要是错误分类、池行为、`config.example.yaml` 漂移防护与 4 个额外的集成 stub 场景）
 2. `task bdd` — 实测 **285 场景 / 272 pass / 13 skip / 0 fail**，与 **Stage 133** 基线逐字一致（本文件原写 Stage 132 的 284，那是 Stage 133 交付前的数字）。零 `.feature` 文件改动，证明新模块对既有行为零影响
 3. `task fmt` / `task lint` green，无新 clippy warning
-4. ⚠️ **`task check` 不存在于 Taskfile** → 用 `task doctor`（`cargo check --workspace` + clippy）替代，通过。`--no-default-features` 下 websearch 零错误零告警；但该 profile 本身有 **27 个既存错误**（`alerts.rs`/`claude_oauth.rs`/`probe.rs`），`git stash` 对照确认与本 Stage 无关
+4. `task doctor`（`cargo check --workspace` + clippy）通过。⚠️ **原文此处写 `task check`，该 task 不存在于 Taskfile** —— 已于 2026-10-07 订正 CLAUDE.md 与本文件。`--no-default-features` 门禁项**已随 `reqwest` feature 删除而失效**（见下 §7a 收尾）
 5. `task doctor` 无新告警
 6. 人工：SearXNG 实网探针**已完成**（§4.3 第 3 条），无其余待做项（Tavily/博查 探针随接入 Stage 再做）
 
@@ -688,8 +688,8 @@ pub fn build_search_client(
 - [x] `v2:gcm:` 密钥解密 UT 通过；明文 key 不被破坏
 - [x] 配置非法值（未知 default_provider / 未知 kind / 空 instances / 域名列表互斥冲突）在加载期报错，不留到运行时
 - [x] `build_websearch_registry` 只接受已解析结构、不读文件（Stage 138 的 DB 来源可零重写复用）
-- [x] `task test`（**611 pass**，aigw-core 530→611）/ `task bdd`（**285 场景 272 pass 13 skip，与 Stage 133 基线逐字一致**）/ `task fmt` / `task lint` 全绿。⚠️ **`task check` 在 Taskfile 中不存在**（CLAUDE.md 与本文件 §6 均引用了它）——改用 `task doctor`（内含 `cargo check --workspace` + clippy）。建议补 `check` task 或订正文档。
-- [x] `cargo check -p aigw-core --no-default-features`：**websearch 零错误零告警**（`client.rs` 与 `searxng.rs` 的 reqwest 相关 import 已 `#[cfg(feature = "reqwest")]` 门控）。⚠️ 该 profile **本身早已损坏**（`alerts.rs` / `claude_oauth.rs` / `probe.rs` 共 **27 个** `unresolved crate reqwest` 错误）——已用 `git stash` 对照确认为**既存问题，与本 Stage 无关**，登记 §8.2。
+- [x] `task test`（**611 pass**，aigw-core 530→611）/ `task bdd`（**285 场景 272 pass 13 skip，与 Stage 133 基线逐字一致**）/ `task fmt` / `task lint` / `task doctor` 全绿。⚠️ **`task check` 在 Taskfile 中不存在**（CLAUDE.md 与本文件 §6 曾引用）→ **2026-10-07 已订正 CLAUDE.md**，并新增 `task test-filter` / `task fmt-fix` 补齐两处真实缺口。
+- [~] `--no-default-features` 门禁项 **已作废** —— 2026-10-07 用户决策删除 `reqwest` feature（它从未真正可选：`alerts.rs` / `claude_oauth.rs` / `probe.rs` 无条件引用 `reqwest::`，该 profile 有 27 个既存错误）。现 `reqwest` 为必选依赖，22 处 `#[cfg(feature = "reqwest")]` 全部移除，该 flag 成为 no-op。
 - [x] `config.example.yaml` 的 `cost_per_query` 注释写明「摊销单价而非采购价，默认值高估约 50 倍需改写，留 0 则成本不可见」。**另加一条 UT** `test_config_example_yaml_block_parses_into_this_struct`——把注释块反注释后真实反序列化进 `WebSearchConfig` 并跑 `validate()`，防止文档示例与结构漂移（运维唯一的拷贝来源若不可用，比没有更糟）。
 - [x] `docs/11-next-steps.md` + `stage-roadmap.md` + `docs/12-technical-debt.md`（TD-017c）回写
 - [x] git commit（精确 add；`--signoff`）
@@ -718,14 +718,14 @@ pub fn build_search_client(
 3. **`SearchError` 多一个 `EmptyQuery` 变体** —— §3.3.1 实测要求「发请求**之前**拒绝空 query（省一次 RTT）」，但规划的枚举里没有能表达它的变体（硬塞进 `Http{400}` 会谎称发生过网络往返）。
 4. **`SearchError::Parse` 判定为可转移** —— 规划未明确。理由：SearXNG 的「200 + HTML」本质是**该实例配置错误**（`format=json` 未开），兄弟实例可能是对的，所以应当换实例而非整体失败。已由 `test_searxng_html_200_is_a_parse_error_then_tries_next` 锁定。
 5. **`SearchRequest` 不含 `allowed_domains` / `blocked_domains`** —— 规划 §3.2 把它们放进请求结构，但 §3.5 同时要求这两项是**客户端不可触及的服务端护栏**。放在请求里等于给了调用方一个入口，与护栏意图冲突。改为只存在于 `Guardrails`（由 registry 持有），请求结构里**没有这个字段可填**——结构性地不可绕过，优于靠纪律。
-6. **`urlencode` / `url_host` 手写而非引入 `url` crate** —— `websearch` 需在 `--no-default-features` 下编译，而 `url` 随 `reqwest` 进来。两个函数各约 10 行，均有 UT。
+6. **`urlencode` / `url_host` 手写而非引入 `url` crate** —— 原始理由是「需在 `--no-default-features` 下编译」，该理由已随 feature 删除而失效；但保留手写仍然合理（`reqwest` 不导出独立 parser/encoder，两个函数各约 10 行且各有 UT，不值得加直接依赖）。注释已据实改写。
 
 ### 两个新发现（规划未预见）
 
 | # | 发现 | 处理 |
 |---|------|------|
-| 1 | ⚠️ **`task check` 在 `Taskfile.yml` 中不存在** —— CLAUDE.md 的「纪律红线」与本文件 §6/§7 都引用了它，照做会直接失败。实际等价物是 `task doctor`（`cargo check --workspace` + clippy） | 本次用 `task doctor`。建议补一个 `check` task 或订正 CLAUDE.md，否则后续每个 Stage 都会撞一次 |
-| 2 | ⚠️ **`cargo check -p aigw-core --no-default-features` 早已损坏** —— `alerts.rs` / `claude_oauth.rs` / `probe.rs` 共 **27 个** `unresolved crate reqwest` 错误，即 `reqwest` 已是事实必选依赖。用 `git stash` 移除本 Stage 改动后错误数不变，确认为既存问题 | websearch 自身已做到该 profile 下零错误零告警（import 全部 `#[cfg]` 门控）。既存 27 个错误登记 §8.2，不在本 Stage 范围 |
+| 1 | ⚠️ **`task check` 在 `Taskfile.yml` 中不存在** —— CLAUDE.md 的「纪律红线」与本文件 §6/§7 都引用了它，照做会直接失败。实际等价物是 `task doctor` | ✅ **2026-10-07 已收尾**：CLAUDE.md 订正为 `task doctor`，并把 `task check` 写进反例清单。另发现两处真实缺口并补齐：**`task test-filter -- <pattern>`**（过滤测试，此前只能裸命令）与 **`task fmt-fix`**（实际格式化，`task fmt` 只做 `--check`）。纪律文本同时补上「过滤结果不得充当交付依据」的明文边界 |
+| 2 | ⚠️ **`cargo check -p aigw-core --no-default-features` 早已损坏** —— `alerts.rs` / `claude_oauth.rs` / `probe.rs` 共 **27 个** `unresolved crate reqwest` 错误，即 `reqwest` 已是事实必选依赖 | ✅ **2026-10-07 已收尾（用户决策：删除 feature）**：`aigw-core/Cargo.toml` 的 `reqwest`/`reqwest-middleware`/`reqwest-retry` 从 `optional` 改为必选，删掉 `[features] default = ["reqwest"]` 与 `reqwest = [...]`；`aigw-server` 两处 `features = ["reqwest"]` 依赖声明清理；全库 **22 处 `#[cfg(feature = "reqwest")]` 移除**（`router.rs` 2 / `config_loader.rs` 10 / `websearch/*` 10），`#[cfg(all(test, feature="reqwest"))]` → `#[cfg(test)]`。验证：`task test` **1052 pass / 0 fail**（与删除前逐字一致）、`task bdd` **285 场景**不变、`task doctor`/`fmt`/`lint` 全绿 |
 
 ### 验证方式的替代（须知）
 
@@ -798,10 +798,10 @@ pub fn build_search_client(
 | **设计 A（短路）** | tools 只含 web_search 时不调模型，网关搜完直接合成 `server_tool_use` + `web_search_tool_result` + `text` 返回。**唯一能让 Claude Code 的 WebSearch 真正可用**（那是独立的 `/v1/messages` 子请求，设计 C 对它不适用） | 必须合成 Anthropic 服务端工具块 → 踩 `encrypted_content` 不可伪造（调研 §4.4）+ 历史投毒须按 id 前缀剥离（§5.7）两个坑 |
 | **设计 B（agentic loop）** | 把 web_search 换成内部 function 工具 → 模型回 tool_call → 搜索 → 回灌 → 再请求，上限 3 轮 | **硬前提未实测：上游 MaaS 是否支持网关*注入*的 function 工具往返**（调研 §5.9 第 1 项 / §6.3 第 7 项）。Stage 132 只验证了「Codex 客户端声明的工具」可用，**网关注入**的工具是否被模型正确调用**尚无证据** → 立项前必须先做这一项实测 |
 
-**本 Stage 发现的既存缺陷（不在本 Stage 范围）**：
+**本 Stage 发现的既存缺陷 —— ✅ 均已于 2026-10-07 收尾（用户决策）**：
 
-- ⚠️ **`cargo check -p aigw-core --no-default-features` 有 27 个编译错误** —— `alerts.rs` / `claude_oauth.rs` / `probe.rs` 直接引用 `reqwest::` 而未做 feature 门控，即 `reqwest` 已是事实必选依赖，`[features] default = ["reqwest"]` 的可选性只是名义上的。`git stash` 对照确认与 Phase 53 无关。两种收尾方式：① 给三个文件补 `#[cfg(feature = "reqwest")]`，恢复该 profile；② 承认现实，把 `reqwest` 从 optional 改为必选依赖并删掉该 feature。**建议 ②**（没有消费者在用无 reqwest 的 aigw-core，维护一个没人跑的 profile 是净成本）。
-- ⚠️ **`task check` 不存在于 `Taskfile.yml`** —— 但 CLAUDE.md 的纪律红线把它列为必用命令，多个 Stage 文档的门禁也引用它。应补 task 或订正文档。
+- ✅ **`reqwest` feature 已删除** —— 原问题：`--no-default-features` 有 27 个编译错误（`alerts.rs` / `claude_oauth.rs` / `probe.rs` 无条件引用 `reqwest::`），即该 feature 的可选性只是名义上的。采纳方案 ②「承认现实」：Cargo.toml 三个依赖改必选、删 `[features] default`/`reqwest`、`aigw-server` 依赖声明清理、全库 22 处 `#[cfg(feature = "reqwest")]` 移除。**不保留该 profile 的理由**：没有消费者在构建无 reqwest 的 aigw-core，维护一个没人跑且早已损坏的 profile 是净成本。验证：`task test` 1052 pass/0 fail 与删除前逐字一致，`task bdd` 285 场景不变。
+- ✅ **Taskfile 补齐两个真实缺口 + CLAUDE.md 订正** —— `task check` 不存在（已订正为 `task doctor`，并列入反例）；新增 **`task test-filter -- <pattern>`**（此前跑过滤测试只能用裸命令）与 **`task fmt-fix`**（`task fmt` 只做 `--check`，此前格式化只能用裸命令）。纪律文本补上明文边界：**过滤测试是迭代工具，门禁与交付结论必须以 `task test` 全量结果为准**。
 
 **本层的功能性遗留**：
 

@@ -22,14 +22,8 @@
 //! future provider follows.
 
 use crate::websearch::instance::InstancePool;
-use crate::websearch::provider::SearchError;
-use crate::websearch::types::{SearchResponse, SearchResult};
-// Only the `SearchProvider` impl (and therefore its request type) needs these,
-// and that impl is gated on the `reqwest` feature.
-#[cfg(feature = "reqwest")]
-use crate::websearch::provider::SearchProvider;
-#[cfg(feature = "reqwest")]
-use crate::websearch::types::SearchRequest;
+use crate::websearch::provider::{SearchError, SearchProvider};
+use crate::websearch::types::{SearchRequest, SearchResponse, SearchResult};
 
 pub const KIND: &str = "searxng";
 
@@ -38,7 +32,6 @@ pub struct SearxngProvider {
     name: String,
     cost_per_query: f64,
     pool: InstancePool,
-    #[cfg(feature = "reqwest")]
     client: reqwest_middleware::ClientWithMiddleware,
     timeout_ms: u64,
 }
@@ -55,7 +48,6 @@ impl std::fmt::Debug for SearxngProvider {
 }
 
 impl SearxngProvider {
-    #[cfg(feature = "reqwest")]
     pub fn new(
         name: impl Into<String>,
         cost_per_query: f64,
@@ -87,8 +79,8 @@ impl SearxngProvider {
 
 /// Minimal percent-encoding for a query-string value.
 ///
-/// Hand-rolled to keep this module compilable without the `reqwest`/`url`
-/// dependency chain, matching the rest of `websearch`.
+/// Hand-rolled rather than adding a dependency for one query-string value —
+/// `reqwest` exposes no standalone encoder, and this has its own test.
 fn urlencode(s: &str) -> String {
     let mut out = String::with_capacity(s.len() * 3);
     for b in s.as_bytes() {
@@ -207,7 +199,6 @@ fn str_field(item: &serde_json::Value, key: &str) -> String {
         .to_string()
 }
 
-#[cfg(feature = "reqwest")]
 #[async_trait::async_trait]
 impl SearchProvider for SearxngProvider {
     fn name(&self) -> &str {
@@ -291,7 +282,6 @@ impl SearchProvider for SearxngProvider {
     }
 }
 
-#[cfg(feature = "reqwest")]
 fn is_timeout(e: &reqwest_middleware::Error) -> bool {
     match e {
         reqwest_middleware::Error::Reqwest(r) => r.is_timeout(),

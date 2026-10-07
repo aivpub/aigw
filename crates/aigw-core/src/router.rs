@@ -12,7 +12,6 @@ use rand::Rng;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
-#[cfg(feature = "reqwest")]
 use std::time::Duration;
 use std::time::Instant;
 use tokio::sync::Mutex;
@@ -531,7 +530,6 @@ impl Router {
     ///
     /// Uses `reqwest-middleware` + `reqwest-retry` with exponential backoff.
     /// Retries on 5xx and network errors; 4xx is not retried.
-    #[cfg(feature = "reqwest")]
     pub fn build_retry_client(&self) -> reqwest_middleware::ClientWithMiddleware {
         use reqwest_middleware::ClientBuilder;
         use reqwest_retry::policies::ExponentialBackoff;

@@ -9,9 +9,9 @@ tokio = { workspace = true }
 tokio-util = { version = "0.7" }
 axum = { workspace = true }
 sqlx = { workspace = true }
-reqwest = { workspace = true, optional = true }
-reqwest-middleware = { version = "0.3", optional = true, features = ["json"] }
-reqwest-retry = { version = "0.6", optional = true }
+reqwest = { workspace = true }
+reqwest-middleware = { version = "0.3", features = ["json"] }
+reqwest-retry = { version = "0.6" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
@@ -54,8 +54,11 @@ testcontainers = "0.23"
 testcontainers-modules = { version = "0.11", features = ["postgres", "mysql"] }
 
 [features]
-default = ["reqwest"]
-reqwest = ["dep:reqwest", "dep:reqwest-middleware", "dep:reqwest-retry"]
+# `reqwest` used to be an optional feature, but alerts.rs / claude_oauth.rs /
+# probe.rs reference `reqwest::` unconditionally, so `--no-default-features`
+# never actually compiled (27 errors). The optionality was nominal; the HTTP
+# client is a hard requirement of this crate. Removed rather than repaired —
+# no consumer builds aigw-core without it.
 integration = []
 # Test-only: enables the OAuth mock-endpoint env remap (AIGW_*_MOCK_BASE).
 # Enabled by the aigw-server integration BDD harness and by `cargo test`

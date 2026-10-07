@@ -17,31 +17,39 @@
 
 ```yaml
 # 正确 ✅
-task test              # 运行单元测试
+task test              # 运行全量单元测试（门禁/交付结论只认这个）
+task test-filter -- <pattern>   # 开发迭代期按名字过滤跑 aigw-core lib 测试
+                                # 例：task test-filter -- websearch
 task bdd               # Mock BDD 测试
 task bdd-real-sqlite   # SQLite 真实 BDD
 task bdd-real-pg       # PostgreSQL 真实 BDD
 task bdd-real-mysql    # MySQL 真实 BDD
 task doctor            # 编译检查（cargo check --workspace + clippy）+ 项目健康状态
 task build             # 构建 release 二进制
-task fmt               # 格式检查
+task fmt               # 格式检查（只读 --check）
+task fmt-fix           # 实际格式化代码（写入文件）
 task lint              # clippy -D warnings
 
 # 错误 ❌
 cargo test --test bdd        # 缺少 AIGW_TEST_START_SERVER 等环境变量
 AIGW_REAL_API=1 cargo test   # 缺少完整配置链
+cargo test -p aigw-core --lib websearch   # 应使用 task test-filter -- websearch
+cargo fmt --all               # 应使用 task fmt-fix
 cargo check                   # 应使用 task doctor（Taskfile 中无 check task）
 task check                    # ⚠️ 此 task 不存在，会报 "Task not found" 错误
 ```
 
-Agent 在处理任何需要执行命令的任务时，必须先查阅 `Taskfile.yml` 找到对应 task，使用 `task <name>` 执行。如果 Taskfile 中没有对应 task，需要先和用户讨论是否添加，而不是自作主张跑裸命令。
+**过滤测试的边界（`task test-filter`）**：它是**迭代加速工具，不是证据**。任何「门禁通过」「Stage 完成」「交付验证」的结论，**必须以 `task test` 全量结果为准**。用过滤结果充当交付依据等同于谎报。
+
+Agent 在处理任何需要执行命令的任务时，必须先查阅 `Taskfile.yml` 找到对应 task，使用 `task <name>` 执行。如果 Taskfile 中没有对应 task，**必须先停下来和用户讨论是否添加**，而不是「因为没有 task」就自作主张跑裸命令——后者是本纪律最常见的破防方式（2026-10-06 Stage 134 实际发生过：发现 `task check` 不存在后直接跑了 `cargo check`、`cargo fmt --all`、`cargo test` 过滤版共十余次）。
 
 ## 快速命令
 
 ```bash
 task doctor      # 编译检查（cargo check --workspace + clippy）+ 项目健康状态
-task test        # 运行单元测试
+task test        # 运行全量单元测试
 task bdd         # Mock BDD 测试
+task fmt-fix     # 格式化代码
 task status      # 显示状态
 ```
 

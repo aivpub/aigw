@@ -177,7 +177,6 @@ impl WebSearchRegistry {
 /// **This is the single place a new vendor is wired in.** Unknown kinds are
 /// rejected with a message listing [`config::SUPPORTED_KINDS`], so the error text
 /// stays accurate without being maintained by hand.
-#[cfg(feature = "reqwest")]
 pub fn build_provider(
     cfg: &WebSearchProviderConfig,
     instances: Vec<WebSearchInstanceConfig>,

@@ -37,7 +37,6 @@ use crate::config::{ModelEntry, RouterSettings};
 use crate::db::Database;
 use crate::models::ProxyModel;
 use crate::router::RouterConfig;
-#[cfg(feature = "reqwest")]
 use crate::websearch::{
     config::{WebSearchConfig, WebSearchInstanceConfig},
     CooldownPolicy, Guardrails, SearchProvider, WebSearchRegistry,
@@ -178,7 +177,6 @@ pub fn router_settings_seed_json(router_settings: &Option<RouterSettings>) -> se
 /// `Err` fails startup. Invalid values (unknown `default_provider`, unsupported
 /// `kind`, empty `instances`, conflicting domain lists) are rejected here rather
 /// than at request time.
-#[cfg(feature = "reqwest")]
 pub fn build_websearch_registry(
     cfg: &Option<WebSearchConfig>,
     master_key: &str,
@@ -492,7 +490,6 @@ mod tests {
     // build_websearch_registry (Phase 53, Stage 134)
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    #[cfg(feature = "reqwest")]
     const WEB_SEARCH_YAML: &str = r#"
 enabled: true
 default_provider: searxng
@@ -512,13 +509,11 @@ providers:
         weight: 1
 "#;
 
-    #[cfg(feature = "reqwest")]
     fn parse_web_search(yaml: &str) -> WebSearchConfig {
         serde_yaml::from_str(yaml).expect("parse web_search block")
     }
 
     #[test]
-    #[cfg(feature = "reqwest")]
     fn test_websearch_config_absent_disables_layer() {
         // The whole block missing from config.yaml must cost nothing at all —
         // same master-switch semantics as CacheConfig.
@@ -527,7 +522,6 @@ providers:
     }
 
     #[test]
-    #[cfg(feature = "reqwest")]
     fn test_websearch_disabled_flag_disables_layer() {
         let mut cfg = parse_web_search(WEB_SEARCH_YAML);
         cfg.enabled = false;
@@ -537,7 +531,6 @@ providers:
     }
 
     #[test]
-    #[cfg(feature = "reqwest")]
     fn test_build_websearch_registry_wires_providers_and_guardrails() {
         let cfg = parse_web_search(WEB_SEARCH_YAML);
         let reg = build_websearch_registry(&Some(cfg), "mk")
@@ -557,7 +550,6 @@ providers:
     }
 
     #[test]
-    #[cfg(feature = "reqwest")]
     fn test_build_websearch_registry_rejects_invalid_config_at_load() {
         // Startup must fail rather than surfacing the problem per-request.
         let mut cfg = parse_web_search(WEB_SEARCH_YAML);
@@ -575,7 +567,6 @@ providers:
     }
 
     #[test]
-    #[cfg(feature = "reqwest")]
     fn test_build_websearch_registry_rejects_bad_proxy_url() {
         let mut cfg = parse_web_search(WEB_SEARCH_YAML);
         cfg.proxy_url = "not a proxy".to_string();
@@ -585,7 +576,6 @@ providers:
     }
 
     #[test]
-    #[cfg(feature = "reqwest")]
     fn test_build_websearch_registry_decrypts_instance_api_keys() {
         let master_key = "sk-master-loader-test";
         let cipher = crate::crypto::encrypt_litellm_value_gcm("sk-paid-key", master_key).unwrap();

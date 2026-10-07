@@ -200,8 +200,9 @@ fn domain_allowed(url: &str, guardrails: &Guardrails) -> bool {
 
 /// Host of a url, lowercased, without userinfo or port.
 ///
-/// Hand-rolled instead of pulling in `url`: this module must compile with
-/// `--no-default-features` (where `reqwest`, and therefore `url`, is absent).
+/// Hand-rolled rather than pulling in the `url` crate: `reqwest` re-exports no
+/// parser and the two cases we need (host extraction for domain matching) are a
+/// handful of lines with their own tests. Not worth a direct dependency.
 fn url_host(url: &str) -> Option<String> {
     let rest = url
         .split_once("://")

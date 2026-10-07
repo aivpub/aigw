@@ -17,6 +17,25 @@ tasks:
       - cargo test --workspace
       - echo "test passed"
 
+  test-filter:
+    desc: "run a subset of unit tests by name filter — `task test-filter -- websearch`"
+    summary: |
+      Fast inner-loop variant of `task test`: passes everything after `--`
+      straight to the libtest name filter.
+
+        task test-filter -- websearch           # whole module
+        task test-filter -- websearch::config   # one submodule
+        task test-filter -- test_normalize_     # one test group
+
+      Scope is aigw-core's lib tests only (that is where the inner loop lives).
+      A filtered run is an ITERATION AID, never evidence: any gate, delivery
+      claim or reported result must come from a full `task test`.
+    cmds:
+      - cargo test -p aigw-core --lib -- {{.CLI_ARGS}}
+      # No backticks in this string: Taskfile runs cmds through a shell, so a
+      # backtick-quoted "task test" would be executed as command substitution.
+      - echo "test-filter passed -- NOT a substitute for a full 'task test'"
+
   bdd:
     desc: "run mock BDD tests"
     cmds:
@@ -183,10 +202,16 @@ tasks:
       - cargo run -p aigw-server -- --config config.yaml
 
   fmt:
-    desc: "code format check"
+    desc: "code format check (read-only; use fmt-fix to actually format)"
     cmds:
       - cargo fmt --all -- --check
       - echo "fmt passed"
+
+  fmt-fix:
+    desc: "format code in place (writes files)"
+    cmds:
+      - cargo fmt --all
+      - echo "fmt-fix applied"
 
   lint:
     desc: "code lint"

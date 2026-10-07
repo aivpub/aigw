@@ -9,7 +9,7 @@ name = "aigw"
 path = "src/main.rs"
 
 [dependencies]
-aigw-core = { path = "../aigw-core", features = ["reqwest"] }
+aigw-core = { path = "../aigw-core" }
 tokio = { workspace = true }
 axum = { workspace = true }
 reqwest = { workspace = true }
@@ -40,7 +40,7 @@ axum-client-ip = "1"
 sqlx = { workspace = true }
 
 [dev-dependencies]
-aigw-core = { path = "../aigw-core", features = ["reqwest", "test"] }
+aigw-core = { path = "../aigw-core", features = ["test"] }
 aigw-migrate = { path = "../aigw-migrate" }
 axum-test = "16"
 cucumber = { version = "0.21", features = ["macros"] }

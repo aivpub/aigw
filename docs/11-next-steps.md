@@ -33,10 +33,15 @@
 
 **⚠️ 验证方式的替代（须知）**: **未走严格 TDD 红绿**（测试与实现同批编写）。补偿手段是**变异测试** —— 注入 4 个针对性缺陷（删除 score 重排 / 截断先于去重 / 4xx 改为可转移 / snippet 读错键），确认每个都被对应 UT 捕获后还原。这证明断言非同义反复，**但不等同于红绿流程**。另：3 个集成测试最初因「实例选择随机」而 flaky，已改为断言与顺序无关的不变量，连跑 5 次稳定。
 
-### ⚠️ 本 Stage 发现的两个既存问题（与 Phase 53 无关，待决策）
+### ✅ 工程纪律与构建配置收尾（2026-10-07，用户决策后执行）
 
-1. **`task check` 在 `Taskfile.yml` 中不存在** —— 但 CLAUDE.md 的「纪律红线」把它列为必用命令，多个 Stage 文档的门禁也引用它。实际等价物是 `task doctor`（`cargo check --workspace` + clippy）。**后续每个 Stage 都会撞一次** → 应补 task 或订正 CLAUDE.md。
-2. **`cargo check -p aigw-core --no-default-features` 已有 27 个编译错误** —— `alerts.rs` / `claude_oauth.rs` / `probe.rs` 直接用 `reqwest::` 而无 feature 门控，即 `reqwest` 已是事实必选依赖。`git stash` 对照确认与本 Stage 无关（websearch 自身在该 profile 下零错误零告警）。**建议**：承认现实，把 `reqwest` 改为必选并删掉该 feature（没有消费者在用无 reqwest 的 aigw-core，维护无人跑的 profile 是净成本）。
+Stage 134 执行期间暴露了「Agent 绕过 Taskfile 跑裸命令」的问题，根因是**纪律文本引用了不存在的 task，且两处真实缺口没有 task 覆盖**。三项决策全部落地：
+
+1. **删除 `reqwest` feature（方案 ②「承认现实」）** —— 该 feature 从未真正可选：`alerts.rs` / `claude_oauth.rs` / `probe.rs` 无条件引用 `reqwest::`，`--no-default-features` 有 **27 个既存编译错误**。改动：Cargo.toml 三个依赖去 `optional`、删 `[features] default = ["reqwest"]` 与 `reqwest = [...]`、`aigw-server` 两处 `features = ["reqwest"]` 清理、全库 **22 处 `#[cfg(feature = "reqwest")]` 移除**（`router.rs` 2 / `config_loader.rs` 10 / `websearch/*` 10）。**验证**：`task test` **1052 pass / 0 fail**（与删除前逐字一致）、`task bdd` **285 场景**不变、`task doctor` / `fmt` / `lint` 全绿。
+2. **新增 `task test-filter -- <pattern>`** —— 此前跑过滤测试（开发迭代）**只能用裸命令**，这是 Stage 134 违规最集中的地方。现收敛进 Taskfile，并在 CLAUDE.md 写明边界：**过滤测试是迭代工具，不是证据；门禁与交付结论必须以 `task test` 全量结果为准**。
+3. **新增 `task fmt-fix`** —— `task fmt` 只做 `--check`（只读），此前「实际格式化代码」没有任何 task 覆盖。现 `fmt` 管检查、`fmt-fix` 管写入，职责分明。
+
+**CLAUDE.md 同步订正**：`task check` → `task doctor`（前者不存在，且被显式列入反例清单）、`task test-bdd` → `task bdd`、补 `test-filter` / `fmt-fix` / `fmt` / `lint`，并把「没有 task 时必须先问用户、不得自作主张跑裸命令」从一句话强化为带实例的明文约束。
 
 ### 下一步：Stage 135（prompt 注入接线，12h）
 
@@ -425,6 +430,6 @@ Phase 45:   ████████████████████ 100% (3
 | ✅ | **Phase 51 Stage 130 收尾 + 安全审计（134/134 ALL STAGES COMPLETE）** | ✅ 完成（2026-08-24，real BDD 58/58 × 3 + 审计 8 项 + TD-015a Resolved + ADR-034 收尾） |
 | ✅ | **Phase 53 Stage 134 搜索后端抽象层**（`aigw-core::websearch` 六文件 + 装载 + 配置 section + 81 UT） | ✅ 完成（2026-10-06） |
 | P1 | **Phase 53 Stage 135 prompt 注入接线** + 修 TD-017g | 下一步 |
-| P2 | `task check` 缺失（CLAUDE.md 纪律红线引用了不存在的 task）/ `--no-default-features` 既存 27 错误 | 待决策（Stage 134 发现） |
+| ✅ | 工程纪律与构建配置收尾：删 `reqwest` feature + 新增 `task test-filter` / `task fmt-fix` + CLAUDE.md 订正 | ✅ 完成（2026-10-07） |
 | P2 | TD-008c/d 后端错误多语言 + RTL、TD-009e 外链缩略图、TD-011a 视频 token 估算（剩余） | 待处理（视使用量） |
 | P2 | Phase 41 测试缺口（适配器 UT + 流式接线） | ✅ 关闭（2026-08-09） |

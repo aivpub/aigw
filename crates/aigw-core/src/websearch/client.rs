@@ -11,7 +11,6 @@
 //! `build_retry_client`'s per-request construction: connection reuse is directly
 //! visible in TTFT here.
 
-#[cfg(feature = "reqwest")]
 use std::time::Duration;
 
 /// Build a search client: optional proxy egress, transient retries, hard timeout.
@@ -19,7 +18,6 @@ use std::time::Duration;
 /// `proxy_url` accepts `http`/`https`/`socks5`/`socks5h` (same as
 /// `probe::build_proxy_client`; `insecure_skip_verify` is likewise not offered).
 /// Retries cover 5xx and network errors only — 4xx is never retried.
-#[cfg(feature = "reqwest")]
 pub fn build_search_client(
     proxy_url: Option<&str>,
     timeout: Duration,
@@ -44,7 +42,7 @@ pub fn build_search_client(
         .build())
 }
 
-#[cfg(all(test, feature = "reqwest"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
