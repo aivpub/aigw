@@ -221,8 +221,10 @@ async fn record_search_spend(
             "results": outcome.results_detail(),
         })),
         session_id: ctx.session_id.map(str::to_string),
+        // `empty` still means the provider answered — only a transport-level
+        // `degraded` is a failure.
         status: Some(
-            if outcome.status() == "ok" {
+            if matches!(outcome.status(), "ok" | "empty") {
                 "success"
             } else {
                 "failure"

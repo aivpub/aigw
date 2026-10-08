@@ -142,8 +142,16 @@ impl SearchStub {
 static STUB: std::sync::OnceLock<Arc<tokio::sync::Mutex<Option<Arc<SearchStub>>>>> =
     std::sync::OnceLock::new();
 
+/// Second instance slot — for the multi-instance `api_base` scenario.
+static STUB2: std::sync::OnceLock<Arc<tokio::sync::Mutex<Option<Arc<SearchStub>>>>> =
+    std::sync::OnceLock::new();
+
 fn stub_slot() -> &'static Arc<tokio::sync::Mutex<Option<Arc<SearchStub>>>> {
     STUB.get_or_init(|| Arc::new(tokio::sync::Mutex::new(None)))
+}
+
+fn stub2_slot() -> &'static Arc<tokio::sync::Mutex<Option<Arc<SearchStub>>>> {
+    STUB2.get_or_init(|| Arc::new(tokio::sync::Mutex::new(None)))
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -151,9 +159,17 @@ fn stub_slot() -> &'static Arc<tokio::sync::Mutex<Option<Arc<SearchStub>>>> {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 async fn install_registry(world: &mut TestWorld, stub: Option<Arc<SearchStub>>, timeout_ms: u64) {
+    let urls = stub.map(|s| vec![s.base_url.clone()]);
+    install_registry_urls(world, urls, timeout_ms).await;
+}
+
+/// [`install_registry`] with an explicit instance list — the multi-instance
+/// `api_base` scenario needs two endpoints so the column can be shown to track
+/// whichever one actually served the query.
+async fn install_registry_urls(world: &mut TestWorld, urls: Option<Vec<String>>, timeout_ms: u64) {
     use aigw_core::websearch::{WebSearchConfig, WebSearchInstanceConfig, WebSearchProviderConfig};
 
-    let cfg = stub.map(|s| WebSearchConfig {
+    let cfg = urls.map(|urls| WebSearchConfig {
         enabled: true,
         default_provider: "searxng".to_string(),
         failover_order: vec!["searxng".to_string()],
@@ -171,12 +187,15 @@ async fn install_registry(world: &mut TestWorld, stub: Option<Arc<SearchStub>>, 
             kind: "searxng".to_string(),
             cost_per_query: 0.01,
             timeout_ms: None,
-            instances: vec![WebSearchInstanceConfig {
-                base_url: s.base_url.clone(),
-                api_key: None,
-                weight: None,
-                enabled: true,
-            }],
+            instances: urls
+                .into_iter()
+                .map(|base_url| WebSearchInstanceConfig {
+                    base_url,
+                    api_key: None,
+                    weight: None,
+                    enabled: true,
+                })
+                .collect(),
         }],
     });
 
@@ -220,6 +239,46 @@ async fn given_search_not_configured(world: &mut TestWorld) {
     }
     drop(slot);
     install_registry(world, None, 5000).await;
+}
+
+/// Two instances: the first is a dead port, the second is the live stub. The
+/// `api_base` column must show the one that actually answered, not the first
+/// configured endpoint.
+#[given(expr = "web_search 配有两个实例且仅第二个可用")]
+async fn given_two_instances_second_live(world: &mut TestWorld) {
+    let mut slot = stub2_slot().lock().await;
+    let stub = match slot.as_ref() {
+        Some(s) => s.clone(),
+        None => {
+            let s = Arc::new(SearchStub::start().await);
+            *slot = Some(s.clone());
+            s
+        }
+    };
+    drop(slot);
+    stub.queries.lock().unwrap().clear();
+    stub.set(200, searxng_fixture());
+    stub.set_delay(0);
+    let urls = vec!["http://127.0.0.1:9".to_string(), stub.base_url.clone()];
+    install_registry_urls(world, Some(urls), 3000).await;
+}
+
+#[then(expr = "搜索行的 api_base 为第二个实例地址")]
+async fn then_search_api_base_is_second(world: &mut TestWorld) {
+    let slot = stub2_slot().lock().await;
+    let expected = slot
+        .as_ref()
+        .expect("second stub not started")
+        .base_url
+        .clone();
+    drop(slot);
+    let rows = search_rows(world).await;
+    let last = rows.last().expect("no search row");
+    assert_eq!(
+        last.api_base.as_deref(),
+        Some(expected.as_str()),
+        "api_base must be the instance that served the query, not the first configured"
+    );
 }
 
 #[given(expr = "搜索后端返回状态码 {int}")]
