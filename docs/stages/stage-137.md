@@ -542,11 +542,11 @@ function extractSearchMeta(metadata: unknown): {
 - [x] en + zh-CN 键集对称，`npx tsc -b` 无 i18n 类型错
 - [x] `task fe-lint` / `task fe-bdd` / `task test` / `task fmt` / `task lint` 全绿
 - [x] `task bdd-real-sqlite` / `bdd-real-pg` / `bdd-real-mysql` 三驱动全绿（JSON 条件方言验证）
-      —— Stage 137 后端改动落地时已跑 **61/61 × 3**；本 Stage 后续的前端改动**不触及**这三条驱动的断言面
-      （三驱动跑的是后端 feature，前端改动仅在 `crates/aigw-frontend`），故未重复执行
+      —— 收尾时**实测复跑**（`task test-db-up` + 三驱动）：sqlite **61/61**、pg **61/61**、mysql **61/61**
+      （各 298 steps），含 Stage 137 新增的 `spend_logs 的 call_type / parent_call_id 过滤跨三方言一致` feature
 - [x] `docs/12-technical-debt.md` 登记 §8.2 各条（TD-018 关闭 + 新增 TD-019）
 - [x] `docs/stages/stage-roadmap.md` + `docs/11-next-steps.md` 回写
-- [ ] git commit（精确 add；`--signoff`）
+- [x] git commit（精确 add；`--signoff`）—— `08214fd`
 
 ---
 
