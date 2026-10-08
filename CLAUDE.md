@@ -21,9 +21,11 @@ task test              # 运行全量单元测试（门禁/交付结论只认这
 task test-filter -- <pattern>   # 开发迭代期按名字过滤跑 aigw-core lib 测试
                                 # 例：task test-filter -- websearch
 task bdd               # Mock BDD 测试
-task bdd-real-sqlite   # SQLite 真实 BDD
-task bdd-real-pg       # PostgreSQL 真实 BDD
-task bdd-real-mysql    # MySQL 真实 BDD
+task bdd-real-sqlite   # SQLite 真实 BDD（自带 DB + server，无需前置）
+task test-db-up        # 起 PostgreSQL + MySQL 测试库并等到 healthy（bdd-real-pg/mysql 的前置）
+task bdd-real-pg       # PostgreSQL 真实 BDD（需先 task test-db-up）
+task bdd-real-mysql    # MySQL 真实 BDD（需先 task test-db-up）
+task test-db-down      # 停测试库（保留数据卷）
 task doctor            # 编译检查（cargo check --workspace + clippy）+ 项目健康状态
 task build             # 构建 release 二进制
 task fmt               # 格式检查（只读 --check）
@@ -37,6 +39,7 @@ cargo test -p aigw-core --lib websearch   # 应使用 task test-filter -- websea
 cargo fmt --all               # 应使用 task fmt-fix
 cargo check                   # 应使用 task doctor（Taskfile 中无 check task）
 task check                    # ⚠️ 此 task 不存在，会报 "Task not found" 错误
+docker compose -f docker-compose.test.yml up -d   # 应使用 task test-db-up（含 health 等待）
 ```
 
 **过滤测试的边界（`task test-filter`）**：它是**迭代加速工具，不是证据**。任何「门禁通过」「Stage 完成」「交付验证」的结论，**必须以 `task test` 全量结果为准**。用过滤结果充当交付依据等同于谎报。

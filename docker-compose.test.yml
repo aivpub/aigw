@@ -5,9 +5,10 @@
 # Used for BDD tests and cross-database verification.
 #
 # Quick start:
-#   docker compose -f docker-compose.test.yml up -d
+#   task test-db-up          # starts PostgreSQL + MySQL and waits for readiness
 #   task bdd-real-pg
 #   task bdd-real-mysql
+#   task test-db-down
 # =============================================================================
 
 services:
@@ -34,6 +35,12 @@ services:
       - "3306:3306"
     volumes:
       - mysql_test_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
 volumes:
   pg_test_data:

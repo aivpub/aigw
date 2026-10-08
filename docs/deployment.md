@@ -27,10 +27,16 @@ docker compose -f docker-compose.allinone.yml up -d
 ### Test / CI
 
 ```bash
-docker compose -f docker-compose.test.yml up -d
+task test-db-up        # 起 PostgreSQL + MySQL 并等到 healthy
 task bdd-real-pg
 task bdd-real-mysql
+task test-db-down
 ```
+
+`test-db-up` 需要 `.env` 中的 `POSTGRES_PASSWORD` / `MYSQL_ROOT_PASSWORD`
+（compose 文件缺这两项会拒绝启动）。容器数据落在命名卷里，`test-db-down`
+不会删数据；要干净重来用
+`docker compose -f docker-compose.test.yml down -v`。
 
 ## Configuration
 

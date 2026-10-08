@@ -450,6 +450,9 @@ function extractSearchMeta(metadata: unknown): {
 
 ## 7. 门禁
 
+- [ ] **TDD 红绿（本 Stage 强制）** —— 用户 2026-10-08 决策：Stage 134/135/136 的「测试与实现同批编写」不再沿用，本 Stage **每个 UT/BDD 必须先跑红再写实现**。红绿过程与证据写进 §Implementation Notes
+
+
 - [ ] 7 个新后端 UT 先 fail 后 pass（TDD 红绿），含注入转义与 `parent_call_id` 无命中两条
 - [ ] 20 条新 BDD 场景 × 3 viewport = 60 用例全绿
 - [ ] 既有 BDD 零回归（embedding badge / embedding 抽屉 / multimodal marker / dashboard 四组重点复验）

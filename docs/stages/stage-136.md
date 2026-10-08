@@ -43,7 +43,7 @@ Stage 134/135 让网关在一次客户端请求里**先搜后问**（设计 C，
 - [x] 搜索费计入 key/user/team/org 四级 `increment_*_spend`（BDD `key "ws-chat-key" 的累计 spend 含搜索费` 端到端断言）
 - [x] `api_base` 记录**实际命中实例**的 `base_url`（Stage 135 侧补 `SearchResponse.endpoint` + `parse_response_from`；BDD `搜索行的 api_base 非空`）；`custom_llm_provider` 仍为 provider 名
 - [x] 搜索行有独立 `call_id`，`update_spend_log` 按 `call_id` 定位，Phase 2 物理上触不到；搜索结果**在搜索时刻**即已写库（早于模型 Phase 1），故流式路径无需额外处理
-- [x] 三个 surface（chat / responses / messages）**非流式**响应体回传搜索次数（`echo_web_search_requests`，BDD `响应 usage.server_tool_use.web_search_requests 为 1`）。**流式为范围收窄**（Review F8）
+- [x] 三个 surface（chat / responses / messages）**非流式**响应体回传搜索次数（`echo_web_search_requests`，BDD `响应 usage.server_tool_use.web_search_requests 为 1`）。**流式明确不做**（2026-10-08 决策，见 §8.2：收益仅一个观测字段，代价是改三处 SSE 转发帧、其中一处是三次生产事故的事故现场）
 - [x] 每次搜索与每次模型调用各自持有**独立的 spend 上下文**：`record_search_spend` 构造各自独立的 `SpendLog` 值并各自调用 `increment_*`，无共享可变实例
 - [x] `task test`（aigw-core 645 / aigw-server 184）/ `task bdd`（293 场景 280 pass / 13 skip）/ `task bdd-real-sqlite`（58/58）/ `task fmt` / `task lint` / `task doctor` 全绿
 
@@ -327,7 +327,7 @@ pub struct ServerToolUse {
 }
 ```
 
-- **流式：本期不回传**（Review F8，范围收窄）。chunk 以原始字节转发（`tx.send(chunk.to_vec())`），要在既有 usage 帧里注入字段需 parse → mutate → re-serialize，而 Responses 适配器本就会**重建** usage 为 `{input_tokens, output_tokens, total_tokens}`（`adapter.rs:2880-2912`），上游带来的字段在这一步被剥掉 —— 三条 surface 各需一处帧改写点，设计初稿未规划。**非流式三 surface 已全部回传**；流式随 Stage 137 一起处理或单独立项。
+- **流式：明确不做（2026-10-08 决策）**。chunk 以原始字节转发（`tx.send(chunk.to_vec())`），要在既有 usage 帧里注入字段需 parse → mutate → re-serialize；Responses 适配器还会**重建** usage 为 `{input_tokens, output_tokens, total_tokens}`（`adapter.rs:2880-2912` 与 `finish()` 的 `response.completed`），上游带来的字段在这一步被剥掉 —— 三条 surface 各需一处帧改写点，而 `responses.rs` 的流式循环是三次生产事故的同一现场（`c3f360c` / `4bd85c7` / `8cf8c12`）。**收益仅「流式客户端能看到本次搜了几次」这一个观测字段** —— 计费、预算、SpendLog 与流式完全无关（搜索行在搜索完成那刻即写库，早于模型调用）。**非流式三 surface 已全覆盖**。
 - 全部字段 `Option` + `skip_serializing_if` → **未启用搜索时响应体字节级不变**，既有 BDD 不受影响
 
 ### 3.9a 零金额不退化为 no-op（必须守住的约束）
@@ -496,7 +496,7 @@ pub struct ServerToolUse {
 |----|------|
 | **真实 provider 端到端未执行** | §4.3 第 1–3 项（SearXNG 三种单价的真实链路验证）需可达实例，本轮未做 |
 | **`bdd-real-pg` / `bdd-real-mysql` 未跑** | 本机无 PG/MySQL 服务；三方言手写 INSERT 未改（仅新 `call_type` 取值），SQLite 已验证 |
-| **流式 usage 回传未做** | Review F8 —— chunk 原始字节转发 + Responses 适配器重建 usage，三 surface 各需一处帧改写点；非流式已全覆盖 |
+| **流式 usage 回传 —— 不做（决策，非欠账）** | 2026-10-08 用户决策：代价（改三处 SSE 转发帧，含三次生产事故现场 `responses.rs`）远大于收益（仅一个观测字段；计费/预算/SpendLog 与流式无关）。**非流式已全覆盖**，流式客户端看不到 `web_search_requests` 是已接受的已知限制 |
 | **多实例 `api_base` 端到端未覆盖** | `api_base` 非空已由 BDD 断言；「切换命中实例后该列随动」需第二个 stub 实例，登记为后续 |
 | **搜索行不入 `daily_spend_queue`** | 显式决策（§3.5）：复合分组键会切碎日聚合，处置留 Stage 137 审计 |
 | **`empty` 结果计费** | provider 答 200 但 `normalize` 全过滤 → 判 `Empty` 并**照样计费**（真实往返已发生，§8.1 宁多算不漏账）；`status="success"` |
@@ -544,6 +544,8 @@ pub struct ServerToolUse {
 ### 9.4 未走严格 TDD 红绿
 
 UT 与实现同批编写（与 Stage 134/135 同类登记）。`calc_search_spend` 的边界值（NaN/inf/负值/零次）在实现落地时同步补测，非先红后绿。
+
+**Stage 137 起改为强制红绿**（2026-10-08 用户决策）—— 同批编写无法排除「测试按实现写」，本 Stage 是最后一例。
 
 ### 9.5 真实端到端（2026-10-08）
 

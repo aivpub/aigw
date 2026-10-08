@@ -30,11 +30,17 @@
 
 `bdd-real-sqlite` / `bdd-real-pg` / `bdd-real-mysql` 三驱动均 58/58 绿（`docker compose -f docker-compose.test.yml up -d` 起本地 PG/MySQL）。
 
-**范围收窄**: 流式 usage 回传不做（chunk 原始字节转发 + Responses 适配器重建 usage，三 surface 各需帧改写点）。
+**范围收窄（明确不做，非欠账）**: 流式 usage 回传 —— 2026-10-08 决策。代价是改三处 SSE 转发帧（其中 `responses.rs` 的流式循环是三次生产事故现场），收益仅「流式客户端能看见本次搜了几次」这一个观测字段；**计费 / 预算 / SpendLog 与流式完全无关**（搜索行在搜索完成那刻即写库，早于模型调用）。非流式三 surface 已全覆盖。
 
-### 下一步：Stage 137（调用日志展现，9h）
+### 新增 Taskfile 任务（2026-10-08）
+
+`task test-db-up` / `task test-db-down` —— 封装 `docker compose -f docker-compose.test.yml`，`up` 带 `--wait` 直到两个容器 healthy。此前 `bdd-real-pg` / `bdd-real-mysql` 的前置（起 PG/MySQL）**没有任何 task 覆盖**，只能手敲 docker 命令，属纪律缺口。
+
+### 下一步：Stage 137（调用日志展现，9h）—— **强制 TDD 红绿**
 
 Spend Logs 识别 `call_type="search"` 行（徽章 + query + 结果数 + provider + spend）+ 父子跳转 UX + `call_type` 过滤 + **零 token 行对既有 Usage 聚合口径的影响审计** + i18n + fe-bdd。⚠️ 搜索行入不入 `daily_spend_queue` 的处置也在此定（Stage 136 显式不入）。
+
+**⚠️ 本 Stage 强制 TDD 红绿**（用户 2026-10-08 决策）：每个 UT/BDD 先跑红再写实现，红绿证据写进 Implementation Notes。Stage 134/135/136 的同批编写不再沿用。
 
 ### Stage 135 交付（2026-10-07）
 
