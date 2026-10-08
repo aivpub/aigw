@@ -465,7 +465,7 @@ pub struct ServerToolUse {
 - [~] 新 UT：`calc_search_spend` × 9（`chat.rs`）+ wire 层 × 3（echo）+ core × 2（`performed_search` 计费语义）。**未走严格红绿**（与 Stage 134/135 同类登记）
 - [x] BDD 覆盖计费链路：`spend_logs 中存在 call_type="search" 的行` / `搜索行的 spend 为 0.01` / `token 列全为 0` / `model 为 "searxng/search"` / `api_base 非空` / `metadata.parent_call_id 与模型行相同` / `key 累计 spend 含搜索费` / `usage.server_tool_use.web_search_requests 为 1` — 全部挂入既有 Chat 触发场景。**未覆盖**：零单价与多实例 `api_base` 的端到端（`calc_search_spend(_, Some(0.0))` 由 UT 锁定；多实例需第二个 stub 实例，登记 §8.2）
 - [x] `task test` / `task bdd` / `task fmt` / `task lint` / `task doctor` 全绿
-- [~] `task bdd-real-sqlite` 58/58 绿；`bdd-real-pg` / `bdd-real-mysql` **未跑**（环境无 PG/MySQL 服务，登记 §8.2）
+- [x] `task bdd-real-sqlite` / `bdd-real-pg` / `bdd-real-mysql` **三驱动各 58/58 绿**（`docker compose -f docker-compose.test.yml up -d`）
 - [ ] ⏳ **真实 provider 端到端未执行**（§4.3 第 1–3 项；需可达的 SearXNG 实例）—— 登记 §8.2
 - [x] 未启用搜索时响应 `usage` 字节级不变（`echo_leaves_usage_untouched_when_not_searched` + `echo_noops_without_usage`；且 `skip_serializing_if` 保证 struct 层不变）
 - [x] `docs/12-technical-debt.md` 登记 §8.2 各条
@@ -544,3 +544,26 @@ pub struct ServerToolUse {
 ### 9.4 未走严格 TDD 红绿
 
 UT 与实现同批编写（与 Stage 134/135 同类登记）。`calc_search_spend` 的边界值（NaN/inf/负值/零次）在实现落地时同步补测，非先红后绿。
+
+### 9.5 真实端到端（2026-10-08）
+
+对自建 SearXNG `http://30.184.60.216:9099`（`task build` → release 二进制 + 临时 config）跑通：
+
+| 场景 | 结果 |
+|------|------|
+| chat `web_search_options`，`cost_per_query: 0.01` | 200；搜索行 `spend=0.01`、`api_base=http://30.184.60.216:9099`、`model=searxng/search`、token 归零、`metadata.parent_call_id` 对上父行；`virtual_keys.spend=0.01` |
+| 同上，摊销单价 `0.000012` | `spend=1.2e-05` 精确落库；key 累加 `3.6e-05`（3 次） |
+| 同上，显式 `0.0` | 搜索行**仍存在**、`spend=0.0`、`metadata.cost_per_query=0.0`（零金额不退化） |
+| 两实例（首个死端口 + 实际 SearXNG） | `api_base` 记为**实际应答**的 SearXNG，provider 名不变 |
+| 全实例不可达 | 200 + `status="degraded"`，搜索行 `status="failure"`、照样计费 |
+| `allowed_domains` 全过滤 | 200 + `status="empty"`，搜索行 `status="success"`（往返已发生） |
+| `/v1/responses` + `web_search` tool | 200；`usage.server_tool_use.web_search_requests=1` |
+| `/v1/messages` + `web_search_20250305` | 200；同上（此前该形态是 500，TD-017g） |
+
+**修复的 3 处缺陷**（commit `6c200a7`）：
+
+1. `empty` 被记 `status="failure"` —— status 表达式只认 `"ok"`
+2. `搜索后端返回状态码 {int}` 误绑 `#[then]` —— 「500 降级」场景**长期静默 skip**（混在既有 13 个 skip 里）
+3. 多实例 `api_base` 无覆盖 —— 补第二 stub + 场景
+
+**模型侧验证**：模板的 markdown 链接引用指令对本环境模型（`z-ai/glm5`）**有效** —— 回复按 `[域名](URL)` 形式逐条给出了来源链接。

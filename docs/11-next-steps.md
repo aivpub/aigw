@@ -22,7 +22,13 @@
 
 **验证**: aigw-core **645** UT / aigw-server **184**、mock BDD **293 场景（280 pass / 13 skip）/ 1529 steps**、real BDD sqlite **58/58**、`fmt`/`lint`/`doctor` green。BDD 端到端断言了搜索行的 `spend`/`model`/`api_base`/`parent_call_id`/token 归零/key 累计/usage 回传。
 
-**⚠️ 未执行项**: ①真实 provider 端到端（需可达 SearXNG）；②`bdd-real-pg` / `bdd-real-mysql`（本机无服务）；③多实例 `api_base` 端到端。
+**真实端到端（2026-10-08 已执行）**: 对自建 SearXNG `30.184.60.216:9099` 跑通全链路，覆盖 chat / responses / messages 三 surface × 缺省 0.01 / 摊销 0.000012 / 显式 0.0 三种单价 × 多实例 failover × 全实例不可达降级。**暴露并修复 3 处缺陷**（commit `6c200a7`）：
+
+1. **`empty` 结果被记成 `status="failure"`** —— provider 答 200、行却标失败，对账会误读为搜索故障
+2. **`搜索后端返回状态码 {int}` 误绑 `#[then]`** —— 致「500 降级」场景**长期静默 skip**，混在既有 skip 计数里未被察觉
+3. **多实例 `api_base` 无覆盖** —— 补第二实例槽 + 新场景，断言记录的是**实际应答**实例而非配置首个
+
+`bdd-real-sqlite` / `bdd-real-pg` / `bdd-real-mysql` 三驱动均 58/58 绿（`docker compose -f docker-compose.test.yml up -d` 起本地 PG/MySQL）。
 
 **范围收窄**: 流式 usage 回传不做（chunk 原始字节转发 + Responses 适配器重建 usage，三 surface 各需帧改写点）。
 
