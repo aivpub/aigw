@@ -8204,8 +8204,7 @@ impl Database {
 
     // ── Spend Logs: status + token range filter ──
 
-    
-#[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     pub async fn query_spend_logs_with_status_filter(
         &self,
         api_key: Option<&str>,

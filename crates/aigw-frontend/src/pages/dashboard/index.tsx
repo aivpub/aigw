@@ -61,6 +61,7 @@ interface SpendLog {
 interface SpendLogsResponse {
   data: SpendLog[];
   count: number;
+  total_count: number;
 }
 
 interface ModelAgg {
@@ -241,21 +242,30 @@ export function DashboardPage() {
             <p className="text-xs text-muted-foreground mt-1">
               {startDate} — {endDate}
             </p>
+            <p className="text-[10px] text-muted-foreground/70 mt-0.5">
+              {t("dashboard.periodSpendWindow")}
+            </p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium">
-              {t("dashboard.totalRequests")}
+              <span title={t("dashboard.totalRequestsHint")}>
+                {t("dashboard.totalRequests")}
+              </span>
             </CardTitle>
             <BarChart3 className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
+            {/* Stage 137: `count` is this page's row count (≤ limit); the
+                envelope's `total_count` is the real number for the window. */}
             {isLoading ? (
               <Skeleton className="h-8 w-16" />
             ) : (
-              <div className="text-2xl font-bold">{logsData?.count ?? 0}</div>
+              <div className="text-2xl font-bold">
+                {logsData?.total_count ?? 0}
+              </div>
             )}
           </CardContent>
         </Card>

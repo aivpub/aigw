@@ -673,3 +673,34 @@
   - 前端可按凭证状态操作；needs_reauth 凭证经 Re-auth 一键恢复 active，无需 CLI。
   - token 三件套在响应/日志/前端 DOM 全链路 redact（安全审计项在 Stage 130 复核）。
   - 设计文档：`docs/stages/stage-129.md` + `stage-129-review-log.md`；技术债：TD-016a（Refresh 409 不自动弹 Re-auth）、TD-016b（OAuth 编辑仍走通用 advanced JSON）。
+
+## ADR-036: Stage 137 搜索调用的控制台展现与聚合口径（Phase 53）
+
+- **Date**: 2026-10-08
+- **Status**: Accepted
+- **Related Stage**: Stage 137
+- **Decision**:
+  - **聚合口径统一走「前端注脚」，不改聚合 SQL**：搜索行（`call_type="search"`）在 `spend_logs` 里与 LLM 行同级，
+    污染的是**比值与计数**（`total_requests` / 成功率 / 请求数排行），不是**金额**。给 8 个聚合函数 × 3 方言（24 处）
+    加 `WHERE call_type != 'search'` 的改动面远超收益，且会让 `SUM(spend)` **少算搜索费** —— 而那恰恰是 Stage 136
+    要让它可见的东西，对账等式（`SUM(spend_logs.spend)` == `virtual_keys.spend` 增量）会立刻失败。
+    故：计数类 tile 保持原值 + tooltip 注明「含搜索调用」；派生指标（如「平均 token/请求」）本期**不新增**。
+  - **token 列与 spend 列刻意采取相反处置**：token 对搜索**不适用** → 渲染 `—` + tooltip；花费对搜索**适用、
+    恰好为 0** → 渲染 `$0.00` + 「未计价」徽标。区分「不适用」与「值为零」是让该行读起来像真实记录而非坏数据的关键。
+    徽标文案取**中性表述**（「未计价」= 本次未产生金额），不写「已配置为 0」这类断言式归因 —— 因为
+    `calc_search_spend` 对 `NaN`/`±inf`/负数/0 一律归零，前端无法分辨主动置零与配置写脏（Review F3）。
+  - **父子关联走 `metadata.parent_call_id` 的 JSON 过滤，而非 `session_id` 列**：`session_id` 是更优的真列（可索引），
+    但 `SpendLogsQuery.session_id` 是**静默失效的死参数**，接通它属于另一处改动；本期用 JSON 表达式满足需求，
+    并把「接通 `session_id`」登记为 TD-019 的后续（届时可顺带解决 JSON 索引问题）。
+  - **SQL 字面量转义抽象为 `sql_literal(db, raw)`**：MySQL 默认 `sql_mode` 下反斜杠是字符串转义符，仅做引号翻倍
+    可被 `x\' OR 1=1 --` 绕过（编码期实测返回全部行，Critical X1）；SQLite/PG 把反斜杠当普通字符，**不得**对它们做同样处理。
+- **Background**: Stage 136 引入搜索独立 SpendLog 行后，日志页看不见它、聚合口径被它污染。本 Stage 补这两个缺口。
+  设计评审 7 findings（F1-F7）+ 代码评审 6 findings（G1-G6）全部处置。
+- **Consequences**:
+  - **顺带修复既有 bug**：Dashboard「Total Requests」由本页条数 `count` 改读 `total_count`（TD-018 Resolved）。
+  - **新发现**：`SpendLogsQuery.limit` / `session_id` 是死参数，`limit` 致 Period Spend 的求和窗口实为 30 条（TD-019）。
+  - **门禁新增**：本 Stage 起恢复**强制 TDD 红绿**（用户 2026-10-08 决策）—— Stage 134/135/136 的「测试与实现同批编写」
+    不再沿用。红绿证据写入 stage doc 的 Implementation Notes。
+  - **遗留**：按实例聚合的花费视图、搜索专属 prompt visual 渲染器、`metadata.parent_call_id` 的 JSON 索引、
+    跨页父行的端到端场景、既有等值筛选分支的转义统一 —— 均登记 §8.2 与 TD-019。
+  - 设计文档：`docs/stages/stage-137.md` + `stage-137-review-log.md`。

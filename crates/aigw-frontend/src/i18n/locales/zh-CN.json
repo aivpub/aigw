@@ -116,7 +116,9 @@
       "ok": "成功",
       "failed": "失败",
       "tokens": "Token",
-      "rate": "成功率"
+      "rate": "成功率",
+      "requestsHint": "含按次计费的搜索调用",
+      "rateHint": "分母含搜索调用"
     },
     "trend": "趋势",
     "tabSpend": "💰 消费",
@@ -139,13 +141,15 @@
       "totalTokens": "合计",
       "successCount": "成功",
       "failedCount": "失败",
-      "totalRequests": "合计"
+      "totalRequests": "合计",
+      "requestsHint": "含搜索调用"
     },
     "topKeys": "Top API 密钥",
     "spendByProvider": "按供应商消费",
     "spendByModelGroup": "按模型组消费",
     "spendByModel": "按模型消费",
-    "others": "其他"
+    "others": "其他",
+    "unknownGroupHint": "无模型组的调用，含搜索调用"
   },
   "dashboard": {
     "title": "仪表盘",
@@ -167,7 +171,9 @@
       "tokens": "Token",
       "cost": "费用",
       "status": "状态"
-    }
+    },
+    "totalRequestsHint": "含搜索调用",
+    "periodSpendWindow": "仅累加本页调用,不等于整个时间段"
   },
   "keys": {
     "title": "API 密钥",
@@ -645,7 +651,10 @@
       "session": "会话",
       "tokenRange": "Token 范围",
       "minTokPlaceholder": "最小 tok",
-      "maxTokPlaceholder": "最大 tok"
+      "maxTokPlaceholder": "最大 tok",
+      "callType": "调用类型",
+      "callTypePlaceholder": "类型",
+      "parentCall": "父调用"
     },
     "table": {
       "callId": "调用 ID",
@@ -701,7 +710,8 @@
         "cacheKey": "缓存 Key：",
         "team": "团队：",
         "org": "组织：",
-        "mcpTool": "MCP 工具："
+        "mcpTool": "MCP 工具：",
+        "parentCall": "父调用："
       },
       "imageTokens": "图片 Token",
       "imageTokensUpstream": "上游服务商报告值",
@@ -724,11 +734,25 @@
       },
       "fetchError": "加载失败,点击重试",
       "tabDescription": "描述",
-      "tabParams": "参数"
+      "tabParams": "参数",
+      "searchDetail": "搜索详情"
     },
     "noData": "暂无数据",
     "search": {
-      "placeholder": "搜索 call_id 或 request_id..."
+      "placeholder": "搜索 call_id 或 request_id...",
+      "noTokens": "—",
+      "noTokensHint": "搜索按次计费，不消耗 token",
+      "queries": "{{count}} 次查询",
+      "results": "{{count}} 条结果",
+      "provider": "搜索供应商",
+      "instance": "命中实例",
+      "notPriced": "未计价",
+      "zeroSpendHint": "该搜索调用未产生金额。单位成本为 0 时，自建实例的基础设施成本不会进入账面。",
+      "spendHint": "按次计费。单价缺省值是牌价占位，不是自建摊销成本 —— 请核对后改写。",
+      "costPerQuery": "单价 / 次",
+      "childBadge": "搜索调用",
+      "viewChildren": "查看该请求的搜索调用",
+      "spendNotAuthoritative": "以人民币计价的供应商由配置方换算，不可用于对外出账"
     },
     "status": {
       "streaming": "流式"
@@ -742,6 +766,12 @@
       "totalTokens": "总 Tokens",
       "ttft": "TTFT (ms)",
       "duration": "耗时 (ms)"
+    },
+    "callType": {
+      "search": "搜索",
+      "completion": "对话",
+      "responses": "Responses",
+      "embedding": "向量化"
     }
   },
   "playground": {

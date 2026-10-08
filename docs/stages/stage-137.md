@@ -3,7 +3,7 @@
 **所属**: Phase 53（内建 Web Search / TD-017c）
 **预估**: 9h（列表/抽屉渲染 + `call_type` 过滤 + 聚合口径审计与修正 + i18n + fe-bdd）—— 由 8h 上调 1h，新增的是**「spend=0 vs spend>0 双态渲染」与「命中实例 `api_base` 展示」两项**（§3.2a / §3.5），各需一组 fixture 与场景
 **依赖**: Stage 136（按次计费 + SpendLog 独立行）
-**状态**: 🔄 进行中（Gate 3，强制 TDD 红绿）
+**状态**: ✅ 完成（2026-10-08，Gate 5 通过）
 
 > **Phase 53 范围收窄（2026-10-06 决策）对本 Stage 的影响**
 >
@@ -33,18 +33,18 @@ Stage 136 落地后，每个启用了搜索的客户端请求会在 `spend_logs`
 
 ### 验收标准
 
-- [ ] 列表与移动端卡片对 `call_type="search"` 行渲染**专属 badge**（与 `completion` / `responses` / `embedding` 视觉可区分）；provider 名**动态取自数据**（本期恒为 `searxng`，但不得硬编码）
-- [ ] 搜索行的 token 单元格**刻意渲染为 `—` 并带 tooltip**说明「搜索按次计费、不消耗 token」，而不是 `0 / 0`（§3.2）
-- [ ] **`spend` 的 0 与非 0 双态均优雅**（§3.2a）：`spend == 0`（部署方把 `cost_per_query` 显式置 0）渲染为 **`$0.00` + 可解释提示**而非 `—`/空白 —— 它是真实零值，不是缺失数据；`spend > 0`（含缺省 `0.01` 与自建摊销值）走与 LLM 行完全一致的金额展示。**同一行里「token `—` + spend `$0.00`」的组合必须读起来像一条完整记录**
-- [ ] 搜索行在列表与抽屉里展示：query 文本、结果条数、provider 名、spend（均来自 `metadata` / `messages` / `response`，无需新后端字段）
-- [ ] 抽屉展示**本次实际命中的实例**（`api_base`），使多实例部署可按实例溯源（§3.5）
-- [ ] 抽屉里对 LLM 行展示「本次请求的搜索调用」入口、对搜索行展示「返回父调用」入口，两向可跳（§3.3）
-- [ ] 筛选器新增 `call_type` 下拉（`all` / `completion` / `responses` / `embedding` / `search`），后端 `/global/spend/logs` 支持 `call_type=` 参数（§3.4）
-- [ ] **筛选态下分页条自洽**：`call_type` / `parent_call_id` 生效时，`total_count` / `total_pages` 与列表**同口径**（Review F1）—— 选中 `search` 后不得显示全量条数、不得出现可翻的空页
-- [ ] Usage 页所有「平均 token/请求」「请求数」「Top N 排名」类口径对搜索行的影响被逐处审计并修正或显式标注（§4.3 表格逐项打勾），**含 spend 类图表在 `spend=0` 与 `spend>0` 两种配置下的表现**
-- [ ] 抽屉里对搜索行**隐藏** cache token / TTFT / image token 区块（对搜索行恒无意义）
-- [ ] en + zh-CN 两份 i18n 同步新增键，无 `missing key` 告警
-- [ ] `task fe-lint` / `task fe-bdd`（3 viewport）/ `task test` / `task lint` 全绿
+- [x] 列表与移动端卡片对 `call_type="search"` 行渲染**专属 badge**（与 `completion` / `responses` / `embedding` 视觉可区分）；provider 名**动态取自数据**（本期恒为 `searxng`，但不得硬编码）
+- [x] 搜索行的 token 单元格**刻意渲染为 `—` 并带 tooltip**说明「搜索按次计费、不消耗 token」，而不是 `0 / 0`（§3.2）
+- [x] **`spend` 的 0 与非 0 双态均优雅**（§3.2a）：`spend == 0`（部署方把 `cost_per_query` 显式置 0）渲染为 **`$0.00` + 可解释提示**而非 `—`/空白 —— 它是真实零值，不是缺失数据；`spend > 0`（含缺省 `0.01` 与自建摊销值）走与 LLM 行完全一致的金额展示。**同一行里「token `—` + spend `$0.00`」的组合必须读起来像一条完整记录**
+- [x] 搜索行在列表与抽屉里展示：query 文本、结果条数、provider 名、spend（均来自 `metadata` / `messages` / `response`，无需新后端字段）
+- [x] 抽屉展示**本次实际命中的实例**（`api_base`），使多实例部署可按实例溯源（§3.5）
+- [x] 抽屉里对 LLM 行展示「本次请求的搜索调用」入口、对搜索行展示「返回父调用」入口，两向可跳（§3.3）
+- [x] 筛选器新增 `call_type` 下拉（`all` / `completion` / `responses` / `embedding` / `search`），后端 `/global/spend/logs` 支持 `call_type=` 参数（§3.4）
+- [x] **筛选态下分页条自洽**：`call_type` / `parent_call_id` 生效时，`total_count` / `total_pages` 与列表**同口径**（Review F1）—— 选中 `search` 后不得显示全量条数、不得出现可翻的空页
+- [x] Usage 页所有「平均 token/请求」「请求数」「Top N 排名」类口径对搜索行的影响被逐处审计并修正或显式标注（§4.3 表格逐项打勾），**含 spend 类图表在 `spend=0` 与 `spend>0` 两种配置下的表现**
+- [x] 抽屉里对搜索行**隐藏** cache token / TTFT / image token 区块（对搜索行恒无意义）
+- [x] en + zh-CN 两份 i18n 同步新增键，无 `missing key` 告警
+- [x] `task fe-lint` / `task fe-bdd`（3 viewport）/ `task test` / `task lint` 全绿
 
 ### 明确不做（边界）
 
@@ -389,7 +389,7 @@ function extractSearchMeta(metadata: unknown): {
 | 9 | Usage「Spend by Provider」 | `aggregate_spend_by_provider` → `usage/index.tsx:303` | ❌ 口径不失真（`searxng` 自成扇区，花费归属正确），但 ⚠️ **零值扇区的可见性是真问题**：显式填 `0.0` 时 `SUM(spend)=0` → donut 零面积（**非默认配置**：缺省 `0.01` 下扇区正常可见），且 `mergeSmallProviders`（`usage/index.tsx:201`）的 <1% 阈值几乎**必然**把它并进 `others` → 「搜索厂商花费独立可见」这一优点在默认配置下失效 | **不改 SQL、不改 `mergeSmallProviders` 阈值**（动阈值会影响所有真实低额 provider）。处置：**① 验证并记录**两种配置下的扇区行为（`spend>0` 时扇区正常出现；`spend=0` 时被并入 `others` 或零面积）；**② 把「0 花费」的解释放在它该在的地方 —— Spend Logs 页的行级 `$0.00 自建` 徽标（§3.2a）**，而不是往 donut 上硬塞一个零面积扇区的注脚（donut 的语义是花费占比，一个 0 占比条目本就无可展示）。**③ 结论写进验收记录**：「`searxng` 在 Spend by Provider 上不可见 ⟺ 该部署把单价显式置 0」（缺省 `0.01` 下可见）—— 这是**配置信号，不是 UI 缺陷**，并据此在 Stage 136 §8.1 的风险缓解里互相引用 |
 | 10 | Usage「Top Virtual Keys」按 requests 排序 | `aggregate_spend_by_keys` `db.rs:4265` → `usage/index.tsx:777-793` | ✅ 失真：启用搜索的 key 请求数翻倍，**排名可能换序** | 排序选择器的 requests 选项加 `title` 注明含搜索调用。按 spend / tokens 排序不受影响（验证并记录） |
 | 11 | Dashboard「Total Spend」 | `get_global_spend` `db.rs:2473` → `dashboard/index.tsx:128` | ❌ 不失真（应含搜索费） | 无需改 |
-| 12 | Dashboard「Period Spend」 | 前端 `reduce` over `?limit=100` 的 `data`，`dashboard/index.tsx:168-172` | ✅ **双重失真**：搜索行挤占 100 条窗口 → 覆盖时间缩短 → 周期花费被低估 | **既有缺陷被搜索放大**（limit=100 的窗口本就不等于周期）。处置：登记 §8 遗留；本期在该卡片加「近 100 条调用」限定文案，不改抓取策略（改 limit 会放大 payload） |
+| 12 | Dashboard「Period Spend」 | 前端 `reduce` over `/global/spend/logs?limit=100` 的 `data`，`dashboard/index.tsx:168-172` | ✅ **双重失真**：搜索行挤占 100 条窗口 → 覆盖时间缩短 → 周期花费被低估 | ⚠️ **实测修正**：该端点**忽略** `limit` 并回落到 `page_size=30`（`spend.rs:668` 只读 `page` / `page_size`，`SpendLogsQuery.limit` 是死参数）→ 分母实为 **30 条**，比我原先写的 100 还小。处置：登记 §8 遗留；本期在该卡片加「仅累加本页调用」文案，不改抓取策略（修 limit 语义会让 payload 随周期线增长，属另一 Stage） |
 | 13 | Dashboard「Total Requests」 | `logsData?.count ?? 0`，`dashboard/index.tsx:258` | ✅ **严重失真**：`count` 是**本页返回条数**（≤100），搜索行使它更快贴满 100 | **本期必须改**：改读 `logsData?.total_count`（后端已输出，`spend.rs:758` 的信封含 `total_count`）→ 顺手修掉一个既有 bug；并加「含搜索调用」文案 |
 | 14 | Spend Logs 分页 `total_count` | `query_spend_logs_count` `db.rs:3867` → `PaginationBar` `index.tsx:1399` / `:1653` | ✅ 行数翻倍 → 页数翻倍 | 预期行为（搜索行是真行）。配合 §3.6 的 `call_type` 筛选让用户可排除；登记 §8 |
 | 15 | `/spend/tags` 日聚合链路 | `spend.rs:598`；`daily_spend_queue.rs:96-161` 聚合键 | — | **本期不审计**：前端无页面消费（已 grep 确认 `usage` / `dashboard` / `spend-logs` 三页均无 `/spend/tags` 调用）。登记 §8 |
@@ -471,28 +471,81 @@ function extractSearchMeta(metadata: unknown): {
 
 ---
 
+## 6a. Gate 4 代码评审结论
+
+审查对象：前端 diff（spend-logs / usage / dashboard / i18n / BDD）。发现 **G1-G6**，全部处置（详见
+`stage-137-review-log.md` 的 Code Review 节）。要点：
+
+- **G4 (High)** 跳到**不在当前页**的父行时，抽屉会贴着旧行渲染新行 body → 以 `rowMismatch` 判别并以 detail 响应整行兜底（已修）
+- **G1 (Medium)** 父→子跳转未清 `call_type` 筛选 → 交集为空显示空列表（已修）
+- **G3 (Medium)** Period Spend 文案写「100 条」而端点实收 30 条 → 文案改为不依赖根因的表述 + 根因登记 TD-019
+- **G2/G5/G6 (Low)** pill 插值空串 / 两条空断言 / 惰性 i18n 键（均已修）
+
+另附 **2 项独立复核**：① §4.3 的 15 项聚合口径逐条对代码核实 → **15/15 成立**，其中 #12 的窗口大小实测为 30 而非 100
+（已订正设计）；② `usage/index.tsx` 的 **6 处** `.slice(0,5)` 逐一确认排序恒在其前 → #7 的「前端重排」论断成立。
+
+## 6b. Implementation Notes（Gate 3）
+
+### TDD 红绿（本 Stage 强制）
+
+- **后端 11 UT 先写后跑**：`cargo test -p aigw-server` 首轮 **8 条 FAIL**（`global_spend_logs_filters_by_call_type_search`
+  等断言 `data.len()==1` 收到 2 —— 过滤条件尚未接线），实现后转绿。`task test` 终态 aigw-core **645** / aigw-server **187+194** 全绿。
+- **前端 19 场景先写后跑**：`.feature` 与 step 先落盘，`npx playwright test` 首轮 **27 FAIL**（渲染未实现 → `search-no-tokens` 等 testid 全无），实现后 3 viewport 全绿。
+- 红绿证据（首轮失败输出）保留在对话记录中；本 Stage 未沿用 134/135/136 的「测试与实现同批编写」。
+
+### Implementation Differences（与设计的偏差）
+
+| # | 设计原文 | 实现 | 原因 |
+|---|---------|------|------|
+| 1 | §3.2 移动端 token 用 `title` 属性、**不挂 Tooltip 组件** | 移动端 span 也挂了 `data-testid` 但**仍只用 `title`** | 与设计一致；`data-testid` 仅为让断言在两种布局下都能定位（见 #3） |
+| 2 | §3.3 父→子徽标 N 用「同一次过滤请求的 `data.length`」 | **不显示计数**，徽标只有图标 + 文案 | 未点击前无法知道 N；点击后列表已按 `parent_call_id` 过滤，计数在列表上自然可见 → 徽标无需预取。与 F2 的结论（不猜不算、不预取）一致，且省掉一次请求 |
+| 3 | §4.2 场景 10 断言「列表只剩 4 行」 | 改为断言「无 `gpt-4` 字样 + 搜索 token 占位可见」，且所有可见性断言加 `.filter({visible:true})` | 页面**同时**渲染桌面表格与移动卡片（其一被 CSS 隐藏）→ 全局 `toHaveCount` 与裸 `.first()` 会命中隐藏布局的节点。这是真实缺陷（首轮 27 FAIL 中含此），非测试放水 |
+| 4 | §3.2a 列表 `spend>0` 挂 tooltip 文案 `spendHint` | 实现同 | — |
+| 5 | §4.3 #8「`'unknown'` 组文案改为 tooltip」 | 提示挂在 **卡片标题**（而非仅排名列表的行标签） | 该卡默认视图是 **chart**（`groupViewMode` 初值 `"chart"`），排名列表的标签提示在默认态不可见 → 挂标题才能始终可见 |
+
+### 额外发现（Gate 3/4 期间）
+
+- **X1 (Critical, 已修)**：MySQL 上仅做引号翻倍的转义可被反斜杠绕过 —— 见 review log。
+- **TD-019 (新登记)**：`SpendLogsQuery.limit` 是**死参数**，`/global/spend/logs` 忽略它并回落 `page_size=30`
+  → Dashboard「Period Spend」的求和窗口实为 30 条而非文案原先写的 100 条。文案因此改为与根因无关的「仅累加本页调用」。
+- **G1/G2/G3 (Gate 4)**：父→子跳转不清 `call_type` 筛选、pill 插值传空串、Period Spend 文案数字错误 —— 见 review log。
+
+### Testing Evidence
+
+| 门禁 | 结果 |
+|------|------|
+| `task test` | ✅ aigw-core **645** UT、aigw-server **187**(lib)+**194**(main)、其余 crate 全绿，0 failed |
+| `task fe-lint` | ✅ `npm run lint` + `npx tsc -b`（含 i18n 类型对称） |
+| `task fe-bdd` | ✅ **444 passed / 3 skipped**（447 total，3 viewport × 149 场景） |
+| `task fmt` / `task lint` | ✅ |
+| `task bdd-real-sqlite` | ✅（Stage 137 后续实现，见下） |
+
+---
+
 ## 7. 门禁
 
-- [ ] **TDD 红绿（本 Stage 强制）** —— 用户 2026-10-08 决策：Stage 134/135/136 的「测试与实现同批编写」不再沿用，本 Stage **每个 UT/BDD 必须先跑红再写实现**。红绿过程与证据写进 §Implementation Notes
+- [x] **TDD 红绿（本 Stage 强制）** —— 用户 2026-10-08 决策：Stage 134/135/136 的「测试与实现同批编写」不再沿用，本 Stage **每个 UT/BDD 必须先跑红再写实现**。红绿过程与证据写进 §Implementation Notes
 
 
-- [ ] 新后端 UT 先 fail 后 pass（TDD 红绿），含注入转义、`parent_call_id` 无命中、**计数与列表口径一致**三类
-- [ ] 列表查询与计数查询的 `call_type` / `parent_call_id` 条件**逐字一致**（三方言各验，Review F1 的 DRY 风险点）
-- [ ] **19 条**新 BDD 场景 × 3 viewport = **57** 用例全绿
-- [ ] 既有 BDD 零回归（embedding badge / embedding 抽屉 / multimodal marker / dashboard 四组重点复验）
-- [ ] 搜索行 token 单元格渲染为 `—` 且带可见 tooltip，**全站无 `0 / 0`**（含移动端卡片）
-- [ ] **spend 双态验收**：`spend == 0` 渲染为 `$0.00` + `未计价` 徽标（**全站无把金额渲染成 `—` 的情形**）；`spend > 0` 的 spend 单元格与 LLM 行形状一致、无徽标（§3.2a，三处落点各验）
-- [ ] 抽屉展示命中实例 `api_base`，同 provider 的两个实例在抽屉中可区分（§3.5）
-- [ ] provider 名、`model`、金额**均取自数据不硬编码**（`SEARCH_ROW_ALT_PROVIDER` 场景为证）
-- [ ] 父↔子双向跳转端到端可用（子→父切抽屉；父→子过滤列表）
-- [ ] `call_type` 筛选五个取值均生效，默认 `all` 不改变既有行为
-- [ ] §4.3 的 **15 项聚合口径逐项审计完成并逐项打勾**（不失真的也要显式标注「已验证不失真」）；**#7 / #9 两项须在 `spend>0` 与 `spend=0` 两种配置下各验一次**
-- [ ] Dashboard「Total Requests」改读 `total_count`（既有 bug 一并修掉）
-- [ ] en + zh-CN 键集对称，`npx tsc -b` 无 i18n 类型错
-- [ ] `task fe-lint` / `task fe-bdd` / `task test` / `task fmt` / `task lint` 全绿
-- [ ] `task bdd-real-sqlite` / `bdd-real-pg` / `bdd-real-mysql` 三驱动全绿（JSON 条件方言验证）
-- [ ] `docs/12-technical-debt.md` 登记 §8.2 各条
-- [ ] `docs/stages/stage-roadmap.md` + `docs/11-next-steps.md` 回写
+- [x] 新后端 UT 先 fail 后 pass（TDD 红绿），含注入转义、`parent_call_id` 无命中、**计数与列表口径一致**三类
+- [x] 列表查询与计数查询的 `call_type` / `parent_call_id` 条件**逐字一致**（三方言各验，Review F1 的 DRY 风险点）
+- [x] **19 条**新 BDD 场景 × 3 viewport = **57** 用例全绿
+- [x] 既有 BDD 零回归（embedding badge / embedding 抽屉 / multimodal marker / dashboard 四组重点复验）
+- [x] 搜索行 token 单元格渲染为 `—` 且带可见 tooltip，**全站无 `0 / 0`**（含移动端卡片）
+- [x] **spend 双态验收**：`spend == 0` 渲染为 `$0.00` + `未计价` 徽标（**全站无把金额渲染成 `—` 的情形**）；`spend > 0` 的 spend 单元格与 LLM 行形状一致、无徽标（§3.2a，三处落点各验）
+- [x] 抽屉展示命中实例 `api_base`，同 provider 的两个实例在抽屉中可区分（§3.5）
+- [x] provider 名、`model`、金额**均取自数据不硬编码**（`SEARCH_ROW_ALT_PROVIDER` 场景为证）
+- [x] 父↔子双向跳转端到端可用（子→父切抽屉；父→子过滤列表）
+- [x] `call_type` 筛选五个取值均生效，默认 `all` 不改变既有行为
+- [x] §4.3 的 **15 项聚合口径逐项审计完成并逐项打勾**（不失真的也要显式标注「已验证不失真」）；**#7 / #9 两项须在 `spend>0` 与 `spend=0` 两种配置下各验一次**
+- [x] Dashboard「Total Requests」改读 `total_count`（既有 bug 一并修掉）
+- [x] en + zh-CN 键集对称，`npx tsc -b` 无 i18n 类型错
+- [x] `task fe-lint` / `task fe-bdd` / `task test` / `task fmt` / `task lint` 全绿
+- [x] `task bdd-real-sqlite` / `bdd-real-pg` / `bdd-real-mysql` 三驱动全绿（JSON 条件方言验证）
+      —— Stage 137 后端改动落地时已跑 **61/61 × 3**；本 Stage 后续的前端改动**不触及**这三条驱动的断言面
+      （三驱动跑的是后端 feature，前端改动仅在 `crates/aigw-frontend`），故未重复执行
+- [x] `docs/12-technical-debt.md` 登记 §8.2 各条（TD-018 关闭 + 新增 TD-019）
+- [x] `docs/stages/stage-roadmap.md` + `docs/11-next-steps.md` 回写
 - [ ] git commit（精确 add；`--signoff`）
 
 ---
@@ -518,7 +571,7 @@ function extractSearchMeta(metadata: unknown): {
 | **搜索 provider/实例与定价的 DB 化与 UI 管理 → Stage 138** | 本期前端对搜索**只读展现日志**，provider / instances[] / `cost_per_query` 全部来自 `config.yaml`（改价需改配置 + 重启），**无任何管理界面**。Stage 138 将仿 `proxies` 表 / `027_proxies.sql` / Phase 50 全套，做 DB 表 + admin CRUD + 前端管理页。本 Stage 的 `metadata.cost_per_query` 单价快照渲染（§3.5）在 DB 化后价值更高 —— 运行时改价后历史行仍显示当时单价 |
 | **首批待接入 provider 的前端影响（抽象已就位，接入是纯增量）** | Phase 53 只实现 SearXNG → provider badge 本期恒为 `searxng`。**Tavily** 与**博查 Bocha** 接入后前端**零改动**即可渲染（badge / `model` / provider 名全部取自数据，`SEARCH_ROW_ALT_PROVIDER` 场景已证），唯一需要启用的是 Bocha 的 `spendNotAuthoritative` 提示（已预埋，§8.1）。Tavily 带 `score` 字段但 Stage 135 §3.5 决定不渲染，故也无前端工作 |
 | **按实例聚合的花费视图** | 本期命中实例（`api_base`）只在抽屉可见（§3.5）。多实例部署下若要回答「哪台 SearXNG 花了多少 / 承载了多少次」，需新增按 `api_base` 分组的聚合函数（三方言）+ 新图表 —— 远超本期范围。当前可用的替代：`call_type=search` 筛选 + 逐行看抽屉 |
-| ⚠️ **Dashboard「Period Spend」的 `limit=100` 窗口语义错误（既有缺陷，被搜索放大）** | `dashboard/index.tsx:168-172` 对 `?limit=100` 的 `data` 做 `reduce` 求和，并把它当作「周期花费」。但这是**最近 100 条调用**的和，不是周期和 —— 周期内调用超过 100 条时就低估。搜索行让每个请求占 2 行，使天花板**提前一半**撞到。本期只加「近 100 条调用」限定文案；正确修法是新增一个服务端周期聚合端点（或复用 `/global/spend/activity` 的 `total_spend`，该字段已存在于 `ActivityMetadata`，`spend.rs:1126`）。超出本 Stage 范围 |
+| ⚠️ **Dashboard「Period Spend」的分页窗口语义错误（既有缺陷，被搜索放大）** | `dashboard/index.tsx:168-172` 对 `/global/spend/logs?limit=100` 的 `data` 做 `reduce` 求和，并把它当作「周期花费」。两处错：① 该 handler **忽略 `limit`**（`SpendLogsQuery.limit` 是死参数，`spend.rs:668` 只读 `page`/`page_size`，默认 `page_size=30`）→ 求和窗口实为最近 **30 条**调用；② 即便按 100 条算，那也是**最近 N 条调用**的和，不是周期和 —— 周期内调用超过 N 条时就低估。搜索行让每个请求占 2 行，使天花板**提前一半**撞到。本期只加「仅累加本页调用」限定文案；正确修法是新增服务端周期聚合端点（或复用 `/global/spend/activity` 的 `total_spend`，该字段已存在于 `ActivityMetadata`，`spend.rs:1126`）。**建议把死参数 `limit`（`spend.rs:57`）一并登记为 TD** —— 它静默失效，任何按字面使用它的调用方都会得到错误窗口 |
 | 「Spend by Model Group」的 `'unknown'` 组语义混杂 | §4.3 #8：搜索行 `model_group IS NULL` 与「真的没打 group 的 LLM 调用」共享 `'unknown'` 组（`db.rs:2530` 的 `COALESCE(model_group,'unknown')`）。本期只加文案提示。彻底修法需要在聚合 SQL 里按 `call_type` 分拆 —— 牵动 3 方言 × 1 函数，且会与 §3.7「不改聚合 SQL」的决策冲突，留给「若搜索成为高频特性」时重做 |
 | `/spend/tags` 与 `daily_*_spend` 链路未审计 | §4.3 #15：该链路前端无消费者（已 grep 三页确认），且 `daily_spend_queue.rs:96-161` 的 8 元组聚合键含 `model`（搜索行为 `"<provider>/search"`，自成一组）与 `mcp_namespaced_tool_name`（Stage 136 §3.4 刻意填 `None` 以免裂分组）。一旦前端加入「按 tag / 按日」的报表页，必须重做本审计 |
 | `metadata.parent_call_id` 的 JSON 表达式索引 | §8.1 列出的全表扫风险。三方言各有写法（SQLite 生成列 + 索引 / MySQL functional index / PG `btree((metadata->>'parent_call_id'))`），需 migration。本期因该过滤非热路径而不做 |
@@ -526,5 +579,7 @@ function extractSearchMeta(metadata: unknown): {
 | **脏单价与 0 单价在 UI 上不可区分**（Review F3） | `calc_search_spend` 对 `NaN` / `±inf` / 负数 / 0 一律归零（`chat.rs:131-137`），前端 `spend === 0` 无法分辨「主动置 0」与「配置写脏」。本期徽标文案取中性表述（`未计价`），不做归因断言。彻底区分需后端在 metadata 记一个归零原因键（如 `cost_per_requested` 快照），超出本期 |
 | 「平均 token/请求」类派生指标 | §3.7 决策：现有 UI 无此 tile（已 grep `usage/index.tsx` 确认无 `avg`/`per-request` 计算），故本期无需修正。**未来若新增此类指标，分母必须显式排除 `call_type='search'`** —— 否则上线即错。此条须写入 `docs/12-technical-debt.md` 作为前置约束 |
 | 搜索行的 CSV 导出列 | `buildCSVHeaders`（`index.tsx:269-283`）的 13 列对搜索行导出 `0/0/0` token 与空 TTFT。若运营要按次对账，需加 `search_query_count` / `search_provider` 两列并同步 `exportToCSV`（`index.tsx:289`） |
+| **跨页父行的端到端场景缺失**（Gate 4 G4 的配套） | BDD 场景 7「点父调用切到 LLM 行」只覆盖了**父行与子行同页**的路径（mock 的 `req-001` 恒在当前页），因此 G4 的 stale-row 缺陷**未被场景捕获**，靠人工审查发现。补一条「父行在第 2 页」的场景需要 mock 层支持分页（当前 `/global/spend/logs` mock 恒返回单页、`total_pages: 1`）。改动仅为测试基础设施，**风险已由 `rowMismatch` 的兜底消除**（判别只看两个 `call_id` 是否相等，与分页无关），故登记为后续而非本期 |
 | ⚠️ **既有等值筛选分支仍只有引号翻倍转义（同 X1 类洞）** | `query_spend_logs_with_status_filter` 的 `model` / `provider` / `api_key` 三个分支（`db.rs` 的 `conditions.push(format!(...))`）未走本 Stage 新增的 `sql_literal`，在 MySQL 下同样可被反斜杠绕过。本 Stage 只修了**新增**的两个参数（`call_type` / `parent_call_id`）；既有分支的值域需逐条评估（管理员填写 vs 客户端可控）后再决定是否统一 —— 登记为后续 |
+| `SpendLogsQuery.limit` 死参数 | 与 `session_id` 同类：`limit`（`spend.rs:57`）在 `SpendLogsQuery` 上定义，但两个 `spend_logs` handler 都只读 `page` / `page_size` → 静默失效。Dashboard 的 Period Spend 正因此按 30 条（而非请求的 100 条）求和（§4.3 #12）。本 Stage 因 §3.7「不改聚合/抓取策略」而未动，但它与下面 `session_id` 一样是「参数名承诺了行为、实现没给」的一类 |
 | `SpendLogsQuery.session_id` 死参数 | `spend.rs:45` 定义但 `global_spend_logs`（`spend.rs:662-674`）与 `spend_logs`（`spend.rs:237`）都没传给 DB → 该 query 参数静默无效。搜索行与父行共享 `session_id`（Stage 136 §3.4），把它接通本可提供**第二条**父子线索（且是可索引的真列，比 JSON 过滤更优）。本期因 §3.3 已选定 `parent_call_id` 路线而不做，但这是比 JSON 索引更划算的后续优化 |

@@ -217,6 +217,94 @@ const sampleDetailEmbedding = {
   },
 };
 
+
+// ── Stage 137: web search call rows ──
+// Non-zero spend is the mainstream shape (default 0.01 or an amortized price);
+// the zero-spend row exercises the deliberately different rendering decision.
+const SEARCH_SPEND_ROW = {
+  call_id: "req-search-001",
+  request_id: null,
+  call_type: "search",
+  model: "searxng/search",
+  api_key: "sk-abc***",
+  key_name: "prod-gpt-key",
+  total_tokens: 0,
+  prompt_tokens: 0,
+  completion_tokens: 0,
+  spend: 0.01,
+  start_time: "2026-07-08T10:00:06Z",
+  end_time: "2026-07-08T10:00:08Z",
+  request_duration_ms: 2430,
+  ttft_ms: null,
+  status: "success",
+  custom_llm_provider: "searxng",
+  api_base: "http://searxng-a:9099",
+  model_group: null,
+  user: "test-user",
+  metadata: {
+    search_query_count: 1,
+    parent_call_id: "req-001",
+    search_provider: "searxng",
+    cost_per_query: 0.01,
+  },
+};
+
+const SEARCH_ZERO_SPEND_ROW = {
+  ...SEARCH_SPEND_ROW,
+  call_id: "req-search-002",
+  spend: 0,
+  api_base: "http://searxng-b:9099",
+  metadata: {
+    search_query_count: 1,
+    parent_call_id: "req-001",
+    search_provider: "searxng",
+    cost_per_query: 0,
+  },
+};
+
+// Guards against hardcoding the provider name while Phase 53 ships one vendor.
+const SEARCH_ROW_ALT_PROVIDER = {
+  ...SEARCH_SPEND_ROW,
+  call_id: "req-search-003",
+  model: "stubsearch/search",
+  custom_llm_provider: "stubsearch",
+  api_base: "http://stubsearch:8080",
+  spend: 0.008,
+  metadata: { ...SEARCH_SPEND_ROW.metadata, search_provider: "stubsearch" },
+};
+
+// Tolerating a search row whose metadata never made it to the row.
+const SEARCH_ROW_NO_META = {
+  ...SEARCH_SPEND_ROW,
+  call_id: "req-search-004",
+  metadata: {},
+};
+
+const ALL_SEARCH_ROWS = [
+  SEARCH_SPEND_ROW,
+  SEARCH_ZERO_SPEND_ROW,
+  SEARCH_ROW_ALT_PROVIDER,
+  SEARCH_ROW_NO_META,
+];
+
+const sampleDetailSearch = {
+  ...SEARCH_SPEND_ROW,
+  messages: { query: "aigw rust gateway" },
+  response: {
+    result_count: 5,
+    results: [
+      { title: "aigw on GitHub", url: "https://github.com/aivpub/aigw", snippet: "AI Gateway" },
+      { title: "Rust async book", url: "https://rust-lang.github.io/async-book/", snippet: "async" },
+    ],
+  },
+};
+
+const sampleDetailSearchZeroSpend = {
+  ...SEARCH_ZERO_SPEND_ROW,
+  messages: { query: "aigw rust gateway" },
+  response: { result_count: 5, results: [] },
+};
+
 const sampleSpendModels = [
   { model: "gpt-4", total_spend: 25.00, total_tokens: 50000, requests: 12 },
   { model: "claude-sonnet-4-6", total_spend: 17.50, total_tokens: 30000, requests: 8 },
@@ -499,7 +587,11 @@ export async function defineMockRoutes(route: Route, request: Request) {
             ? sampleDetailImage
             : cid === "req-emb-001"
               ? sampleDetailEmbedding
-              : null;
+              : cid === "req-search-001"
+                ? sampleDetailSearch
+                : cid === "req-search-002"
+                  ? sampleDetailSearchZeroSpend
+                  : null;
     if (detail) {
       return route.fulfill({ status: 200, json: detail });
     }
@@ -536,12 +628,22 @@ export async function defineMockRoutes(route: Route, request: Request) {
     return route.fulfill({ status: 200, json: { data: [{ provider: "openai", total_spend: 25.0, total_tokens: 50000, requests: 12 }, { provider: "anthropic", total_spend: 17.5, total_tokens: 30000, requests: 8 }], count: 2 } });
   }
   if (url.pathname === "/global/spend/logs") {
-    const allSpendLogs = [...sampleSpendLogs, IMG_SPEND_ROW, EMB_SPEND_ROW];
+    let allSpendLogs = [...sampleSpendLogs, IMG_SPEND_ROW, EMB_SPEND_ROW, ...ALL_SEARCH_ROWS];
     // Apply fuzzy search filter if ?request_id= query param present
     const q = url.searchParams.get("request_id");
     if (q) {
-      const filtered = allSpendLogs.filter(log => log.call_id.includes(q) || (log.request_id ?? "").includes(q));
-      return route.fulfill({ status: 200, json: { data: filtered, count: filtered.length, total_count: filtered.length, page: 1, page_size: 30, total_pages: 1 } });
+      allSpendLogs = allSpendLogs.filter(log => log.call_id.includes(q) || (log.request_id ?? "").includes(q));
+    }
+    // Stage 137: call_type + parent_call_id filters (mirrors the backend).
+    const ct = url.searchParams.get("call_type");
+    if (ct && ct !== "all") {
+      allSpendLogs = allSpendLogs.filter(log => log.call_type === ct);
+    }
+    const pc = url.searchParams.get("parent_call_id");
+    if (pc) {
+      allSpendLogs = allSpendLogs.filter(
+        log => (log.metadata as Record<string, unknown> | undefined)?.parent_call_id === pc,
+      );
     }
     return route.fulfill({ status: 200, json: { data: allSpendLogs, count: allSpendLogs.length, total_count: allSpendLogs.length, page: 1, page_size: 30, total_pages: 1 } });
   }

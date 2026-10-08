@@ -480,7 +480,16 @@ export function UsagePage() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-1 p-4">
             <CardTitle className="text-xs font-medium">
-              {t("usage.cards.requests")}
+              <TooltipProvider delayDuration={0}>
+                <UiTooltip>
+                  <TooltipTrigger asChild>
+                    <span className="cursor-help border-b border-dotted border-muted-foreground/40">
+                      {t("usage.cards.requests")}
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>{t("usage.cards.requestsHint")}</TooltipContent>
+                </UiTooltip>
+              </TooltipProvider>
             </CardTitle>
             <BarChart3 className="h-3.5 w-3.5 text-muted-foreground" />
           </CardHeader>
@@ -569,7 +578,16 @@ export function UsagePage() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-1 p-4">
             <CardTitle className="text-xs font-medium">
-              {t("usage.cards.rate")}
+              <TooltipProvider delayDuration={0}>
+                <UiTooltip>
+                  <TooltipTrigger asChild>
+                    <span className="cursor-help border-b border-dotted border-muted-foreground/40">
+                      {t("usage.cards.rate")}
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>{t("usage.cards.rateHint")}</TooltipContent>
+                </UiTooltip>
+              </TooltipProvider>
             </CardTitle>
             <TrendingUp className="h-3.5 w-3.5 text-muted-foreground" />
           </CardHeader>
@@ -668,7 +686,7 @@ export function UsagePage() {
                         return `${label}\n  ${t("usage.chart.promptTokens")}: ${fmtTokens(item.prompt_tokens)}  |  ${t("usage.chart.completionTokens")}: ${fmtTokens(item.completion_tokens)}\n  ${t("usage.chart.totalTokens")}: ${fmtTokens(item.tokens)}`;
                       }
                       if (globalChartMode === "requests") {
-                        return `${label}\n  ${t("usage.chart.successCount")}: ${item.successful_requests}  |  ${t("usage.chart.failedCount")}: ${item.failed_requests}\n  ${t("usage.chart.totalRequests")}: ${item.requests}`;
+                        return `${label}\n  ${t("usage.chart.successCount")}: ${item.successful_requests}  |  ${t("usage.chart.failedCount")}: ${item.failed_requests}\n  ${t("usage.chart.totalRequests")} (${t("usage.chart.requestsHint")}): ${item.requests}`;
                       }
                       return `${label}  |  ${fmtSpend(item.spend)}`;
                     }}
@@ -756,7 +774,7 @@ export function UsagePage() {
                   📊 Tokens
                 </TabsTrigger>
                 <TabsTrigger value="requests" className="text-xs px-3 h-5">
-                  📋 Requests
+                  <span title={t("usage.cards.requestsHint")}>📋 Requests</span>
                 </TabsTrigger>
               </TabsList>
             </Tabs>
@@ -987,7 +1005,19 @@ export function UsagePage() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2 pt-4 px-4">
             <CardTitle className="text-sm font-medium">
-              {t("usage.spendByModelGroup")}
+              {/* The chart view is the default, so the 'unknown' disclosure
+                  belongs on the card itself — the ranking list's label hint
+                  alone would be hidden most of the time. */}
+              <TooltipProvider delayDuration={0}>
+                <UiTooltip>
+                  <TooltipTrigger asChild>
+                    <span className="cursor-help border-b border-dotted border-muted-foreground/40">
+                      {t("usage.spendByModelGroup")}
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>{t("usage.unknownGroupHint")}</TooltipContent>
+                </UiTooltip>
+              </TooltipProvider>
             </CardTitle>
             <div className="flex items-center gap-2">
               <Tabs

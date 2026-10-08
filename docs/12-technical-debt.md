@@ -210,14 +210,23 @@
 
 > 原始记录（2026-10-06）：`ClaudeToolDef`（`crates/aigw-core/src/models.rs:1065-1071`）的 `input_schema` 为**非 Option 且无 `type` 字段**——Anthropic 的 `web_search_20250305` 等服务端工具不带 `input_schema`，在 `adapter.rs:230-232` 的 `serde_json::from_value` 处直接反序列化失败 → **HTTP 500**。即 `/v1/messages` 路径比 Responses 路径更糟（后者至少是丢弃+告警）。已跨三路由核实落点（`v1_messages.rs:863` / `chat.rs:1537` / `responses.rs:618`）。**与 web search 无关的既存缺陷**，但同批修复最经济 → 已纳入 Stage 135 验收范围。发现于 2026-10-06 代码测绘（`docs/research/2026-10-06-aigw-websearch-codebase-map.md` §A3）。 |
 
-### TD-018: Dashboard「Total Requests」上限 100（既存缺陷）
+### TD-018: Dashboard「Total Requests」上限 100（既存缺陷）✅ Resolved 2026-10-08（Stage 137）
 
 - **Date**: 2026-10-06
 - **Priority**: P3
 - **Source**: Stage 137 规划期前端测绘（已人工核实）
 - **Description**: Dashboard 的「Total Requests」卡片渲染 `logsData?.count`（`crates/aigw-frontend/src/pages/dashboard/index.tsx:258`），而该查询带 `limit=100`（`:142`）——`count` 是**本页条数**而非总数，故该指标**在请求数超过 100 后恒显示 100**。后端同一端点已返回 `total_count`（Spend Logs 页的 `SpendLogsResponse` 同时声明了 `count` / `total_count` / `page`，`pages/spend-logs/index.tsx:136-140`），但 Dashboard 的局部 interface（`dashboard/index.tsx:61-64`）只声明了 `count`，未取 `total_count`。
 - **修复**: Dashboard 的 `SpendLogsResponse` 补 `total_count` 字段，卡片改读 `total_count`。
-- **备注**: 与 web search **无关**，是独立的既存缺陷；Phase 53 Stage 137 会改动同一文件区域（零 token 行的聚合口径审计），届时顺带修复最经济。**注意**：Stage 136 引入搜索行后，若此处仍读 `count`，该指标会因搜索行挤占分页名额而**进一步失真**。
+- **Resolution**: ✅ 已实现（Stage 137，2026-10-08）——`dashboard/index.tsx` 的局部 `SpendLogsResponse` 补 `total_count`，卡片改读 `logsData?.total_count`，并挂「含搜索调用」提示。**实测补充**：`limit` 参数在 `/global/spend/logs` handler（`spend.rs:668`）上被**忽略**（回落 `page_size=30`），故修前该指标的上限实为 **30** 而非 100 —— 详见下方 TD-019。
+
+### TD-019: `SpendLogsQuery` 的 `limit` / `session_id` 是静默失效的死参数
+
+- **Date**: 2026-10-08
+- **Priority**: P3
+- **Source**: Stage 137 §4.3 #12 聚合口径审计（实测发现）
+- **Description**: `SpendLogsQuery`（`crates/aigw-server/src/routes/spend.rs:38`）声明了 `limit`（`:57`）与 `session_id`（`:45`），但两个消费它的 handler（`global_spend_logs` `:663`、`spend_logs` `:240`）都只读 `page` / `page_size`，从不读这两个字段 → **参数名承诺了行为、实现没给**。
+- **Impact**: ① Dashboard「Period Spend」按 `?limit=100` 抓取却实收 30 条（`page_size` 默认值），求和窗口静默缩水 70%；② `session_id` 筛选静默无效 —— 对搜索行来说这本是 `parent_call_id` 之外**第二条**父子线索，且是**可索引的真列**（优于 §3.4 的 JSON 表达式过滤）。
+- **Target Phase**: 后续 Stage（接通 `session_id` 可同时优化 §8.2 的 JSON 索引问题）。
 
 | TD-017d | Phase 41 遗留适配器 UT 缺口（剩余部分） | P3 | Phase 41 记录的「Stage 102 计划 19 个适配器 UT 未落地」——Stage 131 补 13 个、Stage 132 再补 10 个（item 分派 + tool 配对），剩余（streaming SSE 事件映射等）仍待补。 |
 | TD-017e | ~~**Codex 多轮端到端验证缺失**~~ | P2 | ✅ **Resolved 2026-10-05（Stage 132）** — 用假上游驱动 Codex 0.160.0 完成真实一轮 tool 往返（`exec_command` → `echo hello` → 回填 → 收尾），抓包得真实 round-2 body（含 `function_call` / `function_call_output`），固化为 UT fixture + 变换后打真实上游 → 200。 |

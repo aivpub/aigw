@@ -116,7 +116,9 @@
       "ok": "OK",
       "failed": "Failed",
       "tokens": "Tokens",
-      "rate": "Rate"
+      "rate": "Rate",
+      "requestsHint": "Includes per-query search calls",
+      "rateHint": "Denominator includes search calls"
     },
     "trend": "Trend",
     "tabSpend": "💰 Spend",
@@ -139,13 +141,15 @@
       "totalTokens": "Total",
       "successCount": "Success",
       "failedCount": "Failed",
-      "totalRequests": "Total"
+      "totalRequests": "Total",
+      "requestsHint": "Includes search calls"
     },
     "topKeys": "Top Virtual Keys",
     "spendByProvider": "Spend by Provider",
     "spendByModelGroup": "Spend by Model Group",
     "spendByModel": "Spend by Model",
-    "others": "others"
+    "others": "others",
+    "unknownGroupHint": "Calls without a model group, including search calls"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -167,7 +171,9 @@
       "tokens": "Tokens",
       "cost": "Cost",
       "status": "Status"
-    }
+    },
+    "totalRequestsHint": "Includes search calls",
+    "periodSpendWindow": "Sums the calls on this page only — not the whole range"
   },
   "keys": {
     "title": "API Keys",
@@ -645,7 +651,10 @@
       "session": "Session",
       "tokenRange": "Token Range",
       "minTokPlaceholder": "Min tok",
-      "maxTokPlaceholder": "Max tok"
+      "maxTokPlaceholder": "Max tok",
+      "callType": "Call Type",
+      "callTypePlaceholder": "Type",
+      "parentCall": "Parent call"
     },
     "table": {
       "callId": "Call ID",
@@ -701,7 +710,8 @@
         "cacheKey": "Cache Key:",
         "team": "Team:",
         "org": "Org:",
-        "mcpTool": "MCP Tool:"
+        "mcpTool": "MCP Tool:",
+        "parentCall": "Parent Call:"
       },
       "imageTokens": "Image Tokens",
       "imageTokensUpstream": "Reported by upstream provider",
@@ -724,11 +734,25 @@
       },
       "fetchError": "Failed to load, click to retry",
       "tabDescription": "Description",
-      "tabParams": "Params"
+      "tabParams": "Params",
+      "searchDetail": "Search Detail"
     },
     "noData": "No data available",
     "search": {
-      "placeholder": "Search by call_id or request_id..."
+      "placeholder": "Search by call_id or request_id...",
+      "noTokens": "—",
+      "noTokensHint": "Search is billed per query and consumes no tokens",
+      "queries": "{{count}} queries",
+      "results": "{{count}} results",
+      "provider": "Search provider",
+      "instance": "Served by",
+      "notPriced": "Not priced",
+      "zeroSpendHint": "This search call recorded no cost. A unit price of 0 keeps self-hosted infrastructure cost off the books.",
+      "spendHint": "Billed per query. The unit price defaults to a list-price placeholder, not a self-hosted cost — review it.",
+      "costPerQuery": "Unit price / query",
+      "childBadge": "Search calls",
+      "viewChildren": "View search calls for this request",
+      "spendNotAuthoritative": "CNY-priced providers are converted by configuration; not for billing"
     },
     "status": {
       "streaming": "streaming"
@@ -742,6 +766,12 @@
       "totalTokens": "Total Tokens",
       "ttft": "TTFT (ms)",
       "duration": "Duration (ms)"
+    },
+    "callType": {
+      "search": "Search",
+      "completion": "Completion",
+      "responses": "Responses",
+      "embedding": "Embedding"
     }
   },
   "playground": {

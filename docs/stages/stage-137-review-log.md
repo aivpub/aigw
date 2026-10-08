@@ -170,3 +170,99 @@ fn sql_literal(db: &Database, raw: &str) -> String {
 **验证**：三驱动 real BDD 61/61 × 3 全绿；UT `global_spend_logs_parent_call_id_rejects_quote_injection` 覆盖引号注入。
 
 **遗留（登记 §8.2）**：既有分支（`model` / `provider` / `api_key` 的等值条件）**仍只有引号翻倍**，未走新 escaper。修正它们需要逐条评估值域（管理员填写 vs 客户端可控），超出本 Stage 范围 —— 但这是同一类洞，须登记。
+
+---
+
+## Code Review (Stage 137)
+
+**Review Type**: Code
+**Review Date**: 2026-10-08
+**Reviewer**: Claude (main) + 2× general-purpose subagents（其一专查 §4.3 的 15 项聚合口径断言，其二对抗式审查前端 diff）
+**Files Reviewed**: `crates/aigw-frontend/src/pages/{spend-logs,usage,dashboard}/index.tsx`、
+`crates/aigw-frontend/src/i18n/locales/{en,zh-CN}.json`、
+`crates/aigw-frontend/tests/{features/spend-logs.feature,steps/{spend-logs.steps,api-mocks}.ts}`、
+`crates/aigw-server/src/routes/spend.rs`、`crates/aigw-core/src/db.rs`（后端部分见 X1）
+
+### G1 — 父→子跳转未清除既有的 `call_type` 筛选，两者可取交集为空（Medium，已修）
+
+`onFilterByParent` 原先只设 `parentFilter` 与 `page=1`。若用户先把 `call_type` 选成 `completion`（或 `embedding`），
+再从某条 LLM 行的抽屉点「查看搜索调用」，请求会带 `call_type=completion&parent_call_id=<p>` —— 而子行恒为
+`search`，两条件交集为空 → 列表空白，用户会读成「这个请求没有搜索调用」（错误结论）。
+
+**修复**：`onFilterByParent` 同时 `setCallTypeFilter("all")`（跳转语义就是「看这个请求的搜索调用」，不该被前一个筛选压制）。
+
+### G2 — summary pill 的 `count` 插值传了空串，渲染出悬空的 `×`（Low，已修）
+
+原代码 `t("spendLogs.search.queries", { count: "" }).trim()` 拼成 `"1 × 次查询"` 形态（zh）/ `"1 × queries"`（en）。
+**修复**：改为 `t("spendLogs.search.queries", { count: searchMeta?.search_query_count ?? 1 })`，模板的 `{{count}}` 一次填妥。
+
+### G3 — `periodSpendWindow` 文案与端点实际行为不符（Medium，已修）
+
+初稿文案写「仅覆盖该时间段内最近 100 条调用」，但实测 `/global/spend/logs` 的 handler **忽略 `limit`**
+（`spend.rs:668` 只读 `page`/`page_size`，回落 `page_size=30`）→ 实际窗口是 **30** 条。文案若写 100 就是**新的错误陈述**。
+
+**修复**：文案改为与根因无关的「仅累加本页调用，不等于整个时间段」（en: `Sums the calls on this page only — not the whole range`）；
+根因（`limit` 死参数）另立 **TD-019**，并在 §4.3 #12 与 §8.2 记录。
+
+### 复核确认（未发现问题，逐条留证）
+
+- **§4.3 #7 的「前端重排」论断**：数清 `usage/index.tsx` 全部 **6** 处 `.slice(0, 5)`，逐一确认其**正上方**紧邻一个按
+  `globalChartMode` 的三分支比较器（`:796/803`、`:940/947`、`:1077/1084`、`:1146/1153`、`:1281/1288`、`:1350/1357`）
+  → 排序恒在截断之前，且输入是全量数组（SQL 未按 provider/group 截断）→ 搜索组按 spend 可进 Top 5。**设计 §4.3 #7 成立**。
+- **§4.3 #3「搜索行 token 为 0」**：`web_search_wire.rs:189-191` 写死 `total_tokens/prompt_tokens/completion_tokens = 0`
+  → `SUM` 不变，Tokens tile 确实不失真。
+- **§4.3 #9 的 `mergeSmallProviders`**：`usage/index.tsx:201-220`，阈值 `total * 0.01`，低于者并入 `others`。零花费扇区必被并入
+  （值为 0）→ 与设计记录一致。
+- **§4.3 #13 的修复**：`dashboard/index.tsx` 已改读 `logsData?.total_count`；后端信封确在 `spend.rs:771` 输出该字段。
+- **§4.3 #15**：`grep -rn "spend/tags" crates/aigw-frontend/src` 无命中 → 前端确无消费者，本期不审计成立。
+- **抽屉的跨页跳转路径**：`enrichedLog` 已改为 `detailData ? {...(selectedLog ?? detailData), messages, response} : selectedLog`
+  → 当跳转到列表外的 call_id 时（`selectedLog` 为 null），抽屉用详情响应本体渲染，`isSearchRow` / `extractSearchMeta`
+  仍从真实行数据取值；`detailRequestId` 是 detail query 的 `queryKey`，切行即重取。关闭时清 `selectedLog` + `detailRequestId`。**无 stale 行**。
+
+### G4 — 跳到「不在当前页」的父行时，抽屉会贴着**旧行**渲染新行的 body（High，已修）
+
+`onOpenCallId` 用 `logs.find(...)` 解析目标行，但父行常常**不在当前页**（跨页、或被 `status`/`model`/`call_type` 筛掉）。
+此时 `selectedLog` 被设成 `null`，而 `enrichedLog` 的回退是 `{...(selectedLog ?? detailData), messages, response}` ——
+`selectedLog` 为 `null` 时确实回退到 `detailData`，**但 `useQuery` 在切换 key 的同一帧仍返回上一个 `detailData`**
+（react-query 的 `staleTime: 10s` 与无 `placeholderData` 不改变这一点），于是抽屉在 fetch 期间显示的是
+**上一行的 call_id/model/spend/metadata + 新行的 messages/response** 的混合体，且 fetch 若失败则永久停留。
+
+**失败场景**：搜索行抽屉点「父调用」跳到一个不在第 1 页的父行 → 抽屉标题仍是原搜索行、正文却是父行内容（或反之）。
+
+**修复**：引入 `rowMismatch`（`selectedLog` 与 `detailData` 的 `call_id` 不一致）→ 不一致时**整行取 `detailData`**，
+使标题与正文永远同源：
+
+```tsx
+const rowMismatch = selectedLog != null && detailData != null && detailData.call_id !== selectedLog.call_id;
+const enrichedLog = detailData
+  ? { ...(rowMismatch ? detailData : (selectedLog ?? detailData)), messages: detailData.messages, response: detailData.response }
+  : selectedLog;
+```
+
+**配套**：BDD 场景 7 只覆盖了「父行在同页」的路径（mock 的 `req-001` 恒在当前页）→ 该缺陷未被场景捕获。
+已把 `onOpenCallId` 的语义改为「以 `detailRequestId` 为准的行」，跨页路径由 `rowMismatch` 兜底；
+**跨页父行的端到端场景**（mock 分页 + 父行在第 2 页）登记为后续（见 §8.2），本期不做 —— 需要 mock 层支持分页才有意义。
+
+### G5 — 两条断言是空断言（Low，已修）
+
+- `Search row with empty metadata still renders without crashing` 断言 `[data-testid='error-boundary']` 计数为 0，
+  而**全仓无任何文件产出该 testid**（`ErrorBoundary` 在 `pages/jobs/job-detail.tsx:284`，不渲染 testid）→ 恒真。
+  改为断言 `main` 可见（渲染抛异常会让路由整片空白）。
+- `Search detail drawer hides cache and TTFT blocks` 断言不含 `/Cache:/i`，而抽屉的 cache 标签键
+  `spendLogs.drawer.meta.cache` = `"Cache"`（**无冒号**，拼接后才加 `:`，见 `index.tsx:971`）→ 对真实回归恒真。
+  改为断言搜索详情块在、且不含 `/\d+↑/`（LLM 行的 token pill 形态）。
+
+### G6 — `spendLogs.filters.callType` 是惰性键（Low，已处置）
+
+该键在 `en`/`zh-CN`/`resources.d.ts` 三处都有，但 `grep` 显示 `src/` 无引用（下拉用的是
+`callType.completion|responses|embedding|search` 作选项文案，触发器用 `callTypePlaceholder`）。
+**处置**：不删（删会破坏对称性检查的价值），改为挂到触发器上作 `aria-label` —— 该下拉此前**无可访问名**
+（触发器只有占位符），补上 `aria-label` 既是无障碍改进，也让键不再惰性。
+
+### 复核确认（未发现问题）
+
+- **`count` 变量活跃**：Dashboard 的 `SpendLogsResponse.count` 虽不再被读，但 `useQuery` 返回值里的 `count`
+  仍被 `/global/spend/logs` 的信封携带（`spend.rs:770`）—— 该字段是**API 契约**的一部分，非死代码；
+  前端 interface 保留它是诚实的（后端确实返回）。
+- **未跑跨页路径的判定**：G4 的修复不依赖 mock 支持分页 —— `rowMismatch` 的判别只看两个 `call_id` 是否相等，
+  单页场景下 `selectedLog.call_id === detailData.call_id` 恒成立（同一行），故**既有 447 用例零回归**（已复跑验证）。

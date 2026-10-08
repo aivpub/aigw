@@ -133,6 +133,8 @@ declare module "i18next" {
       failed: string;
       tokens: string;
       rate: string;
+      requestsHint: string;
+      rateHint: string;
     },
     trend: string;
     tabSpend: string;
@@ -156,12 +158,14 @@ declare module "i18next" {
       successCount: string;
       failedCount: string;
       totalRequests: string;
+      requestsHint: string;
     },
     topKeys: string;
     spendByProvider: string;
     spendByModelGroup: string;
     spendByModel: string;
     others: string;
+    unknownGroupHint: string;
   },
   dashboard: {
     title: string;
@@ -184,6 +188,8 @@ declare module "i18next" {
       cost: string;
       status: string;
     },
+    totalRequestsHint: string;
+    periodSpendWindow: string;
   },
   keys: {
     title: string;
@@ -662,6 +668,9 @@ declare module "i18next" {
       tokenRange: string;
       minTokPlaceholder: string;
       maxTokPlaceholder: string;
+      callType: string;
+      callTypePlaceholder: string;
+      parentCall: string;
     },
     table: {
       callId: string;
@@ -718,6 +727,7 @@ declare module "i18next" {
         team: string;
         org: string;
         mcpTool: string;
+        parentCall: string;
       },
       imageTokens: string;
       imageTokensUpstream: string;
@@ -741,10 +751,24 @@ declare module "i18next" {
       fetchError: string;
       tabDescription: string;
       tabParams: string;
+      searchDetail: string;
     },
     noData: string;
     search: {
       placeholder: string;
+      noTokens: string;
+      noTokensHint: string;
+      queries: string;
+      results: string;
+      provider: string;
+      instance: string;
+      notPriced: string;
+      zeroSpendHint: string;
+      spendHint: string;
+      costPerQuery: string;
+      childBadge: string;
+      viewChildren: string;
+      spendNotAuthoritative: string;
     },
     status: {
       streaming: string;
@@ -758,6 +782,12 @@ declare module "i18next" {
       totalTokens: string;
       ttft: string;
       duration: string;
+    },
+    callType: {
+      search: string;
+      completion: string;
+      responses: string;
+      embedding: string;
     },
   },
   playground: {

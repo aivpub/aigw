@@ -140,3 +140,138 @@ Feature: Spend Logs
     And I am on the Spend Logs page
     Then the spend log row with call id "req-emb-001" should show the "embedding" type badge
 
+
+  # ── Stage 137: web search call rendering ──
+  #
+  # Search calls are a new row kind (Stage 136): no tokens, per-query spend,
+  # and a `metadata.parent_call_id` pointing at the LLM request that triggered
+  # them. These scenarios lock the rendering decisions of design §3.1-§3.6.
+
+  Scenario: Spend log list type badge shows search call type
+    Given API endpoints are mocked
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    Then the spend log row with call id "req-search-001" should show the "search" type badge
+
+  Scenario: Search row renders em dash instead of zero tokens
+    Given API endpoints are mocked
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    Then the spend log row with call id "req-search-001" should show no token value
+
+  Scenario: Search row token cell explains why it has no token value
+    Given API endpoints are mocked
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    Then the token cell of the spend log row with call id "req-search-001" should explain itself
+
+  Scenario: Search row shows provider and spend in the list
+    Given API endpoints are mocked
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    Then the spend log row with call id "req-search-001" should show the provider and spend
+
+  Scenario: Zero spend search row renders a real zero amount
+    Given API endpoints are mocked
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    Then the spend log row with call id "req-search-002" should show a zero amount and no tokens
+
+  Scenario: Zero spend search row carries a not-priced affordance
+    Given API endpoints are mocked
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    Then the spend log row with call id "req-search-002" should show the not priced badge
+    And the spend log row with call id "req-search-001" should not show the not priced badge
+
+  Scenario: Search row provider label is not hardcoded
+    Given API endpoints are mocked
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    Then the spend log row with call id "req-search-003" should show the provider "stubsearch"
+
+  Scenario: Search detail drawer shows query text and result count
+    Given API endpoints are mocked
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    When I click on the spend log row with call id "req-search-001"
+    Then the detail drawer should show the search query and result count
+
+  Scenario: Search detail drawer shows the instance that served the call
+    Given API endpoints are mocked
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    When I click on the spend log row with call id "req-search-001"
+    Then the detail drawer should show the search instance "http://searxng-a:9099"
+
+  Scenario: Zero spend drawer explains why the amount is zero
+    Given API endpoints are mocked
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    When I click on the spend log row with call id "req-search-002"
+    Then the detail drawer should show the search instance "http://searxng-b:9099"
+    And the detail drawer should explain the zero search spend
+
+  Scenario: Search detail drawer shows parent call link
+    Given API endpoints are mocked
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    When I click on the spend log row with call id "req-search-001"
+    Then the detail drawer should show the parent call link
+
+  Scenario: Clicking parent call link switches the drawer to the LLM row
+    Given API endpoints are mocked
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    When I click on the spend log row with call id "req-search-001"
+    And I click the parent call link in the detail drawer
+    Then the detail drawer should show the LLM request "req-001"
+
+  Scenario: LLM detail drawer shows a search badge linking to its search rows
+    Given API endpoints are mocked
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    When I click on the spend log row with call id "req-001"
+    Then the detail drawer should show the search calls button
+
+  Scenario: Clicking the search badge filters the list by parent call
+    Given API endpoints are mocked
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    When I click on the spend log row with call id "req-001"
+    And I click the search calls button in the detail drawer
+    Then the spend logs query should include parent_call_id and show only search rows
+
+  Scenario: Call type filter narrows the list to search calls
+    Given API endpoints are mocked
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    When I select "search" in the call type filter
+    Then the spend logs query should include call_type and show only search rows
+
+  Scenario: Call type filter set to all shows both LLM and search rows
+    Given API endpoints are mocked
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    Then the spend logs list should show both LLM and search rows
+
+  Scenario: Search row with empty metadata still renders without crashing
+    Given API endpoints are mocked
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    Then the spend log row with call id "req-search-004" should be visible without errors
+
+  Scenario: Search detail drawer hides cache and TTFT blocks
+    Given API endpoints are mocked
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    When I click on the spend log row with call id "req-search-001"
+    Then the detail drawer should not show cache or ttft
+
+  Scenario: Mobile search card renders em dash tokens and provider
+    Given API endpoints are mocked
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    Given the viewport is mobile size 375x667
+    When I visit "/dash/spend-logs"
+    Then the mobile search card should show no tokens and a provider

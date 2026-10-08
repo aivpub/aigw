@@ -3,6 +3,14 @@
 ## [未发布]
 
 ### 新增
+- Stage 137: 搜索调用在 Spend Logs 页的**专属展现** —— 搜索行 badge（放大镜 + 「搜索」）+ token 单元格渲染 `—` 并挂 tooltip「搜索按次计费，不消耗 token」（与 LLM 行的 `0 / 0` 明确区分）+ spend 单元格对 `spend == 0` 渲染 `$0.00` + 「未计价」徽标（与 token 列的处置**刻意相反**：`—` 专表「不适用」，`$0.00` 专表「值为零且已知原因」）
+- Stage 137: 抽屉**搜索详情块** —— provider / **命中实例 `api_base`**（多实例部署可按实例溯源）/ query 文本 / 结果条数 / `cost_per_query` 单价快照 / 零值说明；`spend === 0` 时附中性说明（不写「已配置为 0」的断言式归因 —— 脏单价与 0 单价在 UI 上不可区分）
+- Stage 137: **父↔子双向跳转** —— 搜索行抽屉的「父调用」链接切换抽屉到父 LLM 行；LLM 行抽屉的「搜索调用」按钮把列表按 `parent_call_id` 过滤（附清除胶囊）
+- Stage 137: Spend Logs 页新增 `call_type` 筛选下拉（`all` / `completion` / `responses` / `embedding` / `search`）
+- Stage 137: 后端 `SpendLogsQuery` 新增 `call_type` / `parent_call_id` 筛选参数（`/global/spend/logs` 与 `/spend/logs`）—— 列表查询 11→13 参、**计数查询同步** 5→7 参（三方言），`parent_call_id` 走三方言 JSON 条件（SQLite `json_extract` / MySQL `JSON_UNQUOTE(JSON_EXTRACT(...))` / PG `metadata->>'...'`）
+- Stage 137: `sql_literal(db, raw)` —— SQL 字面量转义统一入口；MySQL 上在引号翻倍之外**额外翻倍反斜杠**（默认 `sql_mode` 无 `NO_BACKSLASH_ESCAPES` 时反斜杠是转义符，仅翻倍引号可被 `x\' OR 1=1 --` 绕过）；SQLite/PG 不做该处理（它们视反斜杠为普通字符）
+- Stage 137: Usage 页聚合口径注脚 —— Requests / Rate tile、趋势图 requests tooltip、Top Keys 的 requests 排序 + Spend by Model Group 卡片均标注「含搜索调用」
+
 - Stage 136: 搜索**按次计费**（aigw 首个非 token 计价）—— `calc_search_spend(queries, cost_per_query)`（非有限值/非正值归零，防脏配置污染 `virtual_keys.spend`）+ 每次搜索一条 `call_type="search"` 的独立 SpendLog 行（`model="<provider>/search"`、token 列全 0、`api_base`=**实际命中实例**的 `base_url`、`metadata.parent_call_id` 父子关联、**单价快照** `cost_per_query`）+ 四级 `increment_{key,user,team,org}_spend`
 - Stage 136: `SearchResponse.endpoint` + `SearxngProvider::parse_response_from` —— 命中实例的 `base_url` 此前在 `search()` 内被就地丢弃，无处溯源（多实例部署无法定位「哪台 SearXNG 在拖慢/报错」）
 - Stage 136: `SearchServeOutcome::Empty` 独立态（provider 真答了但结果被 `normalize` 全过滤）—— 与 `NoTarget`（从未发出请求）区分，前者计费后者不计费；`performed_search()` = `!NoTarget`
@@ -40,6 +48,8 @@
 - Stage 103: `/v1/models` 暴露 `model_info.mode`（多模态模型可识别）
 
 ### 变更
+- Stage 137: **Dashboard「Total Requests」改读 `total_count`**（原读本页条数 `count`，请求数超一页后恒显页大小）—— 修掉一个既有 bug（TD-018 Resolved）
+- Stage 137: Dashboard「Period Spend」补充「仅累加本页调用，不等于整个时间段」说明（该卡片对 `/global/spend/logs` 的 `data` 求和，而该端点**忽略 `limit`** 并回落 `page_size=30`）
 - Stage 130: chat/v1_messages/responses/embeddings 客户端上游错误从「拼原始 body」收窄为 `upstream_error_message`（TD-015a，全库模式）
 - Stage 113: `Engine::run` 拆出 `run_with_cancel(token)`（保持 `run()` 兼容签名）；health.rs `run_and_save_health_check` 增 `model_info` 参数 + 抽 `build_probe_spec`
 - Stage 103: `openai_message_to_claude` 修 image 转换 bug — data URL 剥离 + media_type 推导（parse_data_url）
@@ -54,6 +64,8 @@
 - Stage 103: `test_activity_reports_timezone_metadata` date-sensitive 修复（固定 start_time 在查询窗口内）
 
 ### 技术债
+- 新增: TD-019 `SpendLogsQuery` 的 `limit` / `session_id` 是静默失效的死参数
+- 解决: TD-018 Dashboard「Total Requests」上限（改读 `total_count`）
 - 解决: TD-015a（Stage 130，`upstream_error_message` 全库收窄）；TD-011b/c + TD-012b（Stage 115）；TD-008a/b + TD-009a/b（Stage 114）；TD-005 / TD-003 / TD-010a（Stage 113）——Phase 45 技术债清理全收官
 - 引入: 无（TD-015b/c/d/e/f + TD-016a/b 维持记录；TD-015d/e 转长期路线 LT-OAuthResponseAdapt / LT-CountTokensAuth）
 

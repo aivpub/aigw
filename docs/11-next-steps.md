@@ -1,11 +1,29 @@
 # aigw -- 下一步行动
 
-**上次更新**: 2026-10-07
-**当前阶段**: **Phase 53 🔄 进行中 — 内建 Web Search（TD-017c）：Stage 134-136 ✅ 完成，137-138 ⏳；总进度 138**
+**上次更新**: 2026-10-08
+**当前阶段**: **Phase 53 🔄 进行中 — 内建 Web Search（TD-017c）：Stage 134-137 ✅ 完成，138 ⏳；总进度 138**
 
 ---
 
-## 当前状态：Phase 53 Stage 136 ✅ 完成，下一步 Stage 137
+## 当前状态：Phase 53 Stage 137 ✅ 完成，下一步 Stage 138
+
+### Stage 137 交付（2026-10-08）
+
+搜索调用在管理控制台的**展现与聚合口径修正**—— 有了搜索行，就得让它在日志里看得见、在聚合里不误导。
+
+| 层 | 交付 |
+|----|------|
+| 后端 `spend.rs` / `db.rs` | `call_type` / `parent_call_id` 两个筛选参数（列表 11→13 参、**计数查询同步** 5→7 参，三方言）；`sql_literal(db, raw)` 修 **X1 Critical**（MySQL 反斜杠绕过转义） |
+| 前端 `spend-logs/index.tsx` | 搜索行 badge + token 列 `—`(tooltip) + spend 列 `$0.00`/「未计价」(与 token 列**刻意相反**) + 抽屉搜索详情块（provider / 命中实例 `api_base` / query / 结果数 / 单价快照）+ **父↔子双向跳转** + `call_type` 筛选 |
+| 前端 `usage/` `dashboard/` | §4.3 **15 项聚合口径**逐条审计 → 前端加注脚、**不改聚合 SQL**；Dashboard「Total Requests」顺带修掉既有 bug（改读 `total_count`，TD-018 Resolved） |
+
+**验证**: `task test`（aigw-core **645** / aigw-server **187+194**）、`task fe-bdd` **444 passed / 3 skipped**（3 viewport × 149 场景）、`task fe-lint`（含 i18n 类型对称）/`fmt`/`lint` 全绿。**强制 TDD 红绿**：后端 11 UT 首轮 8 FAIL、前端 19 场景首轮 27 FAIL。设计评审 7 findings + 代码评审 6 findings（全修，含 1 High 的跨页 stale-row）。
+
+**顺带产出**: 新登记 **TD-019** —— `SpendLogsQuery.limit` / `session_id` 是静默失效的死参数（`limit` 致 Dashboard Period Spend 的窗口实为 30 条而非 100）。
+
+### 下一步：Stage 138（provider/实例/定价 DB 化 + 管理 UI，14h）
+
+搜索 provider 配置从 `config.yaml` 迁到 DB 表（`028_web_search_providers.sql` × 三方言）+ admin CRUD + 前端管理页，仿 `proxies` / Phase 50 全套。**配置源单一来源 + 优先级**（DB 优先 → yaml 回落 → 皆空禁用）；**改价不重启生效**。
 
 ### Stage 136 交付（2026-10-07）
 
@@ -35,12 +53,6 @@
 ### 新增 Taskfile 任务（2026-10-08）
 
 `task test-db-up` / `task test-db-down` —— 封装 `docker compose -f docker-compose.test.yml`，`up` 带 `--wait` 直到两个容器 healthy。此前 `bdd-real-pg` / `bdd-real-mysql` 的前置（起 PG/MySQL）**没有任何 task 覆盖**，只能手敲 docker 命令，属纪律缺口。
-
-### 下一步：Stage 137（调用日志展现，9h）—— **强制 TDD 红绿**
-
-Spend Logs 识别 `call_type="search"` 行（徽章 + query + 结果数 + provider + spend）+ 父子跳转 UX + `call_type` 过滤 + **零 token 行对既有 Usage 聚合口径的影响审计** + i18n + fe-bdd。⚠️ 搜索行入不入 `daily_spend_queue` 的处置也在此定（Stage 136 显式不入）。
-
-**⚠️ 本 Stage 强制 TDD 红绿**（用户 2026-10-08 决策）：每个 UT/BDD 先跑红再写实现，红绿证据写进 Implementation Notes。Stage 134/135/136 的同批编写不再沿用。
 
 ### Stage 135 交付（2026-10-07）
 

@@ -213,6 +213,120 @@ function fmtDuration(ms: number | null) {
   if (ms === null || ms === undefined) return "—";
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
 }
+// ── Stage 137: web search call rows ──
+
+const SEARCH_CALL_TYPE = "search";
+
+function isSearchRow(log: { call_type: string }): boolean {
+  return log.call_type === SEARCH_CALL_TYPE;
+}
+
+/// Read the search metadata Stage 136 writes onto every search row.
+/// Same shape as `extractCacheTokens`: defensive field-by-field narrowing over
+/// an `unknown`, returning null when nothing usable is present.
+function extractSearchMeta(metadata: unknown): {
+  search_query_count?: number;
+  parent_call_id?: string;
+  search_provider?: string;
+  cost_per_query?: number;
+} | null {
+  if (!metadata || typeof metadata !== "object") return null;
+  const m = metadata as Record<string, unknown>;
+  const has = (k: string) => m[k] !== undefined && m[k] !== null;
+  if (!has("parent_call_id") && !has("search_provider") && !has("search_query_count"))
+    return null;
+  return {
+    search_query_count:
+      typeof m.search_query_count === "number" ? (m.search_query_count as number) : undefined,
+    parent_call_id:
+      typeof m.parent_call_id === "string" ? (m.parent_call_id as string) : undefined,
+    search_provider:
+      typeof m.search_provider === "string" ? (m.search_provider as string) : undefined,
+    cost_per_query:
+      typeof m.cost_per_query === "number" ? (m.cost_per_query as number) : undefined,
+  };
+}
+
+/// Result count for a search row, read off the `response` blob Stage 136 writes.
+function searchResultCount(response: unknown): number | null {
+  if (!response || typeof response !== "object") return null;
+  const r = response as Record<string, unknown>;
+  return typeof r.result_count === "number" ? (r.result_count as number) : null;
+}
+
+/// The call-type cell. Search gets a distinct badge + icon; every other type
+/// keeps the plain outline badge it has always had.
+function CallTypeBadge({ log }: { log: { call_type: string } }) {
+  const { t } = useTranslation();
+  if (isSearchRow(log)) {
+    return (
+      <Badge variant="secondary" className="text-[10px] px-1 py-0 gap-1">
+        <Search className="h-3 w-3" />
+        {t("spendLogs.callType.search")}
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="outline" className="text-[10px] px-1 py-0">
+      {log.call_type || "—"}
+    </Badge>
+  );
+}
+
+/// Token cell. A search consumes no tokens — "—" with a tooltip says
+/// "not applicable", which is different from a genuine `0`.
+function SearchTokenHint() {
+  const { t } = useTranslation();
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className="text-muted-foreground cursor-help"
+            data-testid="search-no-tokens"
+            title={t("spendLogs.search.noTokensHint")}
+          >
+            {t("spendLogs.search.noTokens")}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>{t("spendLogs.search.noTokensHint")}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+/// Spend cell. Deliberately the opposite of the token cell: a search *does*
+/// have a cost concept, so a zero amount is rendered as a real `$0.00` plus a
+/// "not priced" badge — never as the "—" that means "not applicable".
+function SearchSpend({ log }: { log: SpendLog }) {
+  const { t } = useTranslation();
+  const { spend } = log;
+  if (spend !== 0) {
+    return (
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="cursor-help">{fmtSpend(spend)}</span>
+          </TooltipTrigger>
+          <TooltipContent>{t("spendLogs.search.spendHint")}</TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1" data-testid="search-zero-spend">
+      <span>{fmtSpend(0)}</span>
+      <Badge
+        variant="outline"
+        className="text-[10px] px-1 py-0"
+        title={t("spendLogs.search.zeroSpendHint")}
+      >
+        {t("spendLogs.search.notPriced")}
+      </Badge>
+    </span>
+  );
+}
+
 function truncate8(s: string) {
   return s ? (s.length > 8 ? s.slice(0, 8) + "…" : s) : "—";
 }
@@ -635,6 +749,8 @@ function DetailDrawer({
   isDetailLoading,
   detailError,
   onRetry,
+  onOpenCallId,
+  onFilterByParent,
 }: {
   log: SpendLogDetail | null;
   open: boolean;
@@ -642,9 +758,21 @@ function DetailDrawer({
   isDetailLoading: boolean;
   detailError: boolean;
   onRetry: () => void;
+  /// Jump the drawer to another call (used by the search row's parent link).
+  onOpenCallId?: (callId: string) => void;
+  /// Filter the list to one request's search calls (LLM row → its children).
+  onFilterByParent?: (parentCallId: string) => void;
 }) {
   const { t } = useTranslation();
   if (!log) return null;
+
+  const isSearch = isSearchRow(log);
+  const searchMeta = extractSearchMeta(log.metadata);
+  const searchQuery =
+    log.messages && typeof log.messages === "object"
+      ? ((log.messages as Record<string, unknown>).query as string | undefined)
+      : undefined;
+  const resultCount = searchResultCount(log.response);
 
   const hasPrompt = log.messages != null;
   const hasResponse = log.response != null;
@@ -703,17 +831,28 @@ function DetailDrawer({
         {/* ── Summary pills row ── */}
         <div className="flex flex-wrap items-center gap-2 mt-3 mb-3">
           <StatusBadge status={log.status || ""} />
-          <Badge variant="outline" className="text-[10px]">
-            {log.call_type || "—"}
-          </Badge>
+          <CallTypeBadge log={log} />
           <span className="text-xs font-medium">{log.model}</span>
           <span className="text-xs font-mono text-muted-foreground">
-            {fmtSpend(log.spend)}
+            {isSearch ? <SearchSpend log={log} /> : fmtSpend(log.spend)}
           </span>
-          <span className="text-[11px] text-muted-foreground">
-            {fmtTokens(log.prompt_tokens)}↑ / {fmtTokens(log.completion_tokens)}
-            ↓ · {fmtTtft(log.ttft_ms)} / {fmtDuration(log.request_duration_ms)}
-          </span>
+          {isSearch ? (
+            <span className="text-[11px] text-muted-foreground">
+              {t("spendLogs.search.queries", {
+                count: searchMeta?.search_query_count ?? 1,
+              })}
+              {resultCount != null
+                ? ` · ${t("spendLogs.search.results", { count: resultCount })}`
+                : ""}
+              {` · ${fmtDuration(log.request_duration_ms)}`}
+            </span>
+          ) : (
+            <span className="text-[11px] text-muted-foreground">
+              {fmtTokens(log.prompt_tokens)}↑ /{" "}
+              {fmtTokens(log.completion_tokens)}↓ · {fmtTtft(log.ttft_ms)} /{" "}
+              {fmtDuration(log.request_duration_ms)}
+            </span>
+          )}
           {(() => {
             const src = imageTokensSource(log);
             return log.image_tokens != null && src ? (
@@ -876,6 +1015,106 @@ function DetailDrawer({
             ) : null}
           </div>
         </div>
+
+        {/* ── Stage 137: search detail block (search rows only) ── */}
+        {isSearch ? (
+          <div
+            className="text-[11px] bg-muted/20 rounded p-2 mb-3 space-y-1"
+            data-testid="search-detail"
+          >
+            <div className="flex items-center gap-1 text-muted-foreground font-medium">
+              <Search className="h-3 w-3" />
+              {t("spendLogs.drawer.searchDetail")}
+            </div>
+            <div className="flex flex-wrap gap-x-4 gap-y-0.5">
+              <span>
+                {t("spendLogs.search.provider")}{" "}
+                <span className="font-mono text-foreground">
+                  {searchMeta?.search_provider ||
+                    log.custom_llm_provider ||
+                    "—"}
+                </span>
+              </span>
+              <span>
+                {t("spendLogs.search.instance")}{" "}
+                <code className="text-[10px] text-foreground">
+                  {log.api_base || "—"}
+                </code>
+              </span>
+              {searchMeta?.search_query_count != null ? (
+                <span>
+                  {t("spendLogs.search.queries", {
+                    count: searchMeta.search_query_count,
+                  })}
+                </span>
+              ) : null}
+              {resultCount != null ? (
+                <span data-testid="search-result-count">
+                  {t("spendLogs.search.results", { count: resultCount })}
+                </span>
+              ) : null}
+              {searchMeta?.cost_per_query != null ? (
+                <span>
+                  {t("spendLogs.search.costPerQuery")}{" "}
+                  <span className="font-mono text-foreground">
+                    {fmtSpend(searchMeta.cost_per_query)}
+                  </span>
+                </span>
+              ) : null}
+            </div>
+            {searchQuery ? (
+              <div className="text-muted-foreground" data-testid="search-query">
+                <span className="font-mono text-foreground break-all">
+                  {searchQuery}
+                </span>
+              </div>
+            ) : null}
+            {log.spend === 0 ? (
+              <div className="text-muted-foreground" data-testid="search-zero-note">
+                {t("spendLogs.search.zeroSpendHint")}
+              </div>
+            ) : null}
+            {searchMeta?.search_provider === "bocha" ? (
+              <div className="text-amber-600">
+                {t("spendLogs.search.spendNotAuthoritative")}
+              </div>
+            ) : null}
+            {searchMeta?.parent_call_id ? (
+              <div className="flex items-center gap-1">
+                <span>{t("spendLogs.drawer.meta.parentCall")}</span>
+                <Button
+                  variant="link"
+                  size="sm"
+                  className="h-auto p-0 text-[11px] font-mono"
+                  data-testid="parent-call-link"
+                  onClick={() => onOpenCallId?.(searchMeta.parent_call_id!)}
+                >
+                  {truncateUuid(searchMeta.parent_call_id)}
+                </Button>
+                <RowCopyButton text={searchMeta.parent_call_id} />
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {/* ── Stage 137: LLM rows can jump to the search calls they triggered.
+               The count is deliberately absent: it is only known once the
+               filtered request comes back (design §3.3 / review F2). ── */}
+        {!isSearch && onFilterByParent && log.call_id ? (
+          <div className="mb-3">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-[11px] gap-1"
+              title={t("spendLogs.search.viewChildren")}
+              data-testid="view-search-calls"
+              onClick={() => onFilterByParent(log.call_id)}
+            >
+              <Search className="h-3 w-3" />
+              {t("spendLogs.search.childBadge")}
+            </Button>
+          </div>
+        ) : null}
 
         {/* ── Body area: loading / error / content ── */}
         <div className="space-y-3">
@@ -1058,6 +1297,10 @@ export function SpendLogsPage() {
   const [requestIdFilter, setRequestIdFilter] = useState("");
   const [requestIdInput, setRequestIdInput] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  // Stage 137: filter by call_type; `parentFilter` is set by the "view search
+  // calls" jump from an LLM row's drawer.
+  const [callTypeFilter, setCallTypeFilter] = useState("all");
+  const [parentFilter, setParentFilter] = useState("");
   const [minTokens, setMinTokens] = useState<number | undefined>();
   const [maxTokens, setMaxTokens] = useState<number | undefined>();
   const [liveTail, setLiveTail] = useState(loadLiveTailPref);
@@ -1130,6 +1373,8 @@ export function SpendLogsPage() {
       modelFilter,
       requestIdFilter,
       statusFilter,
+      callTypeFilter,
+      parentFilter,
       minTokens,
       maxTokens,
       page,
@@ -1148,6 +1393,10 @@ export function SpendLogsPage() {
         url += `&request_id=${encodeURIComponent(requestIdFilter)}`;
       if (statusFilter && statusFilter !== "all")
         url += `&status=${encodeURIComponent(statusFilter)}`;
+      if (callTypeFilter && callTypeFilter !== "all")
+        url += `&call_type=${encodeURIComponent(callTypeFilter)}`;
+      if (parentFilter)
+        url += `&parent_call_id=${encodeURIComponent(parentFilter)}`;
       if (minTokens !== undefined) url += `&min_tokens=${minTokens}`;
       if (maxTokens !== undefined) url += `&max_tokens=${maxTokens}`;
       return apiGet(url);
@@ -1178,15 +1427,25 @@ export function SpendLogsPage() {
     staleTime: Infinity,
   });
 
-  // Merge detail data into the selected log to enrich it with body blobs
-  const enrichedLog =
-    selectedLog && detailData
-      ? {
-          ...selectedLog,
-          messages: detailData.messages,
-          response: detailData.response,
-        }
-      : selectedLog;
+  // Merge detail data into the selected log to enrich it with body blobs.
+  //
+  // Stage 137: the drawer can also be opened for a call_id that is NOT in the
+  // loaded page (the parent-call link on a search row), in which case
+  // `selectedLog` is null. Falling back to it unconditionally would then keep
+  // the *previous* row on screen while the fetch is in flight and pair it with
+  // the new row's body — so a disagreement between the two is resolved by
+  // showing the detail response alone, which is the full row.
+  const rowMismatch =
+    selectedLog != null &&
+    detailData != null &&
+    detailData.call_id !== selectedLog.call_id;
+  const enrichedLog = detailData
+    ? {
+        ...(rowMismatch ? detailData : (selectedLog ?? detailData)),
+        messages: detailData.messages,
+        response: detailData.response,
+      }
+    : selectedLog;
 
   return (
     <div className="space-y-4 max-w-full">
@@ -1347,6 +1606,55 @@ export function SpendLogsPage() {
                 </SelectItem>
               </SelectContent>
             </Select>
+            <Select
+              value={callTypeFilter}
+              onValueChange={(v) => {
+                setCallTypeFilter(v);
+                setPage(1);
+              }}
+            >
+              <SelectTrigger
+                className="h-7 w-[110px] text-xs"
+                data-testid="call-type-filter"
+                aria-label={t("spendLogs.filters.callType")}
+              >
+                <SelectValue
+                  placeholder={t("spendLogs.filters.callTypePlaceholder")}
+                />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">
+                  {t("spendLogs.filters.all")}
+                </SelectItem>
+                <SelectItem value="completion">
+                  {t("spendLogs.callType.completion")}
+                </SelectItem>
+                <SelectItem value="responses">
+                  {t("spendLogs.callType.responses")}
+                </SelectItem>
+                <SelectItem value="embedding">
+                  {t("spendLogs.callType.embedding")}
+                </SelectItem>
+                <SelectItem value="search">
+                  {t("spendLogs.callType.search")}
+                </SelectItem>
+              </SelectContent>
+            </Select>
+            {parentFilter ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  setParentFilter("");
+                  setPage(1);
+                }}
+                className="h-7 shrink-0 text-xs gap-1"
+                data-testid="parent-filter-chip"
+              >
+                {t("spendLogs.filters.parentCall")}: {truncateUuid(parentFilter)}
+                <X className="h-3 w-3" />
+              </Button>
+            ) : null}
             <Input
               type="number"
               placeholder={t("spendLogs.filters.minTokPlaceholder")}
@@ -1487,12 +1795,7 @@ export function SpendLogsPage() {
                         : "—"}
                     </TableCell>
                     <TableCell>
-                      <Badge
-                        variant="outline"
-                        className="text-[10px] px-1 py-0"
-                      >
-                        {log.call_type || "—"}
-                      </Badge>
+                      <CallTypeBadge log={log} />
                     </TableCell>
                     <TableCell className="text-xs whitespace-nowrap">
                       <div className="flex items-center gap-1">
@@ -1542,24 +1845,34 @@ export function SpendLogsPage() {
                       {fmtDuration(log.request_duration_ms)}
                     </TableCell>
                     <TableCell className="text-xs text-right whitespace-nowrap">
-                      <span className="text-muted-foreground">
-                        {fmtTokens(log.prompt_tokens)}
-                      </span>
-                      {" / "}
-                      <span>{fmtTokens(log.completion_tokens)}</span>
-                      {(() => {
-                        const c = extractCacheTokens(log.metadata);
-                        return c ? (
-                          <span className="text-[10px] block text-muted-foreground/70">
-                            {t("usage.cache")}:{" "}
-                            {fmtTokens(c.cache_read_tokens ?? 0)}R /{" "}
-                            {fmtTokens(c.cache_creation_tokens ?? 0)}W
+                      {isSearchRow(log) ? (
+                        <SearchTokenHint />
+                      ) : (
+                        <>
+                          <span className="text-muted-foreground">
+                            {fmtTokens(log.prompt_tokens)}
                           </span>
-                        ) : null;
-                      })()}
+                          {" / "}
+                          <span>{fmtTokens(log.completion_tokens)}</span>
+                          {(() => {
+                            const c = extractCacheTokens(log.metadata);
+                            return c ? (
+                              <span className="text-[10px] block text-muted-foreground/70">
+                                {t("usage.cache")}:{" "}
+                                {fmtTokens(c.cache_read_tokens ?? 0)}R /{" "}
+                                {fmtTokens(c.cache_creation_tokens ?? 0)}W
+                              </span>
+                            ) : null;
+                          })()}
+                        </>
+                      )}
                     </TableCell>
                     <TableCell className="text-xs font-mono text-right font-medium">
-                      {fmtSpend(log.spend)}
+                      {isSearchRow(log) ? (
+                        <SearchSpend log={log} />
+                      ) : (
+                        fmtSpend(log.spend)
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -1580,13 +1893,11 @@ export function SpendLogsPage() {
               >
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
-                    <Badge variant="outline" className="text-[10px] px-1 py-0">
-                      {log.call_type || "—"}
-                    </Badge>
+                    <CallTypeBadge log={log} />
                     <StatusBadge status={log.status || ""} />
                   </div>
                   <span className="text-xs font-mono font-medium">
-                    {fmtSpend(log.spend)}
+                    {isSearchRow(log) ? <SearchSpend log={log} /> : fmtSpend(log.spend)}
                   </span>
                 </div>
                 <div className="text-sm font-medium mb-1 flex items-center gap-1">
@@ -1630,7 +1941,17 @@ export function SpendLogsPage() {
                   </div>
                   <div>
                     {t("spendLogs.table.tokens")}:{" "}
-                    <span>{fmtTokens(log.total_tokens)}</span>
+                    {isSearchRow(log) ? (
+                      <span
+                        className="text-muted-foreground"
+                        data-testid="search-no-tokens"
+                        title={t("spendLogs.search.noTokensHint")}
+                      >
+                        {t("spendLogs.search.noTokens")}
+                      </span>
+                    ) : (
+                      <span>{fmtTokens(log.total_tokens)}</span>
+                    )}
                   </div>
                   <div>
                     {t("spendLogs.table.time")}:{" "}
@@ -1677,6 +1998,22 @@ export function SpendLogsPage() {
         isDetailLoading={isDetailLoading}
         detailError={isDetailError}
         onRetry={() => refetchDetail()}
+        onOpenCallId={(callId) => {
+          // Stay on the same page; swap the row the drawer is pinned to.
+          setSelectedLog(logs.find((l) => l.call_id === callId) ?? null);
+          setDetailRequestId(callId);
+        }}
+        onFilterByParent={(parentCallId) => {
+          setParentFilter(parentCallId);
+          // The jump is "show me this request's search calls", so a lingering
+          // `call_type` filter must not survive it — e.g. completion + parent
+          // would intersect to an empty list.
+          setCallTypeFilter("all");
+          setPage(1);
+          setDrawerOpen(false);
+          setSelectedLog(null);
+          setDetailRequestId(null);
+        }}
       />
     </div>
   );

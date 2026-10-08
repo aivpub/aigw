@@ -1,5 +1,6 @@
 import { createBdd } from "playwright-bdd";
 import { expect } from "@playwright/test";
+import type { Page } from "@playwright/test";
 
 const { Given, When, Then } = createBdd();
 
@@ -347,4 +348,169 @@ Then("the spend log row with call id {string} should show the {string} type badg
     .filter({ visible: true })
     .first();
   await expect(row).toContainText(type, { timeout: 5000 });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Stage 137: web search call rendering
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// The row for `cid`, matching the truncated call_id the table renders.
+function stage137Row(page: Page, cid: string) {
+  const truncated = cid.length <= 10 ? cid : `${cid.slice(0, 5)}…${cid.slice(-5)}`;
+  return page
+    .locator("[data-testid='spend-log-row']")
+    .filter({ hasText: truncated })
+    .filter({ visible: true })
+    .first();
+}
+
+Then("the spend log row with call id {string} should show no token value", async ({ page }, cid: string) => {
+  const row = stage137Row(page, cid);
+  await expect(row.locator("[data-testid='search-no-tokens']")).toBeVisible({ timeout: 5000 });
+  await expect(row).not.toContainText("0 / 0");
+});
+
+Then("the token cell of the spend log row with call id {string} should explain itself", async ({ page }, cid: string) => {
+  // The mobile card has no Tooltip component (title attribute only), so this
+  // scenario asserts the explanation is attached to the cell itself rather than
+  // driving a hover on one viewport and not the others.
+  const cell = stage137Row(page, cid).locator("[data-testid='search-no-tokens']");
+  await expect(cell).toHaveAttribute("title", /billed per query|按次计费/i);
+});
+
+Then("the spend log row with call id {string} should show the provider and spend", async ({ page }, cid: string) => {
+  const row = stage137Row(page, cid);
+  await expect(row).toContainText("searxng", { timeout: 5000 });
+  await expect(row).toContainText("$0.01", { timeout: 5000 });
+});
+
+Then("the spend log row with call id {string} should show a zero amount and no tokens", async ({ page }, cid: string) => {
+  const row = stage137Row(page, cid);
+  await expect(row.locator("[data-testid='search-zero-spend']")).toBeVisible({ timeout: 5000 });
+  await expect(row.locator("[data-testid='search-no-tokens']")).toBeVisible({ timeout: 5000 });
+});
+
+Then("the spend log row with call id {string} should show the not priced badge", async ({ page }, cid: string) => {
+  const row = stage137Row(page, cid);
+  await expect(row.locator("[data-testid='search-zero-spend']")).toContainText(/not priced|未计价/i, { timeout: 5000 });
+});
+
+Then("the spend log row with call id {string} should not show the not priced badge", async ({ page }, cid: string) => {
+  await expect(stage137Row(page, cid).locator("[data-testid='search-zero-spend']")).toHaveCount(0);
+});
+
+Then("the spend log row with call id {string} should show the provider {string}", async ({ page }, cid: string, provider: string) => {
+  await expect(stage137Row(page, cid)).toContainText(provider, { timeout: 5000 });
+});
+
+Then("the detail drawer should show the search query and result count", async ({ page }) => {
+  const dialog = page.locator("[role='dialog']");
+  await dialog.waitFor({ timeout: 5000 });
+  await expect(dialog.locator("[data-testid='search-detail']")).toBeVisible({ timeout: 5000 });
+  await expect(dialog.locator("[data-testid='search-query']")).toContainText("aigw rust gateway");
+  await expect(dialog.locator("[data-testid='search-result-count']")).toContainText("5");
+});
+
+Then("the detail drawer should show the search instance {string}", async ({ page }, apiBase: string) => {
+  const dialog = page.locator("[role='dialog']");
+  await dialog.waitFor({ timeout: 5000 });
+  await expect(dialog.locator("[data-testid='search-detail']")).toContainText(apiBase, { timeout: 5000 });
+});
+
+Then("the detail drawer should explain the zero search spend", async ({ page }) => {
+  const dialog = page.locator("[role='dialog']");
+  await dialog.waitFor({ timeout: 5000 });
+  await expect(dialog.locator("[data-testid='search-zero-note']")).toBeVisible({ timeout: 5000 });
+  await expect(dialog.locator("[data-testid='search-detail']")).toContainText(/\$0\.00/);
+});
+
+Then("the detail drawer should show the parent call link", async ({ page }) => {
+  const dialog = page.locator("[role='dialog']");
+  await dialog.waitFor({ timeout: 5000 });
+  await expect(dialog.locator("[data-testid='parent-call-link']")).toBeVisible({ timeout: 5000 });
+  await expect(dialog.locator("[data-testid='parent-call-link']")).toContainText("req-0");
+});
+
+When("I click the parent call link in the detail drawer", async ({ page }) => {
+  const dialog = page.locator("[role='dialog']");
+  await dialog.locator("[data-testid='parent-call-link']").click();
+  await page.waitForTimeout(700);
+});
+
+Then("the detail drawer should show the LLM request {string}", async ({ page }, cid: string) => {
+  const dialog = page.locator("[role='dialog']");
+  await dialog.waitFor({ timeout: 5000 });
+  await expect(dialog).toContainText("gpt-4", { timeout: 5000 });
+  await expect(dialog.locator("code").filter({ hasText: cid }).first()).toBeVisible({ timeout: 5000 });
+});
+
+Then("the detail drawer should show the search calls button", async ({ page }) => {
+  const dialog = page.locator("[role='dialog']");
+  await dialog.waitFor({ timeout: 5000 });
+  await expect(dialog.locator("[data-testid='view-search-calls']")).toBeVisible({ timeout: 5000 });
+});
+
+When("I click the search calls button in the detail drawer", async ({ page }) => {
+  await page.locator("[role='dialog'] [data-testid='view-search-calls']").click();
+  await page.waitForTimeout(700);
+});
+
+/// First *visible* match. The page keeps the desktop table and the mobile card
+/// list in the DOM at once (one hidden by CSS), so an unfiltered `.first()`
+/// can resolve to a hidden node on the other layout.
+function stage137Visible(page: Page, selector: string) {
+  return page.locator(selector).filter({ visible: true }).first();
+}
+
+Then("the spend logs query should include parent_call_id and show only search rows", async ({ page }) => {
+  await expect(page.locator("[data-testid='parent-filter-chip']")).toBeVisible({ timeout: 5000 });
+  await expect(stage137Visible(page, "[data-testid='search-no-tokens']")).toBeVisible({ timeout: 5000 });
+  await expect(page.getByText("gpt-4", { exact: true }).filter({ visible: true })).toHaveCount(0);
+});
+
+When("I select {string} in the call type filter", async ({ page }, value: string) => {
+  const select = page.locator("[data-testid='call-type-filter']");
+  await select.click();
+  await page.waitForTimeout(300);
+  await page.getByRole("option", { name: new RegExp(value, "i") }).first().click();
+  await page.waitForTimeout(700);
+});
+
+Then("the spend logs query should include call_type and show only search rows", async ({ page }) => {
+  await expect(stage137Visible(page, "[data-testid='search-no-tokens']")).toBeVisible({ timeout: 5000 });
+  await expect(page.getByText("gpt-4", { exact: true }).filter({ visible: true })).toHaveCount(0);
+});
+
+Then("the spend logs list should show both LLM and search rows", async ({ page }) => {
+  await expect(page.getByText("gpt-4", { exact: true }).filter({ visible: true }).first()).toBeVisible({ timeout: 5000 });
+  await expect(stage137Visible(page, "[data-testid='search-no-tokens']")).toBeVisible({ timeout: 5000 });
+});
+
+Then("the spend log row with call id {string} should be visible without errors", async ({ page }, cid: string) => {
+  // An empty-metadata row must still render (the helpers return null, nothing
+  // throws). The page mounting at all is the assertion: a thrown render leaves
+  // the app routes blank.
+  await expect(stage137Row(page, cid)).toBeVisible({ timeout: 5000 });
+  await expect(page.locator("main")).toBeVisible();
+});
+
+Then("the detail drawer should not show cache or ttft", async ({ page }) => {
+  const dialog = page.locator("[role='dialog']");
+  await dialog.waitFor({ timeout: 5000 });
+  // The search block must be present, and neither block that belongs to a
+  // token-bearing call may appear beside it.
+  await expect(dialog.locator("[data-testid='search-detail']")).toBeVisible({ timeout: 5000 });
+  await expect(dialog).not.toContainText(/Cache:/i);
+  await expect(dialog).not.toContainText(/\d+↑/);
+});
+
+Then("the mobile search card should show no tokens and a provider", async ({ page }) => {
+  const card = page
+    .locator("[data-testid='spend-log-row']")
+    .filter({ hasText: "searxng" })
+    .filter({ visible: true })
+    .first();
+  await expect(card).toBeVisible({ timeout: 5000 });
+  await expect(card).toContainText("—");
+  await expect(card).toContainText("searxng");
 });
