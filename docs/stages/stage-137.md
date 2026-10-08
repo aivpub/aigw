@@ -3,7 +3,7 @@
 **所属**: Phase 53（内建 Web Search / TD-017c）
 **预估**: 9h（列表/抽屉渲染 + `call_type` 过滤 + 聚合口径审计与修正 + i18n + fe-bdd）—— 由 8h 上调 1h，新增的是**「spend=0 vs spend>0 双态渲染」与「命中实例 `api_base` 展示」两项**（§3.2a / §3.5），各需一组 fixture 与场景
 **依赖**: Stage 136（按次计费 + SpendLog 独立行）
-**状态**: ⏳ 规划
+**状态**: 🔄 进行中（Gate 3，强制 TDD 红绿）
 
 > **Phase 53 范围收窄（2026-10-06 决策）对本 Stage 的影响**
 >
@@ -40,6 +40,7 @@ Stage 136 落地后，每个启用了搜索的客户端请求会在 `spend_logs`
 - [ ] 抽屉展示**本次实际命中的实例**（`api_base`），使多实例部署可按实例溯源（§3.5）
 - [ ] 抽屉里对 LLM 行展示「本次请求的搜索调用」入口、对搜索行展示「返回父调用」入口，两向可跳（§3.3）
 - [ ] 筛选器新增 `call_type` 下拉（`all` / `completion` / `responses` / `embedding` / `search`），后端 `/global/spend/logs` 支持 `call_type=` 参数（§3.4）
+- [ ] **筛选态下分页条自洽**：`call_type` / `parent_call_id` 生效时，`total_count` / `total_pages` 与列表**同口径**（Review F1）—— 选中 `search` 后不得显示全量条数、不得出现可翻的空页
 - [ ] Usage 页所有「平均 token/请求」「请求数」「Top N 排名」类口径对搜索行的影响被逐处审计并修正或显式标注（§4.3 表格逐项打勾），**含 spend 类图表在 `spend=0` 与 `spend>0` 两种配置下的表现**
 - [ ] 抽屉里对搜索行**隐藏** cache token / TTFT / image token 区块（对搜索行恒无意义）
 - [ ] en + zh-CN 两份 i18n 同步新增键，无 `missing key` 告警
@@ -210,15 +211,21 @@ function extractSearchMeta(metadata: unknown): {
 
 | 位置 | 锚点 | `spend == 0` | `spend > 0`（缺省 / 摊销单价，**主流形态**） |
 |------|------|-------------|------------|
-| desktop spend 单元格 | spend 列（`index.tsx:1413-1454` 列定义内，与 §3.2 的 token 单元格同行） | `$0.00`（**正常字色，不用 `text-muted-foreground` 淡化** —— 淡化会读成缺失）+ 紧随一枚极小 `Badge variant="outline"` 文案 `t("spendLogs.search.notPriced")`（en `Not priced` / zh `未计价`），badge 挂 `title` = `t("spendLogs.search.zeroSpendHint")` | 与 LLM 行**完全一致**的 `fmtSpend(log.spend)`，**无 badge** |
+| desktop spend 单元格 | spend 列（`index.tsx:1413-1454` 列定义内，与 §3.2 的 token 单元格同行） | `$0.00`（**正常字色，不用 `text-muted-foreground` 淡化** —— 淡化会读成缺失）+ 紧随一枚极小 `Badge variant="outline"` 文案 `t("spendLogs.search.notPriced")`（en `Not priced` / zh `未计价`），badge 挂 `title` = `t("spendLogs.search.zeroSpendHint")` | 与 LLM 行**完全一致**的 `fmtSpend(log.spend)`，**无 badge，但挂轻量 tooltip**（Review F4，见下） |
 | 抽屉 summary / 搜索详情块 | §3.5 的搜索详情块内 | `$0.00` + 一行说明 `t("spendLogs.search.zeroSpendHint")`：「该搜索后端的单位成本被配置为 0；自建实例的基础设施成本未计入账面」 | 金额 + `cost_per_query` 单价快照（既有设计） |
 | 移动端卡片 spend | `index.tsx:1603-1609` 区（与 token 行同处） | `$0.00` + `title` 属性承载同一提示（移动端不挂 Tooltip 组件，与既有写法一致） | 同 LLM 行 |
 
-**判别式**：复用 `isSearchRow(log) && log.spend === 0`，**不读配置** —— 前端无配置通道，`spend === 0` 本身就是「单价被显式置 0」的充分信号（搜索一旦发生，`queries ≥ 1`，故 `spend === 0` ⟺ 单价为 0）。
+**判别式**：复用 `isSearchRow(log) && log.spend === 0`，**不读配置** —— 前端无配置通道。
+
+> ⚠️ **归因边界（Review F3）**：`spend === 0` **不**等价于「单价被显式置 0」。`calc_search_spend`（`chat.rs:131-137`）有四条归零路径 —— `queries <= 0`、`unit` 为 `NaN` / `±inf` / **负数** / `0`。后四者是**脏配置**（Stage 136 §8.1 的已知风险），不是主动置零。
+>
+> 因此：① 徽标文案取**中性表述**（`未计价` = 「本次未产生金额」），**不得**写「已配置为 0」这类断言式归因；② §3.2a 表格里的说明文案同步放宽为「该搜索调用记录的金额为 0」；③ 「脏单价与 0 单价在 UI 上不可区分」登记 §8.2。
 
 > **一行的最终观感**（`spend == 0` 时）：`🔍 搜索 | searxng/search | — (tokens) | $0.00 未计价 | 2.4s` —— token 的 `—` 说「不适用」，spend 的 `$0.00 未计价` 说「是零，且我知道为什么是零」。两者合起来**不留任何「数据缺失」的解读空间**，这正是本 Stage 要的效果。`spend > 0` 时该行与 LLM 行在 spend 列上**无视觉差异**（只有 token 列的 `—` 和类型 badge 区分），这也是刻意的 —— 有金额就该像有金额。
 
 > ⚠️ **不得暗示金额已校准**：缺省 `0.01` 是 OpenAI 对外牌价占位，通常比自建摊销成本高约 50 倍（Stage 136 §8.1）。本 Stage **不在 UI 上做任何「成本已准确」的表述**，`cost_per_query` 单价快照直接原样展示即可 —— 让部署方自己看出「这个单价是不是我配的」。
+
+**列表视图的单价可见性（Review F4）**：上面的约束只覆盖了**抽屉**（那里有 `cost_per_query` 快照），但 `spend > 0` 时**列表**会显示一整屏 `$0.01` 而毫无来源提示 —— 恰恰是列表（最常看的视图）在暗示「这个数字是成本」。处置：列表的 spend 单元格挂一枚**轻量 tooltip**（复用 §3.2 token tooltip 的 `TooltipProvider` / `cursor-help` 机制），文案 `t("spendLogs.search.spendHint")`：「按次计费；单价见详情，缺省值为牌价占位而非自建摊销成本」。**不额外加 badge**（`$0.01` 是多数部署的常态，加 badge 会变成噪音），只用 hover 提示。
 
 ### 3.3 父↔子联动 UX —— **选「抽屉内双向跳转」**
 
@@ -249,15 +256,26 @@ function extractSearchMeta(metadata: unknown): {
 
 `parent_call_id` 的三方言 SQL（沿用 `ts_cast`（`db.rs:8134-8137`）已建立的「按 `match self` 出方言差异」模式）：
 
-| driver | 条件 | 既有同类先例 |
-|--------|------|------------|
-| SQLite | `json_extract(metadata, '$.parent_call_id') = '<esc>'` | `db.rs:3966`（activity 的 cache 键提取） |
-| MySQL | `JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.parent_call_id')) = '<esc>'` | `db.rs:3996` 附近的 MySQL 分支 |
-| PostgreSQL | `metadata->>'parent_call_id' = '<esc>'` | `db.rs:4029` 附近的 PG 分支 |
+| driver | 列类型（`002_spend_logs.sql:23`） | 条件 | 合法 JSON | `metadata IS NULL` | 非法 JSON | 既有同类先例 |
+|--------|---|---|---|---|---|---|
+| SQLite | **`BLOB`** | `json_extract(metadata, '$.parent_call_id') = '<esc>'` | ✅ 返回 `p1` | ✅ `NULL`，不匹配 | ⚠️ **`malformed JSON` 报错** | `db.rs:3966`（activity 的 cache 键提取） |
+| MySQL | `JSON` | `JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.parent_call_id')) = '<esc>'` | ✅ | ✅ `IS NULL` | 不可达（列类型强制） | `db.rs:3996` 附近 |
+| PostgreSQL | `JSONB` | `metadata->>'parent_call_id' = '<esc>'` | ✅ | ✅ `IS NULL` | 不可达（列类型强制） | `db.rs:4029` 附近 |
+
+> **Review F5**：上表三行**已实测**（本地 `aigw-postgres-1` / `aigw-mysql-1` 容器 + `sqlite3` 直连）。要点：
+> ① SQLite 的 `metadata` 是 `BLOB` 而非 TEXT，但 JSON1 函数对 BLOB 里的合法 JSON **正常工作**，**无需 `CAST`**；
+> ② **非法 JSON 的风险面只在 SQLite** —— MySQL/PG 的列类型（`JSON` / `JSONB`）结构上不可能存非法 JSON。设计不应把三方言风险描述成对称的；
+> ③ 生产写入路径（`insert_spend_log` 绑定 `Option<Value>`，序列化后必为合法 JSON）使该风险**实际不可达**；但**测试 fixture 若手工塞裸字符串会炸** → 容错断言须覆盖（见 §4.1 末）。
 
 转义**必须**走与 `call_id` 分支（`db.rs:8163-8167`）同样的 `replace('\'', "''")`；由于是等值匹配而非 `LIKE`，不需要 `%` / `_` / `\` 的额外转义。无索引（JSON 表达式索引超出本期范围）—— 该过滤只在用户主动点徽标时触发、且总是叠加在时间窗条件之上，不是热路径。
 
-`query_spend_logs_count`（`db.rs:3867-3874`，5 参数）**本期不改** —— 它已经与列表查询口径不一致（§2.5 末行），扩大它会牵动三方言实现（`db.rs:2669`/`:3118`/`:3532`）。父→子徽标的 N 改用**该过滤请求返回的 `data.length`**（搜索行数恒 ≤ 单请求搜索次数，设计 C 下恒为 1，不会跨页）。
+**`query_spend_logs_count` 必须同步加两个参数**（Review F1，改设计）。它当前只有 5 个参数（`api_key` / `model` / `start_date` / `end_date` / `call_id`，`db.rs:3867-3874`），而列表查询有 11 个 —— 两者由 handler 并发执行（`spend.rs:247-262` / `:660-680`），`total_pages` 由 `total_count` 算出（`:276-277` / `:689-690`）。
+
+**若不改**：用户选 `call_type=search` → 列表只剩 N 条（正确），但分页条显示「共 500 条 / 17 页」→ 翻到第 2 页得到空列表。**这不是「既有小缺陷被曝光」**：此前 5 vs 11 的差距只体现在 `status` / `min_tokens` / `max_tokens`（确实早已存在），而本 Stage 新增的两个筛选**全部**落在这个缺失集里，且 §3.6 把它们做成了主要交互入口。
+
+改动：`query_spend_logs_count` 加 `call_type` / `parent_call_id` 两参数，条件与列表查询**逐字一致**（三方言实现 `db.rs:2669` / `:3118` / `:3532`）。⚠️ **两处 SQL 分叉是本 Stage 最大的 DRY 风险** —— 门禁要求「同一筛选在列表与计数上结果自洽」由 BDD 断言锁定。
+
+**父→子徽标的 N 用 `data.length`**（Review F2：§3.3 表曾写 `total_count`，与本节自相矛盾，现统一为 `data.length`）。约束：`N = min(实际子行数, page_size)`；设计 C 下单请求恒 1 条子行，故该截断**当期不可观测**；若将来引入多轮搜索（设计 B）必须重审。徽标 tooltip 注明「本次返回的条数」。
 
 ### 3.5 抽屉对搜索行的区块裁剪与新增
 
@@ -311,6 +329,9 @@ function extractSearchMeta(metadata: unknown): {
 | `global_spend_logs_parent_call_id_rejects_quote_injection` | 传 `p1' OR '1'='1` → 空结果（转义生效），不 500 |
 | `global_spend_logs_call_type_and_status_combine` | `?call_type=search&status=success` 两条件 AND |
 | `spend_logs_search_row_list_dto_has_metadata` | 搜索行经列表 DTO（`spend.rs:716-751`）后 `metadata.search_query_count` / `.parent_call_id` 仍在（防未来有人裁字段） |
+| `global_spend_logs_count_matches_filtered_total` | 2 行（1 `completion` + 1 `search`），`?call_type=search` → `count == total_count == 1`（Review F1：计数与列表同口径） |
+| `global_spend_logs_count_matches_parent_filter` | `?parent_call_id=p1` → `count == total_count`（同上的 parent 分支） |
+| `global_spend_logs_parent_filter_survives_non_json_metadata`（**SQLite 专项**） | 一行 `metadata = NULL` + 一行 `metadata` 为合法 JSON → `?parent_call_id=p1` 不报错、只命中后者（Review F5；非法 JSON 不可达，已在 §3.4 说明） |
 
 **前端**：该 crate 无 vitest（`crates/aigw-frontend` 下仅 playwright-bdd），helper 的行为由 §4.2 的 BDD 覆盖。`extractSearchMeta` 的 `null` 分支通过「metadata 缺失的搜索行不崩」场景间接锁定。
 
@@ -349,7 +370,7 @@ function extractSearchMeta(metadata: unknown): {
 | 13 | `Search detail drawer hides cache and TTFT blocks` | 抽屉**不含** `Cache` / `TTFT` 文案 | 新 step |
 | 14 | `Mobile search card renders em dash tokens and provider` | `Given the viewport is mobile size 375x667` → 卡片含 `—`（token）与 `searxng`；**零 spend 卡片含 `$0.00` 而非 `—`** | 复用既有 viewport Given（`spend-logs.feature:34`） |
 
-> 20 条 × 3 viewport = **60 个 playwright 用例**（原 14 条 + §3.2a/§3.5 新增 6 条）。场景 14 显式再设 mobile viewport（与 `spend-logs.feature:33-36` 同写法），因为 3 个 project 里只有一个是 mobile。
+> **19 条** × 3 viewport = **57 个 playwright 用例**（Review F6：表内实为 19 行，原写「20 条 / 60 用例」系笔误）。场景 14 显式再设 mobile viewport（与 `spend-logs.feature:33-36` 同写法），因为 3 个 project 里只有一个是 mobile。
 
 ### 4.3 集成验证 —— 聚合口径逐项审计（本 Stage 的正确性核心）
 
@@ -393,7 +414,8 @@ function extractSearchMeta(metadata: unknown): {
 | `spendLogs.search.provider` | `Search provider` | `搜索供应商` |
 | `spendLogs.search.instance` | `Served by` | `命中实例` |
 | `spendLogs.search.notPriced` | `Not priced` | `未计价` |
-| `spendLogs.search.zeroSpendHint` | `Unit cost for this search backend is configured as 0; self-hosted infrastructure cost is not reflected here` | `该搜索后端的单位成本被配置为 0；自建实例的基础设施成本未计入账面` |
+| `spendLogs.search.spendHint` | `Billed per query. The unit price shown in the detail panel defaults to a list-price placeholder, not a self-hosted cost — review it.` | `按次计费。详情面板中的单价缺省值是牌价占位，不是自建摊销成本 —— 请核对后改写。` |
+| `spendLogs.search.zeroSpendHint` | `This search call recorded no cost. A unit price of 0 keeps self-hosted infrastructure cost off the books.` | `该搜索调用未产生金额。单位成本为 0 时，自建实例的基础设施成本不会进入账面。` |
 | `spendLogs.search.costPerQuery` | `Unit price / query` | `单价 / 次` |
 | `spendLogs.search.childBadge` | `Search calls` | `搜索调用` |
 | `spendLogs.search.viewChildren` | `View search calls for this request` | `查看该请求的搜索调用` |
@@ -422,13 +444,13 @@ function extractSearchMeta(metadata: unknown): {
 | `crates/aigw-frontend/src/i18n/locales/en.json` | §4.4 全部新键 |
 | `crates/aigw-frontend/src/i18n/locales/zh-CN.json` | 同上，键集对称 |
 | `crates/aigw-server/src/routes/spend.rs` | `SpendLogsQuery` 加 `call_type` / `parent_call_id`（`:38-52`）；`global_spend_logs`（`:662`）与 `spend_logs`（`:237`）透传；7 个新 UT |
-| `crates/aigw-core/src/db.rs` | `query_spend_logs_with_status_filter`（`:8116`）加两个参数 + 两条 `conditions.push`（`parent_call_id` 三方言 JSON 分支） |
+| `crates/aigw-core/src/db.rs` | `query_spend_logs_with_status_filter`（`:8116`）加两个参数 + 两条 `conditions.push`（`call_type` 等值 / `parent_call_id` 三方言 JSON 分支）；**`query_spend_logs_count`（`:3867`）同步加两参数**，三方言实现（`:2669` / `:3118` / `:3532`）条件与列表查询逐字一致（Review F1） |
 | `crates/aigw-frontend/tests/features/spend-logs.feature` | 20 条新场景（§4.2） |
 | `crates/aigw-frontend/tests/steps/spend-logs.steps.ts` | 新 step 定义（场景 1 / 14 复用既有 step） |
 | `crates/aigw-frontend/tests/steps/api-mocks.ts` | `SEARCH_SPEND_ROW` / `SEARCH_ZERO_SPEND_ROW` / `SEARCH_ROW_ALT_PROVIDER` / `sampleDetailSearch` / `SEARCH_ROW_NO_META`；详情分派链（`:490-507`）；列表 mock 识别 `call_type` / `parent_call_id` |
 | `docs/12-technical-debt.md` | 登记 §8.2 各条 |
 | `docs/stages/stage-roadmap.md` + `docs/11-next-steps.md` | Phase 53 进度回写 |
-| **不改** | 8 个聚合函数 × 3 方言共 24 处 SQL（§3.7 决策）；`query_spend_logs_count`（`db.rs:3867`，§3.4 末）；`buildCSVHeaders`（`index.tsx:269`）；`components/ui/table.tsx`；任何 migration |
+| **不改** | 8 个聚合函数 × 3 方言共 24 处 SQL（§3.7 决策）；`buildCSVHeaders`（`index.tsx:269`）；`components/ui/table.tsx`；任何 migration |
 
 ---
 
@@ -444,6 +466,7 @@ function extractSearchMeta(metadata: unknown): {
 4. `task bdd-real-sqlite` / `bdd-real-pg` / `bdd-real-mysql` — 三驱动全绿（`parent_call_id` 的 JSON 条件**必须三方言各验一遍**，这是本 Stage 后端改动的唯一风险点）
 5. `task fmt` / `task lint` green
 6. **默认行为不变**：不带 `call_type` / `parent_call_id` 时 `/global/spend/logs` 与 `/spend/logs` 的响应与改动前一致（UT `..._without_call_type_returns_both` + 既有 BDD 守护）
+6b. **筛选态列表与计数自洽**：带 `call_type=search` 时 `count` / `total_count` ⊆ 全量，且 `total_count` ≥ 搜索行数、`total_pages` 由**过滤后**的 `total_count` 算出（Review F1 的验证点）
 7. **未启用搜索时**：`spend_logs` 无 `search` 行 → Spend Logs / Usage / Dashboard 三页渲染与改动前逐像素一致（除 Dashboard `total_count` 的有意修正）
 
 ---
@@ -453,8 +476,9 @@ function extractSearchMeta(metadata: unknown): {
 - [ ] **TDD 红绿（本 Stage 强制）** —— 用户 2026-10-08 决策：Stage 134/135/136 的「测试与实现同批编写」不再沿用，本 Stage **每个 UT/BDD 必须先跑红再写实现**。红绿过程与证据写进 §Implementation Notes
 
 
-- [ ] 7 个新后端 UT 先 fail 后 pass（TDD 红绿），含注入转义与 `parent_call_id` 无命中两条
-- [ ] 20 条新 BDD 场景 × 3 viewport = 60 用例全绿
+- [ ] 新后端 UT 先 fail 后 pass（TDD 红绿），含注入转义、`parent_call_id` 无命中、**计数与列表口径一致**三类
+- [ ] 列表查询与计数查询的 `call_type` / `parent_call_id` 条件**逐字一致**（三方言各验，Review F1 的 DRY 风险点）
+- [ ] **19 条**新 BDD 场景 × 3 viewport = **57** 用例全绿
 - [ ] 既有 BDD 零回归（embedding badge / embedding 抽屉 / multimodal marker / dashboard 四组重点复验）
 - [ ] 搜索行 token 单元格渲染为 `—` 且带可见 tooltip，**全站无 `0 / 0`**（含移动端卡片）
 - [ ] **spend 双态验收**：`spend == 0` 渲染为 `$0.00` + `未计价` 徽标（**全站无把金额渲染成 `—` 的情形**）；`spend > 0` 的 spend 单元格与 LLM 行形状一致、无徽标（§3.2a，三处落点各验）
@@ -499,6 +523,7 @@ function extractSearchMeta(metadata: unknown): {
 | `/spend/tags` 与 `daily_*_spend` 链路未审计 | §4.3 #15：该链路前端无消费者（已 grep 三页确认），且 `daily_spend_queue.rs:96-161` 的 8 元组聚合键含 `model`（搜索行为 `"<provider>/search"`，自成一组）与 `mcp_namespaced_tool_name`（Stage 136 §3.4 刻意填 `None` 以免裂分组）。一旦前端加入「按 tag / 按日」的报表页，必须重做本审计 |
 | `metadata.parent_call_id` 的 JSON 表达式索引 | §8.1 列出的全表扫风险。三方言各有写法（SQLite 生成列 + 索引 / MySQL functional index / PG `btree((metadata->>'parent_call_id'))`），需 migration。本期因该过滤非热路径而不做 |
 | 搜索行的 prompt visual 渲染器 | `parseMessages`（`components/log-viewer/MessageViewer.tsx`）是围绕 chat messages 形状写的；`{"query": "..."}` 与 `{"result_count": M, "results": [...]}` 需要专属卡片（类似 Stage 111 为 embedding 做的向量渲染）。本期靠搜索详情块 + raw tab 兜 |
+| **脏单价与 0 单价在 UI 上不可区分**（Review F3） | `calc_search_spend` 对 `NaN` / `±inf` / 负数 / 0 一律归零（`chat.rs:131-137`），前端 `spend === 0` 无法分辨「主动置 0」与「配置写脏」。本期徽标文案取中性表述（`未计价`），不做归因断言。彻底区分需后端在 metadata 记一个归零原因键（如 `cost_per_requested` 快照），超出本期 |
 | 「平均 token/请求」类派生指标 | §3.7 决策：现有 UI 无此 tile（已 grep `usage/index.tsx` 确认无 `avg`/`per-request` 计算），故本期无需修正。**未来若新增此类指标，分母必须显式排除 `call_type='search'`** —— 否则上线即错。此条须写入 `docs/12-technical-debt.md` 作为前置约束 |
 | 搜索行的 CSV 导出列 | `buildCSVHeaders`（`index.tsx:269-283`）的 13 列对搜索行导出 `0/0/0` token 与空 TTFT。若运营要按次对账，需加 `search_query_count` / `search_provider` 两列并同步 `exportToCSV`（`index.tsx:289`） |
 | `SpendLogsQuery.session_id` 死参数 | `spend.rs:45` 定义但 `global_spend_logs`（`spend.rs:662-674`）与 `spend_logs`（`spend.rs:237`）都没传给 DB → 该 query 参数静默无效。搜索行与父行共享 `session_id`（Stage 136 §3.4），把它接通本可提供**第二条**父子线索（且是可索引的真列，比 JSON 过滤更优）。本期因 §3.3 已选定 `parent_call_id` 路线而不做，但这是比 JSON 索引更划算的后续优化 |
