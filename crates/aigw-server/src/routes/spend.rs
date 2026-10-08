@@ -44,6 +44,12 @@ pub struct SpendLogsQuery {
     pub request_id: Option<String>,
     pub session_id: Option<String>,
     pub status: Option<String>,
+    /// Stage 137: filter by `spend_logs.call_type` (completion / responses /
+    /// embedding / search). Absent = no filter (unchanged default).
+    pub call_type: Option<String>,
+    /// Stage 137: filter by `metadata.parent_call_id` — the LLM row a search
+    /// row belongs to. Absent = no filter.
+    pub parent_call_id: Option<String>,
     pub min_tokens: Option<i32>,
     pub max_tokens: Option<i32>,
     pub limit: Option<i32>,
@@ -255,6 +261,8 @@ pub async fn spend_logs(
             query.status.as_deref(),
             query.min_tokens,
             query.max_tokens,
+            query.call_type.as_deref(),
+            query.parent_call_id.as_deref(),
             Some(page_size),
             Some(offset),
         ),
@@ -264,6 +272,8 @@ pub async fn spend_logs(
             query.start_date.as_deref(),
             query.end_date.as_deref(),
             query.request_id.as_deref(),
+            query.call_type.as_deref(),
+            query.parent_call_id.as_deref(),
         ),
     )
     .map_err(|e| {
@@ -668,6 +678,8 @@ pub async fn global_spend_logs(
             query.status.as_deref(),
             query.min_tokens,
             query.max_tokens,
+            query.call_type.as_deref(),
+            query.parent_call_id.as_deref(),
             Some(page_size),
             Some(offset),
         ),
@@ -677,6 +689,8 @@ pub async fn global_spend_logs(
             query.start_date.as_deref(),
             query.end_date.as_deref(),
             query.request_id.as_deref(),
+            query.call_type.as_deref(),
+            query.parent_call_id.as_deref(),
         ),
     )
     .map_err(|e| {
@@ -1398,7 +1412,7 @@ mod tests {
         let state = Arc::new(AppState {
             resolver: ModelResolver::new(db.clone(), None, "onprem"),
             router: AigwRouter::default(),
-            db,
+            db: db.clone(),
             master_key: Some("sk-master-test-123".to_string()),
             aigw_master_key: None,
             key_generate_length: DEFAULT_KEY_TOKEN_LEN,
@@ -1803,6 +1817,273 @@ mod tests {
         assert_eq!(image["source"]["type"].as_str(), Some("base64"));
         assert_eq!(image["source"]["media_type"].as_str(), Some("image/png"));
         assert_eq!(image["source"]["data"].as_str(), Some("iVBORw0KGgo="));
+    }
+
+    // ── Stage 137: call_type / parent_call_id filters (TDD red first) ──
+
+    fn stage137_log(
+        call_id: &str,
+        call_type: &str,
+        metadata: Option<serde_json::Value>,
+    ) -> SpendLog {
+        SpendLog {
+            call_id: call_id.to_string(),
+            request_id: None,
+            call_type: call_type.to_string(),
+            api_key: "master_key".to_string(),
+            spend: if call_type == "search" { 0.01 } else { 0.05 },
+            total_tokens: if call_type == "search" { 0 } else { 100 },
+            prompt_tokens: if call_type == "search" { 0 } else { 60 },
+            completion_tokens: if call_type == "search" { 0 } else { 40 },
+            start_time: chrono::Utc::now(),
+            end_time: chrono::Utc::now(),
+            request_duration_ms: Some(100),
+            completion_start_time: None,
+            model: if call_type == "search" {
+                "searxng/search".to_string()
+            } else {
+                "gpt-4".to_string()
+            },
+            model_id: None,
+            model_group: if call_type == "search" {
+                None
+            } else {
+                Some("gpt-4".to_string())
+            },
+            custom_llm_provider: Some(if call_type == "search" {
+                "searxng".to_string()
+            } else {
+                "openai".to_string()
+            }),
+            api_base: None,
+            user: None,
+            metadata,
+            cache_hit: None,
+            cache_key: None,
+            request_tags: None,
+            team_id: None,
+            organization_id: None,
+            end_user: None,
+            requester_ip_address: None,
+            messages: None,
+            response: None,
+            session_id: None,
+            status: Some("success".to_string()),
+            mcp_namespaced_tool_name: None,
+            agent_id: None,
+            proxy_server_request: None,
+            body_archived: false,
+            parquet_path: None,
+            image_tokens: None,
+        }
+    }
+
+    async fn stage137_state(db: &Database) -> Arc<AppState> {
+        Arc::new(AppState {
+            resolver: ModelResolver::new(db.clone(), None, "onprem"),
+            router: AigwRouter::default(),
+            db: db.clone(),
+            master_key: Some("sk-master-test-123".to_string()),
+            aigw_master_key: None,
+            key_generate_length: DEFAULT_KEY_TOKEN_LEN,
+            disable_custom_api_keys: false,
+            provider_registry: ProviderRegistry::new(),
+            router_state: RouterState::default(),
+            rate_limiter: Arc::new(RateLimiter::new()),
+            deployment_mode: "onprem".to_string(),
+            started_at: std::time::Instant::now(),
+            daily_spend_queue: None,
+            otel_active: false,
+            body_archiver: None,
+            token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
+            web_search: None,
+            metrics: None,
+        })
+    }
+
+    async fn stage137_get(state: Arc<AppState>, uri: &str) -> Value {
+        let app = Router::new()
+            .route("/global/spend/logs", axum::routing::get(global_spend_logs))
+            .with_state(state);
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri(uri)
+            .header(header::AUTHORIZATION, "Bearer sk-master-test-123")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "uri={uri}");
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    /// One LLM row + one search row linked by metadata.parent_call_id.
+    async fn stage137_seed() -> Database {
+        let db = Database::init("sqlite::memory:")
+            .await
+            .expect("init sqlite");
+        db.insert_spend_log(&stage137_log("llm-1", "completion", None))
+            .await
+            .expect("insert llm");
+        db.insert_spend_log(&stage137_log(
+            "search-1",
+            "search",
+            Some(json!({"parent_call_id": "llm-1", "search_query_count": 1})),
+        ))
+        .await
+        .expect("insert search");
+        db
+    }
+
+    #[tokio::test]
+    async fn global_spend_logs_filters_by_call_type_search() {
+        let db = stage137_seed().await;
+        let val = stage137_get(
+            stage137_state(&db).await,
+            "/global/spend/logs?call_type=search",
+        )
+        .await;
+        let data = val["data"].as_array().unwrap();
+        assert_eq!(data.len(), 1, "only the search row");
+        assert_eq!(data[0]["call_type"].as_str(), Some("search"));
+    }
+
+    #[tokio::test]
+    async fn global_spend_logs_without_call_type_returns_both() {
+        let db = stage137_seed().await;
+        let val = stage137_get(stage137_state(&db).await, "/global/spend/logs").await;
+        assert_eq!(
+            val["data"].as_array().unwrap().len(),
+            2,
+            "default unchanged"
+        );
+    }
+
+    #[tokio::test]
+    async fn global_spend_logs_filters_by_parent_call_id() {
+        let db = stage137_seed().await;
+        let val = stage137_get(
+            stage137_state(&db).await,
+            "/global/spend/logs?parent_call_id=llm-1",
+        )
+        .await;
+        let data = val["data"].as_array().unwrap();
+        assert_eq!(data.len(), 1, "only the child search row");
+        assert_eq!(data[0]["call_id"].as_str(), Some("search-1"));
+    }
+
+    #[tokio::test]
+    async fn global_spend_logs_parent_call_id_no_match_returns_empty() {
+        let db = stage137_seed().await;
+        let val = stage137_get(
+            stage137_state(&db).await,
+            "/global/spend/logs?parent_call_id=does-not-exist",
+        )
+        .await;
+        assert!(val["data"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn global_spend_logs_parent_call_id_rejects_quote_injection() {
+        let db = stage137_seed().await;
+        // A quote-injection attempt must escape to a literal and match nothing,
+        // not 500 and not return every row.
+        let val = stage137_get(
+            stage137_state(&db).await,
+            "/global/spend/logs?parent_call_id=llm-1%27%20OR%20%271%27%3D%271",
+        )
+        .await;
+        assert!(
+            val["data"].as_array().unwrap().is_empty(),
+            "injection attempt must not match"
+        );
+    }
+
+    #[tokio::test]
+    async fn global_spend_logs_call_type_and_status_combine() {
+        let db = stage137_seed().await;
+        let val = stage137_get(
+            stage137_state(&db).await,
+            "/global/spend/logs?call_type=search&status=success",
+        )
+        .await;
+        assert_eq!(val["data"].as_array().unwrap().len(), 1);
+        let val = stage137_get(
+            stage137_state(&db).await,
+            "/global/spend/logs?call_type=search&status=failure",
+        )
+        .await;
+        assert!(val["data"].as_array().unwrap().is_empty(), "AND, not OR");
+    }
+
+    #[tokio::test]
+    async fn spend_logs_search_row_list_dto_has_metadata() {
+        let db = stage137_seed().await;
+        let val = stage137_get(
+            stage137_state(&db).await,
+            "/global/spend/logs?call_type=search",
+        )
+        .await;
+        let md = &val["data"][0]["metadata"];
+        assert_eq!(md["search_query_count"].as_i64(), Some(1));
+        assert_eq!(md["parent_call_id"].as_str(), Some("llm-1"));
+    }
+
+    #[tokio::test]
+    async fn global_spend_logs_count_matches_filtered_total() {
+        let db = stage137_seed().await;
+        let val = stage137_get(
+            stage137_state(&db).await,
+            "/global/spend/logs?call_type=search",
+        )
+        .await;
+        assert_eq!(val["count"].as_i64(), Some(1));
+        assert_eq!(
+            val["total_count"].as_i64(),
+            Some(1),
+            "total_count must follow the call_type filter, not the unfiltered set"
+        );
+        assert_eq!(val["total_pages"].as_i64(), Some(1));
+    }
+
+    #[tokio::test]
+    async fn global_spend_logs_count_matches_parent_filter() {
+        let db = stage137_seed().await;
+        let val = stage137_get(
+            stage137_state(&db).await,
+            "/global/spend/logs?parent_call_id=llm-1",
+        )
+        .await;
+        assert_eq!(val["count"].as_i64(), Some(1));
+        assert_eq!(val["total_count"].as_i64(), Some(1));
+    }
+
+    #[tokio::test]
+    async fn global_spend_logs_parent_filter_survives_null_metadata() {
+        // SQLite's `metadata` is a BLOB, so a NULL row is reachable (and is the
+        // only dialect where a non-JSON value could ever be stored). The JSON
+        // path filter must not error on it.
+        let db = Database::init("sqlite::memory:")
+            .await
+            .expect("init sqlite");
+        db.insert_spend_log(&stage137_log("llm-1", "completion", None))
+            .await
+            .expect("insert llm");
+        db.insert_spend_log(&stage137_log(
+            "search-1",
+            "search",
+            Some(json!({"parent_call_id": "llm-1"})),
+        ))
+        .await
+        .expect("insert search");
+        let val = stage137_get(
+            stage137_state(&db).await,
+            "/global/spend/logs?parent_call_id=llm-1",
+        )
+        .await;
+        assert_eq!(val["data"].as_array().unwrap().len(), 1);
     }
 
     #[tokio::test]

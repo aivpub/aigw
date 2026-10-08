@@ -418,3 +418,114 @@ async fn when_tags_no_param(world: &mut TestWorld, alias: String) {
         resp.text().await.unwrap_or_default()
     );
 }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Stage 137: call_type / parent_call_id filters across three dialects
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Resolve the served DB driver so the assertion can name the dialect in
+/// failure output — the whole point of this scenario is cross-dialect JSON.
+fn driver_label() -> String {
+    std::env::var("AIGW_TEST_DB_DRIVER").unwrap_or_else(|_| "sqlite".to_string())
+}
+
+async fn fetch_json(world: &mut TestWorld, url: &str, token: &str) -> serde_json::Value {
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(url)
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+        .expect("request failed");
+    let status = resp.status().as_u16();
+    let body: serde_json::Value = resp.json().await.unwrap_or(serde_json::json!({}));
+    world.last_status = Some(status);
+    body
+}
+
+#[when(expr = "向 aigw 测试库灌入 1 条 LLM 行 + 1 条 search 行并按 {string} 过滤查询 spend logs")]
+async fn when_seed_and_query_with_filter(world: &mut TestWorld, qs: String) {
+    if !seed_enabled() {
+        real_api_steps::set_skip_pass(world, 200, serde_json::json!({"data": [], "count": 0}));
+        return;
+    }
+
+    let db_url = test_db_url();
+    let base = real_api_steps::base_url();
+    let token = "sk-s137-filter-76";
+    real_db_seed::ensure_virtual_key(&db_url, token, "s137-filter", None)
+        .await
+        .ok();
+    let hash = aigw_core::crypto::hash_token(token);
+
+    real_db_seed::cleanup_by_prefix(&db_url, "bdd-s137-")
+        .await
+        .ok();
+
+    let rows = vec![
+        real_db_seed::SeedRow::new(
+            "bdd-s137-llm",
+            &hash,
+            0.05,
+            100,
+            "gpt-4",
+            "2026-07-20T10:00:00",
+        ),
+        real_db_seed::SeedRow::search(
+            "bdd-s137-search",
+            &hash,
+            "bdd-s137-llm",
+            "2026-07-20T10:00:01",
+        ),
+    ];
+    real_db_seed::seed_spend_logs(&db_url, &rows)
+        .await
+        .expect("seed spend logs");
+
+    // /global/spend/logs requires admin; authenticate with the master key (the
+    // seeded virtual key only scopes the rows being counted).
+    let url = format!("{base}/global/spend/logs?{qs}");
+    let body = fetch_json(world, &url, &world.master_key.clone()).await;
+    world.last_body = Some(body);
+}
+
+#[then(expr = "筛选结果的 count 与 total_count 相等")]
+async fn then_count_equals_total_count(world: &mut TestWorld) {
+    let body = world.last_body.as_ref().expect("no body");
+    let count = body.get("count").and_then(|v| v.as_i64()).unwrap_or(-1);
+    let total = body
+        .get("total_count")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(-2);
+    assert_eq!(
+        count,
+        total,
+        "[{}] count ({count}) must equal total_count ({total}) — the list query and the \
+         count query must apply the same filters",
+        driver_label()
+    );
+}
+
+#[then(expr = "筛选结果只包含 {int} 条 call_type 为 {string} 的行")]
+async fn then_only_call_type(world: &mut TestWorld, n: usize, expected: String) {
+    let body = world.last_body.as_ref().expect("no body");
+    let data = body
+        .get("data")
+        .and_then(|v| v.as_array())
+        .expect("no data array");
+    assert_eq!(
+        data.len(),
+        n,
+        "[{}] expected {n} rows, got {}",
+        driver_label(),
+        data.len()
+    );
+    for row in data {
+        assert_eq!(
+            row.get("call_type").and_then(|v| v.as_str()),
+            Some(expected.as_str()),
+            "[{}] unexpected call_type in {row}",
+            driver_label()
+        );
+    }
+}

@@ -2249,6 +2249,8 @@ pub trait SpendLogStore {
         start_date: Option<&str>,
         end_date: Option<&str>,
         call_id: Option<&str>,
+        call_type: Option<&str>,
+        parent_call_id: Option<&str>,
     ) -> Result<i64>;
     /// Get a single spend log by call_id — returns all columns including body blobs.
     async fn get_spend_log_by_call_id(&self, call_id: &str) -> Result<Option<SpendLog>>;
@@ -2673,6 +2675,8 @@ impl SpendLogStore for SqlitePool {
         start_date: Option<&str>,
         end_date: Option<&str>,
         call_id: Option<&str>,
+        call_type: Option<&str>,
+        parent_call_id: Option<&str>,
     ) -> Result<i64> {
         let mut sql = String::from("SELECT COUNT(*) FROM spend_logs WHERE 1=1");
         if api_key.is_some() {
@@ -2690,6 +2694,19 @@ impl SpendLogStore for SqlitePool {
         // Dual-column fuzzy search: match gateway call_id OR upstream request_id (LIKE '%X%').
         if call_id.is_some() {
             sql.push_str(" AND (call_id LIKE ? ESCAPE '\\' OR request_id LIKE ? ESCAPE '\\')");
+        }
+        // Stage 137: inlined literals so the existing `?` placeholder accounting
+        // above is untouched. MUST stay byte-identical to
+        // query_spend_logs_with_status_filter's conditions, or the page count
+        // and the row list disagree.
+        if let Some(ct) = call_type {
+            sql.push_str(&format!(" AND call_type = '{}'", ct.replace('\'', "''")));
+        }
+        if let Some(pc) = parent_call_id {
+            sql.push_str(&format!(
+                " AND json_extract(metadata, '$.parent_call_id') = '{}'",
+                pc.replace('\'', "''")
+            ));
         }
 
         let mut query = sqlx::query_as::<_, (i64,)>(&sql);
@@ -3122,6 +3139,8 @@ impl SpendLogStore for MySqlPool {
         start_date: Option<&str>,
         end_date: Option<&str>,
         call_id: Option<&str>,
+        call_type: Option<&str>,
+        parent_call_id: Option<&str>,
     ) -> Result<i64> {
         let mut sql = String::from("SELECT COUNT(*) FROM spend_logs WHERE 1=1");
         if api_key.is_some() {
@@ -3139,6 +3158,23 @@ impl SpendLogStore for MySqlPool {
         // Dual-column fuzzy search: match gateway call_id OR upstream request_id (LIKE '%X%').
         if call_id.is_some() {
             sql.push_str(" AND (call_id LIKE ? ESCAPE '\\' OR request_id LIKE ? ESCAPE '\\')");
+        }
+        // Stage 137: inlined literals so the existing `?` placeholder accounting
+        // above is untouched. MUST stay byte-identical to
+        // query_spend_logs_with_status_filter's conditions, or the page count
+        // and the row list disagree.
+        // In this impl block the driver is MySqlPool; escape for MySQL.
+        if let Some(ct) = call_type {
+            sql.push_str(&format!(
+                " AND call_type = '{}'",
+                ct.replace('\\', "\\\\").replace('\'', "''")
+            ));
+        }
+        if let Some(pc) = parent_call_id {
+            sql.push_str(&format!(
+                " AND json_extract(metadata, '$.parent_call_id') = '{}'",
+                pc.replace('\\', "\\\\").replace('\'', "''")
+            ));
         }
 
         let mut query = sqlx::query_as::<_, (i64,)>(&sql);
@@ -3536,6 +3572,8 @@ impl SpendLogStore for PgPool {
         start_date: Option<&str>,
         end_date: Option<&str>,
         call_id: Option<&str>,
+        call_type: Option<&str>,
+        parent_call_id: Option<&str>,
     ) -> Result<i64> {
         let ts_cast = "::TIMESTAMPTZ";
 
@@ -3571,6 +3609,18 @@ impl SpendLogStore for PgPool {
                 " AND (call_id = ${} OR request_id = ${})",
                 i,
                 i + 1
+            ));
+        }
+        // Stage 137: inlined literals, same spelling as
+        // query_spend_logs_with_status_filter — the two must agree or the page
+        // count contradicts the row list.
+        if let Some(ct) = call_type {
+            sql.push_str(&format!(" AND call_type = '{}'", ct.replace('\'', "''")));
+        }
+        if let Some(pc) = parent_call_id {
+            sql.push_str(&format!(
+                " AND metadata->>'parent_call_id' = '{}'",
+                pc.replace('\'', "''")
             ));
         }
 
@@ -3616,6 +3666,21 @@ impl SpendLogStore for PgPool {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Database enum spend log dispatch
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Escape a string for an inlined single-quoted SQL literal.
+///
+/// Quote doubling alone is **not** enough on MySQL: backslash is a string
+/// escape character there (default `sql_mode` has no `NO_BACKSLASH_ESCAPES`),
+/// so an input like `x\' OR 1=1 --` survives quote doubling and breaks out of
+/// the literal. PostgreSQL (`standard_conforming_strings=on`) and SQLite treat
+/// backslash literally, so escaping it there would corrupt the value.
+fn sql_literal(db: &Database, raw: &str) -> String {
+    let quotes = raw.replace('\'', "''");
+    match db {
+        Database::Mysql(_) => quotes.replace('\\', "\\\\"),
+        _ => quotes,
+    }
+}
 
 impl Database {
     pub async fn insert_spend_log(&self, log: &SpendLog) -> Result<()> {
@@ -3864,6 +3929,7 @@ impl Database {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn query_spend_logs_count(
         &self,
         api_key: Option<&str>,
@@ -3871,19 +3937,45 @@ impl Database {
         start_date: Option<&str>,
         end_date: Option<&str>,
         call_id: Option<&str>,
+        call_type: Option<&str>,
+        parent_call_id: Option<&str>,
     ) -> Result<i64> {
         match self {
             Database::Sqlite(pool) => {
-                pool.query_spend_logs_count(api_key, model, start_date, end_date, call_id)
-                    .await
+                pool.query_spend_logs_count(
+                    api_key,
+                    model,
+                    start_date,
+                    end_date,
+                    call_id,
+                    call_type,
+                    parent_call_id,
+                )
+                .await
             }
             Database::Mysql(pool) => {
-                pool.query_spend_logs_count(api_key, model, start_date, end_date, call_id)
-                    .await
+                pool.query_spend_logs_count(
+                    api_key,
+                    model,
+                    start_date,
+                    end_date,
+                    call_id,
+                    call_type,
+                    parent_call_id,
+                )
+                .await
             }
             Database::Postgres(pool) => {
-                pool.query_spend_logs_count(api_key, model, start_date, end_date, call_id)
-                    .await
+                pool.query_spend_logs_count(
+                    api_key,
+                    model,
+                    start_date,
+                    end_date,
+                    call_id,
+                    call_type,
+                    parent_call_id,
+                )
+                .await
             }
         }
     }
@@ -8112,7 +8204,8 @@ impl Database {
 
     // ── Spend Logs: status + token range filter ──
 
-    #[allow(clippy::too_many_arguments)]
+    
+#[allow(clippy::too_many_arguments)]
     pub async fn query_spend_logs_with_status_filter(
         &self,
         api_key: Option<&str>,
@@ -8124,6 +8217,8 @@ impl Database {
         status: Option<&str>,
         min_tokens: Option<i32>,
         max_tokens: Option<i32>,
+        call_type: Option<&str>,
+        parent_call_id: Option<&str>,
         limit: Option<i32>,
         offset: Option<i32>,
     ) -> Result<Vec<SpendLog>> {
@@ -8185,6 +8280,25 @@ impl Database {
         }
         if let Some(mt) = max_tokens {
             conditions.push(format!("total_tokens <= {}", mt));
+        }
+        if let Some(ct) = call_type {
+            conditions.push(format!("call_type = '{}'", sql_literal(self, ct)));
+        }
+        // `metadata.parent_call_id` is a JSON path in all three dialects, but
+        // the column types differ: SQLite stores TEXT/BLOB (json_extract works
+        // on either), MySQL JSON, PostgreSQL JSONB. Equality only, so a plain
+        // single-quote escape is sufficient — no LIKE wildcards to neutralise.
+        if let Some(pc) = parent_call_id {
+            let esc = sql_literal(self, pc);
+            // SQLite and MySQL share the JSON1 spelling (verified to match for
+            // string values on both); PostgreSQL uses the native `->>` operator.
+            let cond = match self {
+                Database::Postgres(_) => {
+                    format!("metadata->>'parent_call_id' = '{esc}'")
+                }
+                _ => format!("json_extract(metadata, '$.parent_call_id') = '{esc}'"),
+            };
+            conditions.push(cond);
         }
 
         let where_clause = if conditions.is_empty() {
@@ -10105,13 +10219,13 @@ mod tests {
 
         // Count matching — should be consistent
         let count = db
-            .query_spend_logs_count(None, None, None, None, Some("req-00"))
+            .query_spend_logs_count(None, None, None, None, Some("req-00"), None, None)
             .await
             .expect("count prefix");
         assert_eq!(count, 3, "count should match query for 'req-00'");
 
         let count = db
-            .query_spend_logs_count(None, None, None, None, Some("chatcmpl"))
+            .query_spend_logs_count(None, None, None, None, Some("chatcmpl"), None, None)
             .await
             .expect("count chatcmpl");
         assert_eq!(count, 1, "count should match query for 'chatcmpl'");

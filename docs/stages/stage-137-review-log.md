@@ -130,3 +130,43 @@ if queries <= 0 || !unit.is_finite() || unit <= 0.0 { return 0.0; }
 1. F1 的处置若取「同步改 count」，须验证三方言 `query_spend_logs_count` 实现对 `parent_call_id` 的 JSON 条件与列表查询**逐字一致**（两处 SQL 分叉是本 Stage 最大的 DRY 风险）
 2. F2 的 N 取值须由 BDD 场景 8/9 的真实请求捕获（断言 URL 含 `parent_call_id=` 且徽标文本符合选定语义）
 3. F5 的「非 JSON 文本 metadata」在 SQLite 上的行为须有明确结论（UT 断言容错，或记为不可达并说明依据）
+
+---
+
+## 编码期发现的额外缺陷（Gate 3，TDD 红绿期间）
+
+### X1 — MySQL 上仅做引号翻倍的转义可被反斜杠绕过（Critical，已修）
+
+**发现方式**：Gate 3 阶段核实「§3.4 的单引号转义是否充分」时，实测 MySQL 默认 `sql_mode`（`ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,…`，**无 `NO_BACKSLASH_ESCAPES`**）下反斜杠是字符串转义字符。
+
+**复现**（本地 `aigw-mysql-1`）：
+
+```sql
+-- 输入 parent_call_id =  x + \ + ' + " OR 1=1 --"   （即 x\' OR 1=1 --）
+-- 引号翻倍后成为：  x\'' OR 1=1 --
+SELECT COUNT(*) FROM t
+ WHERE JSON_UNQUOTE(JSON_EXTRACT(m,'$.parent_call_id')) = 'x\'' OR 1=1 -- ';
+-- → 3   （返回全部行，注入成立）
+```
+
+该载荷中的反斜杠把紧随的引号转义掉，**翻倍后的第二个引号反而闭合了字面量**，`OR 1=1` 逃逸成功。
+
+**影响面**：`call_type` 与 `parent_call_id` 两个**本 Stage 新增**的筛选参数都走 `format!` 拼接（沿用既有 `model` / `api_key` 分支的写法），且二者由客户端直接控制 → 本 Stage 把既有模式的可利用面**从「管理员自填的 model 名」扩大到「任意用户可传的筛选参数」**。
+
+**修复**：新增模块级 `sql_literal(db, raw)`：
+
+```rust
+fn sql_literal(db: &Database, raw: &str) -> String {
+    let quotes = raw.replace('\'', "''");
+    match db {
+        Database::Mysql(_) => quotes.replace('\\', "\\\\"),
+        _ => quotes,
+    }
+}
+```
+
+—— MySQL 加反斜杠翻倍，**SQLite/PG 不动**（PG 的 `standard_conforming_strings=on` 与 SQLite 都把反斜杠当普通字符，逃逸它反而会改坏值）。筛选方法经它转义；`query_spend_logs_count` 在 `MySqlPool` 的 impl 块内联同样的双重替换。
+
+**验证**：三驱动 real BDD 61/61 × 3 全绿；UT `global_spend_logs_parent_call_id_rejects_quote_injection` 覆盖引号注入。
+
+**遗留（登记 §8.2）**：既有分支（`model` / `provider` / `api_key` 的等值条件）**仍只有引号翻倍**，未走新 escaper。修正它们需要逐条评估值域（管理员填写 vs 客户端可控），超出本 Stage 范围 —— 但这是同一类洞，须登记。

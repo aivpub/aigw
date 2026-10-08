@@ -31,6 +31,10 @@ pub(crate) struct SeedRow {
     pub request_tags: Option<String>,
     pub custom_llm_provider: Option<String>,
     pub end_user: Option<String>,
+    /// `spend_logs.call_type` — "completion" by default; Stage 137 adds "search".
+    pub call_type: String,
+    /// Raw JSON for `metadata` (e.g. `{"parent_call_id":"..."}`). None → NULL.
+    pub metadata_json: Option<String>,
 }
 
 impl SeedRow {
@@ -59,6 +63,25 @@ impl SeedRow {
             request_tags: None,
             custom_llm_provider: None,
             end_user: None,
+            call_type: "completion".to_string(),
+            metadata_json: None,
+        }
+    }
+
+    /// Stage 137: a search row linked to `parent` via `metadata.parent_call_id`.
+    pub(crate) fn search(call_id: &str, api_key: &str, parent: &str, ts_iso8601: &str) -> Self {
+        Self {
+            spend: 0.01,
+            total_tokens: 0,
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            model: "searxng/search".to_string(),
+            call_type: "search".to_string(),
+            metadata_json: Some(format!(
+                r#"{{"parent_call_id":"{parent}","search_query_count":1}}"#
+            )),
+            custom_llm_provider: Some("searxng".to_string()),
+            ..Self::new(call_id, api_key, 0.01, 0, "searxng/search", ts_iso8601)
         }
     }
 }
@@ -106,16 +129,22 @@ pub(crate) async fn seed_spend_logs(db_url: &str, rows: &[SeedRow]) -> anyhow::R
 
         let user_ident = pool.quote_ident("user");
 
+        let metadata_val = match &row.metadata_json {
+            Some(j) => format!("'{}'", j.replace('\'', "''")),
+            None => "NULL".to_string(),
+        };
+
         let sql = format!(
             r#"INSERT INTO spend_logs
             (call_id, call_type, api_key, spend, total_tokens, prompt_tokens, completion_tokens,
              start_time, end_time, model, status, {user_ident}, team_id, organization_id,
-             request_tags, custom_llm_provider, end_user)
-            VALUES ('{}', 'completion', '{}', {}, {}, {}, {},
+             request_tags, custom_llm_provider, end_user, metadata)
+            VALUES ('{}', '{}', '{}', {}, {}, {}, {},
                     {}, {}, '{}', '{}',
                     {}, {}, {},
-                    {}, {}, {})"#,
+                    {}, {}, {}, {})"#,
             row.call_id,
+            row.call_type,
             row.api_key,
             row.spend,
             row.total_tokens,
@@ -131,6 +160,7 @@ pub(crate) async fn seed_spend_logs(db_url: &str, rows: &[SeedRow]) -> anyhow::R
             tags_val,
             provider_val,
             end_user_val,
+            metadata_val,
         );
         pool.execute_raw(&sql).await?;
     }
