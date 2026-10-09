@@ -1426,7 +1426,7 @@ mod tests {
             otel_active: false,
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
-            web_search: None,
+            web_search: aigw_core::websearch::WebSearchHandle::disabled(),
             metrics: None,
         });
         Router::new()
@@ -1612,7 +1612,7 @@ mod tests {
             otel_active: false,
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
-            web_search: None,
+            web_search: aigw_core::websearch::WebSearchHandle::disabled(),
             metrics: None,
         });
 
@@ -1671,7 +1671,7 @@ mod tests {
             otel_active: false,
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
-            web_search: None,
+            web_search: aigw_core::websearch::WebSearchHandle::disabled(),
             metrics: None,
         });
         let app = Router::new()
@@ -1896,7 +1896,7 @@ mod tests {
             otel_active: false,
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
-            web_search: None,
+            web_search: aigw_core::websearch::WebSearchHandle::disabled(),
             metrics: None,
         })
     }
@@ -2149,7 +2149,7 @@ mod tests {
             otel_active: false,
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
-            web_search: None,
+            web_search: aigw_core::websearch::WebSearchHandle::disabled(),
             metrics: None,
         });
 
@@ -2250,7 +2250,7 @@ mod tests {
             otel_active: false,
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
-            web_search: None,
+            web_search: aigw_core::websearch::WebSearchHandle::disabled(),
             metrics: None,
         });
         let app = Router::new()
@@ -2418,7 +2418,7 @@ mod tests {
             otel_active: false,
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
-            web_search: None,
+            web_search: aigw_core::websearch::WebSearchHandle::disabled(),
             metrics: None,
         });
         let app = Router::new()
@@ -2541,7 +2541,7 @@ mod tests {
             otel_active: false,
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
-            web_search: None,
+            web_search: aigw_core::websearch::WebSearchHandle::disabled(),
             metrics: None,
         });
         let app = Router::new()
@@ -2640,7 +2640,7 @@ mod tests {
             otel_active: false,
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
-            web_search: None,
+            web_search: aigw_core::websearch::WebSearchHandle::disabled(),
             metrics: None,
         });
         let app = Router::new()

@@ -843,7 +843,7 @@ pub async fn messages_handler(
     // Release the resolve span guard before the search await (see chat.rs).
     drop(_resolve_enter);
     let search_status = crate::routes::web_search_wire::maybe_serve(
-        state.web_search.as_deref(),
+        state.web_search.current().as_deref(),
         aigw_core::adapter::ClientProtocol::Anthropic,
         provider_type == aigw_core::deployment::ProviderType::AnthropicNative,
         &mut body_val,
@@ -1977,7 +1977,7 @@ mod tests {
             otel_active: false,
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
-            web_search: None,
+            web_search: aigw_core::websearch::WebSearchHandle::disabled(),
             metrics: None,
         });
 

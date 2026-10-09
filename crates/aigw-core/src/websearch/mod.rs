@@ -30,6 +30,7 @@ pub mod client;
 pub mod config;
 pub mod inject;
 pub mod instance;
+pub mod probe;
 pub mod provider;
 pub mod searxng;
 pub mod trigger;
@@ -42,6 +43,7 @@ pub use inject::{
     has_target, inject_into_last_user, question_query, render, InjectionOutcome, PROMPT_TEMPLATE,
 };
 pub use instance::{CooldownPolicy, InstancePool, WebSearchInstanceState};
+pub use probe::{probe_instance, ProbeOutcome};
 pub use provider::{SearchError, SearchProvider};
 pub use trigger::{SearchTrigger, TriggerSurface};
 pub use types::{
@@ -50,6 +52,70 @@ pub use types::{
 };
 
 use std::sync::Arc;
+
+/// A swappable reference to the live search layer.
+///
+/// `AppState` sits behind an `Arc` for the process lifetime, so a bare
+/// `Option<Arc<WebSearchRegistry>>` field could never be replaced — the whole
+/// point of the Stage 138 admin API is that a price edit takes effect without a
+/// restart. The handle holds the registry behind a lock and hands readers a
+/// cloned `Arc`, which they drop before awaiting.
+///
+/// It is present even when no search is configured (`None` inside): the layer
+/// can then be switched *on* at runtime by adding a provider in the UI, which is
+/// the common first-run path for a DB-backed config.
+#[derive(Clone)]
+pub struct WebSearchHandle {
+    /// `Arc` so the handle is cheap to clone and can be held separately from
+    /// `AppState` (the admin reload path needs to write through a handle it
+    /// owns without borrowing the whole state).
+    inner: Arc<std::sync::RwLock<Option<Arc<WebSearchRegistry>>>>,
+}
+
+impl WebSearchHandle {
+    pub fn new(registry: Option<Arc<WebSearchRegistry>>) -> Self {
+        Self {
+            inner: Arc::new(std::sync::RwLock::new(registry)),
+        }
+    }
+
+    /// No search configured. Not `Default` on purpose — an accidental
+    /// `Default::default()` silently disabling search would be worse than a
+    /// compile error at every construction site.
+    pub fn disabled() -> Self {
+        Self::new(None)
+    }
+
+    /// The registry as of right now, or `None` when the layer is off.
+    ///
+    /// The returned `Arc` is independent of the lock, so callers may hold it
+    /// across `.await` without blocking a reload.
+    pub fn current(&self) -> Option<Arc<WebSearchRegistry>> {
+        self.inner
+            .read()
+            .expect("web search handle poisoned")
+            .clone()
+    }
+
+    pub fn store(&self, registry: Option<Arc<WebSearchRegistry>>) {
+        *self.inner.write().expect("web search handle poisoned") = registry;
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.inner
+            .read()
+            .expect("web search handle poisoned")
+            .is_some()
+    }
+}
+
+impl std::fmt::Debug for WebSearchHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WebSearchHandle")
+            .field("enabled", &self.is_enabled())
+            .finish()
+    }
+}
 
 /// Runtime search layer: the configured providers plus the shared guardrails.
 ///

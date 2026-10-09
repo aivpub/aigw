@@ -359,15 +359,18 @@ async fn main() -> anyhow::Result<()> {
     };
     let router = AigwRouter::from_config(&router_config).with_cache(cache_backend);
 
-    // Stage 135: build the built-in web search layer. `None` when the
-    // `web_search` block is absent or disabled, in which case the three request
-    // entries behave exactly as before. Invalid config fails startup.
+    // Stage 135/138: build the built-in web search layer and hand it to the
+    // state behind a swappable handle. The provider list comes from the DB when
+    // it has rows, else from `config.yaml`, else the layer is off; global
+    // policy (egress proxy, domain lists, snippet cap, retries, cooldown) always
+    // comes from the yaml block. A yaml mistake still fails startup — that is a
+    // file the operator can edit — while an unconvertible DB row is skipped so
+    // that a bad row can never leave the service unable to boot (there would be
+    // no UI left to fix it with).
     let web_search = {
         let ws_config = config.as_ref().and_then(|c| c.web_search.clone());
-        match aigw_core::config_loader::build_websearch_registry(
-            &ws_config,
-            aigw_master_key.as_deref().unwrap_or_default(),
-        ) {
+        let mk = aigw_master_key.as_deref().unwrap_or_default();
+        match aigw_core::config_loader::load_websearch_registry(&db_arc, &ws_config, mk).await {
             Ok(reg) => {
                 if let Some(r) = &reg {
                     tracing::info!(
@@ -375,8 +378,10 @@ async fn main() -> anyhow::Result<()> {
                         max_results = r.guardrails().max_results,
                         "built-in web search enabled"
                     );
+                } else {
+                    tracing::info!("built-in web search disabled (no providers configured)");
                 }
-                reg.map(std::sync::Arc::new)
+                aigw_core::websearch::WebSearchHandle::new(reg.map(std::sync::Arc::new))
             }
             Err(e) => {
                 tracing::error!(error = %e, "invalid web_search config");

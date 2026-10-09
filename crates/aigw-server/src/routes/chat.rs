@@ -1161,7 +1161,7 @@ pub async fn chat_completions(
 
     drop(_resolve_enter);
     let search_status = crate::routes::web_search_wire::maybe_serve(
-        state.web_search.as_deref(),
+        state.web_search.current().as_deref(),
         aigw_core::adapter::ClientProtocol::OpenAI,
         false, // OpenAI surface has no native passthrough that runs web_search itself
         &mut body,
@@ -3001,7 +3001,7 @@ mod tests {
             otel_active: false,
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
-            web_search: None,
+            web_search: aigw_core::websearch::WebSearchHandle::disabled(),
             metrics: None,
         });
 
@@ -3182,7 +3182,7 @@ mod tests {
             otel_active: false,
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
-            web_search: None,
+            web_search: aigw_core::websearch::WebSearchHandle::disabled(),
             metrics: None,
         });
 
@@ -3331,7 +3331,7 @@ mod tests {
             otel_active: false,
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
-            web_search: None,
+            web_search: aigw_core::websearch::WebSearchHandle::disabled(),
             metrics: None,
         });
 
@@ -3397,7 +3397,7 @@ mod tests {
             otel_active: false,
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
-            web_search: None,
+            web_search: aigw_core::websearch::WebSearchHandle::disabled(),
             metrics: None,
         });
 
@@ -3506,7 +3506,7 @@ mod tests {
             otel_active: false,
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
-            web_search: None,
+            web_search: aigw_core::websearch::WebSearchHandle::disabled(),
             metrics: None,
         });
 
@@ -3559,7 +3559,7 @@ mod tests {
             otel_active: false,
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
-            web_search: None,
+            web_search: aigw_core::websearch::WebSearchHandle::disabled(),
             metrics: None,
         })
     }
@@ -3849,7 +3849,7 @@ mod tests {
             otel_active: false,
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
-            web_search: None,
+            web_search: aigw_core::websearch::WebSearchHandle::disabled(),
             metrics: None,
         });
 
@@ -4183,7 +4183,7 @@ mod tests {
             otel_active: false,
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
-            web_search: None,
+            web_search: aigw_core::websearch::WebSearchHandle::disabled(),
             metrics: None,
         });
         let app = Router::new()

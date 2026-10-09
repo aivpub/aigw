@@ -206,7 +206,7 @@ async fn install_registry_urls(world: &mut TestWorld, urls: Option<Vec<String>>,
     let cur = world.ensure_state().await;
     let next: aigw_server::routes::keys::SharedState =
         Arc::new(aigw_server::routes::keys::AppState {
-            web_search: reg,
+            web_search: aigw_core::websearch::WebSearchHandle::new(reg),
             ..(*cur).clone()
         });
     world.state = Some(next);

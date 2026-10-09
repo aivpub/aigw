@@ -72,9 +72,11 @@ pub struct AppState {
     /// refresh + cookie self-heal. Shared across all handlers.
     #[allow(dead_code)] // read by the reverse-proxy pipeline (Stage 128)
     pub token_provider: Arc<aigw_core::claude_token::TokenProvider>,
-    /// Built-in web search layer (Stage 134/135). `None` when `web_search` is
-    /// absent or disabled — the layer then costs nothing.
-    pub web_search: Option<Arc<aigw_core::websearch::WebSearchRegistry>>,
+    /// Built-in web search layer (Stage 134/135), swappable at runtime
+    /// (Stage 138). Holds `None` when nothing is configured; the layer then
+    /// costs nothing, and can still be switched on by adding a provider in the
+    /// UI.
+    pub web_search: aigw_core::websearch::WebSearchHandle,
 }
 
 impl AppState {
@@ -105,7 +107,7 @@ impl AppState {
             otel_active: false,
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
-            web_search: None,
+            web_search: aigw_core::websearch::WebSearchHandle::disabled(),
         }
     }
 }
@@ -1106,7 +1108,7 @@ mod tests {
             otel_active: false,
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
-            web_search: None,
+            web_search: aigw_core::websearch::WebSearchHandle::disabled(),
         });
         Router::new()
             .route("/key/generate", axum::routing::post(generate_key))
@@ -1157,7 +1159,7 @@ mod tests {
             otel_active: false,
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
-            web_search: None,
+            web_search: aigw_core::websearch::WebSearchHandle::disabled(),
         });
         let app = Router::new()
             .route("/key/generate", axum::routing::post(generate_key))
@@ -1217,7 +1219,7 @@ mod tests {
             otel_active: false,
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
-            web_search: None,
+            web_search: aigw_core::websearch::WebSearchHandle::disabled(),
         });
         let app = Router::new()
             .route("/key/generate", axum::routing::post(generate_key))
@@ -1356,7 +1358,7 @@ mod tests {
             otel_active: false,
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
-            web_search: None,
+            web_search: aigw_core::websearch::WebSearchHandle::disabled(),
         });
         let app = Router::new()
             .route("/key/generate", axum::routing::post(generate_key))

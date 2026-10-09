@@ -39,7 +39,7 @@ async fn ensure_global_state() -> aigw_server::routes::keys::SharedState {
             otel_active: false,
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
-            web_search: None,
+            web_search: aigw_core::websearch::WebSearchHandle::disabled(),
             metrics: None,
         });
     // Set it — if another thread beat us, use theirs

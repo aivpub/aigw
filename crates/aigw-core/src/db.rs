@@ -5931,7 +5931,7 @@ impl WebSearchStore for MySqlPool {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 const CREATE_WSP_PG: &str = r#"
-INSERT INTO web_search_providers (name, kind, cost_per_query, enabled, failover_order, timeout_ms, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+INSERT INTO web_search_providers (name, kind, cost_per_query, enabled, failover_order, timeout_ms, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id
 "#;
 const GET_WSP_PG: &str = r#"
 SELECT id, name, kind, cost_per_query, enabled, failover_order, timeout_ms, created_at, updated_at FROM web_search_providers WHERE id = $1
@@ -5950,7 +5950,7 @@ SELECT id, name, kind, cost_per_query, enabled, failover_order, timeout_ms, crea
 ORDER BY (failover_order IS NULL), failover_order, id LIMIT 1
 "#;
 const CREATE_WSI_PG: &str = r#"
-INSERT INTO web_search_instances (provider_id, name, base_url, api_key, weight, enabled, probe_result, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+INSERT INTO web_search_instances (provider_id, name, base_url, api_key, weight, enabled, probe_result, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id
 "#;
 const GET_WSI_PG: &str = r#"
 SELECT id, provider_id, name, base_url, api_key, weight, enabled, probe_result, created_at, updated_at FROM web_search_instances WHERE id = $1
@@ -5971,13 +5971,17 @@ const DEL_WSP_PG: &str = r#"DELETE FROM web_search_providers WHERE id = $1"#;
 #[async_trait]
 impl WebSearchStore for PgPool {
     async fn create_web_search_provider(&self, p: &WebSearchProviderRow) -> Result<i64> {
-        let row: (i64,) = sqlx::query_as(
-            "INSERT INTO web_search_providers (name, kind, cost_per_query, enabled, failover_order, timeout_ms, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
-        )
-        .bind(&p.name).bind(&p.kind).bind(p.cost_per_query).bind(p.enabled)
-        .bind(p.failover_order).bind(p.timeout_ms)
-        .bind(&p.created_at).bind(&p.updated_at)
-        .fetch_one(self).await?;
+        let row: (i64,) = sqlx::query_as(CREATE_WSP_PG)
+            .bind(&p.name)
+            .bind(&p.kind)
+            .bind(p.cost_per_query)
+            .bind(p.enabled)
+            .bind(p.failover_order)
+            .bind(p.timeout_ms)
+            .bind(&p.created_at)
+            .bind(&p.updated_at)
+            .fetch_one(self)
+            .await?;
         Ok(row.0)
     }
 
@@ -6041,13 +6045,18 @@ impl WebSearchStore for PgPool {
     }
 
     async fn create_web_search_instance(&self, i: &WebSearchInstanceRow) -> Result<i64> {
-        let row: (i64,) = sqlx::query_as(
-            "INSERT INTO web_search_instances (provider_id, name, base_url, api_key, weight, enabled, probe_result, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id",
-        )
-        .bind(i.provider_id).bind(&i.name).bind(&i.base_url).bind(&i.api_key)
-        .bind(i.weight).bind(i.enabled).bind(&i.probe_result)
-        .bind(&i.created_at).bind(&i.updated_at)
-        .fetch_one(self).await?;
+        let row: (i64,) = sqlx::query_as(CREATE_WSI_PG)
+            .bind(i.provider_id)
+            .bind(&i.name)
+            .bind(&i.base_url)
+            .bind(&i.api_key)
+            .bind(i.weight)
+            .bind(i.enabled)
+            .bind(&i.probe_result)
+            .bind(&i.created_at)
+            .bind(&i.updated_at)
+            .fetch_one(self)
+            .await?;
         Ok(row.0)
     }
 

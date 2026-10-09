@@ -25,9 +25,14 @@
 //!   [`RouterConfig`] for [`Router::from_config`].
 //! - [`build_websearch_registry`] — turn the parsed `web_search` block into a
 //!   runtime [`WebSearchRegistry`] (Phase 53): validate, decrypt per-instance
-//!   keys, build the shared HTTP client and the instance pools. Takes an
-//!   already-parsed struct rather than a file path, so Stage 138's DB-backed
-//!   config source reuses it unchanged.
+//!   keys, build the shared HTTP client and the instance pools.
+//! - [`load_websearch_registry`] — the Stage 138 source-selection wrapper. The
+//!   *provider list* comes from the DB when the tables hold any row, else from
+//!   `config.yaml`, else the layer is off; the *global policy* (egress proxy,
+//!   domain lists, snippet cap, retries, cooldown) always comes from yaml.
+//!   See [`websearch_config_from_db`] for why those two have different sources.
+//!   A row that cannot be turned into a provider is skipped with a warning —
+//!   one bad row must never stop the server from booting.
 //!
 //! The `litellm_settings` block (`drop_params` / `request_timeout` /
 //! `set_verbose`) has no corresponding implementation in aigw today and is
@@ -245,6 +250,325 @@ pub fn build_websearch_registry(
         cfg.attempt_order(),
         guardrails,
     )))
+}
+
+/// Overlays DB rows onto a yaml block for the one field the two sources split on.
+///
+/// **Global policy stays on `base`** (the yaml block, or `WebSearchConfig::default()`
+/// when there is no yaml). `proxy_url`, the domain allow/block lists, the snippet
+/// cap, `retries`, `allowed_fails`, `cooldown_secs` and `max_results` are
+/// infrastructure policy, not per-entity data, and deliberately have no DB column
+/// — reading them from a row would have nowhere to read from, and copying them
+/// into the tables would let a single UI click silently drop an operator's
+/// egress proxy and domain guardrails.
+///
+/// Only the provider list is replaced, and the default/failover order is
+/// re-derived from it: the default is the provider with the smallest non-NULL
+/// `failover_order` (ties by id).
+pub fn websearch_config_from_db(
+    base: WebSearchConfig,
+    providers: &[crate::models::WebSearchProviderRow],
+    instances: &[crate::models::WebSearchInstanceRow],
+) -> WebSearchConfig {
+    let mut ordered: Vec<&crate::models::WebSearchProviderRow> =
+        providers.iter().filter(|p| p.enabled != 0).collect();
+    ordered.sort_by_key(|p| {
+        (
+            p.failover_order.is_none(),
+            p.failover_order.unwrap_or(0),
+            p.id,
+        )
+    });
+
+    let configs: Vec<crate::websearch::config::WebSearchProviderConfig> = ordered
+        .iter()
+        .map(|p| crate::websearch::config::WebSearchProviderConfig {
+            name: p.name.clone(),
+            kind: p.kind.clone(),
+            cost_per_query: p.cost_per_query,
+            timeout_ms: p.timeout_ms.map(|v| v.max(0) as u64),
+            instances: instances
+                .iter()
+                .filter(|i| i.provider_id == p.id && i.enabled != 0)
+                .map(|i| WebSearchInstanceConfig {
+                    base_url: i.base_url.clone(),
+                    api_key: i.api_key.clone(),
+                    weight: i.weight,
+                    enabled: true,
+                })
+                .collect(),
+        })
+        .collect();
+
+    WebSearchConfig {
+        enabled: true,
+        default_provider: configs.first().map(|p| p.name.clone()).unwrap_or_default(),
+        failover_order: configs.iter().skip(1).map(|p| p.name.clone()).collect(),
+        providers: configs,
+        ..base
+    }
+}
+
+/// Resolve the runtime registry from the source that owns it (Stage 138 §3.2).
+///
+/// | DB rows | yaml block | result |
+/// |---------|-----------|--------|
+/// | any     | any       | DB providers + **yaml** global policy |
+/// | none    | present   | yaml (Stage 134 behaviour, byte for byte) |
+/// | none    | absent    | layer off |
+///
+/// The two sources are never merged: a provider list with two authorities makes
+/// "I changed the yaml and nothing happened" unfalsifiable. Global policy is a
+/// different kind of thing and is only ever yaml — see
+/// [`websearch_config_from_db`].
+///
+/// Returning `Err` here fails startup for a *yaml* mistake, which is a file the
+/// operator can edit. Bad rows in the DB are a different matter: they are
+/// skipped with a warning by [`build_websearch_registry_from_rows`], because a
+/// service that cannot boot has no UI left to fix the row with.
+pub async fn load_websearch_registry(
+    db: &Database,
+    yaml: &Option<WebSearchConfig>,
+    master_key: &str,
+) -> Result<Option<WebSearchRegistry>, String> {
+    let providers = db
+        .list_web_search_providers()
+        .await
+        .map_err(|e| format!("failed to read web_search providers: {e}"))?;
+
+    if providers.is_empty() {
+        if yaml.is_some() {
+            tracing::info!(
+                source = "config.yaml",
+                "web search: no provider rows in the database, using the yaml block"
+            );
+        }
+        return build_websearch_registry(yaml, master_key);
+    }
+
+    let mut instances = Vec::new();
+    for p in &providers {
+        let rows = db.list_web_search_instances(p.id).await.map_err(|e| {
+            format!(
+                "failed to read instances of web search provider {}: {e}",
+                p.name
+            )
+        })?;
+        if rows.is_empty() {
+            tracing::warn!(
+                provider = %p.name,
+                "web search provider has no instances in the database, skipping it"
+            );
+        }
+        instances.extend(rows);
+    }
+
+    // Start from the yaml block when there is one so the global policy carries
+    // over; otherwise the struct defaults, which is the documented policy.
+    let base = yaml.clone().unwrap_or_else(default_websearch_config);
+    let cfg = websearch_config_from_db(base, &providers, &instances);
+
+    let n = cfg.providers.len();
+    let reg = build_websearch_registry_from_rows(&cfg, master_key)?;
+    if let Some(r) = &reg {
+        tracing::info!(
+            source = "database",
+            providers = n,
+            names = ?r.provider_names(),
+            "web search: provider list comes from the database; guardrails and egress stay on config.yaml"
+        );
+    }
+    Ok(reg)
+}
+
+/// [`build_websearch_registry`] with per-provider fault isolation.
+///
+/// The yaml path fails the whole build on one bad provider because the operator
+/// can fix the file and restart. Rows can arrive through the admin API while the
+/// process runs, so the reload path must not let one unconvertible row take the
+/// layer down — it drops that provider, keeps the rest, and warns loudly.
+/// `Err` is reserved for faults that are not attributable to a single row
+/// (client construction, global policy validation).
+pub fn build_websearch_registry_from_rows(
+    cfg: &WebSearchConfig,
+    master_key: &str,
+) -> Result<Option<WebSearchRegistry>, String> {
+    if !cfg.enabled {
+        return Ok(None);
+    }
+    if cfg.providers.is_empty() {
+        return Err("web_search.providers must not be empty when enabled".to_string());
+    }
+    // Drop row-level faults *before* validating, because `validate()` is
+    // all-or-nothing and these are precisely the faults that must be tolerated:
+    // an unimplemented `kind` and a provider with no usable instance both
+    // describe one row, not the configuration.
+    let mut usable = cfg.clone();
+    usable.providers.retain(|p| {
+        if !crate::websearch::SUPPORTED_KINDS.contains(&p.kind.as_str()) {
+            tracing::warn!(
+                provider = %p.name,
+                kind = %p.kind,
+                supported = ?crate::websearch::SUPPORTED_KINDS,
+                "skipping web search provider with a kind that has no client"
+            );
+            return false;
+        }
+        if !p.instances.iter().any(|i| i.enabled && !i.base_url.trim().is_empty()) {
+            tracing::warn!(
+                provider = %p.name,
+                "skipping web search provider with no usable instance"
+            );
+            return false;
+        }
+        true
+    });
+    if usable.providers.is_empty() {
+        tracing::warn!("no web search provider survived; the layer is off");
+        return Ok(None);
+    }
+    // Dropping a row may have taken the default (or a failover entry) with it —
+    // a dangling name would fail `validate()` for a reason that is, in fact,
+    // one row's fault. Re-derive both from the survivors, preserving the
+    // survivors' relative order.
+    let alive: Vec<String> = usable.providers.iter().map(|p| p.name.clone()).collect();
+    if !alive.contains(&usable.default_provider) {
+        tracing::warn!(
+            previous = %usable.default_provider,
+            replacement = %alive[0],
+            "the configured default web search provider did not survive; promoting the first survivor"
+        );
+        usable.default_provider = alive[0].clone();
+    }
+    usable.failover_order.retain(|n| {
+        if alive.contains(n) {
+            true
+        } else {
+            tracing::warn!(provider = %n, "dropping failover entry for a provider that did not survive");
+            false
+        }
+    });
+    // Everything left is globally scoped: kind, URL shape, default/failover
+    // naming, domain-list exclusivity. A violation here is not one row's fault.
+    usable.validate()?;
+    let cfg = &usable;
+
+    let policy = CooldownPolicy {
+        allowed_fails: cfg.allowed_fails,
+        cooldown_secs: cfg.cooldown_secs,
+    };
+    let proxy = (!cfg.proxy_url.trim().is_empty()).then_some(cfg.proxy_url.as_str());
+
+    let mut built: Vec<(String, std::sync::Arc<dyn SearchProvider>)> = Vec::new();
+    for p in &cfg.providers {
+        match build_one_provider(p, cfg, policy, proxy, master_key) {
+            Ok(provider) => built.push((p.name.clone(), provider)),
+            Err(e) => tracing::warn!(
+                provider = %p.name,
+                error = %e,
+                "skipping web search provider that could not be built; the rest keep serving"
+            ),
+        }
+    }
+
+    if built.is_empty() {
+        tracing::warn!("every configured web search provider failed to build; the layer is off");
+        return Ok(None);
+    }
+
+    // Only keep names that survived, so `attempt_order` never names a provider
+    // that is not in the list (which would make `resolve_order` a no-op entry).
+    let alive: Vec<String> = built.iter().map(|(n, _)| n.clone()).collect();
+    let attempt_order: Vec<String> = cfg
+        .attempt_order()
+        .into_iter()
+        .filter(|n| alive.contains(n))
+        .chain(alive.iter().cloned())
+        .collect::<Vec<_>>()
+        .into_iter()
+        .fold(Vec::new(), |mut acc, n| {
+            if !acc.contains(&n) {
+                acc.push(n);
+            }
+            acc
+        });
+
+    let guardrails = Guardrails {
+        max_results: cfg.max_results.max(1),
+        snippet_max_chars: cfg.snippet_max_chars,
+        allowed_domains: cfg.allowed_domains.clone(),
+        blocked_domains: cfg.blocked_domains.clone(),
+    };
+
+    Ok(Some(WebSearchRegistry::new(
+        built.into_iter().map(|(_, p)| p).collect(),
+        attempt_order,
+        guardrails,
+    )))
+}
+
+/// Build one provider, or explain why it could not be built.
+fn build_one_provider(
+    p: &crate::websearch::config::WebSearchProviderConfig,
+    cfg: &WebSearchConfig,
+    policy: CooldownPolicy,
+    proxy: Option<&str>,
+    master_key: &str,
+) -> Result<std::sync::Arc<dyn SearchProvider>, String> {
+    if p.instances.is_empty() {
+        return Err("provider has no instances".to_string());
+    }
+    let instances: Vec<WebSearchInstanceConfig> = p
+        .instances
+        .iter()
+        .map(|i| {
+            let api_key = i.api_key.as_ref().and_then(|k| {
+                if k.trim().is_empty() {
+                    None
+                } else {
+                    Some(
+                        crate::crypto::decrypt_litellm_value(k, master_key)
+                            .unwrap_or_else(|_| k.clone()),
+                    )
+                }
+            });
+            WebSearchInstanceConfig {
+                api_key,
+                ..i.clone()
+            }
+        })
+        .collect();
+
+    let timeout_ms = p.effective_timeout_ms(cfg.timeout_ms);
+    let client = crate::websearch::client::build_search_client(
+        proxy,
+        std::time::Duration::from_millis(timeout_ms),
+        cfg.retries,
+    )?;
+    crate::websearch::build_provider(p, instances, policy, client, timeout_ms)
+}
+
+/// The policy half of a `WebSearchConfig` when no `web_search` block is present.
+///
+/// Mirrors the serde defaults on `WebSearchConfig` field by field. It exists so
+/// the DB-driven path never silently picks up a *different* policy than a
+/// yaml-only deploy would get.
+fn default_websearch_config() -> WebSearchConfig {
+    WebSearchConfig {
+        enabled: true,
+        default_provider: String::new(),
+        failover_order: Vec::new(),
+        max_results: crate::websearch::DEFAULT_MAX_RESULTS,
+        timeout_ms: 5000,
+        retries: 1,
+        snippet_max_chars: crate::websearch::DEFAULT_SNIPPET_MAX_CHARS,
+        allowed_domains: Vec::new(),
+        blocked_domains: Vec::new(),
+        proxy_url: String::new(),
+        allowed_fails: 3,
+        cooldown_secs: 60.0,
+        providers: Vec::new(),
+    }
 }
 
 #[cfg(test)]
@@ -628,5 +952,196 @@ providers:
         assert!(build_websearch_registry(&Some(cfg), master_key)
             .unwrap()
             .is_some());
+    }
+    // ── Stage 138: DB-backed provider source ─────────────────────────────
+
+    fn db_provider(
+        name: &str,
+        order: Option<i64>,
+        enabled: i64,
+    ) -> crate::models::WebSearchProviderRow {
+        crate::models::WebSearchProviderRow {
+            id: 0,
+            name: name.to_string(),
+            kind: "searxng".to_string(),
+            cost_per_query: 0.0003,
+            enabled,
+            failover_order: order,
+            timeout_ms: None,
+            created_at: "2026-10-09T00:00:00Z".to_string(),
+            updated_at: "2026-10-09T00:00:00Z".to_string(),
+        }
+    }
+
+    fn db_instance(
+        provider_id: i64,
+        name: &str,
+        enabled: i64,
+    ) -> crate::models::WebSearchInstanceRow {
+        crate::models::WebSearchInstanceRow {
+            id: 0,
+            provider_id,
+            name: name.to_string(),
+            base_url: format!("http://{name}.internal:8080"),
+            api_key: None,
+            weight: None,
+            enabled,
+            probe_result: serde_json::json!({}),
+            created_at: "2026-10-09T00:00:00Z".to_string(),
+            updated_at: "2026-10-09T00:00:00Z".to_string(),
+        }
+    }
+
+    /// The provider list comes from the rows; the default is the smallest
+    /// non-NULL `failover_order`, ties by id.
+    #[test]
+    fn test_db_rows_define_providers_and_default_order() {
+        let base = parse_web_search(WEB_SEARCH_YAML);
+        let mut b = db_provider("beta", None, 1);
+        b.id = 2;
+        let mut a = db_provider("alpha", Some(0), 1);
+        a.id = 1;
+        let instances = vec![db_instance(1, "i1", 1), db_instance(2, "i2", 1)];
+
+        let cfg = websearch_config_from_db(base, &[b.clone(), a.clone()], &instances);
+        assert_eq!(cfg.providers.len(), 2);
+        assert_eq!(cfg.default_provider, "alpha", "order 0 beats NULL");
+        assert_eq!(cfg.failover_order, vec!["beta".to_string()]);
+    }
+
+    /// The whole reason the two sources split: a UI click creating one provider
+    /// must not drop the operator's egress proxy or domain guardrails.
+    #[test]
+    fn test_db_rows_do_not_touch_global_policy() {
+        let mut base = parse_web_search(WEB_SEARCH_YAML);
+        base.proxy_url = "http://egress.internal:3128".to_string();
+        base.allowed_domains = vec!["keepme.com".to_string()];
+        base.blocked_domains = Vec::new();
+        base.retries = 4;
+        base.cooldown_secs = 12.5;
+
+        let mut p = db_provider("from-db", Some(1), 1);
+        p.id = 1;
+        let cfg = websearch_config_from_db(base, &[p], &[db_instance(1, "i", 1)]);
+
+        assert_eq!(cfg.proxy_url, "http://egress.internal:3128");
+        assert_eq!(cfg.allowed_domains, vec!["keepme.com".to_string()]);
+        assert_eq!(cfg.retries, 4);
+        assert_eq!(cfg.cooldown_secs, 12.5);
+    }
+
+    /// Disabled rows and disabled instances are dropped before the builder sees
+    /// them, so a disabled provider can never end up in `attempt_order`.
+    #[test]
+    fn test_disabled_rows_are_dropped() {
+        let mut off = db_provider("off", Some(0), 0);
+        off.id = 1;
+        let mut on = db_provider("on", Some(1), 1);
+        on.id = 2;
+        let instances = vec![db_instance(2, "live", 1), db_instance(2, "dead", 0)];
+
+        let cfg = websearch_config_from_db(default_websearch_config(), &[off, on], &instances);
+        assert_eq!(cfg.providers.len(), 1);
+        assert_eq!(cfg.providers[0].name, "on");
+        assert_eq!(cfg.providers[0].instances.len(), 1);
+        assert_eq!(
+            cfg.providers[0].instances[0].base_url,
+            "http://live.internal:8080"
+        );
+        assert_eq!(cfg.default_provider, "on");
+    }
+
+    #[tokio::test]
+    async fn test_load_uses_yaml_when_db_is_empty() {
+        let db = test_db().await;
+        let reg = load_websearch_registry(&db, &Some(parse_web_search(WEB_SEARCH_YAML)), "mk")
+            .await
+            .expect("load");
+        let reg = reg.expect("yaml path must build");
+        assert_eq!(reg.provider_names(), vec!["searxng"]);
+    }
+
+    #[tokio::test]
+    async fn test_load_is_off_when_both_sources_are_empty() {
+        let db = test_db().await;
+        assert!(load_websearch_registry(&db, &None, "mk")
+            .await
+            .expect("load")
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn test_load_prefers_db_over_yaml() {
+        let db = test_db().await;
+        let mut p = db_provider("from-db", Some(0), 1);
+        p.id = 0;
+        let pid = db.create_web_search_provider(&p).await.expect("create");
+        db.create_web_search_instance(&db_instance(pid, "db-inst", 1))
+            .await
+            .expect("create instance");
+
+        let reg = load_websearch_registry(&db, &Some(parse_web_search(WEB_SEARCH_YAML)), "mk")
+            .await
+            .expect("load")
+            .expect("db path must build");
+        assert_eq!(
+            reg.provider_names(),
+            vec!["from-db"],
+            "the yaml providers must not survive alongside the DB ones"
+        );
+    }
+
+    /// A row whose `kind` has no client must be skipped, not fatal. This is the
+    /// difference between "the UI wrote something the loader cannot use" and
+    /// "the service will not start again" (design review F7).
+    #[tokio::test]
+    async fn test_unbuildable_row_is_skipped_not_fatal() {
+        let db = test_db().await;
+
+        let mut bad = db_provider("bad-kind", Some(0), 1);
+        bad.kind = "tavily".to_string();
+        let bad_id = db.create_web_search_provider(&bad).await.expect("create");
+        db.create_web_search_instance(&db_instance(bad_id, "b", 1))
+            .await
+            .expect("instance");
+
+        let mut good = db_provider("good-kind", Some(1), 1);
+        good.id = 0;
+        let good_id = db.create_web_search_provider(&good).await.expect("create");
+        db.create_web_search_instance(&db_instance(good_id, "g", 1))
+            .await
+            .expect("instance");
+
+        let reg = load_websearch_registry(&db, &None, "mk")
+            .await
+            .expect("an unconvertible row must not fail the load")
+            .expect("the healthy provider still builds");
+        assert_eq!(reg.provider_names(), vec!["good-kind"]);
+    }
+
+    /// A provider with no instance rows is dropped at load rather than turning
+    /// into a build error (the yaml `validate()` would reject it, but the row
+    /// path must degrade instead of failing).
+    #[tokio::test]
+    async fn test_provider_without_instances_is_skipped() {
+        let db = test_db().await;
+        let mut lonely = db_provider("lonely", Some(0), 1);
+        lonely.id = 0;
+        db.create_web_search_provider(&lonely)
+            .await
+            .expect("create");
+
+        let mut ok = db_provider("has-instance", Some(1), 1);
+        ok.id = 0;
+        let id = db.create_web_search_provider(&ok).await.expect("create");
+        db.create_web_search_instance(&db_instance(id, "i", 1))
+            .await
+            .expect("instance");
+
+        let reg = load_websearch_registry(&db, &None, "mk")
+            .await
+            .expect("load")
+            .expect("the complete provider builds");
+        assert_eq!(reg.provider_names(), vec!["has-instance"]);
     }
 }

@@ -304,7 +304,10 @@ impl SearchProvider for SearxngProvider {
     }
 }
 
-fn is_timeout(e: &reqwest_middleware::Error) -> bool {
+/// Shared with `probe.rs`, which classifies its own transport failures the
+/// same way the request path does — two answers to "was that a timeout?"
+/// would drift.
+pub(crate) fn is_timeout(e: &reqwest_middleware::Error) -> bool {
     match e {
         reqwest_middleware::Error::Reqwest(r) => r.is_timeout(),
         reqwest_middleware::Error::Middleware(_) => {
