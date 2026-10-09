@@ -4,7 +4,7 @@
 **预估**: ~20h（028 三方言 migration + CRUD 端点 + 实例子资源 + 连通性探测 + 运行期 reload 重构 + 前端管理页 + i18n + UT/BDD）
 > 由 14h 上调（Review F10）：原估未计入**运行期 reload 的读者侧改造**（`keys.rs` 字段类型 + 3 个读者 + `main.rs` 构造）。可对标 Phase 50 的 `proxies` —— 同等表面积的 4 个 Stage 共 44h（且无实例子资源、无 reload 重构）。
 **依赖**: Stage 134（`WebSearchConfig` / `WebSearchProviderConfig` / 实例结构 / `SearchProvider` trait）、Stage 136（`cost_per_query` 的计费消费者）
-**状态**: 🔄 进行中（Gate 3，强制 TDD 红绿）
+**状态**: ✅ 完成（Gate 5，2026-10-10）
 
 ---
 
@@ -26,17 +26,18 @@ Stage 134 的搜索配置只能写在 `config.yaml`，**改一次单价或加一
 
 ### 验收标准
 
-- [ ] `028_web_search_providers.sql` × 三方言（sqlite / postgres / mysql）建表，并进入 `db.rs` 的 `ALL_TABLES`（Review F6）
-- [ ] **级联删除在三方言各验一遍**（`test_028_instance_cascade_delete`）—— sqlx-sqlite **默认开启** FK（`sqlx-sqlite-0.8.6/src/options/mod.rs:183-185`），SQLite/PG 用内联 `REFERENCES … ON DELETE CASCADE` 即可；**MySQL 必须写表级 `CONSTRAINT … FOREIGN KEY`**（内联 `REFERENCES` 会被 InnoDB 静默忽略，见 `mysql/020_async_jobs.sql:37,48` 的既有写法）（Review F4）
-- [ ] **写路径拒绝 `SUPPORTED_KINDS` 之外的 kind**；且 loader 对无法构造的行 **fail-soft**（`warn` + 跳过），使一行坏数据**不能**阻止服务启动（Review F7）
-- [ ] provider CRUD + **实例子资源** CRUD 端点全部可用（含批量删除、启停）
-- [ ] `api_key` **加密落库**（`v2:gcm:`），list / info 响应 **redact**（照 `proxies` 的 `proxy_url` 处理）
-- [ ] **in-use 守卫**：**最小 `failover_order`（即默认 provider）不可删** → 409（Review F3/F9：DB 化后「默认」是 provider 表自己的列，不再是跨表引用，故判据收窄为「默认那一行」）；删空全部 provider → **回落 yaml**（与「DB 空」同一分支），启动日志明示来源切换
-- [ ] 连通性探测端点：对单个**实例**发一次真实搜索，回报 HTTP 状态 / 延迟 / 结果条数 / 解析是否成功，快照存 `probe_result`
-- [ ] 前端管理页：provider 列表 + 实例子表 + **定价编辑**（`cost_per_query`）+ 探测按钮 + 启停 + i18n（en / zh-CN）
-- [ ] **配置源优先级明确且有 UT**：DB 有记录 → 用 DB；DB 空 → 回落 `config.yaml`；两者皆空 → 禁用（零行为变化）
-- [ ] 单价改动后**不重启进程即生效**（运行期 registry 可刷新）
-- [ ] `task test` / `task bdd` / `task fmt` / `task lint` / `task fe-build` / `task fe-lint` 全绿
+- [x] `028_web_search_providers.sql` × 三方言（sqlite / postgres / mysql）建表，并进入 `db.rs` 的 `ALL_TABLES`（Review F6）
+- [x] **级联删除在三方言各验一遍**（`test_028_instance_cascade_delete`）—— sqlx-sqlite **默认开启** FK（`sqlx-sqlite-0.8.6/src/options/mod.rs:183-185`），SQLite/PG 用内联 `REFERENCES … ON DELETE CASCADE` 即可；**MySQL 必须写表级 `CONSTRAINT … FOREIGN KEY`**（内联 `REFERENCES` 会被 InnoDB 静默忽略，见 `mysql/020_async_jobs.sql:37,48` 的既有写法）（Review F4）
+  > ⚠️ **实测口径**：UT `test_websearch_instance_cascade_delete`（`db.rs`）跑 sqlite；real BDD `websearch_crud.feature` 的级联场景在 **sqlite 后端已跑通**（`task bdd-real-sqlite` 67/67）。**PG / MySQL 两条未在本机执行**（Docker 不可用）。MySQL 那条是哨兵（表级 `CONSTRAINT` 若被误写回内联形式，只有它能抓到），**下次有 Docker 时必须补跑**，见 §8.3 未验证项。
+- [x] **写路径拒绝 `SUPPORTED_KINDS` 之外的 kind**；且 loader 对无法构造的行 **fail-soft**（`warn` + 跳过），使一行坏数据**不能**阻止服务启动（Review F7）
+- [x] provider CRUD + **实例子资源** CRUD 端点全部可用（含批量删除、启停）
+- [x] `api_key` **加密落库**（`v2:gcm:`），list / info 响应 **redact**（照 `proxies` 的 `proxy_url` 处理）
+- [x] **in-use 守卫**：**最小 `failover_order`（即默认 provider）不可删** → 409（Review F3/F9：DB 化后「默认」是 provider 表自己的列，不再是跨表引用，故判据收窄为「默认那一行」）；删空全部 provider → **回落 yaml**（与「DB 空」同一分支），启动日志明示来源切换
+- [x] 连通性探测端点：对单个**实例**发一次真实搜索，回报 HTTP 状态 / 延迟 / 结果条数 / 解析是否成功，快照存 `probe_result`
+- [x] 前端管理页：provider 列表 + 实例子表 + **定价编辑**（`cost_per_query`）+ 探测按钮 + 启停 + i18n（en / zh-CN）
+- [x] **配置源优先级明确且有 UT**：DB 有记录 → 用 DB；DB 空 → 回落 `config.yaml`；两者皆空 → 禁用（零行为变化）
+- [x] 单价改动后**不重启进程即生效**（运行期 registry 可刷新）
+- [x] `task test` / `task bdd` / `task fmt` / `task lint` / `task fe-build` / `task fe-lint` 全绿
 
 ### 明确不做（边界）
 
@@ -310,18 +311,54 @@ pub web_search: std::sync::RwLock<Option<Arc<WebSearchRegistry>>>,   // keys.rs:
 
 ## 7. 门禁
 
-- [ ] 028 migration 三方言通过（**三份 DDL 体**，MySQL 表级 FK）
-- [ ] 级联删除 `test_028_instance_cascade_delete` **三方言各跑一遍**
-- [ ] CRUD + 实例子资源 + 探测 + 启停端点全部可用
-- [ ] `api_key` 加密落库 + 响应 redact + in-use 守卫 409（判据 = 默认行）
-- [ ] 配置源优先级三种情形（DB / yaml / 皆空）各有 UT；**全局策略字段始终来自 yaml**（§3.1a）
-- [ ] loader fail-soft：一行坏配置不阻止启动；reload 失败保留旧 registry
-- [ ] 写路径拒绝 `SUPPORTED_KINDS` 之外的 kind
-- [ ] 探测能识别「HTTP 200 + HTML」为失败
-- [ ] 改价不重启生效（`RwLock` 替换 registry，读者不走 await 持锁）
-- [ ] 前端管理页 + i18n（en/zh-CN）+ **`App.tsx` 路由注册** + 前端 BDD × 3 viewports
-- [ ] `task test` / `bdd` / `bdd-real-*` / `fmt` / `lint` / `fe-build` / `fe-lint` 全绿
-- [ ] git commit（精确 add；`--signoff`）
+- [x] 028 migration 三方言**文件**齐备（**三份 DDL 体**，MySQL 表级 FK）—— ⚠️ **仅 sqlite 体在本机执行过**；PG / MySQL 体未运行（Docker 不可用），见 §8.3
+- [ ] 级联删除 `test_028_instance_cascade_delete` **三方言各跑一遍** —— **sqlite ✅；PG / MySQL 未跑**，见 §8.3
+- [x] CRUD + 实例子资源 + 探测 + 启停端点全部可用
+- [x] `api_key` 加密落库 + 响应 redact + in-use 守卫 409（判据 = 默认行）
+- [x] 配置源优先级三种情形（DB / yaml / 皆空）各有 UT；**全局策略字段始终来自 yaml**（§3.1a）
+- [x] loader fail-soft：一行坏配置不阻止启动；reload 失败保留旧 registry
+- [x] 写路径拒绝 `SUPPORTED_KINDS` 之外的 kind
+- [x] 探测能识别「HTTP 200 + HTML」为失败
+- [x] 改价不重启生效（`RwLock` 替换 registry，读者不走 await 持锁）
+- [x] 前端管理页 + i18n（en/zh-CN）+ **`App.tsx` 路由注册** + 前端 BDD × 3 viewports
+- [x] `task test` / `bdd` / `bdd-real-sqlite` / `fmt` / `lint` / `fe-build` / `fe-lint` 全绿；`bdd-real-pg` / `-mysql` 未跑（Docker 不可用）
+- [x] git commit（精确 add；`--signoff`）
+
+### 7.1 交付证据（2026-10-10）
+
+| 门 | 结果 |
+|----|------|
+| `task test` | aigw-core **667** + aigw-server **203 + 210**、aigw-migrate 等全绿，**0 failed** |
+| `task bdd` | **315 场景（302 passed / 13 skip）**，1680 steps；新增 `websearch_admin.feature` 15 场景全绿 |
+| `task bdd-real-sqlite` | **67 / 67**（含 `websearch_crud.feature` 6 场景：加密落库直读 + 默认守卫 + 级联） |
+| `task bdd-real-pg` / `-mysql` | ⚠️ **未执行**（本机 Docker 不可用）→ §8.3 |
+| `task fe-bdd` | **468 passed / 3 skipped**（3 viewport；新增 `websearch.feature` 8 场景 × 3 = 24） |
+| `task fe-build` / `fe-lint` | ✅（含 i18n 类型对称，`resources.d.ts` 已重生成） |
+| `task fmt` / `lint` / `doctor` | ✅ |
+| 人工端到端（真实 SearXNG） | ✅ 见 §7.2 |
+
+### 7.2 真实 SearXNG 端到端（`http://30.184.60.216:9099`）
+
+走完了设计 §6.6 要求的全链路：建 provider（摊销单价 `0.000012`）→ 加真实实例 →
+探测 → 发搜索请求 → 核对 SpendLog 金额 → **不重启改价** → 再发一次核对。
+
+| 步骤 | 实测 |
+|------|------|
+| 探测真实实例 | `ok=true`、`http_status=200`、`latency_ms=2503`、`result_count=32`、`parse_ok=true` |
+| 探测不可达实例（`127.0.0.1:9`） | `ok=false`、`http_status=null`、`parse_ok=false`，**HTTP 仍 200**（不把探测失败报成服务故障） |
+| 搜索行落库 | `call_type=search`、`model=searxng-e2e/search`、`custom_llm_provider=searxng-e2e`、`api_base=30.184.60.216:9099`（**实际命中实例**）、`spend=1.2e-05`、`total_tokens=0`、`status=success`、`metadata.parent_call_id` 指向父 LLM 行 |
+| 注入生效 | 日志 `web search injected into request surface=chat provider=searxng-e2e results=3`（LLM 调用本身因测试 key 未授权 403，与搜索链路无关） |
+| key 累计扣减 | key `spend=2.4e-05` = 2 次搜索 × `1.2e-05` |
+| **改价不重启** | `PUT .../providers/1 {"cost_per_query":0.0005}` → 下一次搜索行 `spend=0.0005`、`metadata.cost_per_query=0.0005`，进程未重启 |
+| 删除默认 provider | **409** `WEB_SEARCH_PROVIDER_IN_USE`（`referenced_by:["searxng-e2e"]`） |
+
+### 7.3 与设计的偏离
+
+| 设计 | 实现 | 理由 |
+|------|------|------|
+| `delete_provider` 的 409 文案按 §3.3 用「in-use 守卫」 | 错误 type 为 `WEB_SEARCH_PROVIDER_IN_USE`、message 为「this is the default web search provider; promote another provider first」 | 判据从「被引用」变成「是默认行」（Review F3/F9），type 名保留 `IN_USE` 以与 `proxies` 的守卫形态一致 |
+| loader fail-soft 只跳过「构造不出的行」 | 还额外把「DB 里一行 enabled 都没有」当作**合法关闭态**而非错误（`build_websearch_registry_from_rows` 不再对空 provider 列表返 `Err`） | yaml 空列表是操作员写错（可改文件）；DB 空列表是「最后一行被 toggle 关掉」的正常状态。返 `Err` 会让 toggle 看起来没生效（reload 失败保留旧 registry） |
+| 前端 BDD 未规划 | 新增 `websearch.feature` 8 场景 × 3 viewport | 设计 §4.3 已列该项；实现时发现移动端卡片原本不渲染实例子表，即「导航到页面却看不到实例」——补上是修缺陷，不是加断言 |
 
 ## 8. 风险与遗留
 
@@ -347,3 +384,13 @@ pub web_search: std::sync::RwLock<Option<Arc<WebSearchRegistry>>>,   // keys.rs:
 | **配额加权 LB + Redis 配额预留** | sub2api `manager.go` 的 `selectByQuotaWeight` + Lua `quotaIncrScript`；多搜索 key 场景出现后再补，沿用「Redis 不可用时放行而非拒服务」 |
 | **按实例的花费下钻图表** | Stage 137 只做抽屉可见 `api_base`；若要「按实例聚合花费」图表需新查询 |
 | **设计 A（短路）/ 设计 B（agentic loop）** | 后续 Phase，见 Stage 135 §8.2。B 的硬前提（上游是否认网关**注入**的 function tools）仍未实测 |
+
+### 8.3 未验证项（交付时明确未跑，非「已过」）
+
+| 项 | 状态 | 为什么重要 / 何时补 |
+|----|------|-------------------|
+| `task bdd-real-pg` | ⚠️ **未执行** | 本机 Docker 不可用（`docker ps` → daemon 未运行）。028 的 **PG DDL 体**（`BIGSERIAL` / `DOUBLE PRECISION` / `JSONB DEFAULT '{}'::jsonb` / `now()`）**从未在真实 PG 上执行过** —— 语法错误只会在第一次跑迁移时暴露。补法：`task test-db-up && task bdd-real-pg` |
+| `task bdd-real-mysql` | ⚠️ **未执行** | 同上。**这是哨兵**：`web_search_instances` 的 FK 用表级 `CONSTRAINT … FOREIGN KEY`（`028_*.sql` MySQL 体）。若将来有人把它改回 SQLite 那种内联 `REFERENCES`，InnoDB 会**静默忽略**、`ON DELETE CASCADE` 失效，而 **sqlite 与 PG 都测不出来** —— 只有 MySQL 那条能抓到。补法：`task test-db-up && task bdd-real-mysql` |
+| 级联删除三方言各跑一遍 | ⚠️ **仅 sqlite** | 同上两条的前置。UT `test_websearch_instance_cascade_delete` 走 sqlite；PG/MySQL 需由 real BDD 覆盖 |
+| `ProviderDialog` 的 `failover_order` / `timeout_ms` 置空语义 | 已实现为「留空 = 不下发该字段」（后端把缺省读作保留原值） | **无法把已有值改回 NULL**（UI 缺一个「清除」动作）。后端 `UpdateProviderRequest` 用 `Option<i64>` 也区分不了「未传」与「传 null」。影响面小（默认 provider 由最小非空值决定，清空它反而危险），登记为已知边界 |
+| key/team 级单价覆写、按实例花费下钻 | 见 §8.2 | 范围外，非欠账 |

@@ -7,6 +7,24 @@
 
 ---
 
+## 编码期必查项回填（2026-10-10，交付时核对）
+
+| # | 必查项 | 结果 | 载体 |
+|---|--------|------|------|
+| 1 | F1：确认没有任何全局字段被写进两张表；`Guardrails` 四个字段仍来自 yaml | ✅ | `028_*.sql` 无 `proxy_url` / 域名黑白名单 / `snippet_max_chars` / `retries` / `allowed_fails` / `cooldown_secs` / `max_results` 列；`test_db_rows_do_not_touch_global_policy` |
+| 2 | F2：写操作 → 不重启 → 下一次搜索用新单价；36 处字面量全改 | ✅ | `price_change_is_live_without_restart`（handler UT）；**实测**（§7.2）改价 `0.000012 → 0.0005` 后下一次搜索行 spend 即为 `0.0005`。字段类型变更由编译器强制（字面量改不过来就编译失败） |
+| 3 | F3：`UNIQUE(name)` 与「默认 = `failover_order` 最小」各一条 UT（含并列、含全 NULL） | ✅ | `test_websearch_provider_name_is_unique` / `test_default_provider_is_min_failover_order`（覆盖无 order → 最小 id、有 order 优先于无 order、更小的 order 胜出、禁用者落选） |
+| 4 | F4：级联 UT 三方言各跑一遍，MySQL 是哨兵 | ⚠️ **仅 sqlite** | `test_websearch_instance_cascade_delete`（sqlite）；PG/MySQL 待 real BDD —— **本机 Docker 不可用**，见 stage-138 §8.3。MySQL 体已按 `020_async_jobs.sql` 写成表级 `CONSTRAINT` |
+| 5 | F5：探测构造单实例临时池，不复用共享 `InstancePool` | ✅ | `websearch/probe.rs` 自建单实例请求（`test_probe_takes_one_instance_not_a_pool`），不触碰注册表与共享池冷却 |
+| 6 | F7：写路径 kind 校验 + loader fail-soft 两者都要；reload 失败保留旧 registry | ✅ | `validate_kind` → 400（`unsupported_kind_is_rejected_with_a_hint`）；loader fail-soft（`test_unbuildable_row_is_skipped_not_fatal`）；`failed_reload_keeps_the_previous_registry` |
+
+**交付时新增的两条口径修正**（设计未预见，已在 stage-138 §7.3 记录）：
+
+1. **「DB 里一行 enabled 都没有」不再是错误** —— `build_websearch_registry_from_rows` 对空 provider 列表返 `Ok(None)` 而非 `Err`。原设计的 fail-soft 只覆盖「构造不出的行」；但「最后一行被 toggle 关掉」同样会走到空列表，返 `Err` 会让 reload 失败、旧 registry 被保留 → **toggle 看起来没生效**。yaml 路径保持「空列表 = 错误」（那是操作员能改的文件）。
+2. **in-use 守卫的错误文案** —— type 保留 `WEB_SEARCH_PROVIDER_IN_USE`（与 `proxies` 形态一致），message 明确写「这是默认 provider，请先提升另一个」。判据是 Review F3/F9 已定的「默认那一行」。
+
+---
+
 ## Review Summary
 
 设计的主体判断成立：`proxies`（Phase 50）确实是**逐项可照抄**的同构先例，`028` 号可用（迁移目录最大为 `027_proxies.sql`），

@@ -1,11 +1,38 @@
 # aigw -- 下一步行动
 
-**上次更新**: 2026-10-08
-**当前阶段**: **Phase 53 🔄 进行中 — 内建 Web Search（TD-017c）：Stage 134-137 ✅ 完成，138 ⏳；总进度 138**
+**上次更新**: 2026-10-10
+**当前阶段**: **Phase 53 ✅ 内建 Web Search（TD-017c）全部交付：Stage 134-138 完成；总进度 138**
 
 ---
 
-## 当前状态：Phase 53 Stage 137 ✅ 完成，下一步 Stage 138
+## 当前状态：Phase 53 完成，下一步待定（见文末候选）
+
+### Stage 138 交付（2026-10-10）
+
+搜索 provider / 实例 / 定价**从 `config.yaml` 搬进数据库并配上管理页** —— 「改一次单价要改文件 + 重启」这条运营阻塞被消除。
+
+| 层 | 交付 |
+|----|------|
+| migration | `028_web_search_providers.sql` × 三方言（`web_search_providers` + `web_search_instances`，MySQL 表级 `CONSTRAINT … FOREIGN KEY`）；无 `is_default` 列 —— 默认 = 最小非 NULL `failover_order` |
+| core | `WebSearchProviderRow` / `WebSearchInstanceRow` + CRUD store ×3 方言 + 级联删除（应用层单事务 + DDL CASCADE 双保险） |
+| 探测 | `websearch/probe.rs`：单实例真实搜索，**跑完整 `parse_response`**（只看状态码会把 SearXNG「HTTP 200 + HTML」报成健康）+ 快照写 `probe_result` |
+| 配置源 | `load_websearch_registry(db, yaml, mk)`：provider 列表 DB 优先 → 空则回落 yaml → 皆空禁用；**全局策略（出站代理 / 域名黑白名单 / 重试 / 冷却 / `max_results`）始终只来自 yaml**；loader fail-soft（一行坏数据不阻止启动） |
+| 运行期生效 | `WebSearchHandle`（`Arc<RwLock<…>>`）替换裸字段 → 写操作后自动 reload，**改价不重启生效**；reload 失败保留旧 registry |
+| 路由 | `/admin/websearch/providers{,/batch-delete,/{id},/{id}/toggle,/{id}/instances}` + `/instances/{id}{,/toggle,/{id}/test}` + `/reload` |
+| 前端 | `pages/websearch/`（列表 + 实例子表 + **定价编辑** + 探测对话框 + 启停）；**牌价误填黄条**（`kind=searxng` 且单价 > 0.001 时提示「这像牌价而非自建摊销成本」）；i18n en/zh-CN + sidebar 入口 |
+
+**验证**: `task test`（aigw-core **667** / aigw-server **203 + 210**）、`task bdd` **315 场景（302 passed / 13 skip）**、`task bdd-real-sqlite` **67/67**、`task fe-bdd` **468 passed / 3 skipped**（3 viewport）、`fmt`/`lint`/`doctor`/`fe-build`/`fe-lint` 全绿。**真实 SearXNG 端到端**（`30.184.60.216:9099`）走完建 provider → 加实例 → 探测（200 / 2503ms / 32 条）→ 搜索 → 核对金额（`1.2e-05`）→ **不重启改价后新行即为新价** → 删默认 provider 409。
+
+**TDD 红绿**: 后端 BDD 新增 21 场景（mock 15 + real 6）、前端 8 场景 × 3 viewport；首轮 red 已逐条修真因（real 共享库导致「唯一 provider 即默认」假设不成立、`tr:has-text` 命中祖先行、移动端卡片缺实例子表等）。
+
+### ⚠️ 未验证项（必须补，非「已过」）
+
+| 项 | 说明 |
+|----|------|
+| `task bdd-real-pg` | **未跑**（本机 Docker 不可用）。028 **PG DDL 体**从未在真实 PG 上执行 —— 语法问题只会在首次迁移时暴露 |
+| `task bdd-real-mysql` | **未跑**。**这是哨兵**：`web_search_instances` 的 FK 必须保持表级 `CONSTRAINT`；退回内联 `REFERENCES` 会被 InnoDB **静默忽略**、级联失效，而 sqlite/PG 都测不出来 |
+
+补法：`task test-db-up && task bdd-real-pg && task bdd-real-mysql`。
 
 ### Stage 137 交付（2026-10-08）
 
@@ -21,9 +48,19 @@
 
 **顺带产出**: 新登记 **TD-019** —— `SpendLogsQuery.limit` / `session_id` 是静默失效的死参数（`limit` 致 Dashboard Period Spend 的窗口实为 30 条而非 100）。
 
-### 下一步：Stage 138（provider/实例/定价 DB 化 + 管理 UI，14h）
+### 下一步：Phase 53 收官后的候选
 
-搜索 provider 配置从 `config.yaml` 迁到 DB 表（`028_web_search_providers.sql` × 三方言）+ admin CRUD + 前端管理页，仿 `proxies` / Phase 50 全套。**配置源单一来源 + 优先级**（DB 优先 → yaml 回落 → 皆空禁用）；**改价不重启生效**。
+Phase 53（内建 Web Search，Stage 134-138）**全部交付**。后续候选（无强制顺序）：
+
+| 候选 | 说明 |
+|------|------|
+| **补跑 `bdd-real-pg` / `bdd-real-mysql`** | 唯一**明确的欠账**：028 的 PG / MySQL DDL 体从未在真实库执行过。见上方「⚠️ 未验证项」 |
+| 设计 A（搜索短路） | **唯一能让 Claude Code 的 WebSearch 按钮真正可用**的形态（Stage 135 §8.2） |
+| 设计 B（agentic loop） | 硬前提「上游是否认网关**注入**的 function tools」**未实测** |
+| Tavily / 博查客户端 | 抽象已就位，接入 = 加一个 provider 文件 + 一个 `kind` 分支。⚠️ 博查的 CNY→USD 汇率决策落地前，其金额不得对外出账 |
+| OAuth TD-015d / TD-015e | 响应侧协议转换 / count_tokens 双认证 |
+| Codex TD-017b | `tool_choice` 的 `{type:"namespace"}` 形态 |
+| 中期 M1 / M2 | guardrails / Redis 分布式层 |
 
 ### Stage 136 交付（2026-10-07）
 
@@ -119,7 +156,7 @@ Stage 134 执行期间暴露了「Agent 绕过 Taskfile 跑裸命令」的问题
 
 ---
 
-## Phase 53 规划（Stage 137-138 ⏳）
+## Phase 53 规划（Stage 134-138 ✅ 全部交付）
 
 **2026-10-06（内建 Web Search 调研 + Phase 53 规划）**: Stage 131 对服务端工具采取「丢弃 + 告警」——诚实但**客户端的联网能力实际不可用**。本环境实测：上游 MaaS 对 `web_search` 等服务端工具透传**全部 400**，而 litellm 的「派生 `web_search_options`」路线**被收下但不执行搜索**（模型回复「我无法联网」）。**→ 要真正可用，必须由网关自己执行搜索。**
 
@@ -146,7 +183,7 @@ Stage 134 执行期间暴露了「Agent 绕过 Taskfile 跑裸命令」的问题
 - **Provider = 多 provider 架构 + 本期只实现 SearXNG（支持多实例）** —— Tavily（1000/mo 免费）与博查（中文，Bing 兼容形状）**本期不实现**，抽象与 `kind` 已就位，接入是纯增量；Serper / ScrapingDog / 智谱 / 百度千帆登记为后备候选。**SearXNG 非零成本**，`cost_per_query` 填自建摊销值。
 - **新增 Stage 138**：provider / 实例 / 定价的 DB 化 + 管理 UI（对齐模型定价与代理服务的既有治理方式）。
 
-### Phase 53 五 Stage（~49h，**规划态未实施**）
+### Phase 53 五 Stage（~49h，**✅ 全部交付**）
 
 > **范围定调（2026-10-06，两轮用户决策）**：**① 多 provider 架构保留，本期只实现 SearXNG**（Tavily/博查不落地，接入 = 加一文件 + 一个 `kind` 分支；多态/failover/非零计费由 test-only `StubProvider` 证明）；**② 一个 provider 支持多实例**（provider = 逻辑后端 + 定价 → instances[] = 物理端点，实例选择照抄 `router.rs` 的 `cooldown_until` + `weighted_pick`，形成「实例级加权+冷却」与「provider 级 failover」两级结构）；**③ SearXNG 不是零成本** —— `cost_per_query` **缺省 `0.01` USD/次**（= $10/1k，对齐 OpenAI 牌价与 sub2api `174_*.sql`），**缺省即非零故生产默认有真实金额**；但该默认值是牌价占位，自建摊销典型在 `1e-4` 量级，**不改约高估 50 倍**，应按「(服务器+带宽+运维) ÷ 月查询量」改写；**④ 新增 Stage 138** 做 provider/实例/定价的 DB 化与管理 UI（补齐与模型定价、代理服务的治理一致性）。
 
@@ -499,7 +536,10 @@ Phase 45:   ████████████████████ 100% (3
 | ✅ | **Phase 51 Stage 129 前端 OAuth 入口 + 手动 refresh** | ✅ 完成（2026-08-24，ADR-035 + TD-016a/b） |
 | ✅ | **Phase 51 Stage 130 收尾 + 安全审计（134/134 ALL STAGES COMPLETE）** | ✅ 完成（2026-08-24，real BDD 58/58 × 3 + 审计 8 项 + TD-015a Resolved + ADR-034 收尾） |
 | ✅ | **Phase 53 Stage 134 搜索后端抽象层**（`aigw-core::websearch` 六文件 + 装载 + 配置 section + 81 UT） | ✅ 完成（2026-10-06） |
-| P1 | **Phase 53 Stage 135 prompt 注入接线** + 修 TD-017g | 下一步 |
-| ✅ | 工程纪律与构建配置收尾：删 `reqwest` feature + 新增 `task test-filter` / `task fmt-fix` + CLAUDE.md 订正 | ✅ 完成（2026-10-07） |
+| ✅ | **Phase 53 Stage 135 prompt 注入接线**（三入口触发 + 注入最后一条 user 消息 + 降级放行 + 修 TD-017g） | ✅ 完成（2026-10-07） |
+| ✅ | **Phase 53 Stage 136 按次计费 + SpendLog 独立行**（`calc_search_spend` + `call_type="search"` + 四级 increment + 三 surface usage 回传） | ✅ 完成（2026-10-07） |
+| ✅ | **Phase 53 Stage 137 搜索调用日志展现 + 聚合口径修正**（搜索行 badge + 父子跳转 + `call_type` 筛选 + 15 项口径审计） | ✅ 完成（2026-10-08） |
+| ✅ | **Phase 53 Stage 138 provider/实例/定价 DB 化 + 管理 UI**（028 ×3 方言 + CRUD + 探测 + 运行期 reload + 前端管理页） | ✅ 完成（2026-10-10，**Phase 53 收官**） |
+| ⚠️ | **补跑 `task bdd-real-pg` / `bdd-real-mysql`**（028 的 PG / MySQL DDL 体从未在真实库执行；MySQL FK 哨兵见 stage-138 §8.3） | **待办（需 Docker）** |
 | P2 | TD-008c/d 后端错误多语言 + RTL、TD-009e 外链缩略图、TD-011a 视频 token 估算（剩余） | 待处理（视使用量） |
 | P2 | Phase 41 测试缺口（适配器 UT + 流式接线） | ✅ 关闭（2026-08-09） |
