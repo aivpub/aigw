@@ -1258,6 +1258,44 @@ pub struct UpdateProxyRequest {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Web search provider models (Phase 53, Stage 138)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// One search provider: a logical backend plus its pricing.
+///
+/// "Which row is the default" is not a column — it is the row with the smallest
+/// non-NULL `failover_order` (ties broken by id). One fact, one source.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct WebSearchProviderRow {
+    pub id: i64,
+    pub name: String,
+    pub kind: String,
+    pub cost_per_query: f64,
+    pub enabled: i64,
+    pub failover_order: Option<i64>,
+    pub timeout_ms: Option<i64>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// One physical endpoint of a provider. `api_key` is stored encrypted
+/// (`v2:gcm:`) and redacted in responses, same as `proxies.proxy_url`.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct WebSearchInstanceRow {
+    pub id: i64,
+    pub provider_id: i64,
+    pub name: String,
+    pub base_url: String,
+    pub api_key: Option<String>,
+    pub weight: Option<i64>,
+    pub enabled: i64,
+    #[sqlx(default)]
+    pub probe_result: serde_json::Value,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Health Check models
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

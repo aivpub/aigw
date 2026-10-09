@@ -5500,6 +5500,720 @@ impl ProxyStore for PgPool {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// WebSearchStore trait — search provider/instance CRUD (Phase 53, Stage 138)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Search provider + instance CRUD.
+///
+/// `delete_web_search_provider` removes the provider's instances in the same
+/// transaction rather than relying on the foreign key: SQLite gets FK
+/// enforcement for free from sqlx but MySQL only honours a *table-level*
+/// constraint, so the DDL differs per dialect and the delete path must not
+/// depend on which one fired (design §3.1b).
+#[async_trait]
+pub trait WebSearchStore {
+    async fn create_web_search_provider(&self, p: &WebSearchProviderRow) -> Result<i64>;
+    async fn get_web_search_provider(&self, id: i64) -> Result<Option<WebSearchProviderRow>>;
+    async fn get_web_search_provider_by_name(
+        &self,
+        name: &str,
+    ) -> Result<Option<WebSearchProviderRow>>;
+    async fn list_web_search_providers(&self) -> Result<Vec<WebSearchProviderRow>>;
+    async fn update_web_search_provider(&self, p: &WebSearchProviderRow) -> Result<()>;
+    /// Delete the provider and every instance under it, atomically.
+    async fn delete_web_search_provider(&self, id: i64) -> Result<()>;
+    /// The provider that serves a request naming none: the enabled row with the
+    /// smallest non-NULL `failover_order` (ties by id); with no ordering
+    /// declared, the lowest enabled id. `None` when nothing is enabled.
+    async fn default_web_search_provider(&self) -> Result<Option<WebSearchProviderRow>>;
+
+    async fn create_web_search_instance(&self, i: &WebSearchInstanceRow) -> Result<i64>;
+    async fn get_web_search_instance(&self, id: i64) -> Result<Option<WebSearchInstanceRow>>;
+    async fn list_web_search_instances(
+        &self,
+        provider_id: i64,
+    ) -> Result<Vec<WebSearchInstanceRow>>;
+    async fn update_web_search_instance(&self, i: &WebSearchInstanceRow) -> Result<()>;
+    async fn update_web_search_instance_probe(
+        &self,
+        id: i64,
+        probe: &serde_json::Value,
+        now: &str,
+    ) -> Result<()>;
+    async fn delete_web_search_instance(&self, id: i64) -> Result<()>;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// WebSearchStore implementation for SqlitePool
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const CREATE_WSP_SQLITE: &str = r#"
+INSERT INTO web_search_providers (name, kind, cost_per_query, enabled, failover_order, timeout_ms, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+"#;
+const GET_WSP_SQLITE: &str = r#"
+SELECT id, name, kind, cost_per_query, enabled, failover_order, timeout_ms, created_at, updated_at FROM web_search_providers WHERE id = ?
+"#;
+const GET_WSP_BY_NAME_SQLITE: &str = r#"
+SELECT id, name, kind, cost_per_query, enabled, failover_order, timeout_ms, created_at, updated_at FROM web_search_providers WHERE name = ?
+"#;
+const LIST_WSP_SQLITE: &str = r#"
+SELECT id, name, kind, cost_per_query, enabled, failover_order, timeout_ms, created_at, updated_at FROM web_search_providers ORDER BY id
+"#;
+const UPDATE_WSP_SQLITE: &str = r#"
+UPDATE web_search_providers SET name = ?, kind = ?, cost_per_query = ?, enabled = ?, failover_order = ?, timeout_ms = ?, updated_at = ? WHERE id = ?
+"#;
+const DEFAULT_WSP_SQLITE: &str = r#"
+SELECT id, name, kind, cost_per_query, enabled, failover_order, timeout_ms, created_at, updated_at FROM web_search_providers WHERE enabled = 1
+ORDER BY (failover_order IS NULL), failover_order, id LIMIT 1
+"#;
+const CREATE_WSI_SQLITE: &str = r#"
+INSERT INTO web_search_instances (provider_id, name, base_url, api_key, weight, enabled, probe_result, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+"#;
+const GET_WSI_SQLITE: &str = r#"
+SELECT id, provider_id, name, base_url, api_key, weight, enabled, probe_result, created_at, updated_at FROM web_search_instances WHERE id = ?
+"#;
+const LIST_WSI_SQLITE: &str = r#"
+SELECT id, provider_id, name, base_url, api_key, weight, enabled, probe_result, created_at, updated_at FROM web_search_instances WHERE provider_id = ? ORDER BY id
+"#;
+const UPDATE_WSI_SQLITE: &str = r#"
+UPDATE web_search_instances SET name = ?, base_url = ?, api_key = ?, weight = ?, enabled = ?, updated_at = ? WHERE id = ?
+"#;
+const UPDATE_WSI_PROBE_SQLITE: &str = r#"
+UPDATE web_search_instances SET probe_result = ?, updated_at = ? WHERE id = ?
+"#;
+const DEL_WSI_SQLITE: &str = r#"DELETE FROM web_search_instances WHERE id = ?"#;
+const DEL_WSI_BY_PROVIDER_SQLITE: &str =
+    r#"DELETE FROM web_search_instances WHERE provider_id = ?"#;
+const DEL_WSP_SQLITE: &str = r#"DELETE FROM web_search_providers WHERE id = ?"#;
+
+#[async_trait]
+impl WebSearchStore for SqlitePool {
+    async fn create_web_search_provider(&self, p: &WebSearchProviderRow) -> Result<i64> {
+        let r = sqlx::query(CREATE_WSP_SQLITE)
+            .bind(&p.name)
+            .bind(&p.kind)
+            .bind(p.cost_per_query)
+            .bind(p.enabled)
+            .bind(p.failover_order)
+            .bind(p.timeout_ms)
+            .bind(&p.created_at)
+            .bind(&p.updated_at)
+            .execute(self)
+            .await?;
+        Ok(r.last_insert_rowid())
+    }
+
+    async fn get_web_search_provider(&self, id: i64) -> Result<Option<WebSearchProviderRow>> {
+        sqlx::query_as::<_, WebSearchProviderRow>(GET_WSP_SQLITE)
+            .bind(id)
+            .fetch_optional(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn get_web_search_provider_by_name(
+        &self,
+        name: &str,
+    ) -> Result<Option<WebSearchProviderRow>> {
+        sqlx::query_as::<_, WebSearchProviderRow>(GET_WSP_BY_NAME_SQLITE)
+            .bind(name)
+            .fetch_optional(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn list_web_search_providers(&self) -> Result<Vec<WebSearchProviderRow>> {
+        sqlx::query_as::<_, WebSearchProviderRow>(LIST_WSP_SQLITE)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn update_web_search_provider(&self, p: &WebSearchProviderRow) -> Result<()> {
+        sqlx::query(UPDATE_WSP_SQLITE)
+            .bind(&p.name)
+            .bind(&p.kind)
+            .bind(p.cost_per_query)
+            .bind(p.enabled)
+            .bind(p.failover_order)
+            .bind(p.timeout_ms)
+            .bind(&p.updated_at)
+            .bind(p.id)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn delete_web_search_provider(&self, id: i64) -> Result<()> {
+        let mut tx = self.begin().await?;
+        sqlx::query(DEL_WSI_BY_PROVIDER_SQLITE)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(DEL_WSP_SQLITE)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn default_web_search_provider(&self) -> Result<Option<WebSearchProviderRow>> {
+        sqlx::query_as::<_, WebSearchProviderRow>(DEFAULT_WSP_SQLITE)
+            .fetch_optional(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn create_web_search_instance(&self, i: &WebSearchInstanceRow) -> Result<i64> {
+        let r = sqlx::query(CREATE_WSI_SQLITE)
+            .bind(i.provider_id)
+            .bind(&i.name)
+            .bind(&i.base_url)
+            .bind(&i.api_key)
+            .bind(i.weight)
+            .bind(i.enabled)
+            .bind(&i.probe_result)
+            .bind(&i.created_at)
+            .bind(&i.updated_at)
+            .execute(self)
+            .await?;
+        Ok(r.last_insert_rowid())
+    }
+
+    async fn get_web_search_instance(&self, id: i64) -> Result<Option<WebSearchInstanceRow>> {
+        sqlx::query_as::<_, WebSearchInstanceRow>(GET_WSI_SQLITE)
+            .bind(id)
+            .fetch_optional(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn list_web_search_instances(
+        &self,
+        provider_id: i64,
+    ) -> Result<Vec<WebSearchInstanceRow>> {
+        sqlx::query_as::<_, WebSearchInstanceRow>(LIST_WSI_SQLITE)
+            .bind(provider_id)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn update_web_search_instance(&self, i: &WebSearchInstanceRow) -> Result<()> {
+        sqlx::query(UPDATE_WSI_SQLITE)
+            .bind(&i.name)
+            .bind(&i.base_url)
+            .bind(&i.api_key)
+            .bind(i.weight)
+            .bind(i.enabled)
+            .bind(&i.updated_at)
+            .bind(i.id)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn update_web_search_instance_probe(
+        &self,
+        id: i64,
+        probe: &serde_json::Value,
+        now: &str,
+    ) -> Result<()> {
+        sqlx::query(UPDATE_WSI_PROBE_SQLITE)
+            .bind(probe)
+            .bind(now)
+            .bind(id)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn delete_web_search_instance(&self, id: i64) -> Result<()> {
+        sqlx::query(DEL_WSI_SQLITE).bind(id).execute(self).await?;
+        Ok(())
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// WebSearchStore implementation for MySqlPool
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const CREATE_WSP_MYSQL: &str = r#"
+INSERT INTO web_search_providers (name, kind, cost_per_query, enabled, failover_order, timeout_ms, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+"#;
+const GET_WSP_MYSQL: &str = r#"
+SELECT id, name, kind, cost_per_query, enabled, failover_order, timeout_ms, created_at, updated_at FROM web_search_providers WHERE id = ?
+"#;
+const GET_WSP_BY_NAME_MYSQL: &str = r#"
+SELECT id, name, kind, cost_per_query, enabled, failover_order, timeout_ms, created_at, updated_at FROM web_search_providers WHERE name = ?
+"#;
+const LIST_WSP_MYSQL: &str = r#"
+SELECT id, name, kind, cost_per_query, enabled, failover_order, timeout_ms, created_at, updated_at FROM web_search_providers ORDER BY id
+"#;
+const UPDATE_WSP_MYSQL: &str = r#"
+UPDATE web_search_providers SET name = ?, kind = ?, cost_per_query = ?, enabled = ?, failover_order = ?, timeout_ms = ?, updated_at = ? WHERE id = ?
+"#;
+const DEFAULT_WSP_MYSQL: &str = r#"
+SELECT id, name, kind, cost_per_query, enabled, failover_order, timeout_ms, created_at, updated_at FROM web_search_providers WHERE enabled = 1
+ORDER BY (failover_order IS NULL), failover_order, id LIMIT 1
+"#;
+const CREATE_WSI_MYSQL: &str = r#"
+INSERT INTO web_search_instances (provider_id, name, base_url, api_key, weight, enabled, probe_result, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+"#;
+const GET_WSI_MYSQL: &str = r#"
+SELECT id, provider_id, name, base_url, api_key, weight, enabled, probe_result, created_at, updated_at FROM web_search_instances WHERE id = ?
+"#;
+const LIST_WSI_MYSQL: &str = r#"
+SELECT id, provider_id, name, base_url, api_key, weight, enabled, probe_result, created_at, updated_at FROM web_search_instances WHERE provider_id = ? ORDER BY id
+"#;
+const UPDATE_WSI_MYSQL: &str = r#"
+UPDATE web_search_instances SET name = ?, base_url = ?, api_key = ?, weight = ?, enabled = ?, updated_at = ? WHERE id = ?
+"#;
+const UPDATE_WSI_PROBE_MYSQL: &str = r#"
+UPDATE web_search_instances SET probe_result = ?, updated_at = ? WHERE id = ?
+"#;
+const DEL_WSI_MYSQL: &str = r#"DELETE FROM web_search_instances WHERE id = ?"#;
+const DEL_WSI_BY_PROVIDER_MYSQL: &str = r#"DELETE FROM web_search_instances WHERE provider_id = ?"#;
+const DEL_WSP_MYSQL: &str = r#"DELETE FROM web_search_providers WHERE id = ?"#;
+
+#[async_trait]
+impl WebSearchStore for MySqlPool {
+    async fn create_web_search_provider(&self, p: &WebSearchProviderRow) -> Result<i64> {
+        let r = sqlx::query(CREATE_WSP_MYSQL)
+            .bind(&p.name)
+            .bind(&p.kind)
+            .bind(p.cost_per_query)
+            .bind(p.enabled)
+            .bind(p.failover_order)
+            .bind(p.timeout_ms)
+            .bind(&p.created_at)
+            .bind(&p.updated_at)
+            .execute(self)
+            .await?;
+        Ok(r.last_insert_id().try_into().unwrap())
+    }
+
+    async fn get_web_search_provider(&self, id: i64) -> Result<Option<WebSearchProviderRow>> {
+        sqlx::query_as::<_, WebSearchProviderRow>(GET_WSP_MYSQL)
+            .bind(id)
+            .fetch_optional(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn get_web_search_provider_by_name(
+        &self,
+        name: &str,
+    ) -> Result<Option<WebSearchProviderRow>> {
+        sqlx::query_as::<_, WebSearchProviderRow>(GET_WSP_BY_NAME_MYSQL)
+            .bind(name)
+            .fetch_optional(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn list_web_search_providers(&self) -> Result<Vec<WebSearchProviderRow>> {
+        sqlx::query_as::<_, WebSearchProviderRow>(LIST_WSP_MYSQL)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn update_web_search_provider(&self, p: &WebSearchProviderRow) -> Result<()> {
+        sqlx::query(UPDATE_WSP_MYSQL)
+            .bind(&p.name)
+            .bind(&p.kind)
+            .bind(p.cost_per_query)
+            .bind(p.enabled)
+            .bind(p.failover_order)
+            .bind(p.timeout_ms)
+            .bind(&p.updated_at)
+            .bind(p.id)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn delete_web_search_provider(&self, id: i64) -> Result<()> {
+        let mut tx = self.begin().await?;
+        sqlx::query(DEL_WSI_BY_PROVIDER_MYSQL)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(DEL_WSP_MYSQL)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn default_web_search_provider(&self) -> Result<Option<WebSearchProviderRow>> {
+        sqlx::query_as::<_, WebSearchProviderRow>(DEFAULT_WSP_MYSQL)
+            .fetch_optional(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn create_web_search_instance(&self, i: &WebSearchInstanceRow) -> Result<i64> {
+        let r = sqlx::query(CREATE_WSI_MYSQL)
+            .bind(i.provider_id)
+            .bind(&i.name)
+            .bind(&i.base_url)
+            .bind(&i.api_key)
+            .bind(i.weight)
+            .bind(i.enabled)
+            .bind(&i.probe_result)
+            .bind(&i.created_at)
+            .bind(&i.updated_at)
+            .execute(self)
+            .await?;
+        Ok(r.last_insert_id().try_into().unwrap())
+    }
+
+    async fn get_web_search_instance(&self, id: i64) -> Result<Option<WebSearchInstanceRow>> {
+        sqlx::query_as::<_, WebSearchInstanceRow>(GET_WSI_MYSQL)
+            .bind(id)
+            .fetch_optional(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn list_web_search_instances(
+        &self,
+        provider_id: i64,
+    ) -> Result<Vec<WebSearchInstanceRow>> {
+        sqlx::query_as::<_, WebSearchInstanceRow>(LIST_WSI_MYSQL)
+            .bind(provider_id)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn update_web_search_instance(&self, i: &WebSearchInstanceRow) -> Result<()> {
+        sqlx::query(UPDATE_WSI_MYSQL)
+            .bind(&i.name)
+            .bind(&i.base_url)
+            .bind(&i.api_key)
+            .bind(i.weight)
+            .bind(i.enabled)
+            .bind(&i.updated_at)
+            .bind(i.id)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn update_web_search_instance_probe(
+        &self,
+        id: i64,
+        probe: &serde_json::Value,
+        now: &str,
+    ) -> Result<()> {
+        sqlx::query(UPDATE_WSI_PROBE_MYSQL)
+            .bind(probe)
+            .bind(now)
+            .bind(id)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn delete_web_search_instance(&self, id: i64) -> Result<()> {
+        sqlx::query(DEL_WSI_MYSQL).bind(id).execute(self).await?;
+        Ok(())
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// WebSearchStore implementation for PgPool
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const CREATE_WSP_PG: &str = r#"
+INSERT INTO web_search_providers (name, kind, cost_per_query, enabled, failover_order, timeout_ms, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+"#;
+const GET_WSP_PG: &str = r#"
+SELECT id, name, kind, cost_per_query, enabled, failover_order, timeout_ms, created_at, updated_at FROM web_search_providers WHERE id = $1
+"#;
+const GET_WSP_BY_NAME_PG: &str = r#"
+SELECT id, name, kind, cost_per_query, enabled, failover_order, timeout_ms, created_at, updated_at FROM web_search_providers WHERE name = $1
+"#;
+const LIST_WSP_PG: &str = r#"
+SELECT id, name, kind, cost_per_query, enabled, failover_order, timeout_ms, created_at, updated_at FROM web_search_providers ORDER BY id
+"#;
+const UPDATE_WSP_PG: &str = r#"
+UPDATE web_search_providers SET name = $1, kind = $2, cost_per_query = $3, enabled = $4, failover_order = $5, timeout_ms = $6, updated_at = $7 WHERE id = $8
+"#;
+const DEFAULT_WSP_PG: &str = r#"
+SELECT id, name, kind, cost_per_query, enabled, failover_order, timeout_ms, created_at, updated_at FROM web_search_providers WHERE enabled = 1
+ORDER BY (failover_order IS NULL), failover_order, id LIMIT 1
+"#;
+const CREATE_WSI_PG: &str = r#"
+INSERT INTO web_search_instances (provider_id, name, base_url, api_key, weight, enabled, probe_result, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+"#;
+const GET_WSI_PG: &str = r#"
+SELECT id, provider_id, name, base_url, api_key, weight, enabled, probe_result, created_at, updated_at FROM web_search_instances WHERE id = $1
+"#;
+const LIST_WSI_PG: &str = r#"
+SELECT id, provider_id, name, base_url, api_key, weight, enabled, probe_result, created_at, updated_at FROM web_search_instances WHERE provider_id = $1 ORDER BY id
+"#;
+const UPDATE_WSI_PG: &str = r#"
+UPDATE web_search_instances SET name = $1, base_url = $2, api_key = $3, weight = $4, enabled = $5, updated_at = $6 WHERE id = $9
+"#;
+const UPDATE_WSI_PROBE_PG: &str = r#"
+UPDATE web_search_instances SET probe_result = $1, updated_at = $2 WHERE id = $3
+"#;
+const DEL_WSI_PG: &str = r#"DELETE FROM web_search_instances WHERE id = $1"#;
+const DEL_WSI_BY_PROVIDER_PG: &str = r#"DELETE FROM web_search_instances WHERE provider_id = $1"#;
+const DEL_WSP_PG: &str = r#"DELETE FROM web_search_providers WHERE id = $1"#;
+
+#[async_trait]
+impl WebSearchStore for PgPool {
+    async fn create_web_search_provider(&self, p: &WebSearchProviderRow) -> Result<i64> {
+        let row: (i64,) = sqlx::query_as(
+            "INSERT INTO web_search_providers (name, kind, cost_per_query, enabled, failover_order, timeout_ms, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
+        )
+        .bind(&p.name).bind(&p.kind).bind(p.cost_per_query).bind(p.enabled)
+        .bind(p.failover_order).bind(p.timeout_ms)
+        .bind(&p.created_at).bind(&p.updated_at)
+        .fetch_one(self).await?;
+        Ok(row.0)
+    }
+
+    async fn get_web_search_provider(&self, id: i64) -> Result<Option<WebSearchProviderRow>> {
+        sqlx::query_as::<_, WebSearchProviderRow>(GET_WSP_PG)
+            .bind(id)
+            .fetch_optional(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn get_web_search_provider_by_name(
+        &self,
+        name: &str,
+    ) -> Result<Option<WebSearchProviderRow>> {
+        sqlx::query_as::<_, WebSearchProviderRow>(GET_WSP_BY_NAME_PG)
+            .bind(name)
+            .fetch_optional(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn list_web_search_providers(&self) -> Result<Vec<WebSearchProviderRow>> {
+        sqlx::query_as::<_, WebSearchProviderRow>(LIST_WSP_PG)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn update_web_search_provider(&self, p: &WebSearchProviderRow) -> Result<()> {
+        sqlx::query(UPDATE_WSP_PG)
+            .bind(&p.name)
+            .bind(&p.kind)
+            .bind(p.cost_per_query)
+            .bind(p.enabled)
+            .bind(p.failover_order)
+            .bind(p.timeout_ms)
+            .bind(&p.updated_at)
+            .bind(p.id)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn delete_web_search_provider(&self, id: i64) -> Result<()> {
+        let mut tx = self.begin().await?;
+        sqlx::query(DEL_WSI_BY_PROVIDER_PG)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(DEL_WSP_PG).bind(id).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn default_web_search_provider(&self) -> Result<Option<WebSearchProviderRow>> {
+        sqlx::query_as::<_, WebSearchProviderRow>(DEFAULT_WSP_PG)
+            .fetch_optional(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn create_web_search_instance(&self, i: &WebSearchInstanceRow) -> Result<i64> {
+        let row: (i64,) = sqlx::query_as(
+            "INSERT INTO web_search_instances (provider_id, name, base_url, api_key, weight, enabled, probe_result, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id",
+        )
+        .bind(i.provider_id).bind(&i.name).bind(&i.base_url).bind(&i.api_key)
+        .bind(i.weight).bind(i.enabled).bind(&i.probe_result)
+        .bind(&i.created_at).bind(&i.updated_at)
+        .fetch_one(self).await?;
+        Ok(row.0)
+    }
+
+    async fn get_web_search_instance(&self, id: i64) -> Result<Option<WebSearchInstanceRow>> {
+        sqlx::query_as::<_, WebSearchInstanceRow>(GET_WSI_PG)
+            .bind(id)
+            .fetch_optional(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn list_web_search_instances(
+        &self,
+        provider_id: i64,
+    ) -> Result<Vec<WebSearchInstanceRow>> {
+        sqlx::query_as::<_, WebSearchInstanceRow>(LIST_WSI_PG)
+            .bind(provider_id)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn update_web_search_instance(&self, i: &WebSearchInstanceRow) -> Result<()> {
+        sqlx::query(UPDATE_WSI_PG)
+            .bind(&i.name)
+            .bind(&i.base_url)
+            .bind(&i.api_key)
+            .bind(i.weight)
+            .bind(i.enabled)
+            .bind(&i.updated_at)
+            .bind(i.id)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn update_web_search_instance_probe(
+        &self,
+        id: i64,
+        probe: &serde_json::Value,
+        now: &str,
+    ) -> Result<()> {
+        sqlx::query(UPDATE_WSI_PROBE_PG)
+            .bind(probe)
+            .bind(now)
+            .bind(id)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn delete_web_search_instance(&self, id: i64) -> Result<()> {
+        sqlx::query(DEL_WSI_PG).bind(id).execute(self).await?;
+        Ok(())
+    }
+}
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Database enum dispatch — web search store
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+impl Database {
+    pub async fn create_web_search_provider(&self, p: &WebSearchProviderRow) -> Result<i64> {
+        match self {
+            Database::Sqlite(pool) => pool.create_web_search_provider(p).await,
+            Database::Mysql(pool) => pool.create_web_search_provider(p).await,
+            Database::Postgres(pool) => pool.create_web_search_provider(p).await,
+        }
+    }
+    pub async fn get_web_search_provider(&self, id: i64) -> Result<Option<WebSearchProviderRow>> {
+        match self {
+            Database::Sqlite(pool) => pool.get_web_search_provider(id).await,
+            Database::Mysql(pool) => pool.get_web_search_provider(id).await,
+            Database::Postgres(pool) => pool.get_web_search_provider(id).await,
+        }
+    }
+    pub async fn get_web_search_provider_by_name(
+        &self,
+        name: &str,
+    ) -> Result<Option<WebSearchProviderRow>> {
+        match self {
+            Database::Sqlite(pool) => pool.get_web_search_provider_by_name(name).await,
+            Database::Mysql(pool) => pool.get_web_search_provider_by_name(name).await,
+            Database::Postgres(pool) => pool.get_web_search_provider_by_name(name).await,
+        }
+    }
+    pub async fn list_web_search_providers(&self) -> Result<Vec<WebSearchProviderRow>> {
+        match self {
+            Database::Sqlite(pool) => pool.list_web_search_providers().await,
+            Database::Mysql(pool) => pool.list_web_search_providers().await,
+            Database::Postgres(pool) => pool.list_web_search_providers().await,
+        }
+    }
+    pub async fn update_web_search_provider(&self, p: &WebSearchProviderRow) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.update_web_search_provider(p).await,
+            Database::Mysql(pool) => pool.update_web_search_provider(p).await,
+            Database::Postgres(pool) => pool.update_web_search_provider(p).await,
+        }
+    }
+    pub async fn delete_web_search_provider(&self, id: i64) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.delete_web_search_provider(id).await,
+            Database::Mysql(pool) => pool.delete_web_search_provider(id).await,
+            Database::Postgres(pool) => pool.delete_web_search_provider(id).await,
+        }
+    }
+    pub async fn default_web_search_provider(&self) -> Result<Option<WebSearchProviderRow>> {
+        match self {
+            Database::Sqlite(pool) => pool.default_web_search_provider().await,
+            Database::Mysql(pool) => pool.default_web_search_provider().await,
+            Database::Postgres(pool) => pool.default_web_search_provider().await,
+        }
+    }
+    pub async fn create_web_search_instance(&self, i: &WebSearchInstanceRow) -> Result<i64> {
+        match self {
+            Database::Sqlite(pool) => pool.create_web_search_instance(i).await,
+            Database::Mysql(pool) => pool.create_web_search_instance(i).await,
+            Database::Postgres(pool) => pool.create_web_search_instance(i).await,
+        }
+    }
+    pub async fn get_web_search_instance(&self, id: i64) -> Result<Option<WebSearchInstanceRow>> {
+        match self {
+            Database::Sqlite(pool) => pool.get_web_search_instance(id).await,
+            Database::Mysql(pool) => pool.get_web_search_instance(id).await,
+            Database::Postgres(pool) => pool.get_web_search_instance(id).await,
+        }
+    }
+    pub async fn list_web_search_instances(
+        &self,
+        provider_id: i64,
+    ) -> Result<Vec<WebSearchInstanceRow>> {
+        match self {
+            Database::Sqlite(pool) => pool.list_web_search_instances(provider_id).await,
+            Database::Mysql(pool) => pool.list_web_search_instances(provider_id).await,
+            Database::Postgres(pool) => pool.list_web_search_instances(provider_id).await,
+        }
+    }
+    pub async fn update_web_search_instance(&self, i: &WebSearchInstanceRow) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.update_web_search_instance(i).await,
+            Database::Mysql(pool) => pool.update_web_search_instance(i).await,
+            Database::Postgres(pool) => pool.update_web_search_instance(i).await,
+        }
+    }
+    pub async fn update_web_search_instance_probe(
+        &self,
+        id: i64,
+        probe: &serde_json::Value,
+        now: &str,
+    ) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.update_web_search_instance_probe(id, probe, now).await,
+            Database::Mysql(pool) => pool.update_web_search_instance_probe(id, probe, now).await,
+            Database::Postgres(pool) => pool.update_web_search_instance_probe(id, probe, now).await,
+        }
+    }
+    pub async fn delete_web_search_instance(&self, id: i64) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.delete_web_search_instance(id).await,
+            Database::Mysql(pool) => pool.delete_web_search_instance(id).await,
+            Database::Postgres(pool) => pool.delete_web_search_instance(id).await,
+        }
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Database enum proxy dispatch
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -8340,7 +9054,7 @@ mod tests {
     use crate::crypto::hash_token;
     use serde_json::json;
 
-    /// All 23 tables defined in the migrations (aigw names)
+    /// All tables defined in the migrations (aigw names)
     const ALL_TABLES: &[&str] = &[
         "virtual_keys",
         "spend_logs",
@@ -8366,6 +9080,8 @@ mod tests {
         "async_job_steps",
         "async_job_logs",
         "proxies",
+        "web_search_providers",
+        "web_search_instances",
     ];
 
     fn make_test_key(token_hash: &str, key_alias: &str) -> VirtualKey {
@@ -9301,6 +10017,207 @@ mod tests {
         let db = Database::init("sqlite::memory:").await.expect("init");
         // Deleting a non-existent proxy is a no-op Ok (matches delete_credential).
         db.delete_proxy(999).await.expect("delete idempotent");
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // Web search provider/instance CRUD tests (Stage 138)
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    fn make_test_wsp(name: &str, order: Option<i64>) -> WebSearchProviderRow {
+        let now = Utc::now().to_rfc3339();
+        WebSearchProviderRow {
+            id: 0,
+            name: name.to_string(),
+            kind: "searxng".to_string(),
+            cost_per_query: 0.01,
+            enabled: 1,
+            failover_order: order,
+            timeout_ms: None,
+            created_at: now.clone(),
+            updated_at: now,
+        }
+    }
+
+    fn make_test_wsi(provider_id: i64, name: &str) -> WebSearchInstanceRow {
+        let now = Utc::now().to_rfc3339();
+        WebSearchInstanceRow {
+            id: 0,
+            provider_id,
+            name: name.to_string(),
+            base_url: "http://searxng:9099".to_string(),
+            api_key: None,
+            weight: None,
+            enabled: 1,
+            probe_result: serde_json::json!({}),
+            created_at: now.clone(),
+            updated_at: now,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_websearch_provider_crud_roundtrip() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let mut p = make_test_wsp("prov-a", Some(1));
+        let id = db.create_web_search_provider(&p).await.expect("create");
+        assert!(id > 0);
+
+        let got = db.get_web_search_provider(id).await.expect("get").unwrap();
+        assert_eq!(got.name, "prov-a");
+        assert_eq!(got.kind, "searxng");
+        assert_eq!(got.cost_per_query, 0.01);
+        assert_eq!(got.enabled, 1);
+
+        // by-name lookup is what the write path uses to enforce UNIQUE semantics
+        let by_name = db
+            .get_web_search_provider_by_name("prov-a")
+            .await
+            .expect("by name")
+            .unwrap();
+        assert_eq!(by_name.id, id);
+
+        p.id = id;
+        p.name = "prov-a-renamed".to_string();
+        p.cost_per_query = 0.0001;
+        p.enabled = 0;
+        db.update_web_search_provider(&p).await.expect("update");
+        let upd = db.get_web_search_provider(id).await.expect("get").unwrap();
+        assert_eq!(upd.name, "prov-a-renamed");
+        assert_eq!(upd.cost_per_query, 0.0001);
+        assert_eq!(upd.enabled, 0);
+
+        db.delete_web_search_provider(id).await.expect("delete");
+        assert!(db.get_web_search_provider(id).await.expect("get").is_none());
+    }
+
+    /// The cascade must hold regardless of dialect: MySQL ignores the inline
+    /// `REFERENCES` form, so the app-level delete in one transaction is what
+    /// actually guarantees it (design §3.1b).
+    #[tokio::test]
+    async fn test_websearch_instance_cascade_delete() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let pid = db
+            .create_web_search_provider(&make_test_wsp("p", None))
+            .await
+            .expect("create provider");
+        let iid = db
+            .create_web_search_instance(&make_test_wsi(pid, "i1"))
+            .await
+            .expect("create instance");
+        assert!(db
+            .get_web_search_instance(iid)
+            .await
+            .expect("get")
+            .is_some());
+
+        db.delete_web_search_provider(pid).await.expect("delete");
+
+        assert!(
+            db.list_web_search_instances(pid)
+                .await
+                .expect("list")
+                .is_empty(),
+            "instances must not survive their provider"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_websearch_instance_crud_roundtrip() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let pid = db
+            .create_web_search_provider(&make_test_wsp("p", None))
+            .await
+            .unwrap();
+        let mut i = make_test_wsi(pid, "inst-a");
+        let id = db.create_web_search_instance(&i).await.expect("create");
+        assert!(id > 0);
+
+        let got = db.get_web_search_instance(id).await.unwrap().unwrap();
+        assert_eq!(got.name, "inst-a");
+        assert_eq!(got.provider_id, pid);
+
+        i.id = id;
+        i.base_url = "http://other:9099".to_string();
+        i.weight = Some(3);
+        i.enabled = 0;
+        db.update_web_search_instance(&i).await.expect("update");
+        let upd = db.get_web_search_instance(id).await.unwrap().unwrap();
+        assert_eq!(upd.base_url, "http://other:9099");
+        assert_eq!(upd.weight, Some(3));
+        assert_eq!(upd.enabled, 0);
+
+        // probe snapshot is written on its own path
+        let snap = serde_json::json!({"ok": true, "result_count": 5});
+        db.update_web_search_instance_probe(id, &snap, "2026-10-09T00:00:00Z")
+            .await
+            .expect("probe");
+        let probed = db.get_web_search_instance(id).await.unwrap().unwrap();
+        assert_eq!(probed.probe_result["result_count"], 5);
+
+        db.delete_web_search_instance(id).await.expect("delete");
+        assert!(db.get_web_search_instance(id).await.unwrap().is_none());
+    }
+
+    /// Default = smallest non-NULL `failover_order`, ties by id; when no row
+    /// carries an order, the lowest id wins. Disabled rows never win.
+    #[tokio::test]
+    async fn test_default_provider_is_min_failover_order() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+
+        // No order at all -> lowest id.
+        let a = db
+            .create_web_search_provider(&make_test_wsp("a", None))
+            .await
+            .unwrap();
+        let b = db
+            .create_web_search_provider(&make_test_wsp("b", None))
+            .await
+            .unwrap();
+        assert_eq!(
+            db.default_web_search_provider().await.unwrap().unwrap().id,
+            a,
+            "no orders declared -> lowest id"
+        );
+
+        // b declares order 0 -> ordered rows outrank unordered ones.
+        let mut b_row = db.get_web_search_provider(b).await.unwrap().unwrap();
+        b_row.failover_order = Some(0);
+        db.update_web_search_provider(&b_row).await.unwrap();
+        assert_eq!(
+            db.default_web_search_provider().await.unwrap().unwrap().id,
+            b
+        );
+
+        // a declares a smaller order -> a wins.
+        let mut a_row = db.get_web_search_provider(a).await.unwrap().unwrap();
+        a_row.failover_order = Some(-1);
+        db.update_web_search_provider(&a_row).await.unwrap();
+        assert_eq!(
+            db.default_web_search_provider().await.unwrap().unwrap().id,
+            a
+        );
+
+        // Disabling the winner falls through to the next candidate.
+        a_row.enabled = 0;
+        db.update_web_search_provider(&a_row).await.unwrap();
+        assert_eq!(
+            db.default_web_search_provider().await.unwrap().unwrap().id,
+            b
+        );
+    }
+
+    #[tokio::test]
+    async fn test_websearch_provider_name_is_unique() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        db.create_web_search_provider(&make_test_wsp("dup", None))
+            .await
+            .expect("first");
+        let second = db
+            .create_web_search_provider(&make_test_wsp("dup", None))
+            .await;
+        assert!(
+            second.is_err(),
+            "UNIQUE(name) must reject a duplicate provider name"
+        );
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
