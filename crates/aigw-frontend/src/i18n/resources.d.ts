@@ -96,6 +96,7 @@ declare module "i18next" {
       jobs: string;
       budgets: string;
       proxies: string;
+      webSearch: string;
     },
     expandSidebar: string;
     collapseSidebar: string;
@@ -1215,6 +1216,95 @@ declare module "i18next" {
       toggleDone: string;
       batchDone: string;
       inUseSkipped: string;
+    },
+  },
+  webSearch: {
+    title: string;
+    description: string;
+    newProvider: string;
+    allProviders: string;
+    searchPlaceholder: string;
+    noProviders: string;
+    noMatch: string;
+    badge: {
+      default: string;
+    },
+    table: {
+      name: string;
+      kind: string;
+      cost: string;
+      instances: string;
+      status: string;
+      actions: string;
+      perQuery: string;
+    },
+    status: {
+      disabled: string;
+    },
+    dialog: {
+      titleCreate: string;
+      titleEdit: string;
+      description: string;
+      nameLabel: string;
+      namePlaceholder: string;
+      kindLabel: string;
+      costLabel: string;
+      costHint: string;
+      costPlaceholderWarning: string;
+      failoverOrderLabel: string;
+      failoverOrderHint: string;
+      timeoutLabel: string;
+      optionalPlaceholder: string;
+      saveBtn: string;
+      nameRequired: string;
+      costInvalid: string;
+    },
+    instance: {
+      titleCreate: string;
+      titleEdit: string;
+      description: string;
+      name: string;
+      nameLabel: string;
+      namePlaceholder: string;
+      baseUrl: string;
+      baseUrlLabel: string;
+      baseUrlPlaceholder: string;
+      baseUrlInvalid: string;
+      apiKey: string;
+      apiKeyLabel: string;
+      apiKeyPlaceholder: string;
+      apiKeyKeepPlaceholder: string;
+      apiKeyHint: string;
+      weightLabel: string;
+      weight: string;
+      weightHint: string;
+      nameRequired: string;
+      add: string;
+      none: string;
+    },
+    probe: {
+      title: string;
+      ok: string;
+      failed: string;
+      parseFailed: string;
+      httpStatus: string;
+      latency: string;
+      resultCount: string;
+      parseOk: string;
+      yes: string;
+      no: string;
+      probedAt: string;
+      parseHint: string;
+      noResult: string;
+    },
+    toast: {
+      created: string;
+      updated: string;
+      deleted: string;
+      toggleDone: string;
+      batchDone: string;
+      skipped: string;
+      savedNotLive: string;
     },
   },
   claudeOAuth: {

@@ -22,6 +22,7 @@ import { JobDetailPage } from "@/pages/jobs/job-detail";
 import { ErrorBoundary } from "@/pages/jobs/job-detail";
 import { BudgetsPage } from "@/pages/budgets";
 import { ProxiesPage } from "@/pages/proxies";
+import { WebSearchPage } from "@/pages/websearch";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth();
@@ -86,6 +87,7 @@ export default function App() {
             />
             <Route path="budgets" element={<BudgetsPage />} />
             <Route path="proxies" element={<ProxiesPage />} />
+            <Route path="websearch" element={<WebSearchPage />} />
           </Route>
 
           {/* Catch-all: authenticated pages redirect to /dash; unauthenticated to login */}

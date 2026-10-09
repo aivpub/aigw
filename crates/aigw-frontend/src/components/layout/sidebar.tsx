@@ -15,6 +15,7 @@ import {
   ChevronRight,
   PiggyBank,
   Network,
+  Globe,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -75,6 +76,11 @@ function useNavGroups(): NavGroup[] {
           icon: Settings,
         },
         { to: "/dash/proxies", labelKey: "sidebar.nav.proxies", icon: Network },
+        {
+          to: "/dash/websearch",
+          labelKey: "sidebar.nav.webSearch",
+          icon: Globe,
+        },
         { to: "/dash/jobs", labelKey: "sidebar.nav.jobs", icon: Activity },
         {
           to: "/dash/budgets",

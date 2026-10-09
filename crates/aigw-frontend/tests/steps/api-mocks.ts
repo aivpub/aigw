@@ -62,6 +62,77 @@ const proxyList: any[] = [
   },
 ];
 
+// ── Web search providers (Stage 138) ──
+// Module-scoped like `proxyList`: the create path appends so the post-save
+// refetch shows the new row.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const webSearchProviders: any[] = [
+  {
+    id: 1,
+    name: "searxng-main",
+    kind: "searxng",
+    cost_per_query: 0.01,
+    enabled: true,
+    is_default: true,
+    failover_order: 0,
+    timeout_ms: null,
+    instances: [
+      {
+        id: 11,
+        provider_id: 1,
+        name: "searx-hk",
+        base_url: "http://searxng-hk:9099",
+        has_api_key: false,
+        redacted_api_key: null,
+        weight: null,
+        enabled: true,
+        probe_result: { ok: true, result_count: 35 },
+        created_at: "2026-10-01T00:00:00Z",
+        updated_at: "2026-10-01T00:00:00Z",
+      },
+      {
+        id: 12,
+        provider_id: 1,
+        name: "searx-sg",
+        base_url: "http://searxng-sg:9099",
+        has_api_key: true,
+        redacted_api_key: "****a1b2",
+        weight: 3,
+        enabled: true,
+        probe_result: {},
+        created_at: "2026-10-01T00:00:00Z",
+        updated_at: "2026-10-01T00:00:00Z",
+      },
+    ],
+    created_at: "2026-10-01T00:00:00Z",
+    updated_at: "2026-10-01T00:00:00Z",
+  },
+  {
+    id: 2,
+    name: "searxng-backup",
+    kind: "searxng",
+    cost_per_query: 0.000012,
+    enabled: false,
+    is_default: false,
+    failover_order: 1,
+    timeout_ms: 8000,
+    instances: [],
+    created_at: "2026-10-02T00:00:00Z",
+    updated_at: "2026-10-02T00:00:00Z",
+  },
+];
+
+const WEB_SEARCH_PROBE_OK = {
+  id: 11,
+  ok: true,
+  http_status: 200,
+  latency_ms: 2430,
+  result_count: 35,
+  parse_ok: true,
+  error: null,
+  probed_at: "2026-10-09T12:00:00Z",
+};
+
 interface MockOptions {
   role?: string;
   keyCount?: number;
@@ -565,6 +636,142 @@ export async function defineMockRoutes(route: Route, request: Request) {
   }
   if (url.pathname.match(/^\/admin\/proxies\/\d+$/)) {
     return route.fulfill({ status: 200, json: proxyList[0] });
+  }
+
+  // ── Web search providers (Stage 138) ──
+  if (url.pathname === "/admin/websearch/providers" && route.request().method() === "POST") {
+    const body = JSON.parse(request.postData() ?? "{}");
+    const created = {
+      id: webSearchProviders.length + 1,
+      name: body.name ?? "new-provider",
+      kind: body.kind ?? "searxng",
+      cost_per_query: body.cost_per_query ?? 0.01,
+      enabled: true,
+      is_default: false,
+      failover_order: body.failover_order ?? null,
+      timeout_ms: body.timeout_ms ?? null,
+      instances: [],
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    webSearchProviders.push(created);
+    return route.fulfill({
+      status: 200,
+      json: { ...created, reload: { ok: true, providers: [created.name] } },
+    });
+  }
+  if (url.pathname === "/admin/websearch/providers" && route.request().method() === "GET") {
+    const q = url.searchParams.get("search");
+    const filtered = q
+      ? webSearchProviders.filter((p) => p.name.includes(q))
+      : webSearchProviders;
+    return route.fulfill({
+      status: 200,
+      json: { data: filtered, count: filtered.length },
+    });
+  }
+  if (
+    url.pathname === "/admin/websearch/providers/batch-delete" &&
+    route.request().method() === "POST"
+  ) {
+    const body = JSON.parse(request.postData() ?? "{}");
+    const ids: number[] = body.ids ?? [];
+    const skipped = ids
+      .filter((id) => webSearchProviders.find((p) => p.id === id)?.is_default)
+      .map((id) => ({ id, reason: "default_provider" }));
+    const deleted = ids.filter((id) => !skipped.some((s) => s.id === id));
+    return route.fulfill({
+      status: 200,
+      json: {
+        status: "ok",
+        deleted_ids: deleted,
+        skipped,
+        reload: { ok: true, providers: [] },
+      },
+    });
+  }
+  if (url.pathname.match(/^\/admin\/websearch\/providers\/\d+\/instances$/)) {
+    if (route.request().method() === "POST") {
+      const pid = Number(url.pathname.split("/")[4]);
+      const provider = webSearchProviders.find((p) => p.id === pid);
+      const body = JSON.parse(request.postData() ?? "{}");
+      const created = {
+        id: 100 + (provider?.instances.length ?? 0),
+        provider_id: pid,
+        name: body.name ?? "new-instance",
+        base_url: body.base_url ?? "",
+        has_api_key: Boolean(body.api_key),
+        redacted_api_key: body.api_key ? `****${String(body.api_key).slice(-4)}` : null,
+        weight: body.weight ?? null,
+        enabled: true,
+        probe_result: {},
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      provider?.instances.push(created);
+      return route.fulfill({
+        status: 200,
+        json: { ...created, reload: { ok: true, providers: [] } },
+      });
+    }
+  }
+  // A parse failure is the SearXNG "HTTP 200 + HTML" trap; `searx-sg` stands in
+  // for the instance that hits it so the scenario can assert the distinction.
+  // Must precede the generic `\d+` rule below — first match wins here.
+  if (url.pathname.match(/^\/admin\/websearch\/instances\/12\/test$/)) {
+    return route.fulfill({
+      status: 200,
+      json: {
+        ...WEB_SEARCH_PROBE_OK,
+        id: 12,
+        ok: false,
+        result_count: null,
+        parse_ok: false,
+        error: "response body was not the expected JSON (got HTML)",
+      },
+    });
+  }
+  if (url.pathname.match(/^\/admin\/websearch\/instances\/\d+\/test$/)) {
+    return route.fulfill({ status: 200, json: WEB_SEARCH_PROBE_OK });
+  }
+  if (url.pathname.match(/^\/admin\/websearch\/providers\/\d+\/toggle$/)) {
+    const pid = Number(url.pathname.split("/")[4]);
+    const provider = webSearchProviders.find((p) => p.id === pid);
+    if (provider) provider.enabled = !provider.enabled;
+    return route.fulfill({
+      status: 200,
+      json: { ...provider, reload: { ok: true, providers: [] } },
+    });
+  }
+  if (url.pathname.match(/^\/admin\/websearch\/instances\/\d+\/toggle$/)) {
+    return route.fulfill({
+      status: 200,
+      json: { id: 11, enabled: false, reload: { ok: true, providers: [] } },
+    });
+  }
+  if (url.pathname.match(/^\/admin\/websearch\/providers\/\d+$/)) {
+    const pid = Number(url.pathname.split("/").pop());
+    const provider = webSearchProviders.find((p) => p.id === pid);
+    if (route.request().method() === "DELETE") {
+      if (provider?.is_default) {
+        return route.fulfill({
+          status: 409,
+          json: {
+            error: {
+              message: "the default provider cannot be deleted",
+              type: "DEFAULT_PROVIDER_UNDELETABLE",
+            },
+          },
+        });
+      }
+      const idx = webSearchProviders.findIndex((p) => p.id === pid);
+      if (idx >= 0) webSearchProviders.splice(idx, 1);
+      return route.fulfill({
+        status: 200,
+        json: { status: "deleted", id: pid, reload: { ok: true, providers: [] } },
+      });
+    }
+    return route.fulfill({ status: 200, json: provider });
   }
 
   // Spend

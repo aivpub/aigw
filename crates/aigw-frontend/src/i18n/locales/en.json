@@ -79,7 +79,8 @@
       "routerSettings": "Router Settings",
       "jobs": "Jobs",
       "budgets": "Budgets",
-      "proxies": "Proxies"
+      "proxies": "Proxies",
+      "webSearch": "Web Search"
     },
     "expandSidebar": "Expand sidebar",
     "collapseSidebar": "Collapse sidebar"
@@ -1199,6 +1200,95 @@
       "toggleDone": "Status toggled",
       "batchDone": "Batch operation done",
       "inUseSkipped": "{{n}} proxy(s) skipped (in use)"
+    }
+  },
+  "webSearch": {
+    "title": "Web Search",
+    "description": "Manage the built-in search backends and their per-query cost",
+    "newProvider": "New Provider",
+    "allProviders": "All Providers",
+    "searchPlaceholder": "Search by name, kind or instance...",
+    "noProviders": "No search providers configured — built-in web search is off",
+    "noMatch": "No providers match your search",
+    "badge": {
+      "default": "Default"
+    },
+    "table": {
+      "name": "Name",
+      "kind": "Kind",
+      "cost": "Cost",
+      "instances": "Instances",
+      "status": "Status",
+      "actions": "Actions",
+      "perQuery": "query"
+    },
+    "status": {
+      "disabled": "Disabled"
+    },
+    "dialog": {
+      "titleCreate": "New Provider",
+      "titleEdit": "Edit Provider",
+      "description": "A provider is a logical backend plus its price. Add one instance per physical endpoint.",
+      "nameLabel": "Name",
+      "namePlaceholder": "e.g. searxng-main",
+      "kindLabel": "Kind",
+      "costLabel": "Cost per query (USD)",
+      "costHint": "The price this gateway actually pays per search. Self-hosted SearXNG should be the amortized cost — (server + bandwidth + ops) / searches per month — which typically lands near 0.0001, not the 0.01 default. Filling in 0 makes the cost invisible in reports; it does not mean the search was free.",
+      "costPlaceholderWarning": "This looks like the industry list price ($10/1k), not a self-hosted amortized cost. Keeping it overstates spend by roughly 50x — confirm this is the price you meant.",
+      "failoverOrderLabel": "Failover order",
+      "failoverOrderHint": "Lower runs first. The smallest non-null value is the default provider, which cannot be deleted.",
+      "timeoutLabel": "Timeout (ms)",
+      "optionalPlaceholder": "optional",
+      "saveBtn": "Save",
+      "nameRequired": "Name is required",
+      "costInvalid": "Cost must be a non-negative number"
+    },
+    "instance": {
+      "titleCreate": "New Instance",
+      "titleEdit": "Edit Instance",
+      "description": "A physical endpoint under {{provider}}",
+      "name": "Name",
+      "nameLabel": "Name",
+      "namePlaceholder": "e.g. searxng-hk-1",
+      "baseUrl": "Base URL",
+      "baseUrlLabel": "Base URL",
+      "baseUrlPlaceholder": "http://host:9099",
+      "baseUrlInvalid": "Base URL must start with http:// or https://",
+      "apiKey": "API key",
+      "apiKeyLabel": "API key",
+      "apiKeyPlaceholder": "optional",
+      "apiKeyKeepPlaceholder": "leave blank to keep the stored key",
+      "apiKeyHint": "Stored encrypted and never returned in full. SearXNG itself needs no key; set one only when a reverse proxy in front of it does.",
+      "weightLabel": "Weight",
+      "weight": "Weight",
+      "weightHint": "Optional. Declaring a weight on any instance switches the pool from uniform random to weighted selection.",
+      "nameRequired": "Name is required",
+      "add": "Add instance",
+      "none": "No instances yet — this provider cannot serve a search until it has one."
+    },
+    "probe": {
+      "title": "Connectivity Probe",
+      "ok": "Reachable",
+      "failed": "Failed",
+      "parseFailed": "Unparseable response",
+      "httpStatus": "HTTP status",
+      "latency": "Latency",
+      "resultCount": "Results",
+      "parseOk": "Response parsed",
+      "yes": "yes",
+      "no": "no",
+      "probedAt": "Probed at",
+      "parseHint": "The instance answered but its body was not the expected JSON. SearXNG returns HTTP 200 with an HTML page when the `format` parameter is not enabled in settings.yml — enable `json` there.",
+      "noResult": "Probing..."
+    },
+    "toast": {
+      "created": "Provider saved",
+      "updated": "Changes saved",
+      "deleted": "Deleted",
+      "toggleDone": "Status toggled",
+      "batchDone": "Batch operation done",
+      "skipped": "{{n}} provider(s) skipped (default provider)",
+      "savedNotLive": "Saved, but the running search layer was not updated — check the saved rows"
     }
   },
   "claudeOAuth": {
