@@ -55,7 +55,7 @@ use clap::Parser;
 use routes::keys::{self, AppState, SharedState, DEFAULT_KEY_TOKEN_LEN};
 use routes::{
     budget, chat, cors_layer, credentials, docs, embeddings, health, jobs, login, models, org,
-    proxies, responses, router_settings, spend, team, user, v1_messages,
+    proxies, responses, router_settings, spend, team, user, v1_messages, websearch,
 };
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -381,7 +381,10 @@ async fn main() -> anyhow::Result<()> {
                 } else {
                     tracing::info!("built-in web search disabled (no providers configured)");
                 }
-                aigw_core::websearch::WebSearchHandle::new(reg.map(std::sync::Arc::new))
+                aigw_core::websearch::WebSearchHandle::with_yaml_base(
+                    ws_config,
+                    reg.map(std::sync::Arc::new),
+                )
             }
             Err(e) => {
                 tracing::error!(error = %e, "invalid web_search config");
@@ -689,6 +692,47 @@ async fn main() -> anyhow::Result<()> {
         .route(
             "/admin/proxies/{id}/toggle",
             axum::routing::post(proxies::toggle_proxy),
+        )
+        // Web search provider/instance admin (Stage 138)
+        .route(
+            "/admin/websearch/providers",
+            get(websearch::list_providers).post(websearch::create_provider),
+        )
+        .route(
+            "/admin/websearch/providers/batch-delete",
+            axum::routing::post(websearch::batch_delete_providers),
+        )
+        .route(
+            "/admin/websearch/providers/{id}",
+            get(websearch::get_provider)
+                .put(websearch::update_provider)
+                .delete(websearch::delete_provider),
+        )
+        .route(
+            "/admin/websearch/providers/{id}/toggle",
+            axum::routing::post(websearch::toggle_provider),
+        )
+        .route(
+            "/admin/websearch/providers/{id}/instances",
+            get(websearch::list_instances).post(websearch::create_instance),
+        )
+        .route(
+            "/admin/websearch/instances/{id}",
+            get(websearch::get_instance)
+                .put(websearch::update_instance)
+                .delete(websearch::delete_instance),
+        )
+        .route(
+            "/admin/websearch/instances/{id}/toggle",
+            axum::routing::post(websearch::toggle_instance),
+        )
+        .route(
+            "/admin/websearch/instances/{id}/test",
+            axum::routing::post(websearch::test_instance),
+        )
+        .route(
+            "/admin/websearch/reload",
+            axum::routing::post(websearch::reload),
         )
         // Login/Logout endpoints (litellm-compatible /v2/login/*)
         .route("/v2/login", axum::routing::post(login::login))

@@ -396,9 +396,13 @@ pub fn build_websearch_registry_from_rows(
     if !cfg.enabled {
         return Ok(None);
     }
-    if cfg.providers.is_empty() {
-        return Err("web_search.providers must not be empty when enabled".to_string());
-    }
+    // No providers is *not* an error on this path. The yaml `validate()` rejects
+    // an empty list because an operator who wrote `enabled: true` with no
+    // providers made a mistake; the same list arriving from the DB means every
+    // row is disabled, which is a legitimate state — "the layer is off" — and
+    // the state the UI lands in after the last provider is toggled off.
+    // Returning `Err` there would keep a dead provider serving, and the operator
+    // would have no way to tell that the toggle had not taken effect.
     // Drop row-level faults *before* validating, because `validate()` is
     // all-or-nothing and these are precisely the faults that must be tolerated:
     // an unimplemented `kind` and a provider with no usable instance both
@@ -414,7 +418,11 @@ pub fn build_websearch_registry_from_rows(
             );
             return false;
         }
-        if !p.instances.iter().any(|i| i.enabled && !i.base_url.trim().is_empty()) {
+        if !p
+            .instances
+            .iter()
+            .any(|i| i.enabled && !i.base_url.trim().is_empty())
+        {
             tracing::warn!(
                 provider = %p.name,
                 "skipping web search provider with no usable instance"
@@ -1088,6 +1096,48 @@ providers:
             reg.provider_names(),
             vec!["from-db"],
             "the yaml providers must not survive alongside the DB ones"
+        );
+    }
+
+    /// Disabling the last provider must turn the layer off, not fail the load.
+    /// The yaml path treats an empty provider list as a mistake (the operator
+    /// can edit the file); the row path must treat it as the legitimate
+    /// "everything is toggled off" state, otherwise the toggle appears to do
+    /// nothing — the previous registry is kept on a failed reload by design.
+    #[tokio::test]
+    async fn test_all_rows_disabled_turns_the_layer_off() {
+        let db = test_db().await;
+        let mut off = db_provider("only", Some(0), 0);
+        off.id = 0;
+        let id = db.create_web_search_provider(&off).await.expect("create");
+        db.create_web_search_instance(&db_instance(id, "i", 1))
+            .await
+            .expect("instance");
+
+        let reg = load_websearch_registry(&db, &None, "mk")
+            .await
+            .expect("disabling every row is not a load failure");
+        assert!(reg.is_none(), "no enabled provider means no registry");
+    }
+
+    /// The same state must beat a yaml block: rows exist, so they own the
+    /// provider list even when the list resolves to "nothing enabled".
+    #[tokio::test]
+    async fn test_all_rows_disabled_beats_yaml() {
+        let db = test_db().await;
+        let mut off = db_provider("only", Some(0), 0);
+        off.id = 0;
+        let id = db.create_web_search_provider(&off).await.expect("create");
+        db.create_web_search_instance(&db_instance(id, "i", 1))
+            .await
+            .expect("instance");
+
+        let reg = load_websearch_registry(&db, &Some(parse_web_search(WEB_SEARCH_YAML)), "mk")
+            .await
+            .expect("load");
+        assert!(
+            reg.is_none(),
+            "rows exist, so the yaml provider must not come back to life"
         );
     }
 

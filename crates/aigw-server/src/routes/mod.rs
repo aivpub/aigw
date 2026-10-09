@@ -23,3 +23,4 @@ pub mod team;
 pub mod user;
 pub mod v1_messages;
 pub mod web_search_wire;
+pub mod websearch;

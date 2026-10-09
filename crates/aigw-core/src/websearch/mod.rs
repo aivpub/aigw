@@ -66,6 +66,11 @@ use std::sync::Arc;
 /// the common first-run path for a DB-backed config.
 #[derive(Clone)]
 pub struct WebSearchHandle {
+    /// The `config.yaml` block this handle was built from, kept so a reload can
+    /// re-apply the same source-selection rules without the admin route having
+    /// to reach back into the boot config. `None` when the file had no
+    /// `web_search:` section.
+    yaml_base: Option<WebSearchConfig>,
     /// `Arc` so the handle is cheap to clone and can be held separately from
     /// `AppState` (the admin reload path needs to write through a handle it
     /// owns without borrowing the whole state).
@@ -74,7 +79,15 @@ pub struct WebSearchHandle {
 
 impl WebSearchHandle {
     pub fn new(registry: Option<Arc<WebSearchRegistry>>) -> Self {
+        Self::with_yaml_base(None, registry)
+    }
+
+    pub fn with_yaml_base(
+        yaml_base: Option<WebSearchConfig>,
+        registry: Option<Arc<WebSearchRegistry>>,
+    ) -> Self {
         Self {
+            yaml_base,
             inner: Arc::new(std::sync::RwLock::new(registry)),
         }
     }
@@ -84,6 +97,11 @@ impl WebSearchHandle {
     /// compile error at every construction site.
     pub fn disabled() -> Self {
         Self::new(None)
+    }
+
+    /// The yaml block the sources were resolved from, for the reload path.
+    pub fn yaml_base(&self) -> Option<WebSearchConfig> {
+        self.yaml_base.clone()
     }
 
     /// The registry as of right now, or `None` when the layer is off.
