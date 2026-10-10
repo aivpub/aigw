@@ -137,6 +137,20 @@ tasks:
       - AIGW_REAL_API=1 cargo test --test bdd -p aigw-server
       - echo "bdd-all passed"
 
+  test-migrate-mysql:
+    desc: "run the aigw-migrate MySQL regression tests (start DBs with `task test-db-up`)"
+    summary: |
+      TD-020's source-side decoding tests: a MySQL source must round-trip
+      integer columns intact, and BOOLEAN / BIT must still read as flags.
+
+      These are `#[ignore]`d so `task test` stays runnable without Docker;
+      this task runs them explicitly against the compose MySQL.
+    cmds:
+      - |
+        if [ -f .env ]; then set -a; . ./.env; set +a; fi
+        export AIGW_MIGRATE_MYSQL_URL="mysql://root:${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD must be set in .env}@127.0.0.1:3306/mysql"
+        cargo test -p aigw-migrate --test mysql_int_roundtrip -- --ignored
+
   test-integration:
     desc: "run integration tests (needs Docker)"
     cmds:

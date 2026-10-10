@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use sqlx::mysql::MySqlPoolOptions;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::sqlite::SqlitePoolOptions;
-use sqlx::{Column, MySqlPool, PgPool, Row, SqlitePool};
+use sqlx::{Column, MySqlPool, PgPool, Row, SqlitePool, TypeInfo, ValueRef};
 use std::collections::HashMap;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -609,9 +609,9 @@ async fn read_mysql_rows(pool: &MySqlPool, sql: &str) -> anyhow::Result<Vec<Unif
     for row in &rows {
         let cols = row.columns();
         let mut unified = Vec::with_capacity(cols.len());
-        for col in cols {
+        for (i, col) in cols.iter().enumerate() {
             let name = col.name().to_string();
-            let val = try_mysql_get(row, &name);
+            let val = try_mysql_get(row, i, col.type_info().name());
             unified.push((name, val));
         }
         result.push(unified);
@@ -972,9 +972,9 @@ fn stream_mysql_rows<'a>(
             let row = row_res?;
             let cols = row.columns();
             let mut unified = Vec::with_capacity(cols.len());
-            for col in cols {
+            for (i, col) in cols.iter().enumerate() {
                 let name = col.name().to_string();
-                let val = try_mysql_get(&row, &name);
+                let val = try_mysql_get(&row, i, col.type_info().name());
                 unified.push((name, val));
             }
             yield unified;
@@ -983,39 +983,133 @@ fn stream_mysql_rows<'a>(
     .boxed()
 }
 
-fn try_mysql_get(row: &sqlx::mysql::MySqlRow, col: &str) -> Value {
-    if let Ok(v) = row.try_get::<Value, _>(col) {
+/// Decode one MySQL column into the neutral `serde_json::Value` representation.
+///
+/// **Dispatch is by the declared column type, not by trial order** (TD-020).
+/// MySQL has no native boolean: `BOOLEAN` is `TINYINT(1)`, and sqlx's
+/// `bool` is compatible with *every* signed integer width, decoding as
+/// `<i8>::decode() != 0`. Probing `bool` first therefore answered for plain
+/// INT columns too — `42` came back as `Bool(true)` and the migration wrote
+/// `1`, `-5` lost its sign, and only `0` (coincidentally) and `>= 128` (where
+/// i8 overflowed) survived. The type name is the only thing that distinguishes
+/// a flag from a counter, so it decides.
+///
+/// `type_name` is the value of `MySqlColumn::type_info().name()`; `idx` is the
+/// column index (used for the value fetch, since a `&str` name would need a
+/// second lookup).
+fn try_mysql_get(row: &sqlx::mysql::MySqlRow, idx: usize, type_name: &str) -> Value {
+    match row.try_get_raw(idx) {
+        Ok(raw) if raw.is_null() => return Value::Null,
+        Ok(_) => {}
+        Err(_) => return Value::Null,
+    }
+
+    let (base, unsigned) = match type_name.strip_suffix(" UNSIGNED") {
+        Some(b) => (b, true),
+        None => (type_name, false),
+    };
+
+    match base {
+        // A flag, not a counter: `TINYINT(1)` / `BOOLEAN`, and `BIT(1)`.
+        "BOOLEAN" | "BIT" => {
+            if let Ok(v) = row.try_get::<bool, _>(idx) {
+                return Value::Bool(v);
+            }
+        }
+        "TINYINT" | "SMALLINT" | "MEDIUMINT" | "INT" | "YEAR" => {
+            if let Ok(v) = row.try_get::<i64, _>(idx) {
+                return json!(v);
+            }
+        }
+        // An unsigned BIGINT can exceed i64; take it as u64 so the top of the
+        // range survives instead of degrading to a string.
+        "BIGINT" if unsigned => {
+            if let Ok(v) = row.try_get::<u64, _>(idx) {
+                return json!(v);
+            }
+        }
+        "BIGINT" => {
+            if let Ok(v) = row.try_get::<i64, _>(idx) {
+                return json!(v);
+            }
+        }
+        "FLOAT" | "DOUBLE" => {
+            if let Ok(v) = row.try_get::<f64, _>(idx) {
+                return json!(v);
+            }
+        }
+        "JSON" => {
+            if let Ok(v) = row.try_get::<Value, _>(idx) {
+                return v;
+            }
+        }
+        // MySQL datetime/timestamp columns don't decode straight into String.
+        // Same treatment as PG: format uniformly as RFC 3339 UTC.
+        "DATETIME" | "TIMESTAMP" => {
+            if let Ok(v) = row.try_get::<chrono::DateTime<chrono::Utc>, _>(idx) {
+                return Value::String(v.to_rfc3339());
+            }
+            if let Ok(v) = row.try_get::<chrono::NaiveDateTime, _>(idx) {
+                return Value::String(
+                    chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(v, chrono::Utc)
+                        .to_rfc3339(),
+                );
+            }
+        }
+        "DATE" => {
+            if let Ok(v) = row.try_get::<chrono::NaiveDate, _>(idx) {
+                return Value::String(v.format("%Y-%m-%d").to_string());
+            }
+        }
+        "TIME" => {
+            if let Ok(v) = row.try_get::<chrono::NaiveTime, _>(idx) {
+                return Value::String(v.format("%H:%M:%S").to_string());
+            }
+        }
+        _ => {}
+    }
+
+    // Text / blob / decimal / anything the dispatch above did not claim.
+    // Deliberately does NOT probe `bool` — that is the TD-020 bug.
+    fallback_mysql_value(row, idx)
+}
+
+/// Last-resort decoding for column types the type-name dispatch does not name.
+///
+/// Ordering matters here for the same reason it does on PG: `Value` first
+/// catches JSON-shaped payloads that MySQL reports as text/blob. Deliberately
+/// does NOT probe `bool` — that is the TD-020 bug.
+fn fallback_mysql_value(row: &sqlx::mysql::MySqlRow, idx: usize) -> Value {
+    if let Ok(v) = row.try_get::<Value, _>(idx) {
         return v;
     }
-    if let Ok(v) = row.try_get::<bool, _>(col) {
-        return Value::Bool(v);
-    }
-    if let Ok(v) = row.try_get::<f64, _>(col) {
+    if let Ok(v) = row.try_get::<f64, _>(idx) {
         return json!(v);
     }
-    if let Ok(v) = row.try_get::<f32, _>(col) {
+    if let Ok(v) = row.try_get::<f32, _>(idx) {
         return json!(v);
     }
-    if let Ok(v) = row.try_get::<i64, _>(col) {
+    if let Ok(v) = row.try_get::<i64, _>(idx) {
         return json!(v);
     }
-    if let Ok(v) = row.try_get::<i32, _>(col) {
+    if let Ok(v) = row.try_get::<u64, _>(idx) {
         return json!(v);
     }
-    // MySQL datetime/timestamp columns don't decode straight into String.
-    // Same treatment as PG: format uniformly as RFC 3339 UTC.
-    if let Ok(v) = row.try_get::<chrono::DateTime<chrono::Utc>, _>(col) {
+    if let Ok(v) = row.try_get::<i32, _>(idx) {
+        return json!(v);
+    }
+    if let Ok(v) = row.try_get::<chrono::DateTime<chrono::Utc>, _>(idx) {
         return Value::String(v.to_rfc3339());
     }
-    if let Ok(v) = row.try_get::<chrono::NaiveDateTime, _>(col) {
+    if let Ok(v) = row.try_get::<chrono::NaiveDateTime, _>(idx) {
         return Value::String(
             chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(v, chrono::Utc).to_rfc3339(),
         );
     }
-    if let Ok(v) = row.try_get::<chrono::NaiveDate, _>(col) {
+    if let Ok(v) = row.try_get::<chrono::NaiveDate, _>(idx) {
         return Value::String(v.format("%Y-%m-%d").to_string());
     }
-    if let Ok(v) = row.try_get::<String, _>(col) {
+    if let Ok(v) = row.try_get::<String, _>(idx) {
         if v.is_empty() {
             return Value::Null;
         }
