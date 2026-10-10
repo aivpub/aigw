@@ -228,6 +228,19 @@
 - **Impact**: ① Dashboard「Period Spend」按 `?limit=100` 抓取却实收 30 条（`page_size` 默认值），求和窗口静默缩水 70%；② `session_id` 筛选静默无效 —— 对搜索行来说这本是 `parent_call_id` 之外**第二条**父子线索，且是**可索引的真列**（优于 §3.4 的 JSON 表达式过滤）。
 - **Target Phase**: 后续 Stage（接通 `session_id` 可同时优化 §8.2 的 JSON 索引问题）。
 
+### TD-020: `aigw_migrate::native` 的值强转把 MySQL `COUNT(*)` 读成布尔
+
+- **Date**: 2026-10-10
+- **Priority**: P2
+- **Source**: Stage 138 real BDD（`bdd-real-mysql`）实测暴露
+- **Description**: `crates/aigw-migrate/src/native.rs` 的 `try_mysql_get`（`:982`）与 `try_pg_get`（`:503`）按固定顺序试解析列值，其中 **`bool` 排在 `i64` 之前**。MySQL 的 `BIGINT` 列对 `bool` 与 `i64` **同时** compatible（`sqlx-mysql` 的 `bool::compatible` 接受 Tiny/Short/Long/Int24/LongLong 全部有符号整型，解码实现就是 `<i8>::decode() != 0`），于是 `COUNT(*)` 这类 BIGINT 聚合值先被 `bool` 试中：
+  - `COUNT(*) = 0` → `Value::Bool(false)` → `as_str` 的 `to_string()` 得 **`"false"`**（而非 `"0"`）
+  - `COUNT(*) = 1` → `Value::Bool(true)` → **`"true"`**
+  - `COUNT(*) ≥ 2` → `<i8>::decode` 溢出报错 → **回退到 `i64`**，读出正确数字
+- **Impact**: 任何经 `read_rows_sql` 读 **0 或 1 行的整型聚合**都会得到 `"false"` / `"true"` 而非数字。Stage 138 的 real BDD 存在性断言因此失败（`assert_eq!("false", "0")`），两处断言已改为「选出 id 数行数」绕开。**不影响实际迁移**：迁移读的是真实列值（`spend_logs` 的 id 是 BIGINT 但值 ≥ 2 时正常，且迁移不读聚合），PG 侧不受影响（`i64` 在 PG 钉在 INT8，与 `bool`（BOOL）不冲突）。
+- **Fix**: `try_*_get` 改为**按列的声明类型**分派（可用 `row.column(idx).type_info()`），或至少把 `bool` 挪到 `i64` 之后并只在列为 `TINYINT(1)`/`BOOL` 时尝试。前者是正解 —— 目前这套「按顺序试」在 MySQL 的类型宽松性下本就不成立。
+- **Target Phase**: 后续 Stage（独立于 Phase 53；触发条件「迁移读聚合值」已存在）
+
 | TD-017d | Phase 41 遗留适配器 UT 缺口（剩余部分） | P3 | Phase 41 记录的「Stage 102 计划 19 个适配器 UT 未落地」——Stage 131 补 13 个、Stage 132 再补 10 个（item 分派 + tool 配对），剩余（streaming SSE 事件映射等）仍待补。 |
 | TD-017e | ~~**Codex 多轮端到端验证缺失**~~ | P2 | ✅ **Resolved 2026-10-05（Stage 132）** — 用假上游驱动 Codex 0.160.0 完成真实一轮 tool 往返（`exec_command` → `echo hello` → 回填 → 收尾），抓包得真实 round-2 body（含 `function_call` / `function_call_output`），固化为 UT fixture + 变换后打真实上游 → 200。 |
 | TD-017f | `developer_role_passthrough` 无自动嗅探 | P3 | Stage 131 新增的 `model_info.developer_role_passthrough` 为**显式配置**（缺省=映射）。aigw 无 litellm 式 provider 能力注册表（`ProviderType::infer` 把所有非 `anthropic` 归 `OpenAICompatible`），无法自动区分「真 OpenAI」与「OpenAI 兼容」上游。若将来引入能力注册表（litellm `get_supported_openai_params` 等价物），可改为自动嗅探。 |

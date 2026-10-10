@@ -311,8 +311,8 @@ pub web_search: std::sync::RwLock<Option<Arc<WebSearchRegistry>>>,   // keys.rs:
 
 ## 7. 门禁
 
-- [x] 028 migration 三方言**文件**齐备（**三份 DDL 体**，MySQL 表级 FK）—— ⚠️ **仅 sqlite 体在本机执行过**；PG / MySQL 体未运行（Docker 不可用），见 §8.3
-- [ ] 级联删除 `test_028_instance_cascade_delete` **三方言各跑一遍** —— **sqlite ✅；PG / MySQL 未跑**，见 §8.3
+- [x] 028 migration 三方言**文件**齐备（**三份 DDL 体**，MySQL 表级 FK）—— 三方言 DDL 均已在真实库执行通过（`bdd-real-sqlite` / `-pg` / `-mysql` 各 67/67）
+- [x] 级联删除 `test_028_instance_cascade_delete` **三方言各跑一遍** —— sqlite（UT + real BDD）、PG、MySQL 均已实测生效
 - [x] CRUD + 实例子资源 + 探测 + 启停端点全部可用
 - [x] `api_key` 加密落库 + 响应 redact + in-use 守卫 409（判据 = 默认行）
 - [x] 配置源优先级三种情形（DB / yaml / 皆空）各有 UT；**全局策略字段始终来自 yaml**（§3.1a）
@@ -321,7 +321,7 @@ pub web_search: std::sync::RwLock<Option<Arc<WebSearchRegistry>>>,   // keys.rs:
 - [x] 探测能识别「HTTP 200 + HTML」为失败
 - [x] 改价不重启生效（`RwLock` 替换 registry，读者不走 await 持锁）
 - [x] 前端管理页 + i18n（en/zh-CN）+ **`App.tsx` 路由注册** + 前端 BDD × 3 viewports
-- [x] `task test` / `bdd` / `bdd-real-sqlite` / `fmt` / `lint` / `fe-build` / `fe-lint` 全绿；`bdd-real-pg` / `-mysql` 未跑（Docker 不可用）
+- [x] `task test` / `bdd` / `bdd-real-*` / `fmt` / `lint` / `fe-build` / `fe-lint` 全绿（三真实后端均已跑：sqlite / pg / mysql 各 67/67）
 - [x] git commit（精确 add；`--signoff`）
 
 ### 7.1 交付证据（2026-10-10）
@@ -329,9 +329,12 @@ pub web_search: std::sync::RwLock<Option<Arc<WebSearchRegistry>>>,   // keys.rs:
 | 门 | 结果 |
 |----|------|
 | `task test` | aigw-core **667** + aigw-server **203 + 210**、aigw-migrate 等全绿，**0 failed** |
-| `task bdd` | **315 场景（302 passed / 13 skip）**，1680 steps；新增 `websearch_admin.feature` 15 场景全绿 |
+| `task bdd` | **315 场景（302 passed / 13 skip）**，1680 步骤；新增 `websearch_admin.feature` 15 场景全绿 |
 | `task bdd-real-sqlite` | **67 / 67**（含 `websearch_crud.feature` 6 场景：加密落库直读 + 默认守卫 + 级联） |
-| `task bdd-real-pg` / `-mysql` | ⚠️ **未执行**（本机 Docker 不可用）→ §8.3 |
+| `task bdd-real-pg` | **67 / 67**（同日补跑；此前 61/67 —— 见 §7.4 暴露的四处方言缺陷） |
+| `task bdd-real-mysql` | **67 / 67**（同上） |
+| `task bdd-real-pg` | ✅ **67/67**（2026-10-10，Docker 起来后补跑） |
+| `task bdd-real-mysql` | ✅ **67/67**（同日补跑） |
 | `task fe-bdd` | **468 passed / 3 skipped**（3 viewport；新增 `websearch.feature` 8 场景 × 3 = 24） |
 | `task fe-build` / `fe-lint` | ✅（含 i18n 类型对称，`resources.d.ts` 已重生成） |
 | `task fmt` / `lint` / `doctor` | ✅ |
@@ -360,6 +363,27 @@ pub web_search: std::sync::RwLock<Option<Arc<WebSearchRegistry>>>,   // keys.rs:
 | loader fail-soft 只跳过「构造不出的行」 | 还额外把「DB 里一行 enabled 都没有」当作**合法关闭态**而非错误（`build_websearch_registry_from_rows` 不再对空 provider 列表返 `Err`） | yaml 空列表是操作员写错（可改文件）；DB 空列表是「最后一行被 toggle 关掉」的正常状态。返 `Err` 会让 toggle 看起来没生效（reload 失败保留旧 registry） |
 | 前端 BDD 未规划 | 新增 `websearch.feature` 8 场景 × 3 viewport | 设计 §4.3 已列该项；实现时发现移动端卡片原本不渲染实例子表，即「导航到页面却看不到实例」——补上是修缺陷，不是加断言 |
 
+### 7.4 PG / MySQL 真实库首跑暴露的四处方言缺陷（2026-10-10 修复，commit `6ef43b5`）
+
+Docker 就绪后 `task bdd-real-pg` / `-mysql` **首次执行**，两个后端各 **61/67**（6 红，全为 500）。
+根因全部是 **028 的方言 DDL 体与 Rust 侧类型不匹配** —— sqlite 体一跑就绿，把下面这些完整地掩盖了。
+四处修复后两驱动均 **67/67**。
+
+| # | 缺陷 | 症状 | 修法 |
+|---|------|------|------|
+| 1 | PG `enabled INTEGER` ↔ Rust `i64` | `error decoding column "enabled": Rust type i64 (INT8) is not compatible with SQL type INT4`。sqlx-postgres 把 `i64` 钉在 INT8、`bool` 钉在 BOOL，而 INTEGER 是 INT4 —— **两侧都解不出来** | DDL 改 `BOOLEAN`、Rust 字段 `i64` → `bool`（对齐仓内 `026_proxy_models_enabled` 三方言约定），删掉 `flag()` 助手与全部 `!= 0` |
+| 2 | MySQL `created_at/updated_at DATETIME` ↔ Rust `String` | `error decoding column "created_at": Rust type String (VARCHAR) is not compatible with SQL type DATETIME`。sqlx-mysql 的 `str::compatible` 只认文本/Blob 列 | 改 `VARCHAR(64)`（应用始终自己填 RFC 3339），照 027 `proxies` 的写法，去掉 `DEFAULT CURRENT_TIMESTAMP` |
+| 3 | PG `DEFAULT_WSP_PG` 写 `enabled = 1` | 列改 BOOLEAN 后 `1` 不再合法：`operator does not exist: boolean = integer`。**它同时打掉删除守卫的 409**（守卫与 batch-delete 都走这条查询） | 改 `= TRUE` |
+| 4 | `UPDATE_WSI_PG` 占位符 `$9` 而语句只到 `$6` | 潜伏：PUT `/instances/{id}` 会报参数越界。sqlite / MySQL 体都是 `?` 所以只有 PG 受影响；真实 BDD 未覆盖该路径，是**读常量时发现的** | 改 `$7` |
+
+**顺带修（测试侧）**：MySQL 下 `COUNT(*)` 经 `aigw_migrate::native` 的值强转**恒返回 `Value::Bool(false)`**
+（`bool` 在 `i64` 之前被尝试，而 MySQL BIGINT 对两者都 compatible）→ 存在性断言 `assert_eq!("false", "0")` 失败。
+两处断言改为「选出 id 数行数」。**这是 `native.rs` 的独立缺陷，已登记 TD-020**，不在本 Stage 范围。
+
+**教训**：`enabled` 与 `created_at` 两处都是**类型成对约定**（Rust 侧类型 ↔ 方言 DDL 类型），
+单看任一侧都正确。sqlite 因为动态类型 + sqlx 的宽松兼容（`i64` 接受 `Int4|Integer`）永远测不出来 ——
+**这就是 real BDD 三后端不能只跑一个的理由**，也正是 Review F4「MySQL 那条是哨兵」的同一逻辑在另一处的复现。
+
 ## 8. 风险与遗留
 
 ### 8.1 风险
@@ -385,12 +409,16 @@ pub web_search: std::sync::RwLock<Option<Arc<WebSearchRegistry>>>,   // keys.rs:
 | **按实例的花费下钻图表** | Stage 137 只做抽屉可见 `api_base`；若要「按实例聚合花费」图表需新查询 |
 | **设计 A（短路）/ 设计 B（agentic loop）** | 后续 Phase，见 Stage 135 §8.2。B 的硬前提（上游是否认网关**注入**的 function tools）仍未实测 |
 
-### 8.3 未验证项（交付时明确未跑，非「已过」）
+### 8.3 未验证项
+
+> **2026-10-10 更新**：Docker 就绪后 `bdd-real-pg` / `-mysql` 均已补跑并通过（各 **67/67**）——
+> 首跑暴露的四处方言缺陷见 §7.4，已修。**下表保留为「当时未跑」的记录**，以说明这些门禁的必要性。
 
 | 项 | 状态 | 为什么重要 / 何时补 |
 |----|------|-------------------|
-| `task bdd-real-pg` | ⚠️ **未执行** | 本机 Docker 不可用（`docker ps` → daemon 未运行）。028 的 **PG DDL 体**（`BIGSERIAL` / `DOUBLE PRECISION` / `JSONB DEFAULT '{}'::jsonb` / `now()`）**从未在真实 PG 上执行过** —— 语法错误只会在第一次跑迁移时暴露。补法：`task test-db-up && task bdd-real-pg` |
-| `task bdd-real-mysql` | ⚠️ **未执行** | 同上。**这是哨兵**：`web_search_instances` 的 FK 用表级 `CONSTRAINT … FOREIGN KEY`（`028_*.sql` MySQL 体）。若将来有人把它改回 SQLite 那种内联 `REFERENCES`，InnoDB 会**静默忽略**、`ON DELETE CASCADE` 失效，而 **sqlite 与 PG 都测不出来** —— 只有 MySQL 那条能抓到。补法：`task test-db-up && task bdd-real-mysql` |
-| 级联删除三方言各跑一遍 | ⚠️ **仅 sqlite** | 同上两条的前置。UT `test_websearch_instance_cascade_delete` 走 sqlite；PG/MySQL 需由 real BDD 覆盖 |
+| `task bdd-real-pg` | ✅ **已补跑 67/67**（原：⚠️ 未执行） | 028 的 **PG DDL 体**首次真实执行即暴露 `enabled INTEGER` ↔ `i64` 与 `enabled = 1` 两处缺陷（§7.4 #1/#3）—— 证明该门禁不可省 |
+| `task bdd-real-mysql` | ✅ **已补跑 67/67**（原：⚠️ 未执行） | 首跑暴露 `DATETIME` ↔ `String` 缺陷（§7.4 #2）。另：`web_search_instances` 的 FK 必须是表级 `CONSTRAINT` —— 退回内联 `REFERENCES` 会被 InnoDB 静默忽略、级联失效，而 sqlite/PG 都测不出来，**这条哨兵仍然有效** |
+| 级联删除三方言各跑一遍 | ✅ **三方言均已实测** | sqlite（UT + real BDD）、PG、MySQL 的 `ON DELETE CASCADE` 均已手工与 real BDD 双验证生效 |
 | `ProviderDialog` 的 `failover_order` / `timeout_ms` 置空语义 | 已实现为「留空 = 不下发该字段」（后端把缺省读作保留原值） | **无法把已有值改回 NULL**（UI 缺一个「清除」动作）。后端 `UpdateProviderRequest` 用 `Option<i64>` 也区分不了「未传」与「传 null」。影响面小（默认 provider 由最小非空值决定，清空它反而危险），登记为已知边界 |
 | key/team 级单价覆写、按实例花费下钻 | 见 §8.2 | 范围外，非欠账 |
+| TD-020（`native.rs` 把 MySQL `COUNT(*)` 读成布尔） | 新登记 | 与本 Stage 无关的既存缺陷，测试侧已绕开；不影响迁移 |

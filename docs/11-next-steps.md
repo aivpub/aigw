@@ -25,14 +25,24 @@
 
 **TDD 红绿**: 后端 BDD 新增 21 场景（mock 15 + real 6）、前端 8 场景 × 3 viewport；首轮 red 已逐条修真因（real 共享库导致「唯一 provider 即默认」假设不成立、`tr:has-text` 命中祖先行、移动端卡片缺实例子表等）。
 
-### ⚠️ 未验证项（必须补，非「已过」）
+### ✅ PG / MySQL real BDD 已补跑（2026-10-10）
 
-| 项 | 说明 |
-|----|------|
-| `task bdd-real-pg` | **未跑**（本机 Docker 不可用）。028 **PG DDL 体**从未在真实 PG 上执行 —— 语法问题只会在首次迁移时暴露 |
-| `task bdd-real-mysql` | **未跑**。**这是哨兵**：`web_search_instances` 的 FK 必须保持表级 `CONSTRAINT`；退回内联 `REFERENCES` 会被 InnoDB **静默忽略**、级联失效，而 sqlite/PG 都测不出来 |
+`task bdd-real-pg` 与 `task bdd-real-mysql` 首发各 **61/67**（6 红，全 500），
+四处缺陷修复后均 **67/67** —— 全部是 **028 方言 DDL 体与 Rust 类型不匹配**，
+sqlite 体一跑就绿把它们完整掩盖了：
 
-补法：`task test-db-up && task bdd-real-pg && task bdd-real-mysql`。
+| # | 缺陷 | 修法 |
+|---|------|------|
+| 1 | PG `enabled INTEGER` ↔ Rust `i64`（sqlx `i64`=INT8 / `bool`=BOOL，INTEGER 两侧都解不出） | DDL 改 `BOOLEAN`，Rust 改 `bool`（对齐 026 约定） |
+| 2 | MySQL `created_at/updated_at DATETIME` ↔ Rust `String`（sqlx 的 `str` 不认 DATETIME） | 改 `VARCHAR(64)`，照 027 `proxies` |
+| 3 | PG `DEFAULT_WSP_PG` 的 `enabled = 1` 在 BOOLEAN 列上非法（**同时打掉删除守卫的 409**） | 改 `= TRUE` |
+| 4 | `UPDATE_WSI_PG` 占位符 `$9` 而语句只到 `$6`（潜伏，PUT instance 才撞） | 改 `$7` |
+
+commit `6ef43b5`。顺带登记 **TD-020**：`aigw_migrate::native` 的值强转把 MySQL
+`COUNT(*)` 读成 `Value::Bool(false)`（`bool` 排在 `i64` 前，而 MySQL BIGINT 对两者
+都 compatible）—— 测试侧已绕开，不影响迁移，独立于本 Phase。
+
+**至此三真实后端全部实测通过：sqlite / pg / mysql 各 67/67。**
 
 ### Stage 137 交付（2026-10-08）
 
@@ -54,7 +64,8 @@ Phase 53（内建 Web Search，Stage 134-138）**全部交付**。后续候选�
 
 | 候选 | 说明 |
 |------|------|
-| **补跑 `bdd-real-pg` / `bdd-real-mysql`** | 唯一**明确的欠账**：028 的 PG / MySQL DDL 体从未在真实库执行过。见上方「⚠️ 未验证项」 |
+| ~~补跑 `bdd-real-pg` / `bdd-real-mysql`~~ | ✅ **已完成（2026-10-10，各 67/67）** —— 曾暴露四处方言缺陷，见上方小节 |
+| TD-020：`native.rs` 值强转把 MySQL `COUNT(*)` 读成布尔 | 独立缺陷（不影响迁移），见 `docs/12-technical-debt.md` |
 | 设计 A（搜索短路） | **唯一能让 Claude Code 的 WebSearch 按钮真正可用**的形态（Stage 135 §8.2） |
 | 设计 B（agentic loop） | 硬前提「上游是否认网关**注入**的 function tools」**未实测** |
 | Tavily / 博查客户端 | 抽象已就位，接入 = 加一个 provider 文件 + 一个 `kind` 分支。⚠️ 博查的 CNY→USD 汇率决策落地前，其金额不得对外出账 |
