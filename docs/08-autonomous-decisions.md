@@ -704,3 +704,74 @@
   - **遗留**：按实例聚合的花费视图、搜索专属 prompt visual 渲染器、`metadata.parent_call_id` 的 JSON 索引、
     跨页父行的端到端场景、既有等值筛选分支的转义统一 —— 均登记 §8.2 与 TD-019。
   - 设计文档：`docs/stages/stage-137.md` + `stage-137-review-log.md`。
+
+## ADR-037: TD-019 —— 接通 `limit` / `session_id` 两个静默失效的查询参数
+
+- **Date**: 2026-10-10
+- **Status**: Accepted
+- **Related Stage**: 无（Stage 137 审计登记，独立修复）
+- **Decision**:
+  - **`limit` 出现时即 page size**（两者指同一件事，只能有一个生效），并加 `MAX_SPEND_LOG_PAGE_SIZE = 1000` 上限
+    —— 此前 `limit` 完全无界。`limit` 缺席时 `page_size` 行为逐字不变（向后兼容）。
+  - **`session_id` 走真列，不做 JSON 表达式**。它是 `spend_logs` 上可索引的真实列，三方言**无需分叉**
+    （对比 `metadata.parent_call_id` 要 SQLite/MySQL 的 `json_extract` 与 PG 的 `->>` 两套拼写）。
+    ADR-036 当初选 JSON 路径正是因为 `session_id` 是死参数 —— 本条即 ADR-036 预告的「那处改动」。
+  - **计数查询必须同步改**。列表查询与计数查询口径不一致会让分页条显示全量条数、翻页得到空列表 ——
+    Stage 137 已踩过同一个坑，本次把二者放在同一次改动里。
+- **Background**: `SpendLogsQuery` 声明了这两个字段，两个消费它的 handler 却从不读 → **参数名承诺了行为、实现没给**。
+  `limit` 使 Dashboard「Period Spend」的求和窗口实为 30 条而非 100 条（静默缩水 70%），而卡片标题写着 Period。
+- **Consequences**:
+  - **TDD 红绿**：`limit_sets_the_page_size` 把 `limit` 分支还原成旧代码时红在 `left: 30, right: 40`；real BDD 场景
+    `session_id 过滤走真列` 摘掉过滤条件后红在「count 与 total_count 相等」（正是两个查询口径不一致）。
+  - `session_id` 接通后可作为 `parent_call_id` 之外第二条父子线索，且**天然带索引**，
+    后续若把搜索行父子关联从 JSON 迁到它，可顺带解掉 §8.2 的 JSON 索引问题。
+
+## ADR-038: TD-020 —— MySQL 源解码改为按列声明类型分派（P0 数据损坏）
+
+- **Date**: 2026-10-10
+- **Status**: Accepted
+- **Related Stage**: 无（Stage 138 的 PG/MySQL 补跑暴露，独立修复）
+- **Decision**:
+  - **`try_mysql_get` 的解码路径由列类型名决定，不再「按固定顺序试」**。MySQL 无原生布尔（`BOOLEAN` = `TINYINT(1)`），
+    sqlx 的 `bool::compatible` 接受 Tiny/Short/Long/Int24/LongLong **全部有符号整型**，解码实现是 `<i8>::decode() != 0`
+    —— 于是「先试 `bool`」让 42 被读成 `true`、写回 1。类型名是区分「标志位」与「计数器」的唯一依据。
+    分派表：`BOOLEAN`/`BIT` → `bool`；`TINYINT`/`SMALLINT`/`MEDIUMINT`/`INT`/`YEAR` → `i64`；`BIGINT UNSIGNED` → `u64`；
+    `FLOAT`/`DOUBLE` → `f64`；`JSON` → `Value`；`DATETIME`/`TIMESTAMP`/`DATE`/`TIME` → 字符串；其余走 fallback（**不再探 `bool`**）。
+  - **`BIT(1)` 归为布尔** —— sqlx 的 `bool::compatible` 含 `ColumnType::Bit` 而 `int_compatible` 不含，故 `BIT` 与
+    `TINYINT(1)` 是仅有的、只有 `bool` 能解的两种列。这个互补关系正是「类型名完整决定路径」成立的依据，不是巧合。
+  - **PG 侧刻意不改造** —— PG 把 `bool` 钉在 BOOL、`i64` 钉在 INT8，两者互斥，试错顺序在那里是安全的。
+    只加注释说明为何不必同样改造；对称改造会引入无收益的风险。
+  - **测试用 `#[ignore]` + 专用 task**（`task test-migrate-mysql`）—— 需要真库，而 `task test` 必须保持无 Docker 可跑。
+- **Background**: 该 bug 最初被记为 **P2** 并写下「不影响实际迁移：迁移读的是真实列值，且值 ≥ 2 时正常」——**该判定是错的**，
+  仅凭 real BDD 里 `COUNT(*)` 读出 `Bool(false)` 就下了结论，未真读一列数据。补读 MySQL 真表后：`total_tokens=42 → 1`、
+  `request_duration_ms=9000 → 1`。受害面是**所有落在 `1..=127` 或负数的整型列**（`1..=127` 正是最常见的 token 区间），
+  范围是「MySQL 作为迁移源」的任意目标。定级改 P0，commit `e3c78ed` 订正记录、`0907f6c` 修复。
+- **Consequences**:
+  - 新增 `tests/mysql_int_roundtrip.rs` 钉住边界（`0/1/42/127/128/9000/-5/-1` × {INT,BIGINT}）+ 「`BOOLEAN`/`BIT` 仍是 bool
+    而普通 `TINYINT` 是整数」——后半条是旧的试错顺序**分辨不出**的。
+  - **教训**：`enabled INTEGER`（Stage 138）、`created_at DATETIME`（Stage 138）、本条 `bool` 抢答 —— 三者同一类：
+    **Rust 侧类型 ↔ 方言 DDL/驱动类型是成对约定**，sqlite 因动态类型 + sqlx 宽松兼容永远测不出来。
+    **这是 real BDD 三后端不能只跑一个的代价，已经在同一周内三次兑现。**
+
+## ADR-039: Phase 53 以 Stage 138 收口；设计 A（短路）留作独立 Phase
+
+- **Date**: 2026-10-10
+- **Status**: Accepted
+- **Related Stage**: Phase 53 收尾
+- **Decision**:
+  - **Phase 53 在 Stage 138 结束**，达成其规划目标：搜索真正可用（135）、成本入账（136）、日志可见（137）、
+    配置可运营（138）。「客户端拿不到结构化 citations」是**设计 C 的既定取舍**（架构调研 §5.3），不是欠账。
+  - **设计 A（短路，唯一能让 Claude Code 的 WebSearch 按钮可用）不在 Phase 53 内赶工，留作独立 Phase**。
+    理由：它**必须合成 Anthropic 服务端工具块**（`server_tool_use` + `web_search_tool_result`），
+    而这两个块由上游签发、多轮回放时逐字节校验 —— **配套的「按 id 前缀剥离历史块」不做，第二轮整个会话 400**
+    （sub2api 用 `srvtoolu_ws_` 标记自造块的血泪教训）。这需要一个设计门禁与独立评审，不是一个「顺手补完」。
+  - **设计 B（agentic loop）的前置条件仍未实测** —— 「上游 MaaS 是否认网关**注入**的 function 工具往返」
+    （架构调研 §5.9 第 1 项）。Stage 132 只证明了「客户端自己声明的工具」能 round-trip。**立项前必须先做这项实测。**
+- **Background**: 用户指令「没完成的继续完成」。判定「设计 A/B 属未完成」不成立 —— 架构调研 §5.3 的推荐路线明确把它们列为
+  阶段 2 与阶段 3，Phase 53 的范围定调（roadmap v67.0）写的是「134-138」。把阶段 2 的形态塞进 Phase 53 会让
+  **一个已通过全部门禁的 Stage 重新打开**，并把两个协议硬约束留到无人评审处解决。
+- **Consequences**:
+  - **Phase 53 = 5/5 完成，总进度 138**（Stage 139 未立项）。
+  - 候选清单（不进 Phase 53）：设计 A / 设计 B / Tavily 与博查客户端 / Serper 与 ScrapingDog 后备 provider /
+    `search_count` 专列 / 按实例花费下钻 / 配额加权 LB。
+  - 与设计 A 捆绑的必要工作（不是可选项）：`srvtoolu_` 前缀标记 + 发往上游前剥离 + 多轮回放 e2e。

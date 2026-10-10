@@ -1,7 +1,7 @@
 # aigw -- 下一步行动
 
 **上次更新**: 2026-10-10
-**当前阶段**: **Phase 53 ✅ 内建 Web Search（TD-017c）全部交付：Stage 134-138 完成；总进度 138**
+**当前阶段**: **Phase 53 ✅ 内建 Web Search（TD-017c）全部交付：Stage 134-138 完成；总进度 138**（Phase 53 收官；Stage 139 未立项）
 
 ---
 
@@ -42,7 +42,14 @@ commit `6ef43b5`。顺带登记 **TD-020**：`aigw_migrate::native` 的值强转
 `COUNT(*)` 读成 `Value::Bool(false)`（`bool` 排在 `i64` 前，而 MySQL BIGINT 对两者
 都 compatible）—— 测试侧已绕开，不影响迁移，独立于本 Phase。
 
-**至此三真实后端全部实测通过：sqlite / pg / mysql 各 67/67。**
+**至此三真实后端全部实测通过。**（Stage 138 时各 67/67；TD-019 补 session_id 场景后各 **68/68**。）
+
+### 两个独立缺陷的修复（2026-10-10，均不属 Phase 53）
+
+| 条目 | 内容 |
+|------|------|
+| **TD-020（P0）** | 追查上面那个 `COUNT(*)` 表象时发现范围远大于聚合：`try_mysql_get` 的 `bool` 排在 `i64` 之前，而 MySQL 无原生布尔、sqlx 的 `bool` 接受全部有符号整型（解码是 `<i8>::decode() != 0`）→ **INT 列里 `1..=127` 与负数全被读成 `true`、写回 1**（`total_tokens=42 → 1`、`request_duration_ms=9000 → 1`）。**我最初把它记成 P2 并写下「不影响实际迁移」，那是错的**。改按列声明类型分派（ADR-038），新增 `tests/mysql_int_roundtrip.rs` + `task test-migrate-mysql` |
+| **TD-019** | `SpendLogsQuery.limit` / `session_id` 声明了却从不被读 —— `limit=100` 实收 30 条（Dashboard「Period Spend」求和窗口缩水 70%）。`limit` 接通为 page size（带上限），`session_id` 走真列三方言（ADR-037），real BDD 补场景 |
 
 ### Stage 137 交付（2026-10-08）
 
@@ -64,10 +71,10 @@ Phase 53（内建 Web Search，Stage 134-138）**全部交付**。后续候选�
 
 | 候选 | 说明 |
 |------|------|
-| ~~补跑 `bdd-real-pg` / `bdd-real-mysql`~~ | ✅ **已完成（2026-10-10，各 67/67）** —— 曾暴露四处方言缺陷，见上方小节 |
-| TD-020：`native.rs` 值强转把 MySQL `COUNT(*)` 读成布尔 | 独立缺陷（不影响迁移），见 `docs/12-technical-debt.md` |
-| 设计 A（搜索短路） | **唯一能让 Claude Code 的 WebSearch 按钮真正可用**的形态（Stage 135 §8.2） |
-| 设计 B（agentic loop） | 硬前提「上游是否认网关**注入**的 function tools」**未实测** |
+| ~~补跑 `bdd-real-pg` / `bdd-real-mysql`~~ | ✅ **已完成（2026-10-10）** —— 曾暴露四处方言缺陷，见上方小节 |
+| ~~TD-020 / TD-019~~ | ✅ **均已修复（2026-10-10，ADR-037 / ADR-038）** |
+| 设计 A（搜索短路） | **唯一能让 Claude Code 的 WebSearch 按钮真正可用**的形态。⚠️ 必须配套「`srvtoolu_` 前缀标记 + 发往上游前剥离历史块」，否则第二轮整个会话 400 |
+| 设计 B（agentic loop） | 硬前提「上游是否认网关**注入**的 function tools」**未实测** —— 立项前必须先做这项实测 |
 | Tavily / 博查客户端 | 抽象已就位，接入 = 加一个 provider 文件 + 一个 `kind` 分支。⚠️ 博查的 CNY→USD 汇率决策落地前，其金额不得对外出账 |
 | OAuth TD-015d / TD-015e | 响应侧协议转换 / count_tokens 双认证 |
 | Codex TD-017b | `tool_choice` 的 `{type:"namespace"}` 形态 |
@@ -551,6 +558,8 @@ Phase 45:   ████████████████████ 100% (3
 | ✅ | **Phase 53 Stage 136 按次计费 + SpendLog 独立行**（`calc_search_spend` + `call_type="search"` + 四级 increment + 三 surface usage 回传） | ✅ 完成（2026-10-07） |
 | ✅ | **Phase 53 Stage 137 搜索调用日志展现 + 聚合口径修正**（搜索行 badge + 父子跳转 + `call_type` 筛选 + 15 项口径审计） | ✅ 完成（2026-10-08） |
 | ✅ | **Phase 53 Stage 138 provider/实例/定价 DB 化 + 管理 UI**（028 ×3 方言 + CRUD + 探测 + 运行期 reload + 前端管理页） | ✅ 完成（2026-10-10，**Phase 53 收官**） |
+| ✅ | TD-020（P0，`aigw_migrate` 把 MySQL INT 列读成布尔）修复 + `task test-migrate-mysql` | ✅ 完成（2026-10-10，ADR-038） |
+| ✅ | TD-019（`SpendLogsQuery.limit` / `session_id` 静默失效）接通 + real BDD 三方言 | ✅ 完成（2026-10-10，ADR-037） |
 | ⚠️ | **补跑 `task bdd-real-pg` / `bdd-real-mysql`**（028 的 PG / MySQL DDL 体从未在真实库执行；MySQL FK 哨兵见 stage-138 §8.3） | **待办（需 Docker）** |
 | P2 | TD-008c/d 后端错误多语言 + RTL、TD-009e 外链缩略图、TD-011a 视频 token 估算（剩余） | 待处理（视使用量） |
 | P2 | Phase 41 测试缺口（适配器 UT + 流式接线） | ✅ 关闭（2026-08-09） |
