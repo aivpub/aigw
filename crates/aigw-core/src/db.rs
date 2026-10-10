@@ -5946,7 +5946,7 @@ const UPDATE_WSP_PG: &str = r#"
 UPDATE web_search_providers SET name = $1, kind = $2, cost_per_query = $3, enabled = $4, failover_order = $5, timeout_ms = $6, updated_at = $7 WHERE id = $8
 "#;
 const DEFAULT_WSP_PG: &str = r#"
-SELECT id, name, kind, cost_per_query, enabled, failover_order, timeout_ms, created_at, updated_at FROM web_search_providers WHERE enabled = 1
+SELECT id, name, kind, cost_per_query, enabled, failover_order, timeout_ms, created_at, updated_at FROM web_search_providers WHERE enabled = TRUE
 ORDER BY (failover_order IS NULL), failover_order, id LIMIT 1
 "#;
 const CREATE_WSI_PG: &str = r#"
@@ -5959,7 +5959,7 @@ const LIST_WSI_PG: &str = r#"
 SELECT id, provider_id, name, base_url, api_key, weight, enabled, probe_result, created_at, updated_at FROM web_search_instances WHERE provider_id = $1 ORDER BY id
 "#;
 const UPDATE_WSI_PG: &str = r#"
-UPDATE web_search_instances SET name = $1, base_url = $2, api_key = $3, weight = $4, enabled = $5, updated_at = $6 WHERE id = $9
+UPDATE web_search_instances SET name = $1, base_url = $2, api_key = $3, weight = $4, enabled = $5, updated_at = $6 WHERE id = $7
 "#;
 const UPDATE_WSI_PROBE_PG: &str = r#"
 UPDATE web_search_instances SET probe_result = $1, updated_at = $2 WHERE id = $3
@@ -10039,7 +10039,7 @@ mod tests {
             name: name.to_string(),
             kind: "searxng".to_string(),
             cost_per_query: 0.01,
-            enabled: 1,
+            enabled: true,
             failover_order: order,
             timeout_ms: None,
             created_at: now.clone(),
@@ -10056,7 +10056,7 @@ mod tests {
             base_url: "http://searxng:9099".to_string(),
             api_key: None,
             weight: None,
-            enabled: 1,
+            enabled: true,
             probe_result: serde_json::json!({}),
             created_at: now.clone(),
             updated_at: now,
@@ -10074,7 +10074,7 @@ mod tests {
         assert_eq!(got.name, "prov-a");
         assert_eq!(got.kind, "searxng");
         assert_eq!(got.cost_per_query, 0.01);
-        assert_eq!(got.enabled, 1);
+        assert!(got.enabled);
 
         // by-name lookup is what the write path uses to enforce UNIQUE semantics
         let by_name = db
@@ -10087,12 +10087,12 @@ mod tests {
         p.id = id;
         p.name = "prov-a-renamed".to_string();
         p.cost_per_query = 0.0001;
-        p.enabled = 0;
+        p.enabled = false;
         db.update_web_search_provider(&p).await.expect("update");
         let upd = db.get_web_search_provider(id).await.expect("get").unwrap();
         assert_eq!(upd.name, "prov-a-renamed");
         assert_eq!(upd.cost_per_query, 0.0001);
-        assert_eq!(upd.enabled, 0);
+        assert!(!upd.enabled);
 
         db.delete_web_search_provider(id).await.expect("delete");
         assert!(db.get_web_search_provider(id).await.expect("get").is_none());
@@ -10147,12 +10147,12 @@ mod tests {
         i.id = id;
         i.base_url = "http://other:9099".to_string();
         i.weight = Some(3);
-        i.enabled = 0;
+        i.enabled = false;
         db.update_web_search_instance(&i).await.expect("update");
         let upd = db.get_web_search_instance(id).await.unwrap().unwrap();
         assert_eq!(upd.base_url, "http://other:9099");
         assert_eq!(upd.weight, Some(3));
-        assert_eq!(upd.enabled, 0);
+        assert!(!upd.enabled);
 
         // probe snapshot is written on its own path
         let snap = serde_json::json!({"ok": true, "result_count": 5});
@@ -10206,7 +10206,7 @@ mod tests {
         );
 
         // Disabling the winner falls through to the next candidate.
-        a_row.enabled = 0;
+        a_row.enabled = false;
         db.update_web_search_provider(&a_row).await.unwrap();
         assert_eq!(
             db.default_web_search_provider().await.unwrap().unwrap().id,

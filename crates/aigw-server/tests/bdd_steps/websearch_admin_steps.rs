@@ -235,7 +235,7 @@ async fn given_bad_kind_row(world: &mut TestWorld, kind: String) {
             name,
             kind,
             cost_per_query: 0.01,
-            enabled: 1,
+            enabled: true,
             failover_order: None,
             timeout_ms: None,
             created_at: now.clone(),

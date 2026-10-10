@@ -271,7 +271,7 @@ pub fn websearch_config_from_db(
     instances: &[crate::models::WebSearchInstanceRow],
 ) -> WebSearchConfig {
     let mut ordered: Vec<&crate::models::WebSearchProviderRow> =
-        providers.iter().filter(|p| p.enabled != 0).collect();
+        providers.iter().filter(|p| p.enabled).collect();
     ordered.sort_by_key(|p| {
         (
             p.failover_order.is_none(),
@@ -289,7 +289,7 @@ pub fn websearch_config_from_db(
             timeout_ms: p.timeout_ms.map(|v| v.max(0) as u64),
             instances: instances
                 .iter()
-                .filter(|i| i.provider_id == p.id && i.enabled != 0)
+                .filter(|i| i.provider_id == p.id && i.enabled)
                 .map(|i| WebSearchInstanceConfig {
                     base_url: i.base_url.clone(),
                     api_key: i.api_key.clone(),
@@ -966,7 +966,7 @@ providers:
     fn db_provider(
         name: &str,
         order: Option<i64>,
-        enabled: i64,
+        enabled: bool,
     ) -> crate::models::WebSearchProviderRow {
         crate::models::WebSearchProviderRow {
             id: 0,
@@ -984,7 +984,7 @@ providers:
     fn db_instance(
         provider_id: i64,
         name: &str,
-        enabled: i64,
+        enabled: bool,
     ) -> crate::models::WebSearchInstanceRow {
         crate::models::WebSearchInstanceRow {
             id: 0,
@@ -1005,11 +1005,11 @@ providers:
     #[test]
     fn test_db_rows_define_providers_and_default_order() {
         let base = parse_web_search(WEB_SEARCH_YAML);
-        let mut b = db_provider("beta", None, 1);
+        let mut b = db_provider("beta", None, true);
         b.id = 2;
-        let mut a = db_provider("alpha", Some(0), 1);
+        let mut a = db_provider("alpha", Some(0), true);
         a.id = 1;
-        let instances = vec![db_instance(1, "i1", 1), db_instance(2, "i2", 1)];
+        let instances = vec![db_instance(1, "i1", true), db_instance(2, "i2", true)];
 
         let cfg = websearch_config_from_db(base, &[b.clone(), a.clone()], &instances);
         assert_eq!(cfg.providers.len(), 2);
@@ -1028,9 +1028,9 @@ providers:
         base.retries = 4;
         base.cooldown_secs = 12.5;
 
-        let mut p = db_provider("from-db", Some(1), 1);
+        let mut p = db_provider("from-db", Some(1), true);
         p.id = 1;
-        let cfg = websearch_config_from_db(base, &[p], &[db_instance(1, "i", 1)]);
+        let cfg = websearch_config_from_db(base, &[p], &[db_instance(1, "i", true)]);
 
         assert_eq!(cfg.proxy_url, "http://egress.internal:3128");
         assert_eq!(cfg.allowed_domains, vec!["keepme.com".to_string()]);
@@ -1042,11 +1042,11 @@ providers:
     /// them, so a disabled provider can never end up in `attempt_order`.
     #[test]
     fn test_disabled_rows_are_dropped() {
-        let mut off = db_provider("off", Some(0), 0);
+        let mut off = db_provider("off", Some(0), false);
         off.id = 1;
-        let mut on = db_provider("on", Some(1), 1);
+        let mut on = db_provider("on", Some(1), true);
         on.id = 2;
-        let instances = vec![db_instance(2, "live", 1), db_instance(2, "dead", 0)];
+        let instances = vec![db_instance(2, "live", true), db_instance(2, "dead", false)];
 
         let cfg = websearch_config_from_db(default_websearch_config(), &[off, on], &instances);
         assert_eq!(cfg.providers.len(), 1);
@@ -1081,10 +1081,10 @@ providers:
     #[tokio::test]
     async fn test_load_prefers_db_over_yaml() {
         let db = test_db().await;
-        let mut p = db_provider("from-db", Some(0), 1);
+        let mut p = db_provider("from-db", Some(0), true);
         p.id = 0;
         let pid = db.create_web_search_provider(&p).await.expect("create");
-        db.create_web_search_instance(&db_instance(pid, "db-inst", 1))
+        db.create_web_search_instance(&db_instance(pid, "db-inst", true))
             .await
             .expect("create instance");
 
@@ -1107,10 +1107,10 @@ providers:
     #[tokio::test]
     async fn test_all_rows_disabled_turns_the_layer_off() {
         let db = test_db().await;
-        let mut off = db_provider("only", Some(0), 0);
+        let mut off = db_provider("only", Some(0), false);
         off.id = 0;
         let id = db.create_web_search_provider(&off).await.expect("create");
-        db.create_web_search_instance(&db_instance(id, "i", 1))
+        db.create_web_search_instance(&db_instance(id, "i", true))
             .await
             .expect("instance");
 
@@ -1125,10 +1125,10 @@ providers:
     #[tokio::test]
     async fn test_all_rows_disabled_beats_yaml() {
         let db = test_db().await;
-        let mut off = db_provider("only", Some(0), 0);
+        let mut off = db_provider("only", Some(0), false);
         off.id = 0;
         let id = db.create_web_search_provider(&off).await.expect("create");
-        db.create_web_search_instance(&db_instance(id, "i", 1))
+        db.create_web_search_instance(&db_instance(id, "i", true))
             .await
             .expect("instance");
 
@@ -1148,17 +1148,17 @@ providers:
     async fn test_unbuildable_row_is_skipped_not_fatal() {
         let db = test_db().await;
 
-        let mut bad = db_provider("bad-kind", Some(0), 1);
+        let mut bad = db_provider("bad-kind", Some(0), true);
         bad.kind = "tavily".to_string();
         let bad_id = db.create_web_search_provider(&bad).await.expect("create");
-        db.create_web_search_instance(&db_instance(bad_id, "b", 1))
+        db.create_web_search_instance(&db_instance(bad_id, "b", true))
             .await
             .expect("instance");
 
-        let mut good = db_provider("good-kind", Some(1), 1);
+        let mut good = db_provider("good-kind", Some(1), true);
         good.id = 0;
         let good_id = db.create_web_search_provider(&good).await.expect("create");
-        db.create_web_search_instance(&db_instance(good_id, "g", 1))
+        db.create_web_search_instance(&db_instance(good_id, "g", true))
             .await
             .expect("instance");
 
@@ -1175,16 +1175,16 @@ providers:
     #[tokio::test]
     async fn test_provider_without_instances_is_skipped() {
         let db = test_db().await;
-        let mut lonely = db_provider("lonely", Some(0), 1);
+        let mut lonely = db_provider("lonely", Some(0), true);
         lonely.id = 0;
         db.create_web_search_provider(&lonely)
             .await
             .expect("create");
 
-        let mut ok = db_provider("has-instance", Some(1), 1);
+        let mut ok = db_provider("has-instance", Some(1), true);
         ok.id = 0;
         let id = db.create_web_search_provider(&ok).await.expect("create");
-        db.create_web_search_instance(&db_instance(id, "i", 1))
+        db.create_web_search_instance(&db_instance(id, "i", true))
             .await
             .expect("instance");
 

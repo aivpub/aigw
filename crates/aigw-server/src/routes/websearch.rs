@@ -197,7 +197,7 @@ impl InstanceResponse {
             has_api_key: stored.is_some(),
             redacted_api_key: redacted,
             weight: row.weight,
-            enabled: row.enabled != 0,
+            enabled: row.enabled,
             probe_result: row.probe_result,
             created_at: row.created_at,
             updated_at: row.updated_at,
@@ -229,7 +229,7 @@ impl ProviderResponse {
             name: row.name.clone(),
             kind: row.kind.clone(),
             cost_per_query: row.cost_per_query,
-            enabled: row.enabled != 0,
+            enabled: row.enabled,
             is_default: default_id == Some(row.id),
             failover_order: row.failover_order,
             timeout_ms: row.timeout_ms,
@@ -246,15 +246,6 @@ impl ProviderResponse {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Reload
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-/// Serialize a bool into the 0/1 integer the migrations use for flags.
-fn flag(on: bool) -> i64 {
-    if on {
-        1
-    } else {
-        0
-    }
-}
 
 /// Rebuild the runtime registry from the current rows and swap it in.
 ///
@@ -413,7 +404,7 @@ pub async fn create_provider(
         name,
         kind: body.kind.clone(),
         cost_per_query: cost,
-        enabled: flag(body.enabled.unwrap_or(true)),
+        enabled: body.enabled.unwrap_or(true),
         failover_order: body.failover_order,
         timeout_ms: body.timeout_ms,
         created_at: now.clone(),
@@ -487,7 +478,7 @@ pub async fn update_provider(
         row.name = name.to_string();
     }
     if let Some(on) = body.enabled {
-        row.enabled = flag(on);
+        row.enabled = on;
     }
     if let Some(order) = body.failover_order {
         row.failover_order = Some(order);
@@ -606,7 +597,7 @@ pub async fn toggle_provider(
         .await
         .map_err(db_error)?
         .ok_or_else(|| not_found("provider"))?;
-    row.enabled = flag(row.enabled == 0);
+    row.enabled = !row.enabled;
     row.updated_at = now_rfc3339();
     state
         .db
@@ -719,7 +710,7 @@ pub async fn create_instance(
         base_url: body.base_url.trim_end_matches('/').to_string(),
         api_key,
         weight: body.weight,
-        enabled: flag(body.enabled.unwrap_or(true)),
+        enabled: body.enabled.unwrap_or(true),
         probe_result: json!({}),
         created_at: now.clone(),
         updated_at: now,
@@ -775,7 +766,7 @@ pub async fn update_instance(
     row.base_url = body.base_url.trim_end_matches('/').to_string();
     row.weight = body.weight;
     if let Some(on) = body.enabled {
-        row.enabled = flag(on);
+        row.enabled = on;
     }
     row.updated_at = now_rfc3339();
 
@@ -829,7 +820,7 @@ pub async fn toggle_instance(
         .await
         .map_err(db_error)?
         .ok_or_else(|| not_found("instance"))?;
-    row.enabled = flag(row.enabled == 0);
+    row.enabled = !row.enabled;
     row.updated_at = now_rfc3339();
     state
         .db
@@ -877,7 +868,7 @@ pub async fn test_instance(
         base_url: instance.base_url.clone(),
         api_key: instance.api_key.clone(),
         weight: instance.weight,
-        enabled: instance.enabled != 0,
+        enabled: instance.enabled,
     };
 
     let outcome = probe_instance(
@@ -1351,15 +1342,14 @@ mod tests {
         .await;
         assert_eq!(s, 200, "{body}");
         assert_eq!(body["enabled"], false);
-        assert_eq!(
-            state
+        assert!(
+            !state
                 .db
                 .get_web_search_provider(id)
                 .await
                 .unwrap()
                 .unwrap()
-                .enabled,
-            0
+                .enabled
         );
         assert!(
             !state.web_search.is_enabled(),
@@ -1423,7 +1413,7 @@ mod tests {
                 name: "bad".to_string(),
                 kind: "tavily".to_string(),
                 cost_per_query: 0.01,
-                enabled: 1,
+                enabled: true,
                 failover_order: Some(9),
                 timeout_ms: None,
                 created_at: now.clone(),

@@ -1271,7 +1271,7 @@ pub struct WebSearchProviderRow {
     pub name: String,
     pub kind: String,
     pub cost_per_query: f64,
-    pub enabled: i64,
+    pub enabled: bool,
     pub failover_order: Option<i64>,
     pub timeout_ms: Option<i64>,
     pub created_at: String,
@@ -1288,7 +1288,7 @@ pub struct WebSearchInstanceRow {
     pub base_url: String,
     pub api_key: Option<String>,
     pub weight: Option<i64>,
-    pub enabled: i64,
+    pub enabled: bool,
     #[sqlx(default)]
     pub probe_result: serde_json::Value,
     pub created_at: String,

@@ -122,6 +122,19 @@ async fn scalar(sql: &str) -> String {
     }
 }
 
+/// Number of rows a query returns.
+///
+/// Deliberately counts rows rather than reading `COUNT(*)`: on MySQL the shared
+/// value coercion (`aigw_migrate::native`) tries `bool` before `i64`, and a
+/// MySQL `BIGINT` is compatible with both — so `COUNT(*)` comes back as
+/// `Value::Bool(false)` for zero. Selecting the ids sidesteps that entirely.
+async fn row_count(sql: &str) -> usize {
+    let pool = aigw_migrate::native::SourcePool::connect(&test_db_url())
+        .await
+        .expect("connect to test db");
+    pool.read_rows_sql(sql).await.expect("read rows").len()
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Given
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -452,9 +465,8 @@ async fn then_instance_gone_from_db(world: &mut TestWorld) {
         return;
     }
     let _ = &world;
-    let count =
-        scalar("SELECT COUNT(*) FROM web_search_instances WHERE name = 'real-inst-cascade'").await;
-    assert_eq!(count, "0", "instance survived its provider's deletion");
+    let n = row_count("SELECT id FROM web_search_instances WHERE name = 'real-inst-cascade'").await;
+    assert_eq!(n, 0, "instance survived its provider's deletion");
 }
 
 #[then(expr = "该 provider 在库中已不存在")]
@@ -463,9 +475,9 @@ async fn then_provider_gone_from_db(world: &mut TestWorld) {
         return;
     }
     let _ = &world;
-    let count =
-        scalar("SELECT COUNT(*) FROM web_search_providers WHERE name = 'real-searx-cascade'").await;
-    assert_eq!(count, "0", "provider row survived deletion");
+    let n =
+        row_count("SELECT id FROM web_search_providers WHERE name = 'real-searx-cascade'").await;
+    assert_eq!(n, 0, "provider row survived deletion");
 }
 
 #[then(expr = "real 搜索 provider toggle 返回 {int}")]
