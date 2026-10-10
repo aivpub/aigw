@@ -228,18 +228,40 @@
 - **Impact**: ① Dashboard「Period Spend」按 `?limit=100` 抓取却实收 30 条（`page_size` 默认值），求和窗口静默缩水 70%；② `session_id` 筛选静默无效 —— 对搜索行来说这本是 `parent_call_id` 之外**第二条**父子线索，且是**可索引的真列**（优于 §3.4 的 JSON 表达式过滤）。
 - **Target Phase**: 后续 Stage（接通 `session_id` 可同时优化 §8.2 的 JSON 索引问题）。
 
-### TD-020: `aigw_migrate::native` 的值强转把 MySQL `COUNT(*)` 读成布尔
+### TD-020: `aigw_migrate::native` 把 MySQL 的 INT 列值读成布尔 —— **会丢数据**
 
 - **Date**: 2026-10-10
-- **Priority**: P2
-- **Source**: Stage 138 real BDD（`bdd-real-mysql`）实测暴露
-- **Description**: `crates/aigw-migrate/src/native.rs` 的 `try_mysql_get`（`:982`）与 `try_pg_get`（`:503`）按固定顺序试解析列值，其中 **`bool` 排在 `i64` 之前**。MySQL 的 `BIGINT` 列对 `bool` 与 `i64` **同时** compatible（`sqlx-mysql` 的 `bool::compatible` 接受 Tiny/Short/Long/Int24/LongLong 全部有符号整型，解码实现就是 `<i8>::decode() != 0`），于是 `COUNT(*)` 这类 BIGINT 聚合值先被 `bool` 试中：
-  - `COUNT(*) = 0` → `Value::Bool(false)` → `as_str` 的 `to_string()` 得 **`"false"`**（而非 `"0"`）
-  - `COUNT(*) = 1` → `Value::Bool(true)` → **`"true"`**
-  - `COUNT(*) ≥ 2` → `<i8>::decode` 溢出报错 → **回退到 `i64`**，读出正确数字
-- **Impact**: 任何经 `read_rows_sql` 读 **0 或 1 行的整型聚合**都会得到 `"false"` / `"true"` 而非数字。Stage 138 的 real BDD 存在性断言因此失败（`assert_eq!("false", "0")`），两处断言已改为「选出 id 数行数」绕开。**不影响实际迁移**：迁移读的是真实列值（`spend_logs` 的 id 是 BIGINT 但值 ≥ 2 时正常，且迁移不读聚合），PG 侧不受影响（`i64` 在 PG 钉在 INT8，与 `bool`（BOOL）不冲突）。
-- **Fix**: `try_*_get` 改为**按列的声明类型**分派（可用 `row.column(idx).type_info()`），或至少把 `bool` 挪到 `i64` 之后并只在列为 `TINYINT(1)`/`BOOL` 时尝试。前者是正解 —— 目前这套「按顺序试」在 MySQL 的类型宽松性下本就不成立。
-- **Target Phase**: 后续 Stage（独立于 Phase 53；触发条件「迁移读聚合值」已存在）
+- **Priority**: **P0**（数据损坏；此前记为 P2 并判定「不影响实际迁移」—— **该判定是错的**）
+- **Source**: Stage 138 real BDD（`bdd-real-mysql`）暴露 0/1 行的表象；随后专项复现发现范围远大于「聚合值」
+- **Description**: `crates/aigw-migrate/src/native.rs` 的 `try_mysql_get`（`:986`）按固定顺序试解析列值，**`bool` 排在 `i64` 之前**（`:990` vs `:999`）。MySQL 的 `bool::compatible` 接受 **Tiny / Short / Long / Int24 / LongLong 全部有符号整型**（`sqlx-mysql-0.8.6/src/types/bool.rs:19-31`），解码实现是 `<i8>::decode() != 0`（`:40-42`）。于是：
+
+  | 源值 | `<i8>::decode` | 读出的 `Value` | 迁移写入 | 结果 |
+  |------|---------------|---------------|---------|------|
+  | `0` | `Ok(0)` | `Bool(false)` | `0` | ✅ 巧合正确 |
+  | **`1..=127`** | `Ok(非0)` | **`Bool(true)`** | **`1`** | ❌ **42 → 1、127 → 1** |
+  | **负数**（如 `-5`） | `Ok(非0)` | **`Bool(true)`** | **`1`** | ❌ **-5 → 1（丢符号）** |
+  | `128` 及更大 | `Err(溢出)` | `Number(n)` | `n` | ✅ 回退到 `i64` |
+
+  **实测**（`spend_logs` 真表，MySQL 源；经 `aigw_migrate::native::read_rows_sql` 读出、`value_to_target_literal` 渲染为 INT 目标 —— SQLite `INTEGER` 与 MySQL `int` 结果相同）：
+
+  ```
+  源:      id=500  total_tokens=42   prompt_tokens=30    request_duration_ms=9000
+  读+写:   id=500  total_tokens=1    prompt_tokens=1     request_duration_ms=9000
+  源:      id=501  total_tokens=200  prompt_tokens=128   request_duration_ms=100
+  读+写:   id=501  total_tokens=200  prompt_tokens=128   request_duration_ms=1
+  ```
+
+  **42 → 1，9000 → 1。** 任何落在 `1..=127` 或负数的整型列都被改写。
+
+  PG 与 SQLite 源不受影响：PG 把 `i64` 钉在 INT8、`bool` 钉在 BOOL，两者不冲突；SQLite 的 `try_sqlite_get` **没有 `bool` 分支**（`:568`），走 `i64`。
+
+- **Impact**: **MySQL → 任意目标**的迁移会静默改写所有落在 `1..=127` 或负数的整型列 —— `total_tokens` / `prompt_tokens` / `completion_tokens` / `image_tokens`（`1..=127` 是最常见的 token 数区间）、`spend_logs` 的计数列、任何 `INT` 业务列。PG→MySQL 方向不受影响（PG 侧读得准），所以**受害面是「MySQL 作为迁移源」**。
+
+  ⚠️ **受害的是哪条链路**：值经 `try_mysql_get` 读入 → `value_to_target_literal` 按目标列类型渲染。这条路径用于 `aigw-migrate` 的字面量插入模式；native 的 streaming/batch 路径（`insert_rows_batch`）走「源 `Value` 直接绑定为目标类型的 bind 参数」，同样经过 `try_mysql_get`，故一并受影响。**结论：以 MySQL 为源的任何迁移都不可信。**
+
+- **Fix**: `try_*_get` 改为**按列的声明类型分派**（`row.column(idx).type_info()`），而不是「按固定顺序试」。至少也要把 `bool` 挪到 `i64` 之后、且仅在列为 `TINYINT(1)` / `BOOL` 时尝试。
+- **Verification owed**: 修复后补一条 UT：MySQL 源表含 `0 / 1 / 42 / 127 / 128 / -5` 的 INT 列，断言逐一原值往返。**在此之前，MySQL 作为迁移源应视为不可用。**
+- **Target Phase**: 立即（独立于 Phase 53）
 
 | TD-017d | Phase 41 遗留适配器 UT 缺口（剩余部分） | P3 | Phase 41 记录的「Stage 102 计划 19 个适配器 UT 未落地」——Stage 131 补 13 个、Stage 132 再补 10 个（item 分派 + tool 配对），剩余（streaming SSE 事件映射等）仍待补。 |
 | TD-017e | ~~**Codex 多轮端到端验证缺失**~~ | P2 | ✅ **Resolved 2026-10-05（Stage 132）** — 用假上游驱动 Codex 0.160.0 完成真实一轮 tool 往返（`exec_command` → `echo hello` → 回填 → 收尾），抓包得真实 round-2 body（含 `function_call` / `function_call_output`），固化为 UT fixture + 变换后打真实上游 → 200。 |
