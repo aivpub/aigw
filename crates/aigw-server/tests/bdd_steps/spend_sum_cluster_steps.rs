@@ -462,22 +462,26 @@ async fn when_seed_and_query_with_filter(world: &mut TestWorld, qs: String) {
         .await
         .ok();
 
-    let rows = vec![
-        real_db_seed::SeedRow::new(
-            "bdd-s137-llm",
-            &hash,
-            0.05,
-            100,
-            "gpt-4",
-            "2026-07-20T10:00:00",
-        ),
-        real_db_seed::SeedRow::search(
-            "bdd-s137-search",
-            &hash,
-            "bdd-s137-llm",
-            "2026-07-20T10:00:01",
-        ),
-    ];
+    // TD-019: give the LLM row a session_id so `?session_id=` has something
+    // real to filter on. The search row gets a different one, so a filter that
+    // is silently ignored returns 2 rows instead of 1 and fails loudly.
+    let mut llm = real_db_seed::SeedRow::new(
+        "bdd-s137-llm",
+        &hash,
+        0.05,
+        100,
+        "gpt-4",
+        "2026-07-20T10:00:00",
+    );
+    llm.session_id = Some("bdd-s137-sess".to_string());
+    let mut search = real_db_seed::SeedRow::search(
+        "bdd-s137-search",
+        &hash,
+        "bdd-s137-llm",
+        "2026-07-20T10:00:01",
+    );
+    search.session_id = Some("bdd-s137-other".to_string());
+    let rows = vec![llm, search];
     real_db_seed::seed_spend_logs(&db_url, &rows)
         .await
         .expect("seed spend logs");
@@ -504,6 +508,75 @@ async fn then_count_equals_total_count(world: &mut TestWorld) {
          count query must apply the same filters",
         driver_label()
     );
+}
+
+#[when(expr = "向 aigw 测试库灌入 1 条 LLM 行 + 1 条 search 行并按 session_id 过滤查询 spend logs")]
+async fn when_seed_and_query_by_session_id(world: &mut TestWorld) {
+    if !seed_enabled() {
+        real_api_steps::set_skip_pass(world, 200, serde_json::json!({"data": [], "count": 0}));
+        return;
+    }
+
+    let db_url = test_db_url();
+    let base = real_api_steps::base_url();
+    let token = "sk-s137-filter-76";
+    real_db_seed::ensure_virtual_key(&db_url, token, "s137-filter", None)
+        .await
+        .ok();
+    let hash = aigw_core::crypto::hash_token(token);
+
+    real_db_seed::cleanup_by_prefix(&db_url, "bdd-s137-")
+        .await
+        .ok();
+
+    let mut llm = real_db_seed::SeedRow::new(
+        "bdd-s137-llm",
+        &hash,
+        0.05,
+        100,
+        "gpt-4",
+        "2026-07-20T10:00:00",
+    );
+    llm.session_id = Some("bdd-s137-sess".to_string());
+    let mut search = real_db_seed::SeedRow::search(
+        "bdd-s137-search",
+        &hash,
+        "bdd-s137-llm",
+        "2026-07-20T10:00:01",
+    );
+    search.session_id = Some("bdd-s137-other".to_string());
+    real_db_seed::seed_spend_logs(&db_url, &[llm, search])
+        .await
+        .expect("seed spend logs");
+
+    let url = format!("{base}/global/spend/logs?session_id=bdd-s137-sess");
+    let body = fetch_json(world, &url, &world.master_key.clone()).await;
+    world.last_body = Some(body);
+}
+
+/// Exactly `n` rows came back, each carrying the expected `session_id`.
+#[then(expr = "筛选结果为 {int} 条 session_id 为 {string} 的行")]
+async fn then_only_session_id(world: &mut TestWorld, n: usize, expected: String) {
+    let body = world.last_body.as_ref().expect("no body");
+    let data = body
+        .get("data")
+        .and_then(|v| v.as_array())
+        .expect("no data array");
+    assert_eq!(
+        data.len(),
+        n,
+        "[{}] expected {n} rows for session_id={expected}, got {}: {body}",
+        driver_label(),
+        data.len()
+    );
+    for row in data {
+        assert_eq!(
+            row.get("session_id").and_then(|v| v.as_str()),
+            Some(expected.as_str()),
+            "[{}] unexpected session_id in {row}",
+            driver_label()
+        );
+    }
 }
 
 #[then(expr = "筛选结果只包含 {int} 条 call_type 为 {string} 的行")]

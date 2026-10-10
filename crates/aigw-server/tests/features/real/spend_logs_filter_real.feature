@@ -27,3 +27,13 @@ Feature: spend_logs 的 call_type / parent_call_id 过滤跨三方言一致（St
     Then 响应状态码为 200
     And 筛选结果的 count 与 total_count 相等
     And 筛选结果只包含 0 条 call_type 为 "search" 的行
+
+  # TD-019: session_id is a real, indexable column — no JSON path, no dialect
+  # split. It used to be accepted and silently ignored, so this scenario would
+  # have returned both seeded rows instead of one.
+  Scenario: session_id 过滤走真列，列表与计数同口径
+    Given 上游 litellm 数据库连接已配置
+    When 向 aigw 测试库灌入 1 条 LLM 行 + 1 条 search 行并按 session_id 过滤查询 spend logs
+    Then 响应状态码为 200
+    And 筛选结果的 count 与 total_count 相等
+    And 筛选结果为 1 条 session_id 为 "bdd-s137-sess" 的行

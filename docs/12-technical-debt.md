@@ -219,16 +219,16 @@
 - **修复**: Dashboard 的 `SpendLogsResponse` 补 `total_count` 字段，卡片改读 `total_count`。
 - **Resolution**: ✅ 已实现（Stage 137，2026-10-08）——`dashboard/index.tsx` 的局部 `SpendLogsResponse` 补 `total_count`，卡片改读 `logsData?.total_count`，并挂「含搜索调用」提示。**实测补充**：`limit` 参数在 `/global/spend/logs` handler（`spend.rs:668`）上被**忽略**（回落 `page_size=30`），故修前该指标的上限实为 **30** 而非 100 —— 详见下方 TD-019。
 
-### TD-019: `SpendLogsQuery` 的 `limit` / `session_id` 是静默失效的死参数
+### TD-019: `SpendLogsQuery` 的 `limit` / `session_id` 是静默失效的死参数 ✅ Resolved 2026-10-10
 
 - **Date**: 2026-10-08
 - **Priority**: P3
 - **Source**: Stage 137 §4.3 #12 聚合口径审计（实测发现）
 - **Description**: `SpendLogsQuery`（`crates/aigw-server/src/routes/spend.rs:38`）声明了 `limit`（`:57`）与 `session_id`（`:45`），但两个消费它的 handler（`global_spend_logs` `:663`、`spend_logs` `:240`）都只读 `page` / `page_size`，从不读这两个字段 → **参数名承诺了行为、实现没给**。
 - **Impact**: ① Dashboard「Period Spend」按 `?limit=100` 抓取却实收 30 条（`page_size` 默认值），求和窗口静默缩水 70%；② `session_id` 筛选静默无效 —— 对搜索行来说这本是 `parent_call_id` 之外**第二条**父子线索，且是**可索引的真列**（优于 §3.4 的 JSON 表达式过滤）。
-- **Target Phase**: 后续 Stage（接通 `session_id` 可同时优化 §8.2 的 JSON 索引问题）。
+- **Resolution**: ✅ 已实现（2026-10-10，commit `eee9124`）——`limit` 出现时**即 page size**，并加 `MAX_SPEND_LOG_PAGE_SIZE = 1000` 上限（此前无界）；`limit` 缺席时 `page_size` 行为不变。`session_id` 作为真列接通三方言（无需 JSON1/`->>` 分叉），trait / 3 impl / 分发 / **计数查询** / 两个 handler 全部跟上。**计数查询必须同步改**——否则筛选后分页条显示全量条数（Stage 137 踩过同一个坑）。TDD 红绿：`limit_sets_the_page_size` 还原旧代码时红在 `left: 30, right: 40`。
 
-### TD-020: `aigw_migrate::native` 把 MySQL 的 INT 列值读成布尔 —— **会丢数据**
+### TD-020: `aigw_migrate::native` 把 MySQL 的 INT 列值读成布尔 ✅ Resolved 2026-10-10
 
 - **Date**: 2026-10-10
 - **Priority**: **P0**（数据损坏；此前记为 P2 并判定「不影响实际迁移」—— **该判定是错的**）
@@ -259,9 +259,9 @@
 
   ⚠️ **受害的是哪条链路**：值经 `try_mysql_get` 读入 → `value_to_target_literal` 按目标列类型渲染。这条路径用于 `aigw-migrate` 的字面量插入模式；native 的 streaming/batch 路径（`insert_rows_batch`）走「源 `Value` 直接绑定为目标类型的 bind 参数」，同样经过 `try_mysql_get`，故一并受影响。**结论：以 MySQL 为源的任何迁移都不可信。**
 
-- **Fix**: `try_*_get` 改为**按列的声明类型分派**（`row.column(idx).type_info()`），而不是「按固定顺序试」。至少也要把 `bool` 挪到 `i64` 之后、且仅在列为 `TINYINT(1)` / `BOOL` 时尝试。
-- **Verification owed**: 修复后补一条 UT：MySQL 源表含 `0 / 1 / 42 / 127 / 128 / -5` 的 INT 列，断言逐一原值往返。**在此之前，MySQL 作为迁移源应视为不可用。**
-- **Target Phase**: 立即（独立于 Phase 53）
+- **Fix**: `try_*_get` 改为**按列的声明类型分派**（而不是「按固定顺序试」）。
+- **Resolution**: ✅ 已实现（2026-10-10，commit `0907f6c`）——`try_mysql_get` 改按 `type_info().name()` 分派：`BOOLEAN`/`BIT` → `bool`（sqlx 的 `bool::compatible` 含 `Bit` 而整型不含，故这两种列**只有 bool 能解**，类型名完整决定路径）；`TINYINT`/`SMALLINT`/`MEDIUMINT`/`INT`/`YEAR` → `i64`；`BIGINT UNSIGNED` → `u64`（超 i64 上界不降级为字符串）；`FLOAT`/`DOUBLE` → `f64`；`JSON` → `Value`；`DATETIME`/`TIMESTAMP`/`DATE`/`TIME` → 字符串；其余走 fallback，**其中不再探 `bool`**。新增 `tests/mysql_int_roundtrip.rs`（`#[ignore]`，`task test-migrate-mysql` 执行）：`0/1/42/127/128/9000/-5/-1` × {INT,BIGINT} 原值往返 + `BOOLEAN`/`BIT(1)` 仍是 bool 而普通 `TINYINT` 是整数。首轮红（`int_col did not decode as an integer: Bool(true)`），改后绿。
+- **Target Phase**: ✅ 已解决（2026-10-10）
 
 | TD-017d | Phase 41 遗留适配器 UT 缺口（剩余部分） | P3 | Phase 41 记录的「Stage 102 计划 19 个适配器 UT 未落地」——Stage 131 补 13 个、Stage 132 再补 10 个（item 分派 + tool 配对），剩余（streaming SSE 事件映射等）仍待补。 |
 | TD-017e | ~~**Codex 多轮端到端验证缺失**~~ | P2 | ✅ **Resolved 2026-10-05（Stage 132）** — 用假上游驱动 Codex 0.160.0 完成真实一轮 tool 往返（`exec_command` → `echo hello` → 回填 → 收尾），抓包得真实 round-2 body（含 `function_call` / `function_call_output`），固化为 UT fixture + 变换后打真实上游 → 200。 |

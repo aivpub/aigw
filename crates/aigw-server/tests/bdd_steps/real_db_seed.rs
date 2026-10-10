@@ -35,6 +35,9 @@ pub(crate) struct SeedRow {
     pub call_type: String,
     /// Raw JSON for `metadata` (e.g. `{"parent_call_id":"..."}`). None → NULL.
     pub metadata_json: Option<String>,
+    /// `spend_logs.session_id` — the real, indexable parent/child column
+    /// (TD-019). None → NULL.
+    pub session_id: Option<String>,
 }
 
 impl SeedRow {
@@ -65,6 +68,7 @@ impl SeedRow {
             end_user: None,
             call_type: "completion".to_string(),
             metadata_json: None,
+            session_id: None,
         }
     }
 
@@ -138,11 +142,11 @@ pub(crate) async fn seed_spend_logs(db_url: &str, rows: &[SeedRow]) -> anyhow::R
             r#"INSERT INTO spend_logs
             (call_id, call_type, api_key, spend, total_tokens, prompt_tokens, completion_tokens,
              start_time, end_time, model, status, {user_ident}, team_id, organization_id,
-             request_tags, custom_llm_provider, end_user, metadata)
+             request_tags, custom_llm_provider, end_user, metadata, session_id)
             VALUES ('{}', '{}', '{}', {}, {}, {}, {},
                     {}, {}, '{}', '{}',
                     {}, {}, {},
-                    {}, {}, {}, {})"#,
+                    {}, {}, {}, {}, {})"#,
             row.call_id,
             row.call_type,
             row.api_key,
@@ -161,6 +165,7 @@ pub(crate) async fn seed_spend_logs(db_url: &str, rows: &[SeedRow]) -> anyhow::R
             provider_val,
             end_user_val,
             metadata_val,
+            opt_str_literal(&row.session_id),
         );
         pool.execute_raw(&sql).await?;
     }
