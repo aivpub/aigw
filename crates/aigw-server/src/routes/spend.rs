@@ -29,6 +29,12 @@ use std::collections::HashMap;
 
 use super::keys::SharedState;
 
+/// Upper bound on rows a single spend-log page may return.
+///
+/// `limit` predates this cap and carried no bound; the dashboard asks for 100.
+/// Kept as one constant so the capped path and the description cannot drift.
+const MAX_SPEND_LOG_PAGE_SIZE: i32 = 1000;
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Query parameters
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -263,6 +269,7 @@ pub async fn spend_logs(
             query.max_tokens,
             query.call_type.as_deref(),
             query.parent_call_id.as_deref(),
+            query.session_id.as_deref(),
             Some(page_size),
             Some(offset),
         ),
@@ -274,6 +281,7 @@ pub async fn spend_logs(
             query.request_id.as_deref(),
             query.call_type.as_deref(),
             query.parent_call_id.as_deref(),
+            query.session_id.as_deref(),
         ),
     )
     .map_err(|e| {
@@ -664,7 +672,14 @@ pub async fn global_spend_logs(
     require_admin(&auth)?;
 
     let page = query.page.unwrap_or(1).max(1);
-    let page_size = query.page_size.unwrap_or(30).clamp(1, 100);
+    // TD-019: `limit` used to be accepted and ignored, so a caller asking for
+    // 100 rows silently received `page_size` (30). When `limit` is present it
+    // IS the page size — the two name the same thing and only one can win.
+    let page_size = query
+        .limit
+        .filter(|n| *n > 0)
+        .map(|n| n.clamp(1, MAX_SPEND_LOG_PAGE_SIZE))
+        .unwrap_or_else(|| query.page_size.unwrap_or(30).clamp(1, 100));
     let offset = (page - 1) * page_size;
 
     let (logs, total_count) = tokio::try_join!(
@@ -680,6 +695,7 @@ pub async fn global_spend_logs(
             query.max_tokens,
             query.call_type.as_deref(),
             query.parent_call_id.as_deref(),
+            query.session_id.as_deref(),
             Some(page_size),
             Some(offset),
         ),
@@ -691,6 +707,7 @@ pub async fn global_spend_logs(
             query.request_id.as_deref(),
             query.call_type.as_deref(),
             query.parent_call_id.as_deref(),
+            query.session_id.as_deref(),
         ),
     )
     .map_err(|e| {
@@ -2668,5 +2685,160 @@ mod tests {
             .unwrap();
         let response = app.oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    // ── TD-019: `limit` and `session_id` are no longer dead parameters ──
+
+    /// A minimal but complete spend log — `SpendLog` has no `Default`.
+    fn td019_log(call_id: String, session_id: Option<String>) -> SpendLog {
+        let now = chrono::Utc::now();
+        SpendLog {
+            call_id,
+            request_id: None,
+            call_type: "completion".to_string(),
+            api_key: "master_key".to_string(),
+            spend: 0.01,
+            total_tokens: 10,
+            prompt_tokens: 5,
+            completion_tokens: 5,
+            start_time: now,
+            end_time: now,
+            request_duration_ms: Some(10),
+            completion_start_time: None,
+            model: "gpt-4".to_string(),
+            model_id: None,
+            model_group: None,
+            custom_llm_provider: None,
+            api_base: None,
+            user: None,
+            metadata: None,
+            cache_hit: None,
+            cache_key: None,
+            request_tags: None,
+            team_id: None,
+            organization_id: None,
+            end_user: None,
+            requester_ip_address: None,
+            messages: None,
+            response: None,
+            session_id,
+            status: Some("success".to_string()),
+            mcp_namespaced_tool_name: None,
+            agent_id: None,
+            proxy_server_request: None,
+            body_archived: false,
+            parquet_path: None,
+            image_tokens: None,
+        }
+    }
+
+    /// Build a state holding `n` spend logs, each tagged with a session_id.
+    async fn spend_logs_state(n: usize, session: &str) -> Arc<AppState> {
+        let db = Database::init("sqlite::memory:")
+            .await
+            .expect("init sqlite");
+        for i in 0..n {
+            let log = td019_log(format!("td019-{i}"), Some(format!("{session}-{i}")));
+            db.insert_spend_log(&log).await.expect("insert");
+        }
+        Arc::new(AppState {
+            resolver: ModelResolver::new(db.clone(), None, "onprem"),
+            router: AigwRouter::default(),
+            db,
+            master_key: Some("sk-master-test-123".to_string()),
+            aigw_master_key: None,
+            key_generate_length: DEFAULT_KEY_TOKEN_LEN,
+            disable_custom_api_keys: false,
+            provider_registry: ProviderRegistry::new(),
+            router_state: RouterState::default(),
+            rate_limiter: Arc::new(RateLimiter::new()),
+            deployment_mode: "onprem".to_string(),
+            started_at: std::time::Instant::now(),
+            daily_spend_queue: None,
+            otel_active: false,
+            body_archiver: None,
+            token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
+            web_search: aigw_core::websearch::WebSearchHandle::disabled(),
+            metrics: None,
+        })
+    }
+
+    async fn get_logs(app: Router, uri: &str) -> Value {
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri(uri)
+            .header(header::AUTHORIZATION, "Bearer sk-master-test-123")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    /// `?limit=N` sets the page size. It used to be parsed and dropped, so the
+    /// dashboard's `limit=100` really fetched `page_size` (30).
+    #[tokio::test]
+    async fn limit_sets_the_page_size() {
+        let app = Router::new()
+            .route("/global/spend/logs", axum::routing::get(global_spend_logs))
+            .with_state(spend_logs_state(45, "sess").await);
+
+        let body = get_logs(app, "/global/spend/logs?limit=40").await;
+        let data = body["data"].as_array().expect("data");
+        assert_eq!(
+            data.len(),
+            40,
+            "limit=40 must return 40 rows, not the 30-row page_size default"
+        );
+    }
+
+    /// An explicit `page_size` still works when `limit` is absent.
+    #[tokio::test]
+    async fn page_size_still_applies_without_limit() {
+        let app = Router::new()
+            .route("/global/spend/logs", axum::routing::get(global_spend_logs))
+            .with_state(spend_logs_state(20, "sess").await);
+
+        let body = get_logs(app, "/global/spend/logs?page_size=5").await;
+        assert_eq!(body["data"].as_array().expect("data").len(), 5);
+    }
+
+    /// `limit` is capped so a caller cannot ask for the whole table.
+    #[tokio::test]
+    async fn limit_is_capped() {
+        let app = Router::new()
+            .route("/global/spend/logs", axum::routing::get(global_spend_logs))
+            .with_state(spend_logs_state(3, "sess").await);
+
+        let body = get_logs(app, "/global/spend/logs?limit=999999").await;
+        // Only 3 rows exist, so this asserts the cap did not error; the
+        // important half is that it did not try to honour 999999.
+        assert_eq!(body["data"].as_array().expect("data").len(), 3);
+    }
+
+    /// `?session_id=` filters, and the count agrees with the row list.
+    #[tokio::test]
+    async fn session_id_filters_rows_and_count() {
+        let state = spend_logs_state(6, "sess-a").await;
+        // A second session in the same DB, so a no-op filter would be visible.
+        for i in 0..4 {
+            let log = td019_log(format!("other-{i}"), Some(format!("sess-b-{i}")));
+            state.db.insert_spend_log(&log).await.expect("insert b");
+        }
+        let app = Router::new()
+            .route("/global/spend/logs", axum::routing::get(global_spend_logs))
+            .with_state(state);
+
+        let body = get_logs(app, "/global/spend/logs?session_id=sess-a-0").await;
+        let data = body["data"].as_array().expect("data");
+        assert_eq!(data.len(), 1, "exactly one row carries that session_id");
+        assert_eq!(data[0]["session_id"], "sess-a-0");
+        assert_eq!(
+            body["total_count"], 1,
+            "the count query must apply the same filter as the row query"
+        );
     }
 }

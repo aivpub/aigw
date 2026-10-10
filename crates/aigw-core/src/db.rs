@@ -2251,6 +2251,7 @@ pub trait SpendLogStore {
         call_id: Option<&str>,
         call_type: Option<&str>,
         parent_call_id: Option<&str>,
+        session_id: Option<&str>,
     ) -> Result<i64>;
     /// Get a single spend log by call_id — returns all columns including body blobs.
     async fn get_spend_log_by_call_id(&self, call_id: &str) -> Result<Option<SpendLog>>;
@@ -2677,6 +2678,7 @@ impl SpendLogStore for SqlitePool {
         call_id: Option<&str>,
         call_type: Option<&str>,
         parent_call_id: Option<&str>,
+        session_id: Option<&str>,
     ) -> Result<i64> {
         let mut sql = String::from("SELECT COUNT(*) FROM spend_logs WHERE 1=1");
         if api_key.is_some() {
@@ -2707,6 +2709,9 @@ impl SpendLogStore for SqlitePool {
                 " AND json_extract(metadata, '$.parent_call_id') = '{}'",
                 pc.replace('\'', "''")
             ));
+        }
+        if let Some(sid) = session_id {
+            sql.push_str(&format!(" AND session_id = '{}'", sid.replace('\'', "''")));
         }
 
         let mut query = sqlx::query_as::<_, (i64,)>(&sql);
@@ -3141,6 +3146,7 @@ impl SpendLogStore for MySqlPool {
         call_id: Option<&str>,
         call_type: Option<&str>,
         parent_call_id: Option<&str>,
+        session_id: Option<&str>,
     ) -> Result<i64> {
         let mut sql = String::from("SELECT COUNT(*) FROM spend_logs WHERE 1=1");
         if api_key.is_some() {
@@ -3174,6 +3180,12 @@ impl SpendLogStore for MySqlPool {
             sql.push_str(&format!(
                 " AND json_extract(metadata, '$.parent_call_id') = '{}'",
                 pc.replace('\\', "\\\\").replace('\'', "''")
+            ));
+        }
+        if let Some(sid) = session_id {
+            sql.push_str(&format!(
+                " AND session_id = '{}'",
+                sid.replace('\\', "\\\\").replace('\'', "''")
             ));
         }
 
@@ -3574,6 +3586,7 @@ impl SpendLogStore for PgPool {
         call_id: Option<&str>,
         call_type: Option<&str>,
         parent_call_id: Option<&str>,
+        session_id: Option<&str>,
     ) -> Result<i64> {
         let ts_cast = "::TIMESTAMPTZ";
 
@@ -3622,6 +3635,9 @@ impl SpendLogStore for PgPool {
                 " AND metadata->>'parent_call_id' = '{}'",
                 pc.replace('\'', "''")
             ));
+        }
+        if let Some(sid) = session_id {
+            sql.push_str(&format!(" AND session_id = '{}'", sid.replace('\'', "''")));
         }
 
         let mut query = sqlx::query_as::<_, (i64,)>(&sql);
@@ -3939,6 +3955,7 @@ impl Database {
         call_id: Option<&str>,
         call_type: Option<&str>,
         parent_call_id: Option<&str>,
+        session_id: Option<&str>,
     ) -> Result<i64> {
         match self {
             Database::Sqlite(pool) => {
@@ -3950,6 +3967,7 @@ impl Database {
                     call_id,
                     call_type,
                     parent_call_id,
+                    session_id,
                 )
                 .await
             }
@@ -3962,6 +3980,7 @@ impl Database {
                     call_id,
                     call_type,
                     parent_call_id,
+                    session_id,
                 )
                 .await
             }
@@ -3974,6 +3993,7 @@ impl Database {
                     call_id,
                     call_type,
                     parent_call_id,
+                    session_id,
                 )
                 .await
             }
@@ -8941,6 +8961,7 @@ impl Database {
         max_tokens: Option<i32>,
         call_type: Option<&str>,
         parent_call_id: Option<&str>,
+        session_id: Option<&str>,
         limit: Option<i32>,
         offset: Option<i32>,
     ) -> Result<Vec<SpendLog>> {
@@ -9021,6 +9042,11 @@ impl Database {
                 _ => format!("json_extract(metadata, '$.parent_call_id') = '{esc}'"),
             };
             conditions.push(cond);
+        }
+        // TD-019: `session_id` is a real, indexable column — unlike the
+        // `metadata.parent_call_id` JSON path above it needs no dialect split.
+        if let Some(sid) = session_id {
+            conditions.push(format!("session_id = '{}'", sql_literal(self, sid)));
         }
 
         let where_clause = if conditions.is_empty() {
@@ -11144,13 +11170,13 @@ mod tests {
 
         // Count matching — should be consistent
         let count = db
-            .query_spend_logs_count(None, None, None, None, Some("req-00"), None, None)
+            .query_spend_logs_count(None, None, None, None, Some("req-00"), None, None, None)
             .await
             .expect("count prefix");
         assert_eq!(count, 3, "count should match query for 'req-00'");
 
         let count = db
-            .query_spend_logs_count(None, None, None, None, Some("chatcmpl"), None, None)
+            .query_spend_logs_count(None, None, None, None, Some("chatcmpl"), None, None, None)
             .await
             .expect("count chatcmpl");
         assert_eq!(count, 1, "count should match query for 'chatcmpl'");
