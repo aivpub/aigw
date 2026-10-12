@@ -4,6 +4,7 @@ import { apiPost, apiPut } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
   DialogContent,
@@ -43,6 +44,10 @@ export function ProviderDialog({
   const [timeoutMs, setTimeoutMs] = useState(
     editing?.timeout_ms != null ? String(editing.timeout_ms) : "",
   );
+  // Default to enabled on create: the common case is "add a working provider".
+  // Being able to create one switched off matters because the only other way to
+  // get a disabled provider is to create it enabled and immediately toggle it.
+  const [enabled, setEnabled] = useState(editing?.enabled ?? true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -68,6 +73,7 @@ export function ProviderDialog({
         name: name.trim(),
         kind,
         cost_per_query: parsedCost,
+        enabled,
       };
       // Blank omits the field entirely: the API reads an absent (or null)
       // ordering as "leave the stored value alone", so this cannot unset one.
@@ -132,6 +138,22 @@ export function ProviderDialog({
                 </option>
               ))}
             </select>
+          </div>
+          <div className="flex items-center justify-between rounded-md border px-3 py-2">
+            <div>
+              <Label htmlFor="ws-provider-enabled">
+                {t("webSearch.dialog.enabledLabel")}
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                {t("webSearch.dialog.enabledHint")}
+              </p>
+            </div>
+            <Switch
+              id="ws-provider-enabled"
+              checked={enabled}
+              onCheckedChange={setEnabled}
+              data-testid="ws-provider-enabled"
+            />
           </div>
           <div className="space-y-2">
             <Label htmlFor="ws-provider-cost">{t("webSearch.dialog.costLabel")}</Label>

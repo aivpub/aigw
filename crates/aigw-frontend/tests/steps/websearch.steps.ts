@@ -1,6 +1,6 @@
 import { createBdd } from "playwright-bdd";
 import { expect, type Page } from "@playwright/test";
-import { mockAllApis } from "./api-mocks";
+import { disableAllWebSearchRows, mockAllApis } from "./api-mocks";
 
 const { Given, When, Then } = createBdd();
 
@@ -33,10 +33,14 @@ function firstVisibleProvider(page: Page) {
 }
 
 When("I expand the first search provider", async ({ page }) => {
-  // Only the desktop table has an expander; the mobile card shows instances
-  // unconditionally, so there is nothing to click there.
+  // Idempotent: the row toggles, so clicking it twice collapses what the first
+  // click opened (and a dialog save keeps it open, so scenarios do call this
+  // twice). Only the desktop table has an expander — the mobile card shows
+  // instances unconditionally, so there is nothing to click there.
   const row = page.locator("[data-provider-id]:visible").first();
-  if (await row.count()) {
+  if ((await row.count()) === 0) return;
+  const shown = await page.locator('[data-testid="ws-instance-row"]:visible').count();
+  if (shown === 0) {
     await row.click();
     await page.waitForTimeout(500);
   }
@@ -138,4 +142,103 @@ Then("the probe dialog flags an unparseable response", async ({ page }) => {
   await expect(page.getByTestId("ws-probe-parse-warning")).toBeVisible({
     timeout: 8000,
   });
+});
+
+// ── enabled affordances (empty-state / dialogs / master switch) ──
+
+When("I switch the provider enabled toggle off", async ({ page }) => {
+  await page.getByTestId("ws-provider-enabled").click();
+  await page.waitForTimeout(300);
+});
+
+When("I switch the instance enabled toggle off", async ({ page }) => {
+  await page.getByTestId("ws-instance-enabled").click();
+  await page.waitForTimeout(300);
+});
+
+When("I click the add-instance button on the first search provider", async ({ page }) => {
+  const desktop = page
+    .locator("[data-provider-id]:visible")
+    .first()
+    .getByTestId("ws-add-instance");
+  const target = (await desktop.count())
+    ? desktop
+    : page
+        .locator('[data-testid="ws-provider-card"]:visible')
+        .first()
+        .locator("button:has(.lucide-plus)")
+        .last();
+  await target.click();
+  await page.waitForTimeout(500);
+});
+
+When("I fill instance name with {string}", async ({ page }, value: string) => {
+  await page.getByTestId("ws-instance-name").fill(value);
+  await page.waitForTimeout(300);
+});
+
+When("I fill instance URL with {string}", async ({ page }, value: string) => {
+  await page.getByTestId("ws-instance-url").fill(value);
+  await page.waitForTimeout(300);
+});
+
+When("I refresh the Web Search page", async ({ page }) => {
+  await page.goto("/dash/websearch");
+  await page.waitForLoadState("domcontentloaded");
+  await page.waitForTimeout(1000);
+});
+
+Then(
+  "the provider {string} is shown as disabled",
+  async ({ page }, name: string) => {
+    const row = page
+      .locator("[data-provider-id]:visible, [data-testid='ws-provider-card']:visible")
+      .filter({ hasText: name })
+      .first();
+    await expect(row.getByText(/已停用|Disabled/)).toBeVisible({ timeout: 5000 });
+  },
+);
+
+Then(
+  "the instance {string} is shown as disabled",
+  async ({ page }, name: string) => {
+    const row = page
+      .locator('[data-testid="ws-instance-row"]:visible')
+      .filter({ hasText: name })
+      .first();
+    // `[data-state]` matches the switch button *and* its thumb span, so scope
+    // to the switch itself and read its checked state.
+    await expect(row.getByRole("switch")).toHaveAttribute("aria-checked", "false", {
+      timeout: 5000,
+    });
+  },
+);
+
+Given("every search provider and instance is disabled", async ({ page }) => {
+  // Flip the mock store directly. A click-loop over the switches would be
+  // order- and rerender-sensitive; the point of the scenario is the master
+  // switch's *reading* of that state, not the toggling itself.
+  disableAllWebSearchRows();
+  await page.waitForTimeout(100);
+});
+
+Then("the web search master switch is on", async ({ page }) => {
+  await expect(page.getByTestId("ws-master-switch")).toHaveAttribute(
+    "data-state",
+    "checked",
+    { timeout: 5000 },
+  );
+});
+
+Then("the web search master switch is off", async ({ page }) => {
+  await expect(page.getByTestId("ws-master-switch")).toHaveAttribute(
+    "data-state",
+    "unchecked",
+    { timeout: 5000 },
+  );
+});
+
+When("I switch the web search master switch on", async ({ page }) => {
+  await page.getByTestId("ws-master-switch").click();
+  await page.waitForTimeout(700);
 });

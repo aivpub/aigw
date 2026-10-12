@@ -734,6 +734,12 @@ async fn main() -> anyhow::Result<()> {
             "/admin/websearch/reload",
             axum::routing::post(websearch::reload),
         )
+        // Bulk counterpart of the per-provider toggle: the UI's single on/off
+        // switch has nowhere else to call.
+        .route(
+            "/admin/websearch/enable-all",
+            axum::routing::post(websearch::enable_all),
+        )
         // Login/Logout endpoints (litellm-compatible /v2/login/*)
         .route("/v2/login", axum::routing::post(login::login))
         .route(

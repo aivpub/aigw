@@ -155,8 +155,19 @@ litellm_settings:
 #   #   max_entry_mb: 100
 
 # ── Built-in web search (Phase 53) ────────────────────────────────────────────
-# Absent → disabled, zero behaviour change. Only `kind: searxng` is implemented;
-# an unknown kind fails startup with a message listing the supported kinds.
+# You do NOT need this block to use web search. Providers and their instances
+# are managed in the admin UI (Settings → Web search), and when the database
+# holds provider rows they are the source of truth — this block is then used
+# only for the global policy below (domain lists, egress proxy, retries,
+# cooldown), and only if it is present.
+#
+# So: add this block if you want domain guardrails or an egress proxy. Skip it
+# and configure everything from the UI if you do not — but note that without
+# the block there are no guardrails and no proxy, because those settings have
+# no other home. The startup log says which case you are in.
+#
+# Only `kind: searxng` is implemented; an unknown kind fails startup with a
+# message listing the supported kinds.
 #
 # web_search:
 #   enabled: true

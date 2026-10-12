@@ -1208,7 +1208,10 @@
     "newProvider": "New Provider",
     "allProviders": "All Providers",
     "searchPlaceholder": "Search by name, kind or instance...",
-    "noProviders": "No search providers configured — built-in web search is off",
+    "empty": {
+      "title": "Built-in web search is off",
+      "body": "Search turns on as soon as there is an enabled provider with at least one instance. Add one to start routing search requests through this gateway."
+    },
     "noMatch": "No providers match your search",
     "badge": {
       "default": "Default"
@@ -1241,7 +1244,9 @@
       "optionalPlaceholder": "optional",
       "saveBtn": "Save",
       "nameRequired": "Name is required",
-      "costInvalid": "Cost must be a non-negative number"
+      "costInvalid": "Cost must be a non-negative number",
+      "enabledLabel": "Enabled",
+      "enabledHint": "A disabled provider keeps its settings but serves no requests."
     },
     "instance": {
       "titleCreate": "New Instance",
@@ -1264,7 +1269,8 @@
       "weightHint": "Optional. Declaring a weight on any instance switches the pool from uniform random to weighted selection.",
       "nameRequired": "Name is required",
       "add": "Add instance",
-      "none": "No instances yet — this provider cannot serve a search until it has one."
+      "none": "No instances yet — this provider cannot serve a search until it has one.",
+      "enabledHint": "A disabled instance keeps its settings but is never picked."
     },
     "probe": {
       "title": "Connectivity Probe",
@@ -1288,7 +1294,12 @@
       "toggleDone": "Status toggled",
       "batchDone": "Batch operation done",
       "skipped": "{{n}} provider(s) skipped (default provider)",
-      "savedNotLive": "Saved, but the running search layer was not updated — check the saved rows"
+      "savedNotLive": "Saved, but the running search layer was not updated — check the saved rows",
+      "enabledAll": "Enabled {{n}} row(s)"
+    },
+    "master": {
+      "on": "Web search on",
+      "off": "Web search off — turn on"
     }
   },
   "claudeOAuth": {

@@ -43,3 +43,31 @@ Feature: Web Search Providers
     When I expand the first search provider
     And I click the probe button on the "searx-sg" instance
     Then the probe dialog flags an unparseable response
+
+  Scenario: Create a provider switched off
+    When I click "New Provider" on the Web Search page
+    And I fill search provider name with "searxng-paused"
+    And I switch the provider enabled toggle off
+    And I click the "Save" button in the provider dialog
+    Then the new provider "searxng-paused" appears in the list
+    And the provider "searxng-paused" is shown as disabled
+
+  Scenario: Create an instance switched off
+    When I expand the first search provider
+    And I click the add-instance button on the first search provider
+    And I fill instance name with "inst-paused"
+    And I fill instance URL with "http://paused:9099"
+    And I switch the instance enabled toggle off
+    And I click the "Save" button in the provider dialog
+    And I expand the first search provider
+    Then the instance "inst-paused" is shown as disabled
+
+  Scenario: The master switch reflects that search is already on
+    Then the web search master switch is on
+
+  Scenario: Turning search back on after every row was disabled
+    Given every search provider and instance is disabled
+    When I refresh the Web Search page
+    Then the web search master switch is off
+    When I switch the web search master switch on
+    Then the web search master switch is on

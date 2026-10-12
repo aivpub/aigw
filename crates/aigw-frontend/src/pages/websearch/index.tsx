@@ -63,6 +63,17 @@ export function WebSearchPage() {
   });
 
   const providers = useMemo(() => data?.data ?? [], [data]);
+  // Mirrors the backend's definition of "the layer is on": an enabled provider
+  // with at least one enabled instance. There is no separate global flag to
+  // read, and inventing one here would let the switch disagree with reality.
+  const searchIsOn = useMemo(
+    () =>
+      providers.some(
+        (p) => p.enabled && p.instances.some((i) => i.enabled),
+      ),
+    [providers],
+  );
+  const hasAnyRow = providers.length > 0;
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return providers;
@@ -176,6 +187,22 @@ export function WebSearchPage() {
     [invalidate],
   );
 
+  /// Bulk on: the master switch's only action. Turning the layer *off* is a
+  /// per-row action (each provider/instance has its own switch) because "off"
+  /// needs to be explicit about which rows it means.
+  const handleEnableAll = useCallback(async () => {
+    try {
+      const res = await apiPost<{ enabled_rows?: number; reload?: { ok?: boolean } }>(
+        "/admin/websearch/enable-all",
+      );
+      afterWrite(
+        t("webSearch.toast.enabledAll", { n: res.enabled_rows ?? 0 }),
+      )(res.reload?.ok !== false);
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  }, [afterWrite, t]);
+
   const handleBatchDelete = useCallback(async () => {
     const ids = Array.from(selected);
     if (ids.length === 0) return;
@@ -204,6 +231,21 @@ export function WebSearchPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {hasAnyRow && (
+            <div className="mr-1 flex items-center gap-2">
+              <Switch
+                checked={searchIsOn}
+                disabled={searchIsOn}
+                onCheckedChange={() => handleEnableAll()}
+                data-testid="ws-master-switch"
+              />
+              <span className="text-sm text-muted-foreground">
+                {searchIsOn
+                  ? t("webSearch.master.on")
+                  : t("webSearch.master.off")}
+              </span>
+            </div>
+          )}
           {selected.size > 0 && (
             <Button
               size="sm"
@@ -527,6 +569,13 @@ export function WebSearchPage() {
                           </div>
                         </div>
                         <div className="flex shrink-0 items-center gap-0.5">
+                          {/* The desktop table has this switch too; without it
+                              the phone layout can neither see nor change an
+                              instance's enabled state. */}
+                          <Switch
+                            checked={i.enabled}
+                            onCheckedChange={() => handleToggleInstance(i)}
+                          />
                           <Button
                             variant="ghost"
                             size="icon"
@@ -600,9 +649,29 @@ export function WebSearchPage() {
           </div>
 
           {!isLoading && filtered.length === 0 && (
-            <p className="py-6 text-center text-sm text-muted-foreground">
-              {search ? t("webSearch.noMatch") : t("webSearch.noProviders")}
-            </p>
+            <div className="py-8 text-center" data-testid="ws-empty-state">
+              {search ? (
+                <p className="text-sm text-muted-foreground">{t("webSearch.noMatch")}</p>
+              ) : (
+                <>
+                  <p className="text-sm font-medium">{t("webSearch.empty.title")}</p>
+                  <p className="mx-auto mt-1 max-w-md text-xs text-muted-foreground">
+                    {t("webSearch.empty.body")}
+                  </p>
+                  <Button
+                    size="sm"
+                    className="mt-4"
+                    onClick={() => {
+                      setEditingProvider(null);
+                      setProviderDialogOpen(true);
+                    }}
+                    data-testid="ws-empty-create"
+                  >
+                    <Plus className="h-4 w-4" /> {t("webSearch.newProvider")}
+                  </Button>
+                </>
+              )}
+            </div>
           )}
 
           {error && (

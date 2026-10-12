@@ -1224,7 +1224,10 @@ declare module "i18next" {
     newProvider: string;
     allProviders: string;
     searchPlaceholder: string;
-    noProviders: string;
+    empty: {
+      title: string;
+      body: string;
+    },
     noMatch: string;
     badge: {
       default: string;
@@ -1258,6 +1261,8 @@ declare module "i18next" {
       saveBtn: string;
       nameRequired: string;
       costInvalid: string;
+      enabledLabel: string;
+      enabledHint: string;
     },
     instance: {
       titleCreate: string;
@@ -1281,6 +1286,7 @@ declare module "i18next" {
       nameRequired: string;
       add: string;
       none: string;
+      enabledHint: string;
     },
     probe: {
       title: string;
@@ -1305,6 +1311,11 @@ declare module "i18next" {
       batchDone: string;
       skipped: string;
       savedNotLive: string;
+      enabledAll: string;
+    },
+    master: {
+      on: string;
+      off: string;
     },
   },
   claudeOAuth: {

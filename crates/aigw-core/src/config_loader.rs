@@ -365,18 +365,51 @@ pub async fn load_websearch_registry(
 
     // Start from the yaml block when there is one so the global policy carries
     // over; otherwise the struct defaults, which is the documented policy.
+    //
+    // The distinction matters and is reported honestly below: with no yaml block
+    // the guardrails are *not* "on config.yaml", they are empty. Domain
+    // allow/block lists and the egress proxy have no other source — the DB
+    // tables hold providers and prices only — so a deployment that configures
+    // search purely through the UI runs without either.
+    let yaml_block_present = yaml.is_some();
     let base = yaml.clone().unwrap_or_else(default_websearch_config);
     let cfg = websearch_config_from_db(base, &providers, &instances);
 
     let n = cfg.providers.len();
     let reg = build_websearch_registry_from_rows(&cfg, master_key)?;
     if let Some(r) = &reg {
-        tracing::info!(
-            source = "database",
-            providers = n,
-            names = ?r.provider_names(),
-            "web search: provider list comes from the database; guardrails and egress stay on config.yaml"
-        );
+        if yaml_block_present {
+            tracing::info!(
+                source = "database",
+                providers = n,
+                names = ?r.provider_names(),
+                "web search: provider list comes from the database; guardrails and egress stay on config.yaml"
+            );
+        } else {
+            let g = r.guardrails();
+            let guardrails_are_empty = g.allowed_domains.is_empty()
+                && g.blocked_domains.is_empty()
+                && cfg.proxy_url.trim().is_empty();
+            if guardrails_are_empty {
+                tracing::warn!(
+                    source = "database",
+                    providers = n,
+                    names = ?r.provider_names(),
+                    "web search: provider list comes from the database and there is NO \
+                     `web_search` block in config.yaml — domain allow/block lists and the \
+                     egress proxy are therefore unset. Add a `web_search` block to \
+                     config.yaml if either is wanted."
+                );
+            } else {
+                tracing::info!(
+                    source = "database",
+                    providers = n,
+                    names = ?r.provider_names(),
+                    "web search: provider list comes from the database; guardrails and egress \
+                     come from a `web_search` block in config.yaml"
+                );
+            }
+        }
     }
     Ok(reg)
 }
@@ -1096,6 +1129,63 @@ providers:
             reg.provider_names(),
             vec!["from-db"],
             "the yaml providers must not survive alongside the DB ones"
+        );
+    }
+
+    /// DB-only configuration means *no* guardrails and *no* egress proxy.
+    ///
+    /// The domain allow/block lists and `proxy_url` have exactly one source —
+    /// the yaml block — and the DB tables hold providers and prices only. So a
+    /// deployment that adds its first provider through the UI runs without
+    /// them. This pins that fact, because the startup log used to claim the
+    /// opposite ("guardrails and egress stay on config.yaml") even when there
+    /// was no yaml block to stay on.
+    #[tokio::test]
+    async fn test_db_only_config_has_empty_guardrails() {
+        let db = test_db().await;
+        let mut p = db_provider("ui-made", Some(0), true);
+        p.id = 0;
+        let pid = db.create_web_search_provider(&p).await.expect("create");
+        db.create_web_search_instance(&db_instance(pid, "i", true))
+            .await
+            .expect("instance");
+
+        let reg = load_websearch_registry(&db, &None, "mk")
+            .await
+            .expect("load")
+            .expect("db path must build");
+
+        let g = reg.guardrails();
+        assert!(
+            g.allowed_domains.is_empty() && g.blocked_domains.is_empty(),
+            "no yaml block means no domain guardrails: {g:?}"
+        );
+    }
+
+    /// ...and the yaml block, when present, still supplies them.
+    #[tokio::test]
+    async fn test_yaml_block_supplies_guardrails_on_the_db_path() {
+        let db = test_db().await;
+        let mut p = db_provider("ui-made", Some(0), true);
+        p.id = 0;
+        let pid = db.create_web_search_provider(&p).await.expect("create");
+        db.create_web_search_instance(&db_instance(pid, "i", true))
+            .await
+            .expect("instance");
+
+        let mut yaml = parse_web_search(WEB_SEARCH_YAML);
+        yaml.providers.clear();
+        yaml.blocked_domains = vec!["keepme.com".to_string()];
+
+        let reg = load_websearch_registry(&db, &Some(yaml), "mk")
+            .await
+            .expect("load")
+            .expect("db path must build");
+
+        assert_eq!(
+            reg.guardrails().blocked_domains,
+            vec!["keepme.com".to_string()],
+            "the yaml block's policy must survive the DB provider list"
         );
     }
 

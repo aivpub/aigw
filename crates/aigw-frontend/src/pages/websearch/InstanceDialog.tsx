@@ -4,6 +4,7 @@ import { apiPost, apiPut } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
   DialogContent,
@@ -38,6 +39,7 @@ export function InstanceDialog({
   const [weight, setWeight] = useState(
     editing?.weight != null ? String(editing.weight) : "",
   );
+  const [enabled, setEnabled] = useState(editing?.enabled ?? true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -56,6 +58,7 @@ export function InstanceDialog({
       const body: Record<string, unknown> = {
         name: name.trim(),
         base_url: baseUrl.trim(),
+        enabled,
       };
       // An empty string would clear the stored key, and a blank field means
       // "not editing it" — so only a typed value is sent.
@@ -146,6 +149,22 @@ export function InstanceDialog({
             <p className="text-xs text-muted-foreground">
               {t("webSearch.instance.weightHint")}
             </p>
+          </div>
+          <div className="flex items-center justify-between rounded-md border px-3 py-2">
+            <div>
+              <Label htmlFor="ws-instance-enabled">
+                {t("webSearch.dialog.enabledLabel")}
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                {t("webSearch.instance.enabledHint")}
+              </p>
+            </div>
+            <Switch
+              id="ws-instance-enabled"
+              checked={enabled}
+              onCheckedChange={setEnabled}
+              data-testid="ws-instance-enabled"
+            />
           </div>
           {error && (
             <div className="rounded-md bg-destructive/10 border border-destructive/30 px-3 py-2 text-sm text-destructive">

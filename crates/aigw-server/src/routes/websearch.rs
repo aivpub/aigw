@@ -16,6 +16,7 @@
 //! - POST   /admin/websearch/instances/{id}/toggle        — enable ↔ disable
 //! - POST   /admin/websearch/instances/{id}/test          — connectivity probe, writes snapshot
 //! - POST   /admin/websearch/reload                       — rebuild the runtime registry
+//! - POST   /admin/websearch/enable-all                   — enable every provider + instance
 //!
 //! Every successful write triggers a reload, so "edit in the UI, takes effect
 //! now" is the default rather than something an operator has to remember. The
@@ -610,6 +611,66 @@ pub async fn toggle_provider(
     Ok(Json(with_reload(json!(updated), outcome)))
 }
 
+/// Enable every provider and instance that a previous "disable all" turned off.
+///
+/// There is no global on/off flag: "the layer is on" means "some provider is
+/// enabled and has an enabled instance", because the provider list has exactly
+/// one source and a second switch would be a second source of truth. This is
+/// the bulk counterpart of `toggle_provider`, so the UI's single switch has
+/// something to call.
+///
+/// It enables **everything**, including rows that were individually disabled
+/// before the bulk-off. "Restore" is not "undo" — there is no record of which
+/// flag was set by which action, and inventing one would mean a per-row
+/// previous-state column that nothing else needs.
+pub async fn enable_all(
+    State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    require_admin(&auth)?;
+    let mut enabled = 0usize;
+    for p in state
+        .db
+        .list_web_search_providers()
+        .await
+        .map_err(db_error)?
+    {
+        let mut row = p;
+        if !row.enabled {
+            row.enabled = true;
+            row.updated_at = now_rfc3339();
+            state
+                .db
+                .update_web_search_provider(&row)
+                .await
+                .map_err(db_error)?;
+            enabled += 1;
+        }
+        for mut i in state
+            .db
+            .list_web_search_instances(row.id)
+            .await
+            .map_err(db_error)?
+        {
+            if !i.enabled {
+                i.enabled = true;
+                i.updated_at = now_rfc3339();
+                state
+                    .db
+                    .update_web_search_instance(&i)
+                    .await
+                    .map_err(db_error)?;
+                enabled += 1;
+            }
+        }
+    }
+    let outcome = reload_registry(&state).await;
+    Ok(Json(with_reload(
+        json!({"status": "ok", "enabled_rows": enabled}),
+        outcome,
+    )))
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Instances
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1002,6 +1063,7 @@ mod tests {
             )
             .route("/admin/websearch/instances/{id}/test", post(test_instance))
             .route("/admin/websearch/reload", post(reload))
+            .route("/admin/websearch/enable-all", post(enable_all))
             .with_state(state)
     }
 
@@ -1354,6 +1416,54 @@ mod tests {
         assert!(
             !state.web_search.is_enabled(),
             "disabling the last provider turns the layer off"
+        );
+    }
+
+    /// The bulk counterpart: one click brings back every row the bulk-off took
+    /// down, and the layer is live again without a restart.
+    #[tokio::test]
+    async fn enable_all_brings_the_layer_back() {
+        let state = test_state().await;
+        let app = build_router(state.clone());
+        let id = create_provider_helper(&app, "p", Some(0)).await;
+        let iid = add_instance_helper(&app, id, "i", None).await;
+
+        // Take both the provider and its instance down.
+        for path in [
+            format!("/admin/websearch/providers/{id}/toggle"),
+            format!("/admin/websearch/instances/{iid}/toggle"),
+        ] {
+            let (s, body) = send(&app, axum::http::Method::POST, &path, None).await;
+            assert_eq!(s, 200, "{body}");
+        }
+        assert!(
+            !state.web_search.is_enabled(),
+            "both rows off means the layer is off"
+        );
+
+        let (s, body) = send(
+            &app,
+            axum::http::Method::POST,
+            "/admin/websearch/enable-all",
+            None,
+        )
+        .await;
+        assert_eq!(s, 200, "{body}");
+        assert_eq!(body["enabled_rows"], 2, "provider + instance");
+        assert_eq!(body["reload"]["ok"], true);
+        assert!(
+            state.web_search.is_enabled(),
+            "the layer must be live again without a restart"
+        );
+        assert!(
+            state
+                .db
+                .get_web_search_instance(iid)
+                .await
+                .unwrap()
+                .unwrap()
+                .enabled,
+            "the instance, not only the provider, must come back"
         );
     }
 

@@ -1208,7 +1208,10 @@
     "newProvider": "新建 Provider",
     "allProviders": "全部 Provider",
     "searchPlaceholder": "按名称、类型或实例搜索...",
-    "noProviders": "暂无搜索 Provider —— 内置搜索处于关闭状态",
+    "empty": {
+      "title": "内置搜索未启用",
+      "body": "只要存在一个已启用、且至少有一个实例的 Provider，搜索即刻生效。新建一个即可让本网关开始接管搜索请求。"
+    },
     "noMatch": "没有匹配的 Provider",
     "badge": {
       "default": "默认"
@@ -1241,7 +1244,9 @@
       "optionalPlaceholder": "可选",
       "saveBtn": "保存",
       "nameRequired": "名称必填",
-      "costInvalid": "单价必须是非负数"
+      "costInvalid": "单价必须是非负数",
+      "enabledLabel": "启用",
+      "enabledHint": "停用的 Provider 保留全部配置，但不承接任何请求。"
     },
     "instance": {
       "titleCreate": "新建实例",
@@ -1264,7 +1269,8 @@
       "weightHint": "可选。任一实例声明权重后，池内选择由均匀随机切换为加权随机。",
       "nameRequired": "名称必填",
       "add": "添加实例",
-      "none": "尚无实例 —— 未添加实例前该 Provider 无法承接搜索。"
+      "none": "尚无实例 —— 未添加实例前该 Provider 无法承接搜索。",
+      "enabledHint": "停用的实例保留配置，但永远不会被选中。"
     },
     "probe": {
       "title": "连通性探测",
@@ -1288,7 +1294,12 @@
       "toggleDone": "状态已切换",
       "batchDone": "批量操作完成",
       "skipped": "已跳过 {{n}} 个 Provider（默认 Provider）",
-      "savedNotLive": "已保存，但运行中的搜索层未更新 —— 请检查落库内容"
+      "savedNotLive": "已保存，但运行中的搜索层未更新 —— 请检查落库内容",
+      "enabledAll": "已启用 {{n}} 项"
+    },
+    "master": {
+      "on": "内置搜索已启用",
+      "off": "内置搜索已关闭 — 点击启用"
     }
   },
   "claudeOAuth": {

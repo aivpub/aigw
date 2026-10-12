@@ -646,7 +646,7 @@ export async function defineMockRoutes(route: Route, request: Request) {
       name: body.name ?? "new-provider",
       kind: body.kind ?? "searxng",
       cost_per_query: body.cost_per_query ?? 0.01,
-      enabled: true,
+      enabled: body.enabled ?? true,
       is_default: false,
       failover_order: body.failover_order ?? null,
       timeout_ms: body.timeout_ms ?? null,
@@ -668,6 +668,28 @@ export async function defineMockRoutes(route: Route, request: Request) {
     return route.fulfill({
       status: 200,
       json: { data: filtered, count: filtered.length },
+    });
+  }
+  if (
+    url.pathname === "/admin/websearch/enable-all" &&
+    route.request().method() === "POST"
+  ) {
+    let n = 0;
+    for (const p of webSearchProviders) {
+      if (!p.enabled) {
+        p.enabled = true;
+        n += 1;
+      }
+      for (const i of p.instances) {
+        if (!i.enabled) {
+          i.enabled = true;
+          n += 1;
+        }
+      }
+    }
+    return route.fulfill({
+      status: 200,
+      json: { status: "ok", enabled_rows: n, reload: { ok: true, providers: [] } },
     });
   }
   if (
@@ -703,7 +725,7 @@ export async function defineMockRoutes(route: Route, request: Request) {
         has_api_key: Boolean(body.api_key),
         redacted_api_key: body.api_key ? `****${String(body.api_key).slice(-4)}` : null,
         weight: body.weight ?? null,
-        enabled: true,
+        enabled: body.enabled ?? true,
         probe_result: {},
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
@@ -769,6 +791,14 @@ export async function defineMockRoutes(route: Route, request: Request) {
       return route.fulfill({
         status: 200,
         json: { status: "deleted", id: pid, reload: { ok: true, providers: [] } },
+      });
+    }
+    if (route.request().method() === "PUT" && provider) {
+      const body = JSON.parse(request.postData() ?? "{}");
+      Object.assign(provider, body);
+      return route.fulfill({
+        status: 200,
+        json: { ...provider, reload: { ok: true, providers: [] } },
       });
     }
     return route.fulfill({ status: 200, json: provider });
@@ -1089,6 +1119,20 @@ export function exposeCapturedBodies(page: Page) {
 // defeats the override. Guarding with a WeakSet ensures the broad `**/*` handler is registered
 // exactly once per page, so any override registered later is guaranteed to win.
 const mockedPages = new WeakSet<Page>();
+
+/**
+ * Flip every provider and instance off, straight in the mock store.
+ *
+ * Deterministic where a UI click-loop is not: the page refetches after each
+ * toggle and the row order can shift under the locator. Only reachable from
+ * step definitions, which run in the same worker process as this module.
+ */
+export function disableAllWebSearchRows() {
+  for (const p of webSearchProviders) {
+    p.enabled = false;
+    for (const i of p.instances) i.enabled = false;
+  }
+}
 
 export async function mockAllApis(page: Page, _opts?: MockOptions) {
   if (mockedPages.has(page)) return;
