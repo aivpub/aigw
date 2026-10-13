@@ -1,11 +1,39 @@
 # aigw -- 下一步行动
 
-**上次更新**: 2026-10-10
-**当前阶段**: **Phase 53 ✅ 内建 Web Search（TD-017c）全部交付：Stage 134-138 完成；总进度 138**（Phase 53 收官；Stage 139 未立项）
+**上次更新**: 2026-10-13
+**当前阶段**: **Phase 54 📋 设计待批 —— 搜索调用日志可视化（Stage 139，~8h）；总进度保持 138**（Phase 53 已收官，139 未开工）
 
 ---
 
-## 当前状态：Phase 53 完成，下一步待定（见文末候选）
+## 当前状态：Phase 54 设计待批 —— Stage 139 搜索结果可视化
+
+### Stage 139 设计（2026-10-13，待批）
+
+**问题**：Stage 136 已把检索结果**完整写入** `call_type="search"` 行的 `response.results[]`
+（`{title,url,snippet,score,published_date}`），Stage 137 做了行的识别与父子跳转 ——
+**但结果本身在界面一条都看不到**：
+
+| # | 洞 | 后果 |
+|---|----|------|
+| 1 | 抽屉把 `response` 交给通用 `OutputCard`，而 `parseOutput()` 只认 `choices[]`/`output[]`/`data[]` —— 搜索形状落到兜底 `empty` | 「输出」标签页**渲染成空白** |
+| 2 | 列表 Model 列对搜索行显 `{provider}/search` 内部串 | 结果数、命中实例不可见 |
+| 3 | 抽屉 `search-detail` 块把 5 项信息挤成一行文本 | 信息密度低 |
+
+**范围（用户 2026-10-13 决策，二选一取 A）**：只做「把已经存了的东西画出来」，
+不做按 provider/实例聚合花费、搜索量趋势、命中率（新页面，登记后续）。
+
+**方案要点**：① 后端 detail 新增 `search` **投影块**（`project_search_view` 纯函数，结果≤20 / snippet≤300 / URL 仅 http(s)），
+raw `response` 不裁剪；② 列表搜索行显 `{provider} · N 条结果`；③ 抽屉信息升格为四格指标 + 查询语句 + 父调用；
+④ **抽屉输出区新增 `SearchResultsPanel`**（结果卡片：标题可点/域名/摘要/score），保留「视觉/原始」双标签；
+⑤ i18n 5 key ×2 + 手机端只显结果数。
+
+**关键取舍**：不改共用的 `OutputCard.tsx`；列表不显示 query（列表接口不含 `messages`）；
+`result_count` 与留存条数不一致时两者都显示。
+
+**验证计划**：7 后端 UT（先红后绿）+ 8 BDD 场景 × 3 viewport + 门禁 11 条。
+详见 `docs/stages/stage-139.md`。**代码一行未动。**
+
+### 下一步：Stage 139 设计评审 → 批准后开工
 
 ### Stage 138 交付（2026-10-10）
 
@@ -38,9 +66,8 @@ sqlite 体一跑就绿把它们完整掩盖了：
 | 3 | PG `DEFAULT_WSP_PG` 的 `enabled = 1` 在 BOOLEAN 列上非法（**同时打掉删除守卫的 409**） | 改 `= TRUE` |
 | 4 | `UPDATE_WSI_PG` 占位符 `$9` 而语句只到 `$6`（潜伏，PUT instance 才撞） | 改 `$7` |
 
-commit `6ef43b5`。顺带登记 **TD-020**：`aigw_migrate::native` 的值强转把 MySQL
-`COUNT(*)` 读成 `Value::Bool(false)`（`bool` 排在 `i64` 前，而 MySQL BIGINT 对两者
-都 compatible）—— 测试侧已绕开，不影响迁移，独立于本 Phase。
+commit `6ef43b5`。顺带暴露 **TD-020** —— 初判为「只影响聚合、不影响迁移」，
+后续专项复查**推翻**该结论，定级 P0，见下方「两个独立缺陷的修复」。
 
 **至此三真实后端全部实测通过。**（Stage 138 时各 67/67；TD-019 补 session_id 场景后各 **68/68**。）
 
@@ -65,9 +92,9 @@ commit `6ef43b5`。顺带登记 **TD-020**：`aigw_migrate::native` 的值强转
 
 **顺带产出**: 新登记 **TD-019** —— `SpendLogsQuery.limit` / `session_id` 是静默失效的死参数（`limit` 致 Dashboard Period Spend 的窗口实为 30 条而非 100）。
 
-### 下一步：Phase 53 收官后的候选
+### Phase 53 收官后的候选（在 Phase 54 之外，无强制顺序）
 
-Phase 53（内建 Web Search，Stage 134-138）**全部交付**。后续候选（无强制顺序）：
+Phase 53（内建 Web Search，Stage 134-138）**已全部交付**；当前进行中的是 **Phase 54 / Stage 139**。以下为更后续的候选：
 
 | 候选 | 说明 |
 |------|------|
