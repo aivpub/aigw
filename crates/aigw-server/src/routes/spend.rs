@@ -352,6 +352,11 @@ pub async fn spend_logs(
                 "status": log.status,
                 "mcp_namespaced_tool_name": log.mcp_namespaced_tool_name,
                 "requester_ip_address": &log.requester_ip_address,
+                // Stage 139: search rows only. The list query already selects
+                // `response` (it builds SpendLog), so the count is in memory —
+                // no SQL change. Flattened scalar (not a `search` object) to
+                // keep the list DTO uniform.
+                "result_count": crate::routes::search_view::result_count_of(log),
             })
         })
         .collect();
@@ -544,7 +549,26 @@ pub async fn global_spend_log_detail(
         "messages": &body_payload.messages,
         "response": &body_payload.response,
         "proxy_server_request": &body_payload.proxy_server_request,
+        // Stage 139: what the UI renders for a search row's results. The raw
+        // `response` above stays untouched, so the "raw" tab is still the
+        // provider's own payload; this is the projected, bounded view.
+        "search": crate::routes::search_view::project_search_view(
+            &resolved_log_for_view(&log, &body_payload.response),
+        ),
     })))
+}
+
+/// A `SpendLog` carrying the *resolved* response body — which may have come
+/// from Parquet for an archived row rather than from `log.response`. The
+/// projection is a pure function of the row, so it needs the same body the
+/// response field above is built from, not the cold-column placeholder.
+fn resolved_log_for_view(
+    log: &aigw_core::models::SpendLog,
+    resolved_response: &Option<serde_json::Value>,
+) -> aigw_core::models::SpendLog {
+    let mut out = log.clone();
+    out.response = resolved_response.clone();
+    out
 }
 
 /// Compute TTFT (time to first token) in milliseconds.
@@ -778,6 +802,11 @@ pub async fn global_spend_logs(
                 "status": log.status,
                 "mcp_namespaced_tool_name": log.mcp_namespaced_tool_name,
                 "requester_ip_address": &log.requester_ip_address,
+                // Stage 139: search rows only. The list query already selects
+                // `response` (it builds SpendLog), so the count is in memory —
+                // no SQL change. Flattened scalar (not a `search` object) to
+                // keep the list DTO uniform.
+                "result_count": crate::routes::search_view::result_count_of(log),
             })
         })
         .collect();

@@ -18,6 +18,7 @@ pub mod proxies;
 pub mod proxy;
 pub mod responses;
 pub mod router_settings;
+pub mod search_view;
 pub mod spend;
 pub mod team;
 pub mod user;
