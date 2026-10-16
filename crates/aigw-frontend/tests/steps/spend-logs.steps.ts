@@ -347,7 +347,13 @@ Then("the spend log row with call id {string} should show the {string} type badg
     .filter({ hasText: truncated })
     .filter({ visible: true })
     .first();
-  await expect(row).toContainText(type, { timeout: 5000 });
+  // Scope to the badge cell, case-insensitively. Asserting on the whole row
+  // made this pass off the Model column's `searxng/search` string, which
+  // Stage 139 removed — the badge itself renders the localised label.
+  await expect(row.locator("[data-testid='call-type-badge']")).toContainText(
+    new RegExp(type, "i"),
+    { timeout: 5000 },
+  );
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -513,4 +519,118 @@ Then("the mobile search card should show no tokens and a provider", async ({ pag
   await expect(card).toBeVisible({ timeout: 5000 });
   await expect(card).toContainText("—");
   await expect(card).toContainText("searxng");
+});
+
+// ── Stage 139: search result visualization ──
+
+Then(
+  "the search row model cell of {string} should show {string} and {string}",
+  async ({ page }, cid: string, provider: string, count: string) => {
+    const cell = stage137Row(page, cid).locator("[data-testid='search-model-cell']");
+    await expect(cell).toContainText(provider, { timeout: 5000 });
+    await expect(cell).toContainText(count, { timeout: 5000 });
+  },
+);
+
+Then(
+  "the search row model cell of {string} should show the instance {string}",
+  async ({ page }, cid: string, host: string) => {
+    await expect(
+      stage137Row(page, cid).locator("[data-testid='search-model-instance']"),
+    ).toContainText(host, { timeout: 5000 });
+  },
+);
+
+Then(
+  "the search row model cell of {string} should not show {string}",
+  async ({ page }, cid: string, text: string) => {
+    // The internal `{provider}/search` string must never reach the cell.
+    await expect(
+      stage137Row(page, cid).locator("[data-testid='search-model-cell']"),
+    ).not.toContainText(text, { timeout: 5000 });
+  },
+);
+
+async function searchPanel(page: Page) {
+  const dialog = page.locator("[role='dialog']");
+  await dialog.waitFor({ timeout: 5000 });
+  const panel = dialog.locator("[data-testid='search-results-panel']");
+  await expect(panel).toBeVisible({ timeout: 5000 });
+  return panel;
+}
+
+Then("the search results panel should list {int} results", async ({ page }, n: number) => {
+  const panel = await searchPanel(page);
+  await expect(panel.locator("[data-testid='search-result-item']")).toHaveCount(n, {
+    timeout: 5000,
+  });
+});
+
+Then("the search results panel should show the title {string}", async ({ page }, title: string) => {
+  const panel = await searchPanel(page);
+  await expect(panel).toContainText(title, { timeout: 5000 });
+});
+
+Then("the search results panel should show {string}", async ({ page }, text: string) => {
+  const panel = await searchPanel(page);
+  await expect(panel).toContainText(text, { timeout: 5000 });
+});
+
+Then("the search results panel should show the results-not-retained note", async ({ page }) => {
+  const panel = await searchPanel(page);
+  await expect(panel).toContainText(/not retained|未随日志保留/i, { timeout: 5000 });
+  await expect(panel.locator("[data-testid='search-result-item']")).toHaveCount(0);
+});
+
+function searchResultItem(page: Page, title: string) {
+  return page
+    .locator("[data-testid='search-results-panel'] [data-testid='search-result-item']")
+    .filter({ hasText: title });
+}
+
+Then("the result titled {string} should be a link", async ({ page }, title: string) => {
+  const item = searchResultItem(page, title);
+  await expect(item).toBeVisible({ timeout: 5000 });
+  await expect(item.locator("a[href^='http']")).toHaveCount(1);
+  await expect(item.locator("a[href^='http']")).toHaveAttribute(
+    "rel",
+    /noopener/,
+  );
+});
+
+Then("the result titled {string} should not be a link", async ({ page }, title: string) => {
+  const item = searchResultItem(page, title);
+  await expect(item).toBeVisible({ timeout: 5000 });
+  // `javascript:` fails the http(s) allow-list: the title renders as text.
+  await expect(item.locator("a")).toHaveCount(0);
+});
+
+When("I switch the response tabs to {string}", async ({ page }, tab: string) => {
+  const dialog = page.locator("[role='dialog']");
+  // The drawer has up to two tab groups (input, output); the search row's
+  // response tabs are the last one.
+  await dialog.getByRole("tab", { name: new RegExp(`^${tab}$`, "i") }).last().click();
+  await page.waitForTimeout(300);
+});
+
+Then("the raw response block should contain the stored results array", async ({ page }) => {
+  const dialog = page.locator("[role='dialog']");
+  await expect(dialog.locator("pre").filter({ hasText: "result_count" })).toBeVisible({
+    timeout: 5000,
+  });
+  await expect(dialog.locator("pre").filter({ hasText: "Local note" })).toBeVisible({
+    timeout: 5000,
+  });
+});
+
+Then("the mobile search card should show the result count", async ({ page }) => {
+  const card = page
+    .locator("[data-testid='spend-log-row']")
+    .filter({ hasText: "searxng" })
+    .filter({ visible: true })
+    .first();
+  await expect(card).toBeVisible({ timeout: 5000 });
+  await expect(card.locator("[data-testid='search-model-cell']")).toContainText("5", {
+    timeout: 5000,
+  });
 });

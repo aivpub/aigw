@@ -275,3 +275,74 @@ Feature: Spend Logs
     Given the viewport is mobile size 375x667
     When I visit "/dash/spend-logs"
     Then the mobile search card should show no tokens and a provider
+
+  # ── Stage 139: search result visualization ──
+  #
+  # Stage 136 stored the results and nothing rendered them: the drawer handed
+  # the search `response` to the generic OutputCard, whose shape table has no
+  # entry for `{result_count, results[]}`, so the output tab came up blank.
+  # These scenarios lock design §3.2-§3.5.
+
+  Scenario: Search row model cell shows provider and result count
+    Given API endpoints are mocked
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    Then the search row model cell of "req-search-001" should show "searxng" and "5"
+
+  Scenario: Search row model cell shows the instance that served it
+    Given API endpoints are mocked
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    Then the search row model cell of "req-search-001" should show the instance "searxng-a:9099"
+
+  Scenario: Search row model cell never shows the internal model string
+    Given API endpoints are mocked
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    Then the search row model cell of "req-search-001" should not show "searxng/search"
+
+  Scenario: Search drawer renders every retained result
+    Given API endpoints are mocked
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    When I click on the spend log row with call id "req-search-001"
+    Then the search results panel should list 3 results
+    And the search results panel should show the title "aigw on GitHub"
+
+  Scenario: Search drawer shows both the reported and the retained count
+    Given API endpoints are mocked
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    When I click on the spend log row with call id "req-search-001"
+    Then the search results panel should show "kept 3 of 5"
+
+  Scenario: Only http and https results become links
+    Given API endpoints are mocked
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    When I click on the spend log row with call id "req-search-001"
+    Then the result titled "aigw on GitHub" should be a link
+    And the result titled "Local note" should not be a link
+
+  Scenario: Search drawer keeps the untrimmed payload in the raw tab
+    Given API endpoints are mocked
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    When I click on the spend log row with call id "req-search-001"
+    And I switch the response tabs to "raw"
+    Then the raw response block should contain the stored results array
+
+  Scenario: Search drawer with no retained results shows the empty state
+    Given API endpoints are mocked
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    When I click on the spend log row with call id "req-search-002"
+    Then the search results panel should show the results-not-retained note
+
+  Scenario: Mobile search card shows the result count
+    Given API endpoints are mocked
+    And I am logged in as admin
+    And I am on the Spend Logs page
+    Given the viewport is mobile size 375x667
+    When I visit "/dash/spend-logs"
+    Then the mobile search card should show the result count

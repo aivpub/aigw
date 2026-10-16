@@ -318,6 +318,9 @@ const SEARCH_SPEND_ROW = {
     search_provider: "searxng",
     cost_per_query: 0.01,
   },
+  // Stage 139: the list DTO carries the projected count (the full `results`
+  // array stays on the detail response only).
+  result_count: 5,
 };
 
 const SEARCH_ZERO_SPEND_ROW = {
@@ -366,6 +369,47 @@ const sampleDetailSearch = {
     results: [
       { title: "aigw on GitHub", url: "https://github.com/aivpub/aigw", snippet: "AI Gateway" },
       { title: "Rust async book", url: "https://rust-lang.github.io/async-book/", snippet: "async" },
+      // Stage 139: a non-http URL keeps its title but must not become a link.
+      { title: "Local note", url: "javascript:alert(1)", snippet: "not a link" },
+    ],
+  },
+  // Stage 139: the server-side projection of the two fields above. Mirrors
+  // `aigw-server/src/routes/search_view.rs` — the UI renders this, not raw
+  // `response` (raw stays for the "raw" tab).
+  search: {
+    provider: "searxng",
+    instance: "http://searxng-a:9099",
+    query: "aigw rust gateway",
+    query_count: 1,
+    result_count: 5,
+    kept_count: 3,
+    cost_per_query: 0.01,
+    parent_call_id: "req-001",
+    results: [
+      {
+        title: "aigw on GitHub",
+        url: "https://github.com/aivpub/aigw",
+        domain: "github.com",
+        snippet: "AI Gateway",
+        score: 2.2,
+        published_date: null,
+      },
+      {
+        title: "Rust async book",
+        url: "https://rust-lang.github.io/async-book/",
+        domain: "rust-lang.github.io",
+        snippet: "async",
+        score: 1.3,
+        published_date: null,
+      },
+      {
+        title: "Local note",
+        url: null,
+        domain: null,
+        snippet: "not a link",
+        score: null,
+        published_date: null,
+      },
     ],
   },
 };
@@ -374,6 +418,17 @@ const sampleDetailSearchZeroSpend = {
   ...SEARCH_ZERO_SPEND_ROW,
   messages: { query: "aigw rust gateway" },
   response: { result_count: 5, results: [] },
+  search: {
+    provider: "searxng",
+    instance: "http://searxng-b:9099",
+    query: "aigw rust gateway",
+    query_count: 1,
+    result_count: 5,
+    kept_count: 0,
+    cost_per_query: 0,
+    parent_call_id: "req-001",
+    results: [],
+  },
 };
 
 const sampleSpendModels = [
