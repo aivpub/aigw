@@ -58,6 +58,8 @@ import { toast } from "sonner";
 import { InputCard } from "@/components/log-viewer/InputCard";
 import { OutputCard } from "@/components/log-viewer/OutputCard";
 import { parseMessages } from "@/components/log-viewer/MessageViewer";
+import { SearchResultsPanel } from "./SearchResultsPanel";
+import type { SearchView } from "./SearchResultsPanel";
 import type { ModelItem, ModelListResponse } from "@/pages/models/types";
 
 /* ─────────────────────────────────────────────── Types ── */
@@ -94,6 +96,10 @@ interface SpendLog {
   mcp_namespaced_tool_name?: string | null;
   status: string | null;
   image_tokens?: number | null;
+  /// Search rows only (Stage 139). Projected from the `response` column the
+  /// list query already selects, so the list can show the count without the
+  /// whole results array.
+  result_count?: number | null;
 }
 
 interface SpendLogDetail {
@@ -131,6 +137,9 @@ interface SpendLogDetail {
   messages?: unknown;
   response?: unknown;
   proxy_server_request?: unknown;
+  /// Search rows only (Stage 139): the server-side projection of `response`.
+  /// Absent on every other call type.
+  search?: SearchView | null;
 }
 
 interface SpendLogsResponse {
@@ -260,14 +269,22 @@ function CallTypeBadge({ log }: { log: { call_type: string } }) {
   const { t } = useTranslation();
   if (isSearchRow(log)) {
     return (
-      <Badge variant="secondary" className="text-[10px] px-1 py-0 gap-1">
+      <Badge
+        variant="secondary"
+        className="text-[10px] px-1 py-0 gap-1"
+        data-testid="call-type-badge"
+      >
         <Search className="h-3 w-3" />
         {t("spendLogs.callType.search")}
       </Badge>
     );
   }
   return (
-    <Badge variant="outline" className="text-[10px] px-1 py-0">
+    <Badge
+      variant="outline"
+      className="text-[10px] px-1 py-0"
+      data-testid="call-type-badge"
+    >
       {log.call_type || "—"}
     </Badge>
   );
@@ -330,6 +347,81 @@ function SearchSpend({ log }: { log: SpendLog }) {
 function truncate8(s: string) {
   return s ? (s.length > 8 ? s.slice(0, 8) + "…" : s) : "—";
 }
+
+/// `http://searxng-a:9099/path` → `searxng-a:9099`. The full URL goes in a
+/// `title` so the cell stays one line.
+function instanceShort(apiBase: string | null | undefined): string | null {
+  if (!apiBase) return null;
+  try {
+    return new URL(apiBase).host || apiBase;
+  } catch {
+    return apiBase;
+  }
+}
+
+/// Model cell for a search row (Stage 139, design §3.2).
+///
+/// The stored `model` is the internal `{provider}/search` string — never a
+/// product-facing label. Replace it with the provider the search layer
+/// recorded plus the result count, and put the instance that answered on a
+/// second line (`api_base`, already in the list DTO).
+function SearchModelCell({ log }: { log: SpendLog }) {
+  const { t } = useTranslation();
+  const meta = extractSearchMeta(log.metadata);
+  const provider =
+    meta?.search_provider || log.custom_llm_provider || log.model || "—";
+  const count = log.result_count ?? null;
+  const instance = instanceShort(log.api_base);
+
+  return (
+    <div className="min-w-0">
+      <div className="font-medium truncate" data-testid="search-model-cell">
+        {provider}
+        {count != null
+          ? ` · ${t("spendLogs.search.results", { count })}`
+          : null}
+      </div>
+      {instance ? (
+        <div
+          className="text-[10px] text-muted-foreground font-mono truncate"
+          title={log.api_base ?? undefined}
+          data-testid="search-model-instance"
+        >
+          {instance}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/// One metric tile in the drawer's search block (Stage 139, design §3.3).
+function SearchMetric({
+  label,
+  value,
+  title,
+  mono,
+}: {
+  label: string;
+  value: string;
+  title?: string;
+  mono?: boolean;
+}) {
+  return (
+    <div
+      className="rounded-md border px-2 py-1.5 bg-muted/20 min-w-0"
+      data-testid="search-metric"
+    >
+      <div className="text-[10px] text-muted-foreground truncate">{label}</div>
+      <div
+        className={`text-foreground truncate ${mono ? "font-mono" : ""}`}
+        title={title}
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
+
 function truncateUuid(s: string) {
   if (!s) return "—";
   if (s.length <= 10) return s;
@@ -768,12 +860,31 @@ function DetailDrawer({
 
   const isSearch = isSearchRow(log);
   const searchMeta = extractSearchMeta(log.metadata);
+  const searchView = log.search ?? null;
   const searchQuery =
-    log.messages && typeof log.messages === "object"
+    searchView?.query ??
+    (log.messages && typeof log.messages === "object"
       ? ((log.messages as Record<string, unknown>).query as string | undefined)
-      : undefined;
-  const resultCount = searchResultCount(log.response);
+      : undefined);
+  const searchResultCountValue =
+    searchView?.result_count ?? searchResultCount(log.response);
 
+  const searchProvider =
+    searchView?.provider ??
+    searchMeta?.search_provider ??
+    log.custom_llm_provider ??
+    null;
+  const searchInstance = searchView?.instance ?? log.api_base ?? null;
+  const searchQueryCount =
+    searchView?.query_count ?? searchMeta?.search_query_count ?? null;
+  const searchCostPerQuery =
+    searchView?.cost_per_query ?? searchMeta?.cost_per_query ?? null;
+  const searchParentCallId =
+    searchView?.parent_call_id ?? searchMeta?.parent_call_id ?? null;
+
+  /// A search row's `messages` is `{query}` and its `response` is the results
+  /// blob — the generic Input/Output viewers render neither (design §3.3 F2,
+  /// §3.4). The search blocks below take over both.
   const hasPrompt = log.messages != null;
   const hasResponse = log.response != null;
 
@@ -839,10 +950,10 @@ function DetailDrawer({
           {isSearch ? (
             <span className="text-[11px] text-muted-foreground">
               {t("spendLogs.search.queries", {
-                count: searchMeta?.search_query_count ?? 1,
+                count: searchQueryCount ?? 1,
               })}
-              {resultCount != null
-                ? ` · ${t("spendLogs.search.results", { count: resultCount })}`
+              {searchResultCountValue != null
+                ? ` · ${t("spendLogs.search.results", { count: searchResultCountValue })}`
                 : ""}
               {` · ${fmtDuration(log.request_duration_ms)}`}
             </span>
@@ -1016,54 +1127,57 @@ function DetailDrawer({
           </div>
         </div>
 
-        {/* ── Stage 137: search detail block (search rows only) ── */}
+        {/* ── Stage 139: search detail block (search rows only). Upgraded from
+               Stage 137's single wrapped line into a metrics grid + key/value
+               rows (design §3.3). The Stage 137 testids are kept verbatim so
+               its BDD scenarios do not need rewriting. ── */}
         {isSearch ? (
-          <div
-            className="text-[11px] bg-muted/20 rounded p-2 mb-3 space-y-1"
-            data-testid="search-detail"
-          >
+          <div className="text-[11px] mb-3 space-y-2" data-testid="search-detail">
             <div className="flex items-center gap-1 text-muted-foreground font-medium">
               <Search className="h-3 w-3" />
               {t("spendLogs.drawer.searchDetail")}
             </div>
-            <div className="flex flex-wrap gap-x-4 gap-y-0.5">
-              <span>
-                {t("spendLogs.search.provider")}{" "}
-                <span className="font-mono text-foreground">
-                  {searchMeta?.search_provider ||
-                    log.custom_llm_provider ||
-                    "—"}
-                </span>
-              </span>
-              <span>
-                {t("spendLogs.search.instance")}{" "}
-                <code className="text-[10px] text-foreground">
-                  {log.api_base || "—"}
-                </code>
-              </span>
-              {searchMeta?.search_query_count != null ? (
-                <span>
-                  {t("spendLogs.search.queries", {
-                    count: searchMeta.search_query_count,
-                  })}
-                </span>
-              ) : null}
-              {resultCount != null ? (
-                <span data-testid="search-result-count">
-                  {t("spendLogs.search.results", { count: resultCount })}
-                </span>
-              ) : null}
-              {searchMeta?.cost_per_query != null ? (
-                <span>
-                  {t("spendLogs.search.costPerQuery")}{" "}
-                  <span className="font-mono text-foreground">
-                    {fmtSpend(searchMeta.cost_per_query)}
-                  </span>
-                </span>
-              ) : null}
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <SearchMetric
+                label={t("spendLogs.search.provider")}
+                value={searchProvider ?? "—"}
+              />
+              <SearchMetric
+                label={t("spendLogs.search.instance")}
+                value={searchInstance ?? "—"}
+                title={searchInstance ?? undefined}
+                mono
+              />
+              <SearchMetric
+                label={t("spendLogs.search.queryCountLabel")}
+                value={
+                  searchQueryCount != null ? String(searchQueryCount) : "—"
+                }
+              />
+              <SearchMetric
+                label={t("spendLogs.search.costPerQuery")}
+                value={
+                  searchCostPerQuery != null
+                    ? fmtSpend(searchCostPerQuery)
+                    : "—"
+                }
+                mono
+              />
             </div>
+
+            {searchResultCountValue != null ? (
+              <div className="text-muted-foreground" data-testid="search-result-count">
+                {t("spendLogs.search.results", {
+                  count: searchResultCountValue,
+                })}
+              </div>
+            ) : null}
             {searchQuery ? (
               <div className="text-muted-foreground" data-testid="search-query">
+                <span className="mr-1">
+                  {t("spendLogs.search.queryLabel")}
+                </span>
                 <span className="font-mono text-foreground break-all">
                   {searchQuery}
                 </span>
@@ -1074,12 +1188,12 @@ function DetailDrawer({
                 {t("spendLogs.search.zeroSpendHint")}
               </div>
             ) : null}
-            {searchMeta?.search_provider === "bocha" ? (
+            {searchProvider === "bocha" ? (
               <div className="text-amber-600">
                 {t("spendLogs.search.spendNotAuthoritative")}
               </div>
             ) : null}
-            {searchMeta?.parent_call_id ? (
+            {searchParentCallId ? (
               <div className="flex items-center gap-1">
                 <span>{t("spendLogs.drawer.meta.parentCall")}</span>
                 <Button
@@ -1087,11 +1201,11 @@ function DetailDrawer({
                   size="sm"
                   className="h-auto p-0 text-[11px] font-mono"
                   data-testid="parent-call-link"
-                  onClick={() => onOpenCallId?.(searchMeta.parent_call_id!)}
+                  onClick={() => onOpenCallId?.(searchParentCallId)}
                 >
-                  {truncateUuid(searchMeta.parent_call_id)}
+                  {truncateUuid(searchParentCallId)}
                 </Button>
-                <RowCopyButton text={searchMeta.parent_call_id} />
+                <RowCopyButton text={searchParentCallId} />
               </div>
             ) : null}
           </div>
@@ -1139,7 +1253,11 @@ function DetailDrawer({
             </div>
           ) : (
             <>
-              {hasPrompt ? (
+              {/* Stage 139 (design §3.3 F2): a search row's `messages` is
+                  `{query}`, which `parseMessages` cannot render. The search
+                  block above already shows the query, so the whole Input area
+                  is dropped rather than showing an empty placeholder. */}
+              {isSearch ? null : hasPrompt ? (
                 <div>
                   <Tabs defaultValue="visual">
                     <div className="flex items-center justify-between mb-1.5">
@@ -1170,7 +1288,28 @@ function DetailDrawer({
                 </p>
               )}
 
-              {hasResponse ? (
+              {searchView ? (
+                <div>
+                  <Tabs defaultValue="visual">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <TabsList className="h-7">
+                        <TabsTrigger value="visual" className="text-xs h-6">
+                          {t("spendLogs.drawer.tabVisual")}
+                        </TabsTrigger>
+                        <TabsTrigger value="raw" className="text-xs h-6">
+                          {t("spendLogs.drawer.tabRaw")}
+                        </TabsTrigger>
+                      </TabsList>
+                    </div>
+                    <TabsContent value="visual" className="mt-0">
+                      <SearchResultsPanel view={searchView} />
+                    </TabsContent>
+                    <TabsContent value="raw" className="mt-0">
+                      <RawJsonBlock data={log.response} />
+                    </TabsContent>
+                  </Tabs>
+                </div>
+              ) : hasResponse ? (
                 <div>
                   <Tabs defaultValue="visual">
                     <div className="flex items-center justify-between mb-1.5">
@@ -1444,6 +1583,9 @@ export function SpendLogsPage() {
         ...(rowMismatch ? detailData : (selectedLog ?? detailData)),
         messages: detailData.messages,
         response: detailData.response,
+        // Stage 139: the projected search block only exists on the detail
+        // response — the list DTO carries `result_count` alone.
+        search: detailData.search,
       }
     : selectedLog;
 
@@ -1798,26 +1940,30 @@ export function SpendLogsPage() {
                       <CallTypeBadge log={log} />
                     </TableCell>
                     <TableCell className="text-xs whitespace-nowrap">
-                      <div className="flex items-center gap-1">
-                        {log.model_group ? (
-                          <Badge
-                            variant="secondary"
-                            className="text-[10px] px-1 py-0 font-normal"
-                          >
-                            {log.model_group}
-                          </Badge>
-                        ) : null}
-                        <span className="font-medium">{log.model}</span>
-                        {log.image_tokens != null ? (
-                          <span
-                            className="text-[10px]"
-                            title={`Image Tokens: ${fmtTokens(log.image_tokens)}`}
-                            data-testid="multimodal-marker"
-                          >
-                            🖼️
-                          </span>
-                        ) : null}
-                      </div>
+                      {isSearchRow(log) ? (
+                        <SearchModelCell log={log} />
+                      ) : (
+                        <div className="flex items-center gap-1">
+                          {log.model_group ? (
+                            <Badge
+                              variant="secondary"
+                              className="text-[10px] px-1 py-0 font-normal"
+                            >
+                              {log.model_group}
+                            </Badge>
+                          ) : null}
+                          <span className="font-medium">{log.model}</span>
+                          {log.image_tokens != null ? (
+                            <span
+                              className="text-[10px]"
+                              title={`Image Tokens: ${fmtTokens(log.image_tokens)}`}
+                              data-testid="multimodal-marker"
+                            >
+                              🖼️
+                            </span>
+                          ) : null}
+                        </div>
+                      )}
                     </TableCell>
                     <TableCell className="text-xs whitespace-nowrap text-muted-foreground max-w-[100px] truncate">
                       {log.key_name || log.user || "—"}
@@ -1901,24 +2047,30 @@ export function SpendLogsPage() {
                   </span>
                 </div>
                 <div className="text-sm font-medium mb-1 flex items-center gap-1">
-                  {log.model_group ? (
-                    <Badge
-                      variant="secondary"
-                      className="text-[10px] px-1 py-0 font-normal"
-                    >
-                      {log.model_group}
-                    </Badge>
-                  ) : null}
-                  <span className="truncate">{log.model}</span>
-                  {log.image_tokens != null ? (
-                    <span
-                      className="text-[10px]"
-                      title={`Image Tokens: ${fmtTokens(log.image_tokens)}`}
-                      data-testid="multimodal-marker"
-                    >
-                      🖼️
-                    </span>
-                  ) : null}
+                  {isSearchRow(log) ? (
+                    <SearchModelCell log={log} />
+                  ) : (
+                    <>
+                      {log.model_group ? (
+                        <Badge
+                          variant="secondary"
+                          className="text-[10px] px-1 py-0 font-normal"
+                        >
+                          {log.model_group}
+                        </Badge>
+                      ) : null}
+                      <span className="truncate">{log.model}</span>
+                      {log.image_tokens != null ? (
+                        <span
+                          className="text-[10px]"
+                          title={`Image Tokens: ${fmtTokens(log.image_tokens)}`}
+                          data-testid="multimodal-marker"
+                        >
+                          🖼️
+                        </span>
+                      ) : null}
+                    </>
+                  )}
                 </div>
                 {log.end_user ? (
                   <div className="text-xs text-muted-foreground mb-1">

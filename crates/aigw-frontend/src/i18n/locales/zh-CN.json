@@ -753,7 +753,13 @@
       "costPerQuery": "单价 / 次",
       "childBadge": "搜索调用",
       "viewChildren": "查看该请求的搜索调用",
-      "spendNotAuthoritative": "以人民币计价的供应商由配置方换算，不可用于对外出账"
+      "spendNotAuthoritative": "以人民币计价的供应商由配置方换算，不可用于对外出账",
+      "resultsTitle": "命中结果",
+      "keptOfTotal": "（留存 {{kept}} / 共 {{total}}）",
+      "noResultsKept": "结果未随日志保留",
+      "openResult": "在新标签页打开",
+      "queryLabel": "查询语句",
+      "queryCountLabel": "查询次数"
     },
     "status": {
       "streaming": "流式"

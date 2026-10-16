@@ -770,6 +770,12 @@ declare module "i18next" {
       childBadge: string;
       viewChildren: string;
       spendNotAuthoritative: string;
+      resultsTitle: string;
+      keptOfTotal: string;
+      noResultsKept: string;
+      openResult: string;
+      queryLabel: string;
+      queryCountLabel: string;
     },
     status: {
       streaming: string;

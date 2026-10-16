@@ -753,7 +753,13 @@
       "costPerQuery": "Unit price / query",
       "childBadge": "Search calls",
       "viewChildren": "View search calls for this request",
-      "spendNotAuthoritative": "CNY-priced providers are converted by configuration; not for billing"
+      "spendNotAuthoritative": "CNY-priced providers are converted by configuration; not for billing",
+      "resultsTitle": "Results",
+      "keptOfTotal": "(kept {{kept}} of {{total}})",
+      "noResultsKept": "Results were not retained in the log",
+      "openResult": "Open in a new tab",
+      "queryLabel": "Query",
+      "queryCountLabel": "Queries"
     },
     "status": {
       "streaming": "streaming"
