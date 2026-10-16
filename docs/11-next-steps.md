@@ -1,13 +1,13 @@
 # aigw -- 下一步行动
 
-**上次更新**: 2026-10-13
-**当前阶段**: **Phase 54 📋 设计待批 —— 搜索调用日志可视化（Stage 139，~8h）；总进度保持 138**（Phase 53 已收官，139 未开工）
+**上次更新**: 2026-10-16
+**当前阶段**: **Phase 54 ✅ 完成 —— 搜索调用日志可视化（Stage 139 已交付）；总进度 139**（下一 Phase 待立项）
 
 ---
 
-## 当前状态：Phase 54 设计待批 —— Stage 139 搜索结果可视化
+## 当前状态：Phase 54 已收官 —— Stage 139 搜索结果可视化 ✅
 
-### Stage 139 设计（2026-10-13，待批）
+### Stage 139 交付（2026-10-16）
 
 **问题**：Stage 136 已把检索结果**完整写入** `call_type="search"` 行的 `response.results[]`
 （`{title,url,snippet,score,published_date}`），Stage 137 做了行的识别与父子跳转 ——
@@ -22,18 +22,41 @@
 **范围（用户 2026-10-13 决策，二选一取 A）**：只做「把已经存了的东西画出来」，
 不做按 provider/实例聚合花费、搜索量趋势、命中率（新页面，登记后续）。
 
-**方案要点**：① 后端 detail 新增 `search` **投影块**（`project_search_view` 纯函数，结果≤20 / snippet≤300 / URL 仅 http(s)），
-raw `response` 不裁剪；② 列表搜索行显 `{provider} · N 条结果`；③ 抽屉信息升格为四格指标 + 查询语句 + 父调用；
-④ **抽屉输出区新增 `SearchResultsPanel`**（结果卡片：标题可点/域名/摘要/score），保留「视觉/原始」双标签；
-⑤ i18n 5 key ×2 + 手机端只显结果数。
+**交付**：
 
-**关键取舍**：不改共用的 `OutputCard.tsx`；列表不显示 query（列表接口不含 `messages`）；
-`result_count` 与留存条数不一致时两者都显示。
+| 层 | 落地 |
+|----|------|
+| 后端 | `routes/search_view.rs`（新）：`project_search_view(&SpendLog) -> Option<SearchView>` 纯函数，无 IO，9 条 UT。结果≤20 / snippet≤300 字 / URL 仅 `http(s)`（非法方案 `url` 置 null，标题仍显）；单字段坏只让该字段为 null，整块不消失 |
+| 后端 | `global_spend_log_detail` 的 `search` 键为投影结果（非搜索行为 `null`）；raw `response` 原样保留；列表 DTO 加 `result_count`（**不改 SQL**，列表 SELECT 本就含 `response`） |
+| 前端 | `SearchResultsPanel.tsx`（新）：结果卡片（标题按白名单可点 + `rel="noopener noreferrer"` / 域名 / 摘要 `line-clamp-3` / score 徽标 / `published_date` 仅非 null 时显示），保留「视觉 / 原始」双标签 |
+| 前端 | `SearchModelCell`：列表搜索行显 `{provider} · N 条结果` + 命中实例；抽屉搜索块升格为四格指标；搜索行隐藏 Input 区（`parseMessages` 本就不认 `{query}`，query 只在搜索块出现一次） |
+| i18n | `spendLogs.search.*` 新增 6 key × en/zh-CN（`resultCountShort` 未加 —— 既有 `results` 已是同文案） |
 
-**验证计划**：7 后端 UT（先红后绿）+ 8 BDD 场景 × 3 viewport + 门禁 11 条。
-详见 `docs/stages/stage-139.md`。**代码一行未动。**
+**3 处实现偏差（Gate 3 实测驱动，详见 `stage-139.md` §4.3）**：
+1. 输出区面板**仅在服务端带 `search` 块时**渲染，不自拼空视图 —— 否则会把「留存了结果」误报成「未保留」。
+   顺带修掉 `enrichedLog` 漏传 `search` 的**真实产品 bug**（BDD 场景「kept 3 of 5」捕获）。
+2. 命中实例指标保留**完整 `api_base`** 而非 host:port —— Stage 137 既有 BDD 断言要求全文，截短会返工。
+3. `CallTypeBadge` 加 `data-testid="call-type-badge"` 并收窄 BDD 步骤 ——
+   原断言 `toContainText("search")` 命中的是 Model 列内部串 `searxng/search`，换掉该串后断言失去偶然来源（F1 同类缺陷）。
 
-### 下一步：Stage 139 设计评审 → 批准后开工
+**验证**：`task test` **1224 passed / 0 failed**、`task bdd` **315（302 pass / 13 skip）**、
+`task fe-bdd` **507 passed / 3 skipped**、`fmt`/`lint`/`doctor`/`fe-lint` 全绿。
+**未做**：真实库（`aigw.db` 的 `01a133ec-…`）人工核对 —— 证据全部来自 UT + BDD mock。
+
+**未提交**：Stage 139 的全部改动（含本组文档回写）尚未 commit；**Gate 4 独立代码评审未做**。
+
+### 下一步：Phase 55 立项
+
+候选（按 ADR-039 与 Phase 54 遗留）：
+
+| 方向 | 状态 |
+|------|------|
+| 设计 A（短路）：让 Claude Code WebSearch 按钮可用 | 唯一能解锁该按钮的路径；**必须配套 `srvtoolu_` 前缀剥离**，否则第二轮 400 |
+| 设计 B（agentic loop） | 硬前提「上游是否认网关注入的 function 工具」**仍未实测** |
+| 按 provider / 实例聚合花费与搜索量趋势 | Phase 54 遗留；`search` 投影块已带出 `instance`，是现成输入 |
+| Tavily / 博查客户端 | 抽象已就位，接入 = 加一文件 + 一个 `kind` 分支 |
+| M1 guardrails / M2 Redis 分布式层 | 中期 |
+| OAuth TD-015d / TD-015e、Codex TD-017b | 技术债 |
 
 ### Stage 138 交付（2026-10-10）
 
@@ -94,12 +117,13 @@ commit `6ef43b5`。顺带暴露 **TD-020** —— 初判为「只影响聚合、
 
 ### Phase 53 收官后的候选（在 Phase 54 之外，无强制顺序）
 
-Phase 53（内建 Web Search，Stage 134-138）**已全部交付**；当前进行中的是 **Phase 54 / Stage 139**。以下为更后续的候选：
+Phase 53（内建 Web Search，Stage 134-138）与 **Phase 54 / Stage 139 均已全部交付**；当前无进行中的 Stage，等 Phase 55 立项。以下为更后续的候选：
 
 | 候选 | 说明 |
 |------|------|
 | ~~补跑 `bdd-real-pg` / `bdd-real-mysql`~~ | ✅ **已完成（2026-10-10）** —— 曾暴露四处方言缺陷，见上方小节 |
 | ~~TD-020 / TD-019~~ | ✅ **均已修复（2026-10-10，ADR-037 / ADR-038）** |
+| ~~Phase 54 搜索结果可视化~~ | ✅ **已完成（2026-10-16，Stage 139）** —— 遗留：按 provider/实例聚合花费与搜索量趋势、结果条目点击预览 |
 | 设计 A（搜索短路） | **唯一能让 Claude Code 的 WebSearch 按钮真正可用**的形态。⚠️ 必须配套「`srvtoolu_` 前缀标记 + 发往上游前剥离历史块」，否则第二轮整个会话 400 |
 | 设计 B（agentic loop） | 硬前提「上游是否认网关**注入**的 function tools」**未实测** —— 立项前必须先做这项实测 |
 | Tavily / 博查客户端 | 抽象已就位，接入 = 加一个 provider 文件 + 一个 `kind` 分支。⚠️ 博查的 CNY→USD 汇率决策落地前，其金额不得对外出账 |

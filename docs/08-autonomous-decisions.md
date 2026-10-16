@@ -772,6 +772,9 @@
   **一个已通过全部门禁的 Stage 重新打开**，并把两个协议硬约束留到无人评审处解决。
 - **Consequences**:
   - **Phase 53 = 5/5 完成，总进度 138**（Stage 139 未立项）。
+    > **2026-10-16 后记**：Stage 139（Phase 54，搜索调用日志结果可视化）已于当日交付，总进度 139。
+    > 本 ADR 的决策（Phase 53 以 Stage 138 收口、设计 A 留作独立 Phase）**不变** ——
+    > Stage 139 是 Phase 54 的独立立项，不是 Phase 53 的补课。
   - 候选清单（不进 Phase 53）：设计 A / 设计 B / Tavily 与博查客户端 / Serper 与 ScrapingDog 后备 provider /
     `search_count` 专列 / 按实例花费下钻 / 配额加权 LB。
   - 与设计 A 捆绑的必要工作（不是可选项）：`srvtoolu_` 前缀标记 + 发往上游前剥离 + 多轮回放 e2e。

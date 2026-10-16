@@ -1,7 +1,7 @@
 # aigw — AI Gateway Stagemap
 
 **项目**: aigw (litellm Rust 最小兼容替代)
-**最后更新**: 2026-10-13
+**最后更新**: 2026-10-16
 
 ---
 
@@ -10,8 +10,8 @@
 - **已完成 Phase**: **Phase 51 ✅（Stage 126-130）**Claude OAuth 订阅反代五 Stage 全部交付：凭证交换引擎 + Token 三层自愈 + 反代管线 + 前端入口 + 收尾安全审计。
 - **Phase 51 明细**（历史，总进度当时为 134）: Stage 126-127（2026-08-19）：credentials 表 OAuth 结构化扩展 + Cookie→Token 3 步交换（PKCE S256 经代理）+ `claude_token.rs` TokenProvider 三层自愈 + needs_reauth 告警。**Stage 128（2026-08-20）**：OAuth 反代管线（`oauth_pipeline.rs` billing 指纹字节对齐 sub2api/Parrot + 协议转换 + CC 伪装 + 401 刷新重试 + count_tokens + embeddings 400 + 代理出口）+ 四入口接线。**Stage 129（2026-08-24）**：CredentialsTab OAuth 前端入口 + `POST /credential/oauth/refresh`。**Stage 130（2026-08-24 ✅，134/134）**：real BDD 三后端 OAuth 凭证 CRUD + 加密落库直读断言 + in-use 守卫（**58/58 × 3 全绿**）+ 安全审计 8 项全部通过 + **`/credential/new` OAuth 凭证逐字段 AES-256-GCM 加密落库**（新增 `aigw-core::crypto::encrypt_litellm_value_gcm`）+ **TD-015a 全库收窄**（`chat::upstream_error_message` 接线 4 handler）+ ADR-034 收尾。验证：aigw-core **502** + aigw-server **157** UT、mock BDD **278（265 pass / 13 skip）**、real BDD 三端 **58/58 × 3**、fmt + lint green。详见 `docs/stages/stage-126.md` ~ `stage-130.md` + `stage-130-review-log.md`。
 - **上一 Phase**: **Phase 53 ✅ 完成（Stage 134-138；总进度 138）**——搜索后端抽象层 + 三入口接线 + 按次计费 + 调用日志展现 + **provider/实例/定价 DB 化与管理 UI** 全部交付：搜索真正可用、成本入账、四级预算扣减、日志可见、**改价不重启生效**。三真实后端 sqlite / pg / mysql 各 68/68。
-- **当前 Phase**: **Phase 54 📋 设计待批（Stage 139，~8h）**——搜索调用日志**结果可视化**：Stage 136 已把检索结果写进 `response.results[]`，但界面一条都看不到（通用 `OutputCard` 不认该形状 → 渲染成空白）。本 Phase 只做「把存了的东西画出来」：后端新增 `search` 投影块 + 列表搜索行换渲染 + 抽屉信息分组 + **抽屉输出区结果卡片列表**。**未开工，总进度保持 138**。
-- **下一里程碑**: **Stage 139 设计评审**（设计文档 `docs/stages/stage-139.md` 已提交待批；批准后开工）。已决策留作更后续的候选见 ADR-039：**设计 A（短路，唯一能让 Claude Code WebSearch 按钮可用，但必须配套 `srvtoolu_` 前缀剥离否则第二轮 400）**；**设计 B（agentic loop，硬前提「上游是否认网关注入的 function 工具」仍未实测）**；Tavily / 博查客户端（抽象已就位）；中期 M1 guardrails / M2 Redis 分布式层；OAuth TD-015d / TD-015e；Codex TD-017b。
+- **当前 Phase**: **Phase 54 ✅ 完成（Stage 139；总进度 139）**——搜索调用日志**结果可视化**：Stage 136 已把检索结果写进 `response.results[]`，但界面一条都看不到（通用 `OutputCard` 不认该形状 → 渲染成空白）。本 Phase 交付：后端 `search` 投影块（`project_search_view` 纯函数，9 条 UT）+ 列表搜索行换渲染（`{provider} · N 条结果` + 命中实例）+ 抽屉信息分四格指标 + **抽屉输出区 `SearchResultsPanel` 结果卡片**（标题按 http/https 白名单可点 / 域名 / 摘要 line-clamp / score 徽标），保留「视觉 / 原始」双标签。`task test` 1224 / `bdd` 315（302 pass / 13 skip）/ `fe-bdd` 507 passed / 3 skipped 全绿。⚠️ **未提交；Gate 4 独立代码评审未做**。
+- **下一里程碑**: **Phase 55 立项**（待用户决策方向）。已决策留作更后续的候选见 ADR-039：**设计 A（短路，唯一能让 Claude Code WebSearch 按钮可用，但必须配套 `srvtoolu_` 前缀剥离否则第二轮 400）**；**设计 B（agentic loop，硬前提「上游是否认网关注入的 function 工具」仍未实测）**；Tavily / 博查客户端（抽象已就位）；**Phase 54 遗留**：按 provider/实例聚合的花费与搜索量趋势、结果条目点击预览；中期 M1 guardrails / M2 Redis 分布式层；OAuth TD-015d / TD-015e；Codex TD-017b。
 
 ### 整体进度
 
@@ -63,7 +63,7 @@ Phase 50:   ████████████████████ 100% (4
 Phase 51:   ████████████████████ 100% (5/5 Stages) ✅ Claude OAuth 订阅反代 (Stage 126-130)  — **134/134 ALL STAGES COMPLETE**
 Phase 52:   ████████████████████ 100% (3/3 Stages) ✅ Codex 客户端兼容 (Stage 131-133) — 总进度 137
 Phase 53:   ████████████████████ 100% (5/5 Stages) ✅ 内建 Web Search (Stage 134-138) — 总进度 138
-Phase 54:   ░░░░░░░░░░░░░░░░░░░░   0% (0/1 Stage)  📋 搜索调用日志可视化 (Stage 139 设计待批)
+Phase 54:   ████████████████████ 100% (1/1 Stage)  ✅ 搜索调用日志可视化 (Stage 139) — 总进度 139
 
 ---
 
@@ -200,7 +200,7 @@ Phase 54:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 ---
 
-## Phase 54：搜索调用日志可视化 📋（Stage 139 设计待批，~8h）
+## Phase 54：搜索调用日志可视化 ✅（Stage 139 完成，2026-10-16，~8h）
 
 **背景**: Stage 136 把检索结果**完整写入**了 `call_type="search"` 行的 `response` 列（`{result_count, results:[{title,url,snippet,score,published_date}]}`），Stage 137 做了行的识别与父子跳转 —— 但**结果本身在界面上一条都看不到**。三处独立的洞：
 
@@ -215,7 +215,7 @@ Phase 54:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 | Stage | 状态 | 目标 | 类型 | 预估 |
 |-------|------|------|------|------|
-| Stage 139 | 📋 设计待批（2026-10-13） | **搜索结果可视化** — ① 后端 detail 响应新增 `search` **投影块**（`project_search_view(&SpendLog) -> Option<SearchView>` 纯函数：provider / instance / query / query_count / result_count / cost_per_query / parent_call_id / results[]≤20，snippet≤300 字，URL 仅 `http`/`https`），raw `response` 原样保留；② 列表搜索行 Model 列改显 `{provider} · N 条结果`；③ 抽屉搜索块升级为「四格指标 + 查询语句 + 父调用」；④ **抽屉输出区新增 `SearchResultsPanel`**（结果卡片：标题可点 / 域名 / 摘要 line-clamp / score 徽标 / `published_date` 仅非 null 时显示），保留「视觉 / 原始」双标签；⑤ i18n 5 key ×2 + 手机端只显示结果数。TDD: 7 后端 UT（先红后绿）+ 8 BDD 场景 × 3 viewport。**不动 `OutputCard.tsx`**（搜索走独立分支） | 后端+前端+测试 | ~8h |
+| Stage 139 | ✅ 完成（2026-10-16，**未提交；Gate 4 代码评审未做**） | **搜索结果可视化** — ① 后端 detail 响应新增 `search` **投影块**（`project_search_view(&SpendLog) -> Option<SearchView>` 纯函数：provider / instance / query / query_count / result_count / cost_per_query / parent_call_id / results[]≤20，snippet≤300 字，URL 仅 `http`/`https`），raw `response` 原样保留；② 列表搜索行 Model 列改显 `{provider} · N 条结果` + 命中实例 host:port；③ 抽屉搜索块升级为「四格指标 + 查询语句 + 父调用」；④ **抽屉输出区新增 `SearchResultsPanel`**（结果卡片：标题可点 / 域名 / 摘要 line-clamp / score 徽标 / `published_date` 仅非 null 时显示），保留「视觉 / 原始」双标签；⑤ i18n 6 key ×2 + 手机端只显示结果数。**实交付 9 后端 UT**（规划 7，多出「单条结果缺 title 跳过」与「`result_count_of` 的 call_type 守卫」）+ 9 BDD 场景 × 3 viewport。**不动 `OutputCard.tsx`**（搜索走独立分支）。验证：`task test` 1224 / `task bdd` 315（302 pass / 13 skip）/ `task fe-bdd` 507 passed / 3 skipped / `fmt`+`lint`+`doctor`+`fe-lint` 全绿 | 后端+前端+测试 | ~8h |
 
 **依赖关系**: 依赖 Stage 137（`call_type="search"` 行与抽屉搜索块）与 Stage 136（`response.results[]` 的写入方）；与 Phase 53 的其它 Stage 无耦合。
 
@@ -225,7 +225,12 @@ Phase 54:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 - **列表不显示 query** —— 列表接口不含 `messages`，为一行查询词扩接口不划算；query 只在抽屉呈现。
 - **`result_count` 与留存条数并存** —— provider 自报与实际留存可能不一致（`api-mocks.ts` 的 `sampleDetailSearch` 现存用例正是 5 vs 2）；两者都显示，仅不等时加 `（留存 N / 共 M）` 后缀。
 
-**设计文档**: `docs/stages/stage-139.md`（待批）
+**实现偏差（3 处，Gate 3 实测驱动，详见 `stage-139.md` §4.3）**:
+- **D1** 输出区面板**仅当 detail 响应带 `search` 块时**渲染，不再自拼空视图 —— 否则会把「日志确实留存了结果」误报成「结果未保留」。同时修掉 `enrichedLog` 漏传 `search` 的真实产品 bug（BDD 场景「kept 3 of 5」捕获）。
+- **D2** 命中实例指标显示**完整 `api_base`** 而非 host:port —— Stage 137 的既有 BDD 断言要求全文，截短会使其返工。
+- **D3** `CallTypeBadge` 两个分支都加 `data-testid="call-type-badge"`，BDD 步骤收窄到该 testid —— 原断言命中的是 Model 列里的内部串 `searxng/search`，本 Stage 换掉该串后断言失去偶然来源（评审日志 F1 同类的偶然通过缺陷，借机修掉）。
+
+**设计文档**: `docs/stages/stage-139.md`（✅ 已实现并通过门禁）
 
 ---
 
@@ -1081,6 +1086,7 @@ Phase 54:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 | 版本 | 日期 | 修订内容 |
 |------|------|----------|
+| v73.0 | 2026-10-16 | **Phase 54 收官（Stage 139 交付 ✅，总进度 139）**：搜索结果可视化落地。**后端**：新增 `crates/aigw-server/src/routes/search_view.rs` —— `project_search_view(&SpendLog) -> Option<SearchView>` 纯函数（无 IO，9 条 UT）：从 `metadata` 取 `search_provider`/`search_query_count`/`cost_per_query`/`parent_call_id`，从 `messages` 取 `query`，从 `response` 取 `result_count`/`results[]`，`instance` 取 `api_base`；结果≤20 条、snippet≤300 字、URL 仅 `http`/`https`（非法方案 `url` 置 null 而标题仍显）；任一来源字段缺失/类型不符只让该字段为 null，整块不消失。`global_spend_log_detail` 仅在 `call_type=="search"` 时插入 `search` 键，raw `response` 原样保留；列表 DTO 新增 `result_count`（**不改 SQL** —— 列表 SELECT 本就含 `response`）。**前端**：新增 `SearchResultsPanel.tsx`（结果卡片：标题按白名单可点 + `rel="noopener noreferrer"` / 域名 / 摘要 `line-clamp-3` / score 徽标 / `published_date` 仅非 null 时显示），抽屉输出区在 `search` 块存在时走它并保留「视觉 / 原始」双标签；`SearchModelCell` 让列表搜索行显 `{provider} · N 条结果` + 命中实例；抽屉搜索块升格为四格指标（provider / instance / 查询次数 / 单价）；搜索行隐藏 Input 区（`parseMessages` 本就不认 `{query}`，query 只在搜索块出现一次）；i18n 6 key ×2。**不动 `OutputCard.tsx`**。**3 处实现偏差**（详见 `stage-139.md` §4.3）：① 输出区面板仅在服务端带 `search` 块时渲染，不自拼空视图（否则会把「留存了结果」误报成「未保留」）—— 同时修掉 `enrichedLog` 漏传 `search` 的**真实产品 bug**，由 BDD 场景「kept 3 of 5」捕获；② 命中实例指标保留完整 `api_base`（Stage 137 既有断言要求全文，截短会返工）；③ `CallTypeBadge` 加 `data-testid="call-type-badge"` 并收窄 BDD 步骤 —— 原断言 `toContainText("search")` 命中的是 Model 列内部串 `searxng/search`，本 Stage 换掉该串后断言失去偶然来源（评审日志 F1 同类的偶然通过缺陷，借机修掉）。验证：`task test` **1224 passed / 0 failed**、`task bdd` **315（302 pass / 13 skip）**、`task fe-bdd` **507 passed / 3 skipped**、`fmt`/`lint`/`doctor`/`fe-lint` 全绿。**遗留**：真实库（`aigw.db` 的 `01a133ec-…`）人工核对未做，证据全部来自 UT + BDD mock。 |
 | v72.0 | 2026-10-13 | **Phase 54 立项（搜索调用日志可视化，Stage 139 设计待批，~8h）**：用户决策二选一取 A（只做「把已经存了的东西画出来」，不做聚合分析新页面）。**背景**：Stage 136 已把检索结果完整写入 `call_type="search"` 行的 `response.results[]`（`{title,url,snippet,score,published_date}`），Stage 137 做了行的识别与父子跳转，**但结果本身在界面一条都看不到** —— 抽屉把 `response` 交给通用 `OutputCard` 的 `parseOutput()`，而它只认 `choices[]`/`output[]`/`data[]` 三种形状，搜索形状落到兜底 `empty` → 「输出」标签页渲染成空白。另两处：列表 Model 列对搜索行显 `{provider}/search` 内部串；抽屉 `search-detail` 块信息密度低。**方案要点**：① 后端 detail 新增 `search` **投影块**（`project_search_view` 纯函数，结果≤20 条、snippet≤300 字、URL 仅 http/https），raw `response` 不裁剪；② 列表搜索行显 `{provider} · N 条结果`；③ 抽屉信息升格为四格指标 + 查询语句 + 父调用；④ **抽屉输出区新增 `SearchResultsPanel`**（结果卡片：标题可点/域名/摘要/score），保留「视觉/原始」双标签；⑤ i18n 5 key ×2 + 手机端只显结果数。**关键取舍**：不改共用的 `OutputCard.tsx`（搜索走独立分支）；列表不显示 query（列表接口不含 `messages`，不为此扩接口）；`result_count` 与留存条数不一致时两者都显示。TDD：7 后端 UT（先红后绿）+ 8 BDD 场景 × 3 viewport。**未开工，总进度保持 138**。设计文档 `docs/stages/stage-139.md` 待批。 |
 | v71.0 | 2026-10-10 | **Phase 53 收官（Stage 134-138 全部完成，总进度 138）**：Stage 138（provider/实例/定价 DB 化 + 管理 UI）交付 —— `028_web_search_providers.sql` × 三方言 + CRUD/实例子资源/启停/单实例探测 + 运行期可换 registry（**改价不重启生效**）+ 前端管理页（含定价编辑与牌价误填黄条）。**PG/MySQL 真实库首跑暴露并修掉四处方言类型缺陷**（PG `enabled INTEGER` ↔ `i64`、MySQL `created_at DATETIME` ↔ `String`、PG `enabled = 1` 在 BOOLEAN 列上非法（**同时打掉删除守卫的 409**）、`UPDATE_WSI_PG` 占位符 `$9` 而语句只到 `$6`）—— 见 stage-138 §7.4。验收：aigw-core 667 + aigw-server 207 UT、mock BDD 315（302 pass / 13 skip）、**三真实后端 sqlite / pg / mysql 各 68/68**、fe-bdd 468 passed / 3 skipped、真实 SearXNG 端到端（含不重启改价）。**另修两处独立缺陷**：TD-020（`aigw_migrate` 把 MySQL INT 列读成布尔，`1..=127` 与负数被改写为 1 —— **P0 数据损坏**，ADR-038）与 TD-019（`SpendLogsQuery.limit`/`session_id` 静默失效，ADR-037）。**决策**：设计 A（短路）与设计 B（agentic loop）**留作独立 Phase，不在 Phase 53 赶工** —— 见 ADR-039。 |
 | v70.0 | 2026-10-08 | **Phase 53 Stage 137 交付 ✅（总进度 138，Phase 53 4/5）**：搜索调用在管理控制台的**展现与聚合口径修正**（纯前端 + 两个后端筛选参数）。**后端**：`SpendLogsQuery` 加 `call_type` / `parent_call_id`，列表查询 11→13 参、**计数查询同步加两参**（`query_spend_logs_count` 5→7 参，三方言 —— Review F1 的「筛选后分页条显示全量条数」缺陷），`parent_call_id` 走**三方言 JSON 条件**（SQLite `json_extract` / MySQL `JSON_UNQUOTE(JSON_EXTRACT(...))` / PG `metadata->>'...'`）。**编码期发现 Critical 缺陷 X1**：MySQL 默认 `sql_mode` 下反斜杠是字符串转义符 → 仅做引号翻倍的转义**可被 `x\' OR 1=1 --` 绕过**（实测返回全部行），新增 `sql_literal(db, raw)` 在 MySQL 上额外翻倍反斜杠（SQLite/PG 不动 —— 它们把反斜杠当普通字符，逃逸它会改坏值）。**前端**：搜索行专属 badge + token 单元格刻意渲染 `—`（附 tooltip「按次计费、不消耗 token」）+ spend 列**刻意相反**地渲染 `$0.00` + 「未计价」徽标（区分「不适用」与「值为零」）+ 抽屉搜索详情块（provider / **命中实例 `api_base`** / query / 结果数 / `cost_per_query` 单价快照 / 零值说明）+ **父↔子双向跳转**（搜索行→父调用切抽屉；LLM 行→「查看搜索调用」按 `parent_call_id` 过滤列表）+ `call_type` 下拉 + 清除胶囊。**聚合口径 15 项逐条审计**（§4.3，全部以代码核实）：不改任何聚合 SQL（排除搜索行会让 `SUM(spend)` 少算搜索费、破坏对账等式），只在前端加口径注脚；**顺带修掉既有 bug**：Dashboard「Total Requests」由本页条数 `count` 改读 `total_count`（TD-018 Resolved）；**实测发现** `SpendLogsQuery.limit` 是死参数（端点回落 `page_size=30`）→ 新登记 TD-019。**强制 TDD 红绿**（用户 2026-10-08 决策，本 Stage 起恢复）：后端 11 UT 首轮 8 条 FAIL、前端 19 场景首轮 27 FAIL，实现后转绿。验证：`task test`（aigw-core **645** / aigw-server **187+194**）、`task fe-bdd` **444 passed / 3 skipped**（3 viewport × 149 场景）、`task fe-lint`（含 i18n 类型对称）/`fmt`/`lint` 全绿。设计评审 7 findings（F1-F7）+ 代码评审 6 findings（G1-G6，全修，含 1 High 的跨页 stale-row）。设计文档：`docs/stages/stage-137.md`。 |

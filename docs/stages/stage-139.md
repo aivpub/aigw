@@ -3,7 +3,7 @@
 **所属**: Phase 54（搜索调用日志可视化）
 **预估**: ~8h（后端投影 + 前端四块 + i18n + BDD）
 **依赖**: Stage 137（`call_type="search"` 行与抽屉搜索块）、Stage 136（`response.results[]` 的写入方）
-**状态**: 📋 设计待批（Gate 1）
+**状态**: ✅ 完成（2026-10-16，Gate 3 实现 + 门禁全绿；**Gate 4 代码评审未做**；未提交）
 
 ---
 
@@ -31,6 +31,19 @@ Stage 136 在每条 `call_type="search"` 行的 `response` 列里**完整写入�
 
 ---
 
+## 1.5 核心假设
+
+| # | 假设 | 若不成立的后果 | 验证方式 |
+|---|------|--------------|---------|
+| H1 | **`response.results[]` 在所有搜索行里都存在且形状一致**（`title`/`url`/`snippet` 必有，`score`/`published_date` 可缺） | 结果卡片大面积空白；空态文案成为主路径 | 查真实库现有搜索行的 `response` 逐条核对（已完成：`01a133ec-…` 形状符合） |
+| H2 | **`result_count` 与 `results.len()` 会不一致** | 若事实上恒等，3.4 的「留存 N / 共 M」后缀是多余复杂度 | 已证实不一致：`api-mocks.ts` 的 `sampleDetailSearch` 是 5 vs 2 |
+| H3 | **列表 DTO 不含 `response`，但 DB 查询已 SELECT 该列** —— 故列表加 `result_count` 无需改 SQL | 若 DB 层也没取，就要改列表 SQL 拉大列 | **实测**（`GET /global/spend/logs?call_type=search`）：DTO 29 键无 `response`/`messages`；但 `db.rs:9058` 的列表 SELECT **含 `response`** → handler 里 `log.response` 已在内存 |
+| H4 | **不改通用 `OutputCard` 也能覆盖搜索**（独立组件即可） | 若要复用既有渲染能力（折叠/主题），独立组件的维护面会翻倍 | 读 `OutputCard.tsx` 的 `ParsedOutput` 契约 —— 它的三形状与搜索形状无重叠 |
+| H5 | **投影是纯函数**，可脱离 HTTP 层单测 | 若投影被迫依赖 DB/AppState，7 条 UT 退化为集成测试，红绿循环变慢 | 投影数据全来自入参 `&SpendLog`，无 IO |
+| H6 | **抽屉的 Input 区对搜索行本就是空的**（`parseMessages` 不认 `{query}`） | 若它其实能渲染，隐藏 Input 区就是无谓的信息损失 | 读 `MessageViewer.tsx:33-66` —— 只认数组与 `record.messages`，其余 `return empty` |
+
+---
+
 ## 2. 边界
 
 **做**：列表搜索行的呈现、抽屉搜索信息的分组、抽屉输出区的检索结果列表、i18n、BDD。
@@ -54,7 +67,7 @@ Stage 136 在每条 `call_type="search"` 行的 `response` 列里**完整写入�
 {
   // ...既有字段不动
   "response": { /* 原样，不裁剪 —— 保留"原始"标签页的完整性 */ },
-  "search": {                        // ← 新增，仅 call_type=="search" 时存在
+  "search": {                        // ← 新增，仅 call_type=="search" 时非 null
     "provider": "searxng",
     "instance": "http://searxng-a:9099",
     "query": "aigw rust gateway",
@@ -85,7 +98,11 @@ Stage 136 在每条 `call_type="search"` 行的 `response` 列里**完整写入�
   从 `log.metadata` 取 `search_provider` / `search_query_count` / `cost_per_query` / `parent_call_id`；
   从 `log.messages` 取 `query`；从 `log.response` 取 `result_count` / `results[]`；
   `instance` 取 `log.api_base`。
-- `global_spend_log_detail` 在组装 JSON 时，若 `log.call_type == "search"` 则插入 `"search"` 键。
+- `global_spend_log_detail` 在组装 JSON 时**总是**带上 `"search"` 键，
+  值为 `project_search_view(...)` 的结果 —— `call_type != "search"` 时为 `null`。
+  （投影在组装端点算而非序列化层跳过：`json!` 宏里一个 `Option` 字段直接落成 `null`，
+  要「非搜索行不含该键」得在 `json!` 外另开分支，收益为零 —— 前端 `log.search ?? null` 一视同仁。
+  原设计的「仅搜索行存在该键」措辞由此订正为「非搜索行为 `null`」。）
 
 **常量**：`SEARCH_RESULTS_INLINE_MAX = 20`、`SEARCH_SNIPPET_MAX_CHARS = 300`。
 
@@ -93,20 +110,22 @@ Stage 136 在每条 `call_type="search"` 行的 `response` 列里**完整写入�
 
 ### 3.2 前端：列表 —— 搜索行换掉 Model 列内容
 
-新增 `SearchModelCell`（在 `pages/spend-logs/index.tsx` 内，与既有 `SearchSpend` / `SearchTokenHint` 并列）：
+**Gate 2 决策（F1）**：列表 DTO 为搜索行**新增 `result_count`**。
+代价近零 —— DB 层的列表 SELECT **本就包含 `response`**（`db.rs:9058`），
+handler 里 `log.response` 已在内存，只需投影出这一个整数，**不改 SQL**。
+
+新增 `SearchModelCell`（`pages/spend-logs/index.tsx` 内，与 `SearchSpend` / `SearchTokenHint` 并列）：
 
 ```
-现在：  SearXNG/search
-提议：  SearXNG · 3 条结果
-        ↗ say PONG              ← 次行，truncate + title 全文
+现在：  SearXNG/search                    ← 内部串，且结果数不可见
+改后：  SearXNG · 3 条结果
+        ⚙ 30.184.60.216:9099              ← 命中实例（来自列表既有的 api_base）
 ```
 
-- 第一行：`{search_provider ?? custom_llm_provider} · {result_count} 条结果`
-- 第二行：查询词（来自 `messages.query`；列表接口**不含** `messages`，故列表里查不到 query）
-  → **列表只显示 provider + 结果数**；query 留给抽屉（避免为一个次行把 `messages` 拉进列表接口）
-- `result_count` 未知时只显示 provider
-
-非搜索行的 Model 列**一字不改**。
+- 第一行：`{search_provider ?? custom_llm_provider} · {result_count} 条结果`；`result_count` 为 null 时只显 provider
+- 第二行：命中实例 host:port（`api_base` 列表已有，**零后端成本**）；`api_base` 为 null 则不显示
+- **列表不显示 query** —— 列表 DTO 不含 `messages`（H3 实测确认），query 留给抽屉
+- 非搜索行的 Model 列**一字不改**
 
 ### 3.3 前端：抽屉搜索信息块（`data-testid="search-detail"`）
 
@@ -125,6 +144,15 @@ Stage 136 在每条 `call_type="search"` 行的 `response` 列里**完整写入�
 - 指标格沿用仓库既有 `rounded-md border px-4 py-2` 微卡片风格（同 `QualityDialog` 的 score/grade 块）
 - 「命中实例」只显 host:port（完整 `api_base` 放 `title`），避免长 URL 撑破
 - 既有断言 `data-testid="search-result-count"` / `search-query` / `parent-call-link` **保留**，保证 Stage 137 的 BDD 不返工
+
+**Gate 2 决策（F2）：搜索行隐藏「输入」区，query 只在这一处出现。**
+
+原设计只处理了 Output 侧，漏了 Input 侧 —— 而它**同样是空的**：搜索行的 `messages`
+是 `{"query": "say PONG"}`，`InputCard` 走 `parseMessages()`，而它只认数组
+（裸数组 / `record.messages`），**其余一律 `return empty`**（`MessageViewer.tsx:61`）。
+
+改法：`isSearchRow(log)` 时**不渲染 Input 标签区**，只渲染本搜索详情块 ——
+同一段 query 不在两处重复出现，也避免再维护一条 `{query}` 形状的渲染分支。
 
 ### 3.4 前端：抽屉输出区 —— **本 Stage 的核心**
 
@@ -166,19 +194,27 @@ Stage 136 在每条 `call_type="search"` 行的 `response` 列里**完整写入�
 
 | key | 中文 | 英文 |
 |-----|------|------|
-| `resultCountShort` | `{{count}} 条结果` | `{{count}} results` |
-| `keptOfTotal` | `（留存 {{kept}} / 共 {{total}}）` | `(kept {{kept}} of {{total}})` |
 | `resultsTitle` | `命中结果` | `Results` |
+| `keptOfTotal` | `（留存 {{kept}} / 共 {{total}}）` | `(kept {{kept}} of {{total}})` |
 | `noResultsKept` | `结果未随日志保留` | `Results were not retained in the log` |
 | `openResult` | `在新标签页打开` | `Open in a new tab` |
+| `queryLabel` | `查询语句` | `Query` |
+| `queryCountLabel` | `查询次数` | `Queries` |
 
-既有 `queries` / `results` / `provider` / `instance` / `costPerQuery` 复用。
+设计原列的 `resultCountShort`（`{{count}} 条结果`）**未新增** —— 既有 `results` 已是同一文案，
+再加一个同义 key 只会多一处要同步的翻译（奥卡姆剃刀）。列表与抽屉都复用 `results`。
+
+既有 `queries` / `results` / `provider` / `instance` / `costPerQuery` / `zeroSpendHint` / `spendHint` 复用。
 
 ---
 
 ## 4. 测试
 
-### 4.1 后端 UT（投影纯函数）—— 先红后绿
+### 4.1 后端 UT（投影纯函数）
+
+实际交付 **9 条**（规划 7 条）—— 多出的是设计评审期发现的边界：
+`project_skips_results_without_a_title`（H1 的「单条结果缺 title 时跳过该条而非整块失败」）
+与 `result_count_of_is_search_only`（列表 DTO 用的 `result_count_of` 也必须是 call_type 守卫）。
 
 | UT | 断言 |
 |----|------|
@@ -188,11 +224,14 @@ Stage 136 在每条 `call_type="search"` 行的 `response` 列里**完整写入�
 | `project_caps_results_and_snippet` | 50 条 → 20 条；600 字 → 300 字 |
 | `project_drops_non_http_urls` | `javascript:` / `data:` → 该条 `url` 置 null（标题仍显示） |
 | `project_reports_both_counts_when_they_disagree` | `result_count=5` + 2 条 results → 两者都在 |
+| `project_skips_results_without_a_title` | 单条结果缺 title → 跳过该条，其余照常 |
+| `result_count_of_is_search_only` | 非搜索行 → `None`（列表 DTO 不串键） |
 | `project_survives_malformed_response` | `response` 为字符串/数组 → 不 panic，字段为 null |
 
-### 4.2 前端 BDD（`spend-logs.feature` 追加，× 3 viewports）
+### 4.2 前端 BDD（`spend-logs.feature` 追加 9 个场景，× 3 viewports）
 
 - 搜索行列表显示「provider · N 条结果」而**不是** `searxng/search`
+- 列表第二行显示命中实例 host:port
 - 抽屉搜索块显示四个指标 + 查询语句
 - 抽屉「视觉」标签渲染出**每条结果**的标题/域名/摘要
 - 结果标题在 `url` 合法时是链接、非法时不渲染为链接
@@ -203,6 +242,31 @@ Stage 136 在每条 `call_type="search"` 行的 `response` 列里**完整写入�
 
 mock 侧：`api-mocks.ts` 的 `sampleDetailSearch` 现有 `result_count: 5` 但只有 2 条 `results` ——
 **正好是 3.4 的「计数不一致」场景**，保留；另补一条 `javascript:` URL 的结果用于白名单断言。
+detail mock 同时补投影块 `search`（与后端 `search_view.rs` 同形状），列表行补 `result_count`。
+
+### 4.3 Gate 3 实现偏差（3 处）
+
+实现过程中有 3 处偏离设计文本，均为实测驱动，逐条记录：
+
+| # | 设计原文 | 实际实现 | 原因 |
+|---|---------|---------|------|
+| D1 | 空态「`results` 为空但有 `result_count > 0` → 结果未随日志保留」 | **仅当 `search` 块非 null（即后端判定为搜索行）时才渲染面板**；`search` 为 null 时走原 `OutputCard` 分支，不再合成空视图 | Gate 3 期间发现：列表行 DTO 不含 `search`，抽屉若在 `enrichedLog` 未合并 `search` 时自行拼一个空视图，会把「日志确实留存了结果」误报成「结果未保留」。宁可退化为旧渲染，也不谎报。同时修了 `enrichedLog` 漏传 `search` 的**真实产品 bug**（BDD 场景「kept 3 of 5」捕获） |
+| D2 | 命中实例指标「只显 host:port，完整 `api_base` 放 `title`」 | 指标值显示**完整 `api_base`**，`title` 仍为完整值 | Stage 137 的既有 BDD 断言 `http://searxng-a:9099` 全文；截短会使其返工 —— 与 3.3「既有断言保留」的约束冲突，以既有断言为准 |
+| D3 | 列表行徽标断言隐含在整行文本里 | `CallTypeBadge` 两个分支都加 `data-testid="call-type-badge"`，BDD 步骤收窄到该 testid 上大小写不敏感匹配 | 原断言 `toContainText("search")` 命中的是 Model 列里的内部串 `searxng/search` —— 本 Stage 把它换成 `searxng · 5 results` 后断言失去偶然来源。这是评审日志 F1 同类的**偶然通过**缺陷，借机修掉 |
+
+---
+
+### 4.4 Gate 证据
+
+| 门禁命令 | 结果 |
+|---------|------|
+| `task test` | ✅ 1224 passed / 0 failed（含新增 9 条投影 UT） |
+| `task bdd` | ✅ 315 scenarios（302 passed / 13 skipped）/ 1680 steps |
+| `task fe-bdd` | ✅ 507 passed / 3 skipped（含新增 9 场景 × 3 viewports） |
+| `task fmt` | ✅ |
+| `task lint` | ✅（clippy `-D warnings`） |
+| `task doctor` | ✅（`cargo check --workspace` + clippy） |
+| `task fe-lint` | ✅（含 i18n 类型对称） |
 
 ---
 
@@ -215,37 +279,54 @@ mock 侧：`api-mocks.ts` 的 `sampleDetailSearch` 现有 `result_count: 5` 但�
 | 后端 | `crates/aigw-server/src/routes/mod.rs` | `pub mod search_view;` |
 | 前端 | `crates/aigw-frontend/src/pages/spend-logs/SearchResultsPanel.tsx`（新） | 结果卡片列表 |
 | 前端 | `crates/aigw-frontend/src/pages/spend-logs/index.tsx` | `SearchModelCell` + `SearchDetailBlock` 重写 + 输出区分派 + types |
-| 前端 | `crates/aigw-frontend/src/i18n/locales/{en,zh-CN}.json` | 5 个新 key |
+| 前端 | `crates/aigw-frontend/src/i18n/locales/{en,zh-CN}.json` | 6 个新 key（`resultsTitle` / `keptOfTotal` / `noResultsKept` / `openResult` / `queryLabel` / `queryCountLabel`） |
 | 前端 | `crates/aigw-frontend/src/i18n/resources.d.ts` | 重新生成（`scripts/fe-i18n-types`） |
-| 测试 | `crates/aigw-frontend/tests/features/spend-logs.feature` + `tests/steps/spend-logs.steps.ts` | 8 个新场景 |
-| 测试 | `crates/aigw-frontend/tests/steps/api-mocks.ts` | 补一条非法 URL 的结果 |
+| 测试 | `crates/aigw-frontend/tests/features/spend-logs.feature` + `tests/steps/spend-logs.steps.ts` | 9 个新场景 + 徽标步骤收窄到 `call-type-badge` |
+| 测试 | `crates/aigw-frontend/tests/steps/api-mocks.ts` | detail 补投影 `search` 块 + 一条非法 URL 结果；列表行补 `result_count` |
 
 **不动**：`OutputCard.tsx`（通用组件，搜索走独立分支，避免为一个 nil-safe 形状污染它）、
 `spend_logs` 表结构、Stage 136 的写入路径、Stage 137 的既有 testid。
 
 ---
 
+## 5.5 回滚计划
+
+**纯增量，无数据迁移 —— 回滚即 revert 这组 commit。**
+
+- **后端**：`search` 是 detail 响应的**新增键**，既有键一个不动 → 前端不读它时零影响。回滚后响应恢复原样。
+- **前端**：搜索行渲染从「显 `{provider}/search` + 空白输出」变成「显 provider·结果数 + 结果卡片」。回滚即恢复旧渲染。
+- **无 DB 变更**：本 Stage **不新增表、不改列、不写迁移**（`response` 的写入方 Stage 136 不动）。故没有「回滚要退回数据」的问题。
+- **无配置变更**：不碰 `config.yaml` / `web_search` 块。
+- **回滚判定**：若结果卡片导致列表/抽屉性能问题（大结果集），可只 revert 前端 commit，保留后端投影（后者无害）。
+
+---
+
 ## 6. 回归验证
 
-1. `task test` — 新增 7 个后端 UT
-2. `task bdd` — 既有 315 场景不回归
-3. `task fe-bdd` — 既有 480 passed 不回归 + 新增 8 × 3
-4. `task fmt` / `task lint` / `task doctor` / `task fe-lint` / `task fe-build`
-5. **人工**：用 `aigw.db` 里已有的真实搜索行（`01a133ec-…`，query `say PONG`，3 条结果）开抽屉核对四块
+实测结果（2026-10-16）：
+
+1. `task test` — ✅ 1224 passed / 0 failed（含新增 9 条投影 UT）
+2. `task bdd` — ✅ 315 scenarios（302 passed / 13 skipped）/ 1680 steps，零回归
+3. `task fe-bdd` — ✅ 507 passed / 3 skipped（既有基线 + 9 场景 × 3 viewports）
+4. `task fmt` / `task lint` / `task doctor` / `task fe-lint` — ✅ 全绿
+5. **人工未做** — 未用 `aigw.db` 的真实搜索行（`01a133ec-…`）开抽屉肉眼核对；
+   BDD mock 的 `sampleDetailSearch` 与后端 `search_view.rs` 同形状，已覆盖同一字段集。
+   记为遗留（见 §8）。
 
 ## 7. 门禁
 
-- [ ] 7 个后端 UT 先红后绿
-- [ ] detail 响应新增 `search` 块；非搜索行不含该键
-- [ ] URL 白名单生效（`javascript:` 不出链接）
-- [ ] 结果数上限 20 / 摘要 300 字生效
-- [ ] 列表搜索行不再显示 `{provider}/search` 原始串
-- [ ] 抽屉「视觉」标签渲染每条结果；「原始」标签仍是完整 JSON
-- [ ] `result_count` 与留存数不一致时两者都显示
-- [ ] 手机端不刷屏
-- [ ] i18n en/zh-CN 对称；`fe-lint`（含类型对称）绿
-- [ ] `task test` / `bdd` / `fe-bdd` / `fmt` / `lint` / `doctor` / `fe-lint` 全绿
-- [ ] git commit（精确 add；`--signoff`）
+- [x] 9 个后端 UT 先红后绿（规划 7，实交付 9）
+- [x] detail 响应新增 `search` 块；非搜索行为 `null`（见 §3.1 订正）
+- [x] URL 白名单生效（`javascript:` 不出链接）
+- [x] 结果数上限 20 / 摘要 300 字生效
+- [x] 列表搜索行不再显示 `{provider}/search` 原始串
+- [x] 抽屉「视觉」标签渲染每条结果；「原始」标签仍是完整 JSON
+- [x] `result_count` 与留存数不一致时两者都显示
+- [x] 手机端不刷屏
+- [x] i18n en/zh-CN 对称；`fe-lint`（含类型对称）绿
+- [x] `task test` / `bdd` / `fe-bdd` / `fmt` / `lint` / `doctor` / `fe-lint` 全绿
+- [ ] **Gate 4 代码评审** —— 未做。本 Stage 的实现+门禁已完成，但独立代码评审（历次由 `/rdd-stage-auto` 或多路 subagent 承担）尚未执行
+- [ ] git commit（精确 add；`--signoff`）—— 未提交
 
 ## 8. 风险与遗留
 
@@ -260,3 +341,17 @@ mock 侧：`api-mocks.ts` 的 `sampleDetailSearch` 现有 `result_count: 5` 但�
 - 按 provider / 实例聚合的花费与搜索量趋势（需新查询）
 - 结果条目的点击预览 / 内联抓取
 - 搜索行的 `session_id` 作为第二条父子线索在 UI 上暴露（TD-019 已接通后端）
+- **未做真实库人工核对** —— 见 §6 第 5 条。当前证据全部来自 UT + BDD mock；
+  若要坐实「真实搜索行的四块渲染」，需用 `aigw.db` 里的 `01a133ec-…` 手工过一遍
+
+---
+
+## 9. 对后续 Stage 的影响
+
+| 影响 | 说明 |
+|------|------|
+| **建立了「投影块」先例** | detail 响应可为特定 `call_type` 附加投影键（本 Stage 的 `search`）。后续若要给 embedding / image 行做专属呈现，照此模式加键即可，不必让前端解析 raw blob |
+| **`SearchResultsPanel` 是结果渲染的落点** | 将来「设计 A（短路）」若落地，它的响应里也会有服务端搜索结果块 —— 渲染层可复用本组件 |
+| **URL 白名单是安全约定** | 后续任何「渲染上游返回的 URL 为链接」的改动都必须走同一白名单（`http`/`https` + `rel="noopener noreferrer"`） |
+| **未解锁** | 按实例聚合花费（需新查询）、结果点击预览 —— 均登记为后续 Phase；本 Stage 的 `search` 投影块已把 `instance` 字段带出，是那些功能的现成输入 |
+| **不阻塞任何 Stage** | Phase 53 已收官；本 Stage 与 Phase 53 的其它产出无反向依赖 |
