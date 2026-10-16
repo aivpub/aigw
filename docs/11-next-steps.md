@@ -41,9 +41,16 @@
 
 **验证**：`task test` **1224 passed / 0 failed**、`task bdd` **315（302 pass / 13 skip）**、
 `task fe-bdd` **507 passed / 3 skipped**、`fmt`/`lint`/`doctor`/`fe-lint` 全绿。
-**未做**：真实库（`aigw.db` 的 `01a133ec-…`）人工核对 —— 证据全部来自 UT + BDD mock。
 
-**未提交**：Stage 139 的全部改动（含本组文档回写）尚未 commit；**Gate 4 独立代码评审未做**。
+**真实库核对（2026-10-16）**：`sqlite3 "file:./aigw.db?mode=ro"` 只读打开生产库，
+12 条 `call_type="search"` 行 × 36 条结果逐字段核对 —— `metadata` 四个键 12/12 齐备、
+父调用 12/12 存在、`messages` 形状确为 `{"query":…}`、`title`/`url` 缺失 0/36。
+**推翻一条设计假设**：`result_count` 与 `results.len()` 真实库 **12/12 全部相等**，
+原「会不一致」的判断依据只有人造 fixture → 防御保留但不再声称「实测不一致」。
+**未做**：真机开抽屉肉眼核对（本地无运行实例）；**Gate 4 独立代码评审未做**。
+
+**提交**：`81aa21b`（后端）→ `b7a86b3`（前端）→ `93f1f3b`（测试）→ `a56bab3`（文档组，含本文件），
+均 `--signoff`。⚠️ 这四个提交**已推送至 `origin/main`**（非本次会话执行，见下）。
 
 ### 下一步：Phase 55 立项
 

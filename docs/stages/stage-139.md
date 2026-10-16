@@ -3,7 +3,9 @@
 **所属**: Phase 54（搜索调用日志可视化）
 **预估**: ~8h（后端投影 + 前端四块 + i18n + BDD）
 **依赖**: Stage 137（`call_type="search"` 行与抽屉搜索块）、Stage 136（`response.results[]` 的写入方）
-**状态**: ✅ 完成（2026-10-16，Gate 3 实现 + 门禁全绿；**Gate 4 代码评审未做**；未提交）
+**状态**: ✅ 完成（2026-10-16，Gate 3 实现 + 门禁全绿 + **真实库核对**；**Gate 4 代码评审未做**）
+
+**提交**: `81aa21b`（后端）→ `b7a86b3`（前端）→ `93f1f3b`（测试）→ `a56bab3`（本文档组），均 `--signoff`。
 
 ---
 
@@ -35,8 +37,8 @@ Stage 136 在每条 `call_type="search"` 行的 `response` 列里**完整写入�
 
 | # | 假设 | 若不成立的后果 | 验证方式 |
 |---|------|--------------|---------|
-| H1 | **`response.results[]` 在所有搜索行里都存在且形状一致**（`title`/`url`/`snippet` 必有，`score`/`published_date` 可缺） | 结果卡片大面积空白；空态文案成为主路径 | 查真实库现有搜索行的 `response` 逐条核对（已完成：`01a133ec-…` 形状符合） |
-| H2 | **`result_count` 与 `results.len()` 会不一致** | 若事实上恒等，3.4 的「留存 N / 共 M」后缀是多余复杂度 | 已证实不一致：`api-mocks.ts` 的 `sampleDetailSearch` 是 5 vs 2 |
+| H1 | **`response.results[]` 在所有搜索行里都存在且形状一致**（`title`/`url`/`snippet` 必有，`score`/`published_date` 可缺） | 结果卡片大面积空白；空态文案成为主路径 | 已查真实库 `01a133ec-…` 形状符合。**2026-10-16 复核 12 行 × 36 条**：`title`/`url` 缺失 0/36；但 `snippet` 空串 **9/36**、`published_date` 非 null 仅 **11/36** —— 「可缺」的两个字段比预期更常缺，投影的 `null` 降级是主路径而非边角 |
+| H2 | **`result_count` 与 `results.len()` 会不一致** | 若事实上恒等，3.4 的「留存 N / 共 M」后缀是多余复杂度 | **2026-10-16 真实库核对：12/12 相等** —— 原判断依据只有 `api-mocks.ts` 的人造 5 vs 2 fixture，不成立。**结论：防御保留**（上游换 provider 后仍可能不一致，且前缀只在不等时出现，零成本），但不再声称「实测不一致」 |
 | H3 | **列表 DTO 不含 `response`，但 DB 查询已 SELECT 该列** —— 故列表加 `result_count` 无需改 SQL | 若 DB 层也没取，就要改列表 SQL 拉大列 | **实测**（`GET /global/spend/logs?call_type=search`）：DTO 29 键无 `response`/`messages`；但 `db.rs:9058` 的列表 SELECT **含 `response`** → handler 里 `log.response` 已在内存 |
 | H4 | **不改通用 `OutputCard` 也能覆盖搜索**（独立组件即可） | 若要复用既有渲染能力（折叠/主题），独立组件的维护面会翻倍 | 读 `OutputCard.tsx` 的 `ParsedOutput` 契约 —— 它的三形状与搜索形状无重叠 |
 | H5 | **投影是纯函数**，可脱离 HTTP 层单测 | 若投影被迫依赖 DB/AppState，7 条 UT 退化为集成测试，红绿循环变慢 | 投影数据全来自入参 `&SpendLog`，无 IO |
@@ -185,6 +187,11 @@ handler 里 `log.response` 已在内存，只需投影出这一个整数，**不
 **计数不一致**：`result_count`（provider 自报）与 `results.len()`（实际留存）可能不同 ——
 两者都给：标题写 `命中结果 (留存 N / 共 M)`，仅在不一致时加后缀。
 
+> **2026-10-16 实测订正**：这一分支在真实库里**从未触发** —— 12 条搜索行
+> `result_count` 与 `results.len()` **全部相等**（§6.1）。原设计把它当作「已知会发生的
+> 情形」，依据只有 `api-mocks.ts` 的人造 fixture。实现保留该防御（换 provider 后仍可能
+> 不一致，且仅在不等时加后缀，零成本），但**不得**再作为「真实数据已验证」来引用。
+
 ### 3.5 手机端
 
 列表卡片：搜索行在现有「Model」位置改显 `{provider} · {N} 条结果`（同 3.2）。
@@ -240,8 +247,9 @@ handler 里 `log.response` 已在内存，只需投影出这一个整数，**不
 - 「原始」标签仍显示未裁剪 JSON
 - 手机卡片显示结果数（不展开结果列表）
 
-mock 侧：`api-mocks.ts` 的 `sampleDetailSearch` 现有 `result_count: 5` 但只有 2 条 `results` ——
-**正好是 3.4 的「计数不一致」场景**，保留；另补一条 `javascript:` URL 的结果用于白名单断言。
+mock 侧：`api-mocks.ts` 的 `sampleDetailSearch` 用 `result_count: 5` 但只有 3 条 `results`，
+**刻意造出 3.4 的「计数不一致」** 以锁定该分支（真实库 12/12 相等，§6.1 —— 该分支只能靠
+fixture 覆盖）；另补一条 `javascript:` URL 的结果用于白名单断言。
 detail mock 同时补投影块 `search`（与后端 `search_view.rs` 同形状），列表行补 `result_count`。
 
 ### 4.3 Gate 3 实现偏差（3 处）
@@ -251,7 +259,7 @@ detail mock 同时补投影块 `search`（与后端 `search_view.rs` 同形状�
 | # | 设计原文 | 实际实现 | 原因 |
 |---|---------|---------|------|
 | D1 | 空态「`results` 为空但有 `result_count > 0` → 结果未随日志保留」 | **仅当 `search` 块非 null（即后端判定为搜索行）时才渲染面板**；`search` 为 null 时走原 `OutputCard` 分支，不再合成空视图 | Gate 3 期间发现：列表行 DTO 不含 `search`，抽屉若在 `enrichedLog` 未合并 `search` 时自行拼一个空视图，会把「日志确实留存了结果」误报成「结果未保留」。宁可退化为旧渲染，也不谎报。同时修了 `enrichedLog` 漏传 `search` 的**真实产品 bug**（BDD 场景「kept 3 of 5」捕获） |
-| D2 | 命中实例指标「只显 host:port，完整 `api_base` 放 `title`」 | 指标值显示**完整 `api_base`**，`title` 仍为完整值 | Stage 137 的既有 BDD 断言 `http://searxng-a:9099` 全文；截短会使其返工 —— 与 3.3「既有断言保留」的约束冲突，以既有断言为准 |
+| D2 | 命中实例指标「只显 host:port，完整 `api_base` 放 `title`」 | 指标值显示**完整 `api_base`**，`title` 仍为完整值 | Stage 137 的既有 BDD 断言 `http://searxng-a:9099` 全文；截短会使其返工 —— 与 3.3「既有断言保留」的约束冲突，以既有断言为准。真实库 `api_base` 实测为 `http://30.184.60.216:9099`（25 字符），不显长 |
 | D3 | 列表行徽标断言隐含在整行文本里 | `CallTypeBadge` 两个分支都加 `data-testid="call-type-badge"`，BDD 步骤收窄到该 testid 上大小写不敏感匹配 | 原断言 `toContainText("search")` 命中的是 Model 列里的内部串 `searxng/search` —— 本 Stage 把它换成 `searxng · 5 results` 后断言失去偶然来源。这是评审日志 F1 同类的**偶然通过**缺陷，借机修掉 |
 
 ---
@@ -309,9 +317,62 @@ detail mock 同时补投影块 `search`（与后端 `search_view.rs` 同形状�
 2. `task bdd` — ✅ 315 scenarios（302 passed / 13 skipped）/ 1680 steps，零回归
 3. `task fe-bdd` — ✅ 507 passed / 3 skipped（既有基线 + 9 场景 × 3 viewports）
 4. `task fmt` / `task lint` / `task doctor` / `task fe-lint` — ✅ 全绿
-5. **人工未做** — 未用 `aigw.db` 的真实搜索行（`01a133ec-…`）开抽屉肉眼核对；
-   BDD mock 的 `sampleDetailSearch` 与后端 `search_view.rs` 同形状，已覆盖同一字段集。
-   记为遗留（见 §8）。
+5. **真实库核对** — ✅ 已做，见 §6.1（`aigw.db` 只读打开，12 条真实搜索行）
+
+### 6.1 真实库核对（2026-10-16）
+
+用 `sqlite3 "file:./aigw.db?mode=ro"` 只读打开生产库（336 MB，最后写入 2026-10-16 18:00），
+对 12 条 `call_type="search"` 行逐条核对投影的输入与输出。
+
+**投影输入（12 行全量）**：
+
+| 项 | 实测 |
+|----|------|
+| `metadata.search_provider` | 12/12 有值，全为 `SearXNG` |
+| `metadata.search_query_count` | 12/12 = `1` |
+| `metadata.cost_per_query` | 12/12 = `0.01` |
+| `metadata.parent_call_id` | 12/12 有值，且**父行均存在**，类型均为 `responses` |
+| `messages` | 12/12 为 object，形状就是 `{"query": "…"}`（20~85 字节） |
+| `response.result_count` | 12/12 = `3` |
+| `response.results` 长度 | 12/12 = `3`（共 36 条结果） |
+| `api_base` | 12/12 = `http://30.184.60.216:9099` |
+| `spend` | 12/12 = `0.01` |
+
+**逐条结果（36 条）字段完整性**：
+
+| 字段 | 实测 |
+|------|------|
+| `title` 缺失 | **0 / 36** |
+| `url` 缺失 | **0 / 36** |
+| `snippet` 为空串 | 9 / 36（25%）→ 投影置 `null`，卡片不渲染摘要 |
+| `published_date` 非 null | 11 / 36（31%）→ 其余走「仅非 null 时显示」 |
+| URL 方案 | **36 / 36 均为 `http(s)`** —— 真实库中无一条非法方案 |
+| snippet 最大长度 | 193 字符（< 300 上限，未见真实截断） |
+
+**投影重放**：以仓库内的 `project_search_view` 语义（同一套上限 20 / 300、同一套
+URL 白名单与 `host_of`）在 Python 里重放 `01a133ec-2e2c-7ac1-b665-712c258dfd7e`，
+得 `provider=SearXNG` / `instance=http://30.184.60.216:9099` / `query=say PONG` /
+`result_count=3` / `kept_count=3` / `cost_per_query=0.01` / 3 条结果（域名
+`stackoverflow.com` ×2 / `www.wordhippo.com` ×1，score 2.2 / 1.3 / 1.1），
+与 §3.1 的契约定形状一致，**无字段落空、无条目被丢弃**。
+
+**这一轮核对推翻了一条核心假设**：
+
+> **H2「`result_count` 与 `results.len()` 会不一致」在真实库里不成立 —— 12/12 全部相等。**
+
+设计把「留存 N / 共 M」后缀、`kept_count` 字段、以及一条专门的 BDD 场景都建立在
+「两者会不一致」之上，而依据只有 `api-mocks.ts` 里一个人造的 5 vs 2 fixture。
+真实数据里 `result_count` 恒等于 `results.len()`（SearXNG 结果数 ≤ `max_results`
+时不会发生「provider 自报多于留存」）。
+
+**结论：保留不改，但把它的性质从「已知会发生」改为「已实现的防御」** ——
+投影层与 UI 对不一致的处理是对的（多一层防御无害，且上游换成别的 provider 后
+确实可能不一致），但文档不应再声称「实测不一致」。H2 的验证方式一行已据此订正。
+
+**未覆盖**：因本地无运行中的 aigw 实例（`:4000` / `:8080` 均无监听），
+本次未做「真机开抽屉肉眼核对」—— 核对是通过 SQL 逐字段验证投影输入、
+并以 Python 重放投影语义完成的，**前端渲染的真实数据侧仍未被肉眼验证**。
+这一点保留为遗留（见 §8）。
 
 ## 7. 门禁
 
@@ -321,12 +382,13 @@ detail mock 同时补投影块 `search`（与后端 `search_view.rs` 同形状�
 - [x] 结果数上限 20 / 摘要 300 字生效
 - [x] 列表搜索行不再显示 `{provider}/search` 原始串
 - [x] 抽屉「视觉」标签渲染每条结果；「原始」标签仍是完整 JSON
-- [x] `result_count` 与留存数不一致时两者都显示
+- [x] `result_count` 与留存数不一致时两者都显示（真实库未出现不一致，防御保留）
 - [x] 手机端不刷屏
 - [x] i18n en/zh-CN 对称；`fe-lint`（含类型对称）绿
 - [x] `task test` / `bdd` / `fe-bdd` / `fmt` / `lint` / `doctor` / `fe-lint` 全绿
-- [ ] **Gate 4 代码评审** —— 未做。本 Stage 的实现+门禁已完成，但独立代码评审（历次由 `/rdd-stage-auto` 或多路 subagent 承担）尚未执行
-- [ ] git commit（精确 add；`--signoff`）—— 未提交
+- [x] 真实库核对（`aigw.db` 12 条搜索行，见 §6.1）
+- [x] git commit（精确 add；`--signoff`）—— `81aa21b` / `b7a86b3` / `93f1f3b` / `a56bab3`
+- [ ] **Gate 4 代码评审** —— 未做。本 Stage 的实现 + 门禁已完成，但独立代码评审（历次由 `/rdd-stage-auto` 或多路 subagent 承担）尚未执行
 
 ## 8. 风险与遗留
 
@@ -341,8 +403,9 @@ detail mock 同时补投影块 `search`（与后端 `search_view.rs` 同形状�
 - 按 provider / 实例聚合的花费与搜索量趋势（需新查询）
 - 结果条目的点击预览 / 内联抓取
 - 搜索行的 `session_id` 作为第二条父子线索在 UI 上暴露（TD-019 已接通后端）
-- **未做真实库人工核对** —— 见 §6 第 5 条。当前证据全部来自 UT + BDD mock；
-  若要坐实「真实搜索行的四块渲染」，需用 `aigw.db` 里的 `01a133ec-…` 手工过一遍
+- **前端渲染的真实数据侧未肉眼验证** —— §6.1 的核对覆盖了投影输入与投影语义
+  （SQL 逐字段 + Python 重放），但未在真机上用真实行开抽屉看过渲染结果 ——
+  本地无运行中的 aigw 实例（`:4000` / `:8080` 无监听）。要坐实需 `task dev` 起服务后手工过一遍
 
 ---
 

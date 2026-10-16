@@ -141,3 +141,23 @@
   Model 列改为 `searxng · 5 results` 后断言失去偶然来源。已加 `data-testid="call-type-badge"` 并收窄步骤。
 - 命中实例指标若按设计截短为 host:port，会打掉 Stage 137 的 `http://searxng-a:9099` 全文断言 ——
   以既有断言为准，保留完整 `api_base`（`title` 同值）。
+
+---
+
+## 真实库复核（2026-10-16）—— 推翻了 F1 修正所依赖的一条假设
+
+用 `sqlite3 "file:./aigw.db?mode=ro"` 核对 12 条真实 `call_type="search"` 行（36 条结果）。
+
+**对本评审 F1 的直接冲击**：F1 的修正是「列表 DTO 补 `result_count`，与抽屉同源」，
+其动因是「结果数在列表不可见」。但设计据此进一步推出的 H2
+（**`result_count` 与 `results.len()` 会不一致**，故需 `keptOfTotal` 后缀）
+**在真实库里不成立 —— 12/12 全部相等**。
+
+原 H2 的证据只有 `api-mocks.ts` 的人造 5 vs 2 fixture，属**自证**（用自己造的用例
+证明真实数据会有该特征）。真实 SearXNG 在结果数 ≤ `max_results` 时不会出现
+「自报多于留存」。
+
+**处置**：防御代码保留（换 provider 后仍可能不一致，且前缀仅在不等时出现，零成本），
+但 §4.3/§3.4 的措辞由「已知会发生」改为「已实现的防御」，
+该分支改由 mock **刻意构造**并标明「真实库未触发，仅 fixture 覆盖」。
+`stage-139.md` §1.5 H2 / §3.4 / §6.1 已同步。
