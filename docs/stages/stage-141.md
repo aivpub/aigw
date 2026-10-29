@@ -5,7 +5,7 @@
 **依赖**: Stage 140（`McpStore` / `alias` 校验 / token 加解密）
 **状态**: ✅ 完成（2026-10-29）—— Gate 3 全绿，Gate 4 的 2 HIGH + 5 MED + 3 LOW 已落并经主 Agent 逐条复核
 
-**提交**: —
+**提交**: `51ca3a5`（server 管理 API）→ `d20841c`（BDD + mock 上游）→ `a5fad16`（Phase 55 收官回写），均 `--signoff`，未 push。
 
 ---
 

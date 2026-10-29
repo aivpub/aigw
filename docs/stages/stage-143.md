@@ -5,7 +5,7 @@
 **依赖**: Stage 140（凭据解析）、Stage 141（`mcp/probe.rs` 的协议常量与 envelope 构造）
 **状态**: 🟡 门禁 7/8 —— 代码与三方言 BDD 全绿，Gate 4 的 HIGH 1 / MED 5 已落修；**真机验收 CC PASS / Codex 卡在客户端侧的 namespace 分发**（ADR-046），该项留作残余风险（2026-10-29）
 
-**提交**: —
+**提交**: `51ca3a5`（server 透传/中继/调试口）→ `d20841c`（BDD + mock 上游）→ `a5fad16`（Phase 55 收官回写），均 `--signoff`，未 push。
 
 ---
 

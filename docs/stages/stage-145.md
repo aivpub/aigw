@@ -5,7 +5,7 @@
 **依赖**: Stage 144（`/v1/mcp/*` + `/admin/mcp/calls` + ACL 端点）、Stage 143（`/mcp-rest/tools/list` 与 `/mcp-rest/tools/call`，Playground 标签的落点）、Stage 142（页面骨架）
 **状态**: ✅ 完成（2026-10-29）—— Gate 3 三个前端 task 全绿，142 的 2 HIGH + 7 MED 同批收口
 
-**提交**: —
+**提交**: `27fd651`（前端我的凭据 + Playground MCP 标签）→ `32e67e1`（前端 BDD）→ `a5fad16`（Phase 55 收官回写），均 `--signoff`，未 push。
 
 ---
 

@@ -5,7 +5,7 @@
 **依赖**: Stage 141（`/admin/mcp/*` 全部端点）
 **状态**: ✅ 完成（2026-10-29）—— Gate 4 的 2 HIGH + 7 MED 已由 Stage 145 同批落修，主 Agent 逐条复核
 
-**提交**: —
+**提交**: `27fd651`（前端 MCP 管理页）→ `32e67e1`（前端 BDD）→ `a5fad16`（Phase 55 收官回写），均 `--signoff`，未 push。
 
 ---
 

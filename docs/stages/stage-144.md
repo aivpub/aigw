@@ -5,7 +5,7 @@
 **依赖**: Stage 143（出站 client / 中继 / 日志写入）、Stage 140（`CredentialScope` 与 `resolve_outbound_token`）
 **状态**: ✅ 完成（2026-10-29）—— Gate 3 四门禁全绿；ACL 覆盖面缺口转 ADR-045 由 Stage 143 路径补齐
 
-**提交**: —
+**提交**: `51ca3a5`（server 聚合端点 + 用户凭据）→ `d20841c`（BDD + mock 上游）→ `a5fad16`（Phase 55 收官回写），均 `--signoff`，未 push。
 
 ---
 
