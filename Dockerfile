@@ -84,6 +84,14 @@ COPY --from=planner /app/crates/ crates/
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo chef cook --release --recipe-path recipe.json
 
+# Restore the real workspace manifests and lockfile. `cargo chef cook` replaces
+# them with dependency-only stubs whose local packages are all version 0.0.1;
+# those stubs would otherwise be compiled into CARGO_PKG_VERSION.
+COPY Cargo.toml Cargo.lock ./
+COPY crates/aigw-core/Cargo.toml      crates/aigw-core/Cargo.toml
+COPY crates/aigw-server/Cargo.toml    crates/aigw-server/Cargo.toml
+COPY crates/aigw-migrate/Cargo.toml   crates/aigw-migrate/Cargo.toml
+
 # Copy real source and migrations (only this layer rebuilds on most code changes)
 COPY crates/aigw-core/src/      crates/aigw-core/src/
 COPY crates/aigw-core/migrations/ crates/aigw-core/migrations/
@@ -97,14 +105,18 @@ COPY --from=frontend-builder /app/crates/aigw-frontend/dist/ crates/aigw-fronten
 # Build the application — only workspace crates are recompiled.
 # NO cache mount for target/ here: the cook step preserves target/ in the Docker
 # layer so `cargo build` sees all pre-compiled dependencies and only rebuilds app code.
-ARG GIT_COMMIT_HASH
-ARG GIT_DESCRIBE
-ARG GIT_DIRTY
-ARG GIT_BRANCH
-ARG BUILD_DATE
-ARG RUST_VERSION
+#
+# `.git/` is not in the build context, so build.rs cannot run git; these args
+# supply the version metadata instead (see crates/aigw-server/build.rs).
+ARG GIT_COMMIT_HASH=unknown
+ARG GIT_DESCRIBE=unknown
+ARG GIT_DIRTY=0
+ARG BUILD_DATE=unknown
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build --release
+
+RUN test -n "$GIT_COMMIT_HASH" && test "$GIT_COMMIT_HASH" != "unknown" \
+    || echo "WARN: GIT_COMMIT_HASH was not passed as a build arg — the image will report 'unknown'"
 
 # Collect binaries from cache — BuildKit doesn't preserve target/ naturally,
 # so we copy them to a known location before the next stage

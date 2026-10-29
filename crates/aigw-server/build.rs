@@ -8,6 +8,16 @@
 //! - `GIT_DIRTY` — "-dirty" if working tree has uncommitted changes, else ""
 //! - `GIT_DESCRIBE` — `git describe --tags --always --dirty` output
 //! - `BUILD_DATE` — UTC build date in YYYY-MM-DD format
+//!
+//! Each value comes from the same-named environment variable when set (the
+//! Docker build passes them as build args, since `.git/` is not in the build
+//! context), and falls back to running git locally.
+
+fn env_var(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+}
 
 fn run_cmd(args: &[&str]) -> Option<String> {
     std::process::Command::new(args[0])
@@ -25,26 +35,41 @@ fn run_cmd(args: &[&str]) -> Option<String> {
 
 fn main() {
     // ── Git commit hash (short) ──
-    let git_hash =
-        run_cmd(&["git", "rev-parse", "--short", "HEAD"]).unwrap_or_else(|| "unknown".to_string());
+    let git_hash = env_var("GIT_COMMIT_HASH")
+        .or_else(|| run_cmd(&["git", "rev-parse", "--short", "HEAD"]))
+        .unwrap_or_else(|| "unknown".to_string());
     println!("cargo:rustc-env=GIT_COMMIT_HASH={}", git_hash);
 
     // ── Git dirty status ──
-    let git_dirty = std::process::Command::new("git")
-        .args(["diff", "--quiet"])
-        .status()
-        .map(|s| !s.success())
-        .unwrap_or(false);
-    let dirty_suffix = if git_dirty { "-dirty" } else { "" };
+    let dirty_suffix = match env_var("GIT_DIRTY") {
+        Some(value) => {
+            if value == "1" || value == "true" {
+                "-dirty".to_string()
+            } else {
+                String::new()
+            }
+        }
+        None => {
+            let dirty = std::process::Command::new("git")
+                .args(["diff", "--quiet"])
+                .status()
+                .map(|s| !s.success())
+                .unwrap_or(false);
+            (if dirty { "-dirty" } else { "" }).to_string()
+        }
+    };
     println!("cargo:rustc-env=GIT_DIRTY={}", dirty_suffix);
 
     // ── Git describe (tag-based version) ──
-    let git_describe = run_cmd(&["git", "describe", "--tags", "--always", "--dirty"])
+    let git_describe = env_var("GIT_DESCRIBE")
+        .or_else(|| run_cmd(&["git", "describe", "--tags", "--always", "--dirty"]))
         .unwrap_or_else(|| format!("v{}", env!("CARGO_PKG_VERSION")));
     println!("cargo:rustc-env=GIT_DESCRIBE={}", git_describe);
 
     // ── Build date (UTC) ──
-    let build_date = run_cmd(&["date", "-u", "+%Y-%m-%d"]).unwrap_or_else(|| "unknown".to_string());
+    let build_date = env_var("BUILD_DATE")
+        .or_else(|| run_cmd(&["date", "-u", "+%Y-%m-%d"]))
+        .unwrap_or_else(|| "unknown".to_string());
     println!("cargo:rustc-env=BUILD_DATE={}", build_date);
 
     // Re-run build.rs when git HEAD or index changes.
@@ -52,4 +77,8 @@ fn main() {
     // so we use ../ to reach the workspace-root .git directory.
     println!("cargo:rerun-if-changed=../../.git/HEAD");
     println!("cargo:rerun-if-changed=../../.git/index");
+
+    for name in ["GIT_COMMIT_HASH", "GIT_DIRTY", "GIT_DESCRIBE", "BUILD_DATE"] {
+        println!("cargo:rerun-if-env-changed={}", name);
+    }
 }

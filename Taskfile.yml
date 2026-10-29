@@ -274,6 +274,11 @@ tasks:
   #
   # `IMAGE_REPO` / `IMAGE_TAG` are overridable if you need a different name
   # (e.g. `task docker-build IMAGE_TAG=dev`).
+  #
+  # The `--build-arg` values carry version metadata into build.rs: `.git/` is
+  # excluded by .dockerignore, so `crates/aigw-server/build.rs` cannot shell out
+  # to git inside the image and `aigw --version` would otherwise report
+  # `0.0.1 (unknown)`.
 
   docker-build:
     desc: "build native-arch Docker image (cached), tag ghcr.io/aivpub/aigw:{git-describe} + :latest"
@@ -282,7 +287,13 @@ tasks:
       IMAGE_TAG:
         sh: git describe --tags --always --dirty
     cmds:
-      - docker build -t {{.IMAGE_REPO}}:{{.IMAGE_TAG}} -t {{.IMAGE_REPO}}:latest .
+      - >-
+        docker build
+        --build-arg GIT_COMMIT_HASH=$(git rev-parse --short HEAD)
+        --build-arg GIT_DESCRIBE={{.IMAGE_TAG}}
+        --build-arg GIT_DIRTY=$(git diff --quiet && echo 0 || echo 1)
+        --build-arg BUILD_DATE=$(date -u +%Y-%m-%d)
+        -t {{.IMAGE_REPO}}:{{.IMAGE_TAG}} -t {{.IMAGE_REPO}}:latest .
       - 'echo "built {{.IMAGE_REPO}}:{{.IMAGE_TAG}} + :latest"'
 
   docker-build-amd64:
@@ -292,7 +303,13 @@ tasks:
       IMAGE_TAG:
         sh: git describe --tags --always --dirty
     cmds:
-      - docker buildx build --platform linux/amd64 --load -t {{.IMAGE_REPO}}:{{.IMAGE_TAG}} -t {{.IMAGE_REPO}}:latest .
+      - >-
+        docker buildx build
+        --build-arg GIT_COMMIT_HASH=$(git rev-parse --short HEAD)
+        --build-arg GIT_DESCRIBE={{.IMAGE_TAG}}
+        --build-arg GIT_DIRTY=$(git diff --quiet && echo 0 || echo 1)
+        --build-arg BUILD_DATE=$(date -u +%Y-%m-%d)
+        --platform linux/amd64 --load -t {{.IMAGE_REPO}}:{{.IMAGE_TAG}} -t {{.IMAGE_REPO}}:latest .
       - 'echo "built {{.IMAGE_REPO}}:{{.IMAGE_TAG}} + :latest (linux/amd64)"'
 
   docker-build-amd64-nocache:
@@ -302,7 +319,13 @@ tasks:
       IMAGE_TAG:
         sh: git describe --tags --always --dirty
     cmds:
-      - docker buildx build --no-cache --platform linux/amd64 --load -t {{.IMAGE_REPO}}:{{.IMAGE_TAG}} -t {{.IMAGE_REPO}}:latest .
+      - >-
+        docker buildx build
+        --build-arg GIT_COMMIT_HASH=$(git rev-parse --short HEAD)
+        --build-arg GIT_DESCRIBE={{.IMAGE_TAG}}
+        --build-arg GIT_DIRTY=$(git diff --quiet && echo 0 || echo 1)
+        --build-arg BUILD_DATE=$(date -u +%Y-%m-%d)
+        --no-cache --platform linux/amd64 --load -t {{.IMAGE_REPO}}:{{.IMAGE_TAG}} -t {{.IMAGE_REPO}}:latest .
       - 'echo "built {{.IMAGE_REPO}}:{{.IMAGE_TAG}} + :latest (linux/amd64, no-cache)"'
 
   docker-build-arm64:
@@ -312,7 +335,13 @@ tasks:
       IMAGE_TAG:
         sh: git describe --tags --always --dirty
     cmds:
-      - docker buildx build --platform linux/arm64 --load -t {{.IMAGE_REPO}}:{{.IMAGE_TAG}} -t {{.IMAGE_REPO}}:latest .
+      - >-
+        docker buildx build
+        --build-arg GIT_COMMIT_HASH=$(git rev-parse --short HEAD)
+        --build-arg GIT_DESCRIBE={{.IMAGE_TAG}}
+        --build-arg GIT_DIRTY=$(git diff --quiet && echo 0 || echo 1)
+        --build-arg BUILD_DATE=$(date -u +%Y-%m-%d)
+        --platform linux/arm64 --load -t {{.IMAGE_REPO}}:{{.IMAGE_TAG}} -t {{.IMAGE_REPO}}:latest .
       - 'echo "built {{.IMAGE_REPO}}:{{.IMAGE_TAG}} + :latest (linux/arm64)"'
 
   docker-build-multiarch:
@@ -326,7 +355,13 @@ tasks:
         sh: git describe --tags --always --dirty
       PLATFORMS: '{{.PLATFORMS | default "linux/amd64,linux/arm64"}}'
     cmds:
-      - docker buildx build --platform {{.PLATFORMS}} --push -t {{.IMAGE_REPO}}:{{.IMAGE_TAG}} -t {{.IMAGE_REPO}}:latest .
+      - >-
+        docker buildx build
+        --build-arg GIT_COMMIT_HASH=$(git rev-parse --short HEAD)
+        --build-arg GIT_DESCRIBE={{.IMAGE_TAG}}
+        --build-arg GIT_DIRTY=$(git diff --quiet && echo 0 || echo 1)
+        --build-arg BUILD_DATE=$(date -u +%Y-%m-%d)
+        --platform {{.PLATFORMS}} --push -t {{.IMAGE_REPO}}:{{.IMAGE_TAG}} -t {{.IMAGE_REPO}}:latest .
       - 'echo "pushed {{.IMAGE_REPO}}:{{.IMAGE_TAG}} + :latest ({{.PLATFORMS}})"'
 
   docker-up:
