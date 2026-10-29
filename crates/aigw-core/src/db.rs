@@ -30,6 +30,7 @@ use sqlx::{MySqlPool, PgPool, SqlitePool};
 use std::str::FromStr;
 use thiserror::Error;
 
+use crate::mcp::acl::ToolRule;
 use crate::models::*;
 
 // re-export uuid for test use
@@ -6243,6 +6244,1944 @@ impl Database {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// McpStore trait — MCP server registry + upstream tokens (Phase 55, Stage 140)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// MCP server registry and per-owner upstream credentials.
+///
+/// "Is this token usable" is NOT a SQL predicate: expiry comparison happens in
+/// Rust (`crate::mcp::credential::is_token_usable`) because the three dialects
+/// spell datetime comparison differently, and a token set is a handful of rows.
+///
+/// `delete_mcp_server` removes the server's tokens in the same transaction
+/// rather than relying on the foreign key, for the same reason the web search
+/// store does: MySQL only honours a table-level constraint, so the code path
+/// must not depend on which dialect's cascade fired.
+#[async_trait]
+pub trait McpStore {
+    async fn create_mcp_server(&self, s: &McpServerRow) -> Result<i64>;
+    async fn get_mcp_server(&self, id: i64) -> Result<Option<McpServerRow>>;
+    async fn get_mcp_server_by_alias(&self, alias: &str) -> Result<Option<McpServerRow>>;
+    async fn list_mcp_servers(&self) -> Result<Vec<McpServerRow>>;
+    async fn update_mcp_server(&self, s: &McpServerRow) -> Result<()>;
+    /// Delete the server and every token under it, atomically.
+    async fn delete_mcp_server(&self, id: i64) -> Result<()>;
+
+    /// Insert a token. `is_default` on `t` is ignored — the column has exactly
+    /// one writer, [`McpStore::set_default_mcp_token`].
+    async fn create_mcp_token(&self, t: &McpServerTokenRow) -> Result<i64>;
+    async fn get_mcp_token(&self, id: i64) -> Result<Option<McpServerTokenRow>>;
+    async fn list_mcp_tokens(&self, server_id: i64) -> Result<Vec<McpServerTokenRow>>;
+    /// The owner's default token. Never more than one can be default per owner
+    /// (partial unique index on SQLite/PostgreSQL); the ordering is the MySQL
+    /// safety net should a race ever leave two (stage-140 §3.4).
+    async fn default_mcp_token(
+        &self,
+        server_id: i64,
+        owner_type: &str,
+        owner_id: &str,
+    ) -> Result<Option<McpServerTokenRow>>;
+    /// Zero the owner's flags then set `token_id`, in one transaction. Both
+    /// statements are scoped to `(server_id, owner_type, owner_id)`, so a
+    /// mismatched token id cannot reach another owner's row — it fails with
+    /// `NotFound` instead of silently creating a second default.
+    async fn set_default_mcp_token(
+        &self,
+        server_id: i64,
+        owner_type: &str,
+        owner_id: &str,
+        token_id: i64,
+    ) -> Result<()>;
+    /// Rename / re-value / enable / re-expire a token. Never touches
+    /// `is_default` — see [`McpStore::set_default_mcp_token`].
+    async fn update_mcp_token(&self, t: &McpServerTokenRow) -> Result<()>;
+    async fn delete_mcp_token(&self, id: i64) -> Result<()>;
+
+    /// Paged read with the `tool_count` projection. `status` is the wire value
+    /// (`all` / `enabled` / `disabled`); anything else means "no filter".
+    async fn list_mcp_servers_paged(
+        &self,
+        limit: i64,
+        offset: i64,
+        status: Option<&str>,
+        search: Option<&str>,
+        sort_by: Option<&str>,
+        sort_order: Option<&str>,
+    ) -> Result<Vec<McpServerRow>>;
+    async fn count_mcp_servers(&self, status: Option<&str>, search: Option<&str>) -> Result<i64>;
+
+    /// Replace a server's snapshot with `rows`, atomically: delete-then-insert,
+    /// never a merge. `rows` carry their own `server_id`.
+    async fn replace_mcp_tool_catalog(&self, server_id: i64, rows: &[McpToolRow]) -> Result<()>;
+    async fn list_mcp_tool_catalog(&self, server_id: i64) -> Result<Vec<McpToolRow>>;
+    /// The row count of one server's snapshot. Cheaper than
+    /// [`McpStore::list_mcp_tool_catalog`] when only the number is wanted.
+    async fn count_mcp_tool_catalog(&self, server_id: i64) -> Result<i64>;
+    /// Every tool name stored under **another** server. `has_conflict` is the
+    /// intersection with the fresh snapshot, so this is the general set, not a
+    /// pre-filtered one: the server may have no snapshot at all yet.
+    async fn mcp_tool_names_elsewhere(&self, server_id: i64) -> Result<Vec<String>>;
+    /// Every snapshot. Nothing on the request path calls this any more —
+    /// `POST /admin/mcp/reload` replaces snapshots per server precisely so a
+    /// disabled or briefly unreachable upstream keeps its catalogue. Kept for
+    /// catalogue-wide resets (tests, and a future admin "purge" action).
+    async fn clear_mcp_tool_catalog(&self) -> Result<()>;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// McpCallLogStore trait — MCP call audit trail (Phase 55, Stage 143)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// The audit trail behind `/mcp/{alias}` and `/mcp-rest/*`.
+///
+/// Rows are appended and never updated: a failed call is as much evidence as a
+/// successful one, so the writer runs on both paths. Reads are limited to what
+/// Stage 144's `GET /admin/mcp/calls` needs — filter by alias, newest first.
+#[async_trait]
+pub trait McpCallLogStore {
+    async fn insert_mcp_call_log(&self, row: &McpCallLogRow) -> Result<()>;
+    async fn list_mcp_call_log(
+        &self,
+        server_alias: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<McpCallLogRow>>;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// McpStore implementation for SqlitePool
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const CREATE_MCP_SERVER_SQLITE: &str = r#"
+INSERT INTO mcp_servers (alias, display_name, url, transport, credential_scope, enabled, protocol_version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+"#;
+const GET_MCP_SERVER_SQLITE: &str = r#"
+SELECT id, alias, display_name, url, transport, credential_scope, enabled, protocol_version, created_at, updated_at FROM mcp_servers WHERE id = ?
+"#;
+const GET_MCP_SERVER_BY_ALIAS_SQLITE: &str = r#"
+SELECT id, alias, display_name, url, transport, credential_scope, enabled, protocol_version, created_at, updated_at FROM mcp_servers WHERE alias = ?
+"#;
+const LIST_MCP_SERVERS_SQLITE: &str = r#"
+SELECT id, alias, display_name, url, transport, credential_scope, enabled, protocol_version, created_at, updated_at FROM mcp_servers ORDER BY id
+"#;
+const UPDATE_MCP_SERVER_SQLITE: &str = r#"
+UPDATE mcp_servers SET display_name = ?, url = ?, transport = ?, credential_scope = ?, enabled = ?, protocol_version = ?, updated_at = ? WHERE id = ?
+"#;
+const DELETE_MCP_SERVER_SQLITE: &str = r#"DELETE FROM mcp_servers WHERE id = ?"#;
+const CREATE_MCP_TOKEN_SQLITE: &str = r#"
+INSERT INTO mcp_server_tokens (server_id, owner_type, owner_id, token_name, token_value, enabled, expires_at, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+"#;
+const GET_MCP_TOKEN_SQLITE: &str = r#"
+SELECT id, server_id, owner_type, owner_id, token_name, token_value, is_default, enabled, expires_at, created_by, created_at, updated_at FROM mcp_server_tokens WHERE id = ?
+"#;
+const LIST_MCP_TOKENS_SQLITE: &str = r#"
+SELECT id, server_id, owner_type, owner_id, token_name, token_value, is_default, enabled, expires_at, created_by, created_at, updated_at FROM mcp_server_tokens WHERE server_id = ? ORDER BY id
+"#;
+const DEFAULT_MCP_TOKEN_SQLITE: &str = r#"
+SELECT id, server_id, owner_type, owner_id, token_name, token_value, is_default, enabled, expires_at, created_by, created_at, updated_at FROM mcp_server_tokens WHERE server_id = ? AND owner_type = ? AND owner_id = ?
+ORDER BY is_default DESC, id DESC LIMIT 1
+"#;
+const CLEAR_MCP_TOKEN_DEFAULT_SQLITE: &str = r#"
+UPDATE mcp_server_tokens SET is_default = 0 WHERE server_id = ? AND owner_type = ? AND owner_id = ?
+"#;
+const SET_MCP_TOKEN_DEFAULT_SQLITE: &str = r#"
+UPDATE mcp_server_tokens SET is_default = 1 WHERE id = ? AND server_id = ? AND owner_type = ? AND owner_id = ?
+"#;
+const UPDATE_MCP_TOKEN_SQLITE: &str = r#"
+UPDATE mcp_server_tokens SET token_name = ?, token_value = ?, enabled = ?, expires_at = ?, updated_at = ? WHERE id = ?
+"#;
+const DELETE_MCP_TOKEN_SQLITE: &str = r#"DELETE FROM mcp_server_tokens WHERE id = ?"#;
+const DELETE_MCP_TOKENS_BY_SERVER_SQLITE: &str =
+    r#"DELETE FROM mcp_server_tokens WHERE server_id = ?"#;
+
+/// Column list shared by every read that decodes into [`McpServerRow`].
+const MCP_SERVER_PROJECTION: &str = "s.id, s.alias, s.display_name, s.url, s.transport, \
+     s.credential_scope, s.enabled, s.protocol_version, s.created_at, s.updated_at";
+
+/// Every selected column in `MCP_SERVER_PROJECTION` except the aggregate, spelled
+/// out for `GROUP BY` — PostgreSQL rejects `SELECT *`-style grouping, and sqlx
+/// binds no column names.
+const MCP_SERVER_GROUP_BY: &str = "s.id, s.alias, s.display_name, s.url, s.transport, \
+     s.credential_scope, s.enabled, s.protocol_version, s.created_at, s.updated_at";
+
+/// Wire `status` filter → the boolean the column holds. `None` means no filter.
+fn mcp_status_filter(status: Option<&str>) -> Option<bool> {
+    match status {
+        Some("enabled") => Some(true),
+        Some("disabled") => Some(false),
+        _ => None,
+    }
+}
+
+fn mcp_sort_column(sort_by: Option<&str>) -> &'static str {
+    match sort_by {
+        Some("alias") => "alias",
+        Some("display_name") => "display_name",
+        Some("protocol_version") => "protocol_version",
+        _ => "created_at",
+    }
+}
+
+fn mcp_sort_order(sort_order: Option<&str>) -> &'static str {
+    match sort_order {
+        Some("asc") => "ASC",
+        _ => "DESC",
+    }
+}
+
+/// A `search` value ready for a `LIKE`/`ILIKE` pattern: `%`, `_` and `\` are
+/// literal characters to the operator, and every query pairs this with
+/// `ESCAPE '\'`. Without it `search=%` matches every row.
+fn mcp_search_pattern(search: Option<&str>) -> Option<String> {
+    search.map(str::trim).filter(|s| !s.is_empty()).map(|s| {
+        let mut out = String::with_capacity(s.len());
+        for ch in s.chars() {
+            if matches!(ch, '%' | '_' | '\\') {
+                out.push('\\');
+            }
+            out.push(ch);
+        }
+        out
+    })
+}
+
+const DELETE_MCP_TOOL_CATALOG_SQLITE: &str = r#"DELETE FROM mcp_tool_catalog WHERE server_id = ?"#;
+const CLEAR_MCP_TOOL_CATALOG_SQLITE: &str = r#"DELETE FROM mcp_tool_catalog"#;
+const INSERT_MCP_TOOL_CATALOG_SQLITE: &str = r#"
+INSERT INTO mcp_tool_catalog (server_id, tool_name, description, input_schema, annotations, has_conflict, fetched_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+"#;
+const LIST_MCP_TOOL_CATALOG_SQLITE: &str = r#"
+SELECT id, server_id, tool_name, description, input_schema, annotations, has_conflict, fetched_at
+FROM mcp_tool_catalog WHERE server_id = ? ORDER BY tool_name
+"#;
+const COLLIDING_MCP_TOOL_NAMES_SQLITE: &str = r#"
+SELECT DISTINCT tool_name FROM mcp_tool_catalog WHERE server_id <> ?1 ORDER BY tool_name
+"#;
+
+const INSERT_MCP_CALL_LOG_SQLITE: &str = r#"
+INSERT INTO mcp_call_log (call_id, server_alias, tool_name, method, key_id, user_id, token_owner, status, error_code, latency_ms, request_bytes, response_bytes, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+"#;
+const LIST_MCP_CALL_LOG_SQLITE: &str = r#"
+SELECT call_id, server_alias, tool_name, method, key_id, user_id, token_owner, status, error_code, latency_ms, request_bytes, response_bytes, created_at
+FROM mcp_call_log WHERE (? IS NULL OR server_alias = ?)
+ORDER BY created_at DESC, call_id DESC LIMIT ? OFFSET ?
+"#;
+
+#[async_trait]
+impl McpStore for SqlitePool {
+    async fn create_mcp_server(&self, s: &McpServerRow) -> Result<i64> {
+        let r = sqlx::query(CREATE_MCP_SERVER_SQLITE)
+            .bind(&s.alias)
+            .bind(&s.display_name)
+            .bind(&s.url)
+            .bind(&s.transport)
+            .bind(&s.credential_scope)
+            .bind(s.enabled)
+            .bind(&s.protocol_version)
+            .bind(&s.created_at)
+            .bind(&s.updated_at)
+            .execute(self)
+            .await?;
+        Ok(r.last_insert_rowid())
+    }
+
+    async fn get_mcp_server(&self, id: i64) -> Result<Option<McpServerRow>> {
+        sqlx::query_as::<_, McpServerRow>(GET_MCP_SERVER_SQLITE)
+            .bind(id)
+            .fetch_optional(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn get_mcp_server_by_alias(&self, alias: &str) -> Result<Option<McpServerRow>> {
+        sqlx::query_as::<_, McpServerRow>(GET_MCP_SERVER_BY_ALIAS_SQLITE)
+            .bind(alias)
+            .fetch_optional(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn list_mcp_servers(&self) -> Result<Vec<McpServerRow>> {
+        sqlx::query_as::<_, McpServerRow>(LIST_MCP_SERVERS_SQLITE)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn update_mcp_server(&self, s: &McpServerRow) -> Result<()> {
+        sqlx::query(UPDATE_MCP_SERVER_SQLITE)
+            .bind(&s.display_name)
+            .bind(&s.url)
+            .bind(&s.transport)
+            .bind(&s.credential_scope)
+            .bind(s.enabled)
+            .bind(&s.protocol_version)
+            .bind(&s.updated_at)
+            .bind(s.id)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn delete_mcp_server(&self, id: i64) -> Result<()> {
+        let mut tx = self.begin().await?;
+        sqlx::query(DELETE_MCP_TOOL_CATALOG_SQLITE)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(DELETE_MCP_TOKENS_BY_SERVER_SQLITE)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(DELETE_MCP_SERVER_SQLITE)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn create_mcp_token(&self, t: &McpServerTokenRow) -> Result<i64> {
+        let r = sqlx::query(CREATE_MCP_TOKEN_SQLITE)
+            .bind(t.server_id)
+            .bind(&t.owner_type)
+            .bind(&t.owner_id)
+            .bind(&t.token_name)
+            .bind(&t.token_value)
+            .bind(t.enabled)
+            .bind(&t.expires_at)
+            .bind(&t.created_by)
+            .bind(&t.created_at)
+            .bind(&t.updated_at)
+            .execute(self)
+            .await?;
+        Ok(r.last_insert_rowid())
+    }
+
+    async fn get_mcp_token(&self, id: i64) -> Result<Option<McpServerTokenRow>> {
+        sqlx::query_as::<_, McpServerTokenRow>(GET_MCP_TOKEN_SQLITE)
+            .bind(id)
+            .fetch_optional(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn list_mcp_tokens(&self, server_id: i64) -> Result<Vec<McpServerTokenRow>> {
+        sqlx::query_as::<_, McpServerTokenRow>(LIST_MCP_TOKENS_SQLITE)
+            .bind(server_id)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn default_mcp_token(
+        &self,
+        server_id: i64,
+        owner_type: &str,
+        owner_id: &str,
+    ) -> Result<Option<McpServerTokenRow>> {
+        sqlx::query_as::<_, McpServerTokenRow>(DEFAULT_MCP_TOKEN_SQLITE)
+            .bind(server_id)
+            .bind(owner_type)
+            .bind(owner_id)
+            .fetch_optional(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn set_default_mcp_token(
+        &self,
+        server_id: i64,
+        owner_type: &str,
+        owner_id: &str,
+        token_id: i64,
+    ) -> Result<()> {
+        let mut tx = self.begin().await?;
+        sqlx::query(CLEAR_MCP_TOKEN_DEFAULT_SQLITE)
+            .bind(server_id)
+            .bind(owner_type)
+            .bind(owner_id)
+            .execute(&mut *tx)
+            .await?;
+        let promoted = sqlx::query(SET_MCP_TOKEN_DEFAULT_SQLITE)
+            .bind(token_id)
+            .bind(server_id)
+            .bind(owner_type)
+            .bind(owner_id)
+            .execute(&mut *tx)
+            .await?;
+        if promoted.rows_affected() == 0 {
+            return Err(DbError::NotFound(format!(
+                "MCP token {token_id} does not belong to owner {owner_type}/{} on server {server_id}",
+                if owner_id.is_empty() { "-" } else { owner_id }
+            )));
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn update_mcp_token(&self, t: &McpServerTokenRow) -> Result<()> {
+        sqlx::query(UPDATE_MCP_TOKEN_SQLITE)
+            .bind(&t.token_name)
+            .bind(&t.token_value)
+            .bind(t.enabled)
+            .bind(&t.expires_at)
+            .bind(&t.updated_at)
+            .bind(t.id)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn delete_mcp_token(&self, id: i64) -> Result<()> {
+        sqlx::query(DELETE_MCP_TOKEN_SQLITE)
+            .bind(id)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn list_mcp_servers_paged(
+        &self,
+        limit: i64,
+        offset: i64,
+        status: Option<&str>,
+        search: Option<&str>,
+        sort_by: Option<&str>,
+        sort_order: Option<&str>,
+    ) -> Result<Vec<McpServerRow>> {
+        let sort_col = mcp_sort_column(sort_by);
+        let order = mcp_sort_order(sort_order);
+        let status = mcp_status_filter(status);
+        let search = mcp_search_pattern(search);
+        let sql = format!(
+            "SELECT {MCP_SERVER_PROJECTION}, COALESCE(COUNT(c.id), 0) AS tool_count \
+             FROM mcp_servers s LEFT JOIN mcp_tool_catalog c ON c.server_id = s.id \
+             WHERE (?1 IS NULL OR s.enabled = ?1) \
+               AND (?2 IS NULL OR LOWER(s.alias) LIKE LOWER('%' || ?2 || '%') ESCAPE '\\' \
+                    OR LOWER(s.display_name) LIKE LOWER('%' || ?2 || '%') ESCAPE '\\') \
+             GROUP BY {MCP_SERVER_GROUP_BY} \
+             ORDER BY s.{} {} LIMIT ?3 OFFSET ?4",
+            sort_col, order
+        );
+        sqlx::query_as::<_, McpServerRow>(&sql)
+            .bind(status)
+            .bind(search)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn count_mcp_servers(&self, status: Option<&str>, search: Option<&str>) -> Result<i64> {
+        let status = mcp_status_filter(status);
+        let search = mcp_search_pattern(search);
+        let row: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM mcp_servers s \
+             WHERE (?1 IS NULL OR s.enabled = ?1) \
+               AND (?2 IS NULL OR LOWER(s.alias) LIKE LOWER('%' || ?2 || '%') ESCAPE '\\' \
+                    OR LOWER(s.display_name) LIKE LOWER('%' || ?2 || '%') ESCAPE '\\')",
+        )
+        .bind(status)
+        .bind(search)
+        .fetch_one(self)
+        .await?;
+        Ok(row.0)
+    }
+
+    async fn replace_mcp_tool_catalog(&self, server_id: i64, rows: &[McpToolRow]) -> Result<()> {
+        let mut tx = self.begin().await?;
+        sqlx::query(DELETE_MCP_TOOL_CATALOG_SQLITE)
+            .bind(server_id)
+            .execute(&mut *tx)
+            .await?;
+        for row in rows {
+            sqlx::query(INSERT_MCP_TOOL_CATALOG_SQLITE)
+                .bind(row.server_id)
+                .bind(&row.tool_name)
+                .bind(&row.description)
+                .bind(&row.input_schema)
+                .bind(&row.annotations)
+                .bind(row.has_conflict)
+                .bind(&row.fetched_at)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn list_mcp_tool_catalog(&self, server_id: i64) -> Result<Vec<McpToolRow>> {
+        sqlx::query_as::<_, McpToolRow>(LIST_MCP_TOOL_CATALOG_SQLITE)
+            .bind(server_id)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn count_mcp_tool_catalog(&self, server_id: i64) -> Result<i64> {
+        let row: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM mcp_tool_catalog WHERE server_id = ?")
+                .bind(server_id)
+                .fetch_one(self)
+                .await?;
+        Ok(row.0)
+    }
+
+    async fn mcp_tool_names_elsewhere(&self, server_id: i64) -> Result<Vec<String>> {
+        let rows: Vec<(String,)> = sqlx::query_as(COLLIDING_MCP_TOOL_NAMES_SQLITE)
+            .bind(server_id)
+            .fetch_all(self)
+            .await?;
+        Ok(rows.into_iter().map(|r| r.0).collect())
+    }
+
+    async fn clear_mcp_tool_catalog(&self) -> Result<()> {
+        sqlx::query(CLEAR_MCP_TOOL_CATALOG_SQLITE)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl McpCallLogStore for SqlitePool {
+    async fn insert_mcp_call_log(&self, row: &McpCallLogRow) -> Result<()> {
+        sqlx::query(INSERT_MCP_CALL_LOG_SQLITE)
+            .bind(&row.call_id)
+            .bind(&row.server_alias)
+            .bind(&row.tool_name)
+            .bind(&row.method)
+            .bind(&row.key_id)
+            .bind(&row.user_id)
+            .bind(&row.token_owner)
+            .bind(&row.status)
+            .bind(&row.error_code)
+            .bind(row.latency_ms)
+            .bind(row.request_bytes)
+            .bind(row.response_bytes)
+            .bind(&row.created_at)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn list_mcp_call_log(
+        &self,
+        server_alias: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<McpCallLogRow>> {
+        sqlx::query_as::<_, McpCallLogRow>(LIST_MCP_CALL_LOG_SQLITE)
+            .bind(server_alias)
+            .bind(server_alias)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// McpStore implementation for MySqlPool
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const CREATE_MCP_SERVER_MYSQL: &str = r#"
+INSERT INTO mcp_servers (alias, display_name, url, transport, credential_scope, enabled, protocol_version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+"#;
+const GET_MCP_SERVER_MYSQL: &str = r#"
+SELECT id, alias, display_name, url, transport, credential_scope, enabled, protocol_version, created_at, updated_at FROM mcp_servers WHERE id = ?
+"#;
+const GET_MCP_SERVER_BY_ALIAS_MYSQL: &str = r#"
+SELECT id, alias, display_name, url, transport, credential_scope, enabled, protocol_version, created_at, updated_at FROM mcp_servers WHERE alias = ?
+"#;
+const LIST_MCP_SERVERS_MYSQL: &str = r#"
+SELECT id, alias, display_name, url, transport, credential_scope, enabled, protocol_version, created_at, updated_at FROM mcp_servers ORDER BY id
+"#;
+const UPDATE_MCP_SERVER_MYSQL: &str = r#"
+UPDATE mcp_servers SET display_name = ?, url = ?, transport = ?, credential_scope = ?, enabled = ?, protocol_version = ?, updated_at = ? WHERE id = ?
+"#;
+const DELETE_MCP_SERVER_MYSQL: &str = r#"DELETE FROM mcp_servers WHERE id = ?"#;
+const CREATE_MCP_TOKEN_MYSQL: &str = r#"
+INSERT INTO mcp_server_tokens (server_id, owner_type, owner_id, token_name, token_value, enabled, expires_at, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+"#;
+const GET_MCP_TOKEN_MYSQL: &str = r#"
+SELECT id, server_id, owner_type, owner_id, token_name, token_value, is_default, enabled, expires_at, created_by, created_at, updated_at FROM mcp_server_tokens WHERE id = ?
+"#;
+const LIST_MCP_TOKENS_MYSQL: &str = r#"
+SELECT id, server_id, owner_type, owner_id, token_name, token_value, is_default, enabled, expires_at, created_by, created_at, updated_at FROM mcp_server_tokens WHERE server_id = ? ORDER BY id
+"#;
+const DEFAULT_MCP_TOKEN_MYSQL: &str = r#"
+SELECT id, server_id, owner_type, owner_id, token_name, token_value, is_default, enabled, expires_at, created_by, created_at, updated_at FROM mcp_server_tokens WHERE server_id = ? AND owner_type = ? AND owner_id = ?
+ORDER BY is_default DESC, id DESC LIMIT 1
+"#;
+const CLEAR_MCP_TOKEN_DEFAULT_MYSQL: &str = r#"
+UPDATE mcp_server_tokens SET is_default = 0 WHERE server_id = ? AND owner_type = ? AND owner_id = ?
+"#;
+const SET_MCP_TOKEN_DEFAULT_MYSQL: &str = r#"
+UPDATE mcp_server_tokens SET is_default = 1 WHERE id = ? AND server_id = ? AND owner_type = ? AND owner_id = ?
+"#;
+const UPDATE_MCP_TOKEN_MYSQL: &str = r#"
+UPDATE mcp_server_tokens SET token_name = ?, token_value = ?, enabled = ?, expires_at = ?, updated_at = ? WHERE id = ?
+"#;
+const DELETE_MCP_TOKEN_MYSQL: &str = r#"DELETE FROM mcp_server_tokens WHERE id = ?"#;
+const DELETE_MCP_TOKENS_BY_SERVER_MYSQL: &str =
+    r#"DELETE FROM mcp_server_tokens WHERE server_id = ?"#;
+
+const DELETE_MCP_TOOL_CATALOG_MYSQL: &str = r#"DELETE FROM mcp_tool_catalog WHERE server_id = ?"#;
+const CLEAR_MCP_TOOL_CATALOG_MYSQL: &str = r#"DELETE FROM mcp_tool_catalog"#;
+const INSERT_MCP_TOOL_CATALOG_MYSQL: &str = r#"
+INSERT INTO mcp_tool_catalog (server_id, tool_name, description, input_schema, annotations, has_conflict, fetched_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+"#;
+const LIST_MCP_TOOL_CATALOG_MYSQL: &str = r#"
+SELECT id, server_id, tool_name, description, input_schema, annotations, has_conflict, fetched_at
+FROM mcp_tool_catalog WHERE server_id = ? ORDER BY tool_name
+"#;
+const COLLIDING_MCP_TOOL_NAMES_MYSQL: &str = r#"
+SELECT DISTINCT tool_name FROM mcp_tool_catalog WHERE server_id <> ? ORDER BY tool_name
+"#;
+const INSERT_MCP_CALL_LOG_MYSQL: &str = r#"
+INSERT INTO mcp_call_log (call_id, server_alias, tool_name, method, key_id, user_id, token_owner, status, error_code, latency_ms, request_bytes, response_bytes, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+"#;
+const LIST_MCP_CALL_LOG_MYSQL: &str = r#"
+SELECT call_id, server_alias, tool_name, method, key_id, user_id, token_owner, status, error_code, latency_ms, request_bytes, response_bytes, created_at
+FROM mcp_call_log WHERE (? IS NULL OR server_alias = ?)
+ORDER BY created_at DESC, call_id DESC LIMIT ? OFFSET ?
+"#;
+const COUNT_MCP_SERVERS_MYSQL: &str = r#"
+SELECT COUNT(*) FROM mcp_servers s
+WHERE (? IS NULL OR s.enabled = ?)
+  AND (? IS NULL OR LOWER(s.alias) LIKE LOWER(CONCAT('%', ?, '%')) ESCAPE '\\'
+       OR LOWER(s.display_name) LIKE LOWER(CONCAT('%', ?, '%')) ESCAPE '\\')
+"#;
+
+#[async_trait]
+impl McpStore for MySqlPool {
+    async fn create_mcp_server(&self, s: &McpServerRow) -> Result<i64> {
+        let r = sqlx::query(CREATE_MCP_SERVER_MYSQL)
+            .bind(&s.alias)
+            .bind(&s.display_name)
+            .bind(&s.url)
+            .bind(&s.transport)
+            .bind(&s.credential_scope)
+            .bind(s.enabled)
+            .bind(&s.protocol_version)
+            .bind(&s.created_at)
+            .bind(&s.updated_at)
+            .execute(self)
+            .await?;
+        Ok(r.last_insert_id().try_into().unwrap())
+    }
+
+    async fn get_mcp_server(&self, id: i64) -> Result<Option<McpServerRow>> {
+        sqlx::query_as::<_, McpServerRow>(GET_MCP_SERVER_MYSQL)
+            .bind(id)
+            .fetch_optional(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn get_mcp_server_by_alias(&self, alias: &str) -> Result<Option<McpServerRow>> {
+        sqlx::query_as::<_, McpServerRow>(GET_MCP_SERVER_BY_ALIAS_MYSQL)
+            .bind(alias)
+            .fetch_optional(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn list_mcp_servers(&self) -> Result<Vec<McpServerRow>> {
+        sqlx::query_as::<_, McpServerRow>(LIST_MCP_SERVERS_MYSQL)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn update_mcp_server(&self, s: &McpServerRow) -> Result<()> {
+        sqlx::query(UPDATE_MCP_SERVER_MYSQL)
+            .bind(&s.display_name)
+            .bind(&s.url)
+            .bind(&s.transport)
+            .bind(&s.credential_scope)
+            .bind(s.enabled)
+            .bind(&s.protocol_version)
+            .bind(&s.updated_at)
+            .bind(s.id)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn delete_mcp_server(&self, id: i64) -> Result<()> {
+        let mut tx = self.begin().await?;
+        sqlx::query(DELETE_MCP_TOOL_CATALOG_MYSQL)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(DELETE_MCP_TOKENS_BY_SERVER_MYSQL)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(DELETE_MCP_SERVER_MYSQL)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn create_mcp_token(&self, t: &McpServerTokenRow) -> Result<i64> {
+        let r = sqlx::query(CREATE_MCP_TOKEN_MYSQL)
+            .bind(t.server_id)
+            .bind(&t.owner_type)
+            .bind(&t.owner_id)
+            .bind(&t.token_name)
+            .bind(&t.token_value)
+            .bind(t.enabled)
+            .bind(&t.expires_at)
+            .bind(&t.created_by)
+            .bind(&t.created_at)
+            .bind(&t.updated_at)
+            .execute(self)
+            .await?;
+        Ok(r.last_insert_id().try_into().unwrap())
+    }
+
+    async fn get_mcp_token(&self, id: i64) -> Result<Option<McpServerTokenRow>> {
+        sqlx::query_as::<_, McpServerTokenRow>(GET_MCP_TOKEN_MYSQL)
+            .bind(id)
+            .fetch_optional(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn list_mcp_tokens(&self, server_id: i64) -> Result<Vec<McpServerTokenRow>> {
+        sqlx::query_as::<_, McpServerTokenRow>(LIST_MCP_TOKENS_MYSQL)
+            .bind(server_id)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn default_mcp_token(
+        &self,
+        server_id: i64,
+        owner_type: &str,
+        owner_id: &str,
+    ) -> Result<Option<McpServerTokenRow>> {
+        sqlx::query_as::<_, McpServerTokenRow>(DEFAULT_MCP_TOKEN_MYSQL)
+            .bind(server_id)
+            .bind(owner_type)
+            .bind(owner_id)
+            .fetch_optional(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn set_default_mcp_token(
+        &self,
+        server_id: i64,
+        owner_type: &str,
+        owner_id: &str,
+        token_id: i64,
+    ) -> Result<()> {
+        let mut tx = self.begin().await?;
+        sqlx::query(CLEAR_MCP_TOKEN_DEFAULT_MYSQL)
+            .bind(server_id)
+            .bind(owner_type)
+            .bind(owner_id)
+            .execute(&mut *tx)
+            .await?;
+        let promoted = sqlx::query(SET_MCP_TOKEN_DEFAULT_MYSQL)
+            .bind(token_id)
+            .bind(server_id)
+            .bind(owner_type)
+            .bind(owner_id)
+            .execute(&mut *tx)
+            .await?;
+        if promoted.rows_affected() == 0 {
+            return Err(DbError::NotFound(format!(
+                "MCP token {token_id} does not belong to owner {owner_type}/{} on server {server_id}",
+                if owner_id.is_empty() { "-" } else { owner_id }
+            )));
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn update_mcp_token(&self, t: &McpServerTokenRow) -> Result<()> {
+        sqlx::query(UPDATE_MCP_TOKEN_MYSQL)
+            .bind(&t.token_name)
+            .bind(&t.token_value)
+            .bind(t.enabled)
+            .bind(&t.expires_at)
+            .bind(&t.updated_at)
+            .bind(t.id)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn delete_mcp_token(&self, id: i64) -> Result<()> {
+        sqlx::query(DELETE_MCP_TOKEN_MYSQL)
+            .bind(id)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn list_mcp_servers_paged(
+        &self,
+        limit: i64,
+        offset: i64,
+        status: Option<&str>,
+        search: Option<&str>,
+        sort_by: Option<&str>,
+        sort_order: Option<&str>,
+    ) -> Result<Vec<McpServerRow>> {
+        let sort_col = mcp_sort_column(sort_by);
+        let order = mcp_sort_order(sort_order);
+        let status = mcp_status_filter(status);
+        let search = mcp_search_pattern(search);
+        // MySQL `?` are positional and each occurrence needs its own bind.
+        let sql = format!(
+            "SELECT {MCP_SERVER_PROJECTION}, COALESCE(COUNT(c.id), 0) AS tool_count \
+             FROM mcp_servers s LEFT JOIN mcp_tool_catalog c ON c.server_id = s.id \
+             WHERE (? IS NULL OR s.enabled = ?) \
+               AND (? IS NULL OR LOWER(s.alias) LIKE LOWER(CONCAT('%', ?, '%')) ESCAPE '\\\\' \
+                    OR LOWER(s.display_name) LIKE LOWER(CONCAT('%', ?, '%')) ESCAPE '\\\\') \
+             GROUP BY {MCP_SERVER_GROUP_BY} \
+             ORDER BY s.{} {} LIMIT ? OFFSET ?",
+            sort_col, order
+        );
+        sqlx::query_as::<_, McpServerRow>(&sql)
+            .bind(status)
+            .bind(status)
+            .bind(search.as_deref())
+            .bind(search.as_deref())
+            .bind(search.as_deref())
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn count_mcp_servers(&self, status: Option<&str>, search: Option<&str>) -> Result<i64> {
+        let status = mcp_status_filter(status);
+        let search = mcp_search_pattern(search);
+        let row: (i64,) = sqlx::query_as(COUNT_MCP_SERVERS_MYSQL)
+            .bind(status)
+            .bind(status)
+            .bind(search.as_deref())
+            .bind(search.as_deref())
+            .bind(search.as_deref())
+            .fetch_one(self)
+            .await?;
+        Ok(row.0)
+    }
+
+    async fn replace_mcp_tool_catalog(&self, server_id: i64, rows: &[McpToolRow]) -> Result<()> {
+        let mut tx = self.begin().await?;
+        sqlx::query(DELETE_MCP_TOOL_CATALOG_MYSQL)
+            .bind(server_id)
+            .execute(&mut *tx)
+            .await?;
+        for row in rows {
+            sqlx::query(INSERT_MCP_TOOL_CATALOG_MYSQL)
+                .bind(row.server_id)
+                .bind(&row.tool_name)
+                .bind(&row.description)
+                .bind(&row.input_schema)
+                .bind(&row.annotations)
+                .bind(row.has_conflict)
+                .bind(&row.fetched_at)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn list_mcp_tool_catalog(&self, server_id: i64) -> Result<Vec<McpToolRow>> {
+        sqlx::query_as::<_, McpToolRow>(LIST_MCP_TOOL_CATALOG_MYSQL)
+            .bind(server_id)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn count_mcp_tool_catalog(&self, server_id: i64) -> Result<i64> {
+        let row: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM mcp_tool_catalog WHERE server_id = ?")
+                .bind(server_id)
+                .fetch_one(self)
+                .await?;
+        Ok(row.0)
+    }
+
+    async fn mcp_tool_names_elsewhere(&self, server_id: i64) -> Result<Vec<String>> {
+        let rows: Vec<(String,)> = sqlx::query_as(COLLIDING_MCP_TOOL_NAMES_MYSQL)
+            .bind(server_id)
+            .fetch_all(self)
+            .await?;
+        Ok(rows.into_iter().map(|r| r.0).collect())
+    }
+
+    async fn clear_mcp_tool_catalog(&self) -> Result<()> {
+        sqlx::query(CLEAR_MCP_TOOL_CATALOG_MYSQL)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl McpCallLogStore for MySqlPool {
+    async fn insert_mcp_call_log(&self, row: &McpCallLogRow) -> Result<()> {
+        sqlx::query(INSERT_MCP_CALL_LOG_MYSQL)
+            .bind(&row.call_id)
+            .bind(&row.server_alias)
+            .bind(&row.tool_name)
+            .bind(&row.method)
+            .bind(&row.key_id)
+            .bind(&row.user_id)
+            .bind(&row.token_owner)
+            .bind(&row.status)
+            .bind(&row.error_code)
+            .bind(row.latency_ms)
+            .bind(row.request_bytes)
+            .bind(row.response_bytes)
+            .bind(&row.created_at)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn list_mcp_call_log(
+        &self,
+        server_alias: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<McpCallLogRow>> {
+        sqlx::query_as::<_, McpCallLogRow>(LIST_MCP_CALL_LOG_MYSQL)
+            .bind(server_alias)
+            .bind(server_alias)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// McpStore implementation for PgPool
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const CREATE_MCP_SERVER_PG: &str = r#"
+INSERT INTO mcp_servers (alias, display_name, url, transport, credential_scope, enabled, protocol_version, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id
+"#;
+const GET_MCP_SERVER_PG: &str = r#"
+SELECT id, alias, display_name, url, transport, credential_scope, enabled, protocol_version, created_at, updated_at FROM mcp_servers WHERE id = $1
+"#;
+const GET_MCP_SERVER_BY_ALIAS_PG: &str = r#"
+SELECT id, alias, display_name, url, transport, credential_scope, enabled, protocol_version, created_at, updated_at FROM mcp_servers WHERE alias = $1
+"#;
+const LIST_MCP_SERVERS_PG: &str = r#"
+SELECT id, alias, display_name, url, transport, credential_scope, enabled, protocol_version, created_at, updated_at FROM mcp_servers ORDER BY id
+"#;
+const UPDATE_MCP_SERVER_PG: &str = r#"
+UPDATE mcp_servers SET display_name = $1, url = $2, transport = $3, credential_scope = $4, enabled = $5, protocol_version = $6, updated_at = $7 WHERE id = $8
+"#;
+const DELETE_MCP_SERVER_PG: &str = r#"DELETE FROM mcp_servers WHERE id = $1"#;
+const CREATE_MCP_TOKEN_PG: &str = r#"
+INSERT INTO mcp_server_tokens (server_id, owner_type, owner_id, token_name, token_value, enabled, expires_at, created_by, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id
+"#;
+const GET_MCP_TOKEN_PG: &str = r#"
+SELECT id, server_id, owner_type, owner_id, token_name, token_value, is_default, enabled, expires_at, created_by, created_at, updated_at FROM mcp_server_tokens WHERE id = $1
+"#;
+const LIST_MCP_TOKENS_PG: &str = r#"
+SELECT id, server_id, owner_type, owner_id, token_name, token_value, is_default, enabled, expires_at, created_by, created_at, updated_at FROM mcp_server_tokens WHERE server_id = $1 ORDER BY id
+"#;
+const DEFAULT_MCP_TOKEN_PG: &str = r#"
+SELECT id, server_id, owner_type, owner_id, token_name, token_value, is_default, enabled, expires_at, created_by, created_at, updated_at FROM mcp_server_tokens WHERE server_id = $1 AND owner_type = $2 AND owner_id = $3
+ORDER BY is_default DESC, id DESC LIMIT 1
+"#;
+const CLEAR_MCP_TOKEN_DEFAULT_PG: &str = r#"
+UPDATE mcp_server_tokens SET is_default = FALSE WHERE server_id = $1 AND owner_type = $2 AND owner_id = $3
+"#;
+const SET_MCP_TOKEN_DEFAULT_PG: &str = r#"
+UPDATE mcp_server_tokens SET is_default = TRUE WHERE id = $1 AND server_id = $2 AND owner_type = $3 AND owner_id = $4
+"#;
+const UPDATE_MCP_TOKEN_PG: &str = r#"
+UPDATE mcp_server_tokens SET token_name = $1, token_value = $2, enabled = $3, expires_at = $4, updated_at = $5 WHERE id = $6
+"#;
+const DELETE_MCP_TOKEN_PG: &str = r#"DELETE FROM mcp_server_tokens WHERE id = $1"#;
+const DELETE_MCP_TOKENS_BY_SERVER_PG: &str =
+    r#"DELETE FROM mcp_server_tokens WHERE server_id = $1"#;
+
+const DELETE_MCP_TOOL_CATALOG_PG: &str = r#"DELETE FROM mcp_tool_catalog WHERE server_id = $1"#;
+const CLEAR_MCP_TOOL_CATALOG_PG: &str = r#"DELETE FROM mcp_tool_catalog"#;
+const INSERT_MCP_TOOL_CATALOG_PG: &str = r#"
+INSERT INTO mcp_tool_catalog (server_id, tool_name, description, input_schema, annotations, has_conflict, fetched_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+"#;
+const LIST_MCP_TOOL_CATALOG_PG: &str = r#"
+SELECT id, server_id, tool_name, description, input_schema, annotations, has_conflict, fetched_at
+FROM mcp_tool_catalog WHERE server_id = $1 ORDER BY tool_name
+"#;
+const COLLIDING_MCP_TOOL_NAMES_PG: &str = r#"
+SELECT DISTINCT tool_name FROM mcp_tool_catalog WHERE server_id <> $1 ORDER BY tool_name
+"#;
+const INSERT_MCP_CALL_LOG_PG: &str = r#"
+INSERT INTO mcp_call_log (call_id, server_alias, tool_name, method, key_id, user_id, token_owner, status, error_code, latency_ms, request_bytes, response_bytes, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+"#;
+const LIST_MCP_CALL_LOG_PG: &str = r#"
+SELECT call_id, server_alias, tool_name, method, key_id, user_id, token_owner, status, error_code, latency_ms, request_bytes, response_bytes, created_at
+FROM mcp_call_log WHERE ($1::text IS NULL OR server_alias = $1)
+ORDER BY created_at DESC, call_id DESC LIMIT $2 OFFSET $3
+"#;
+
+#[async_trait]
+impl McpStore for PgPool {
+    async fn create_mcp_server(&self, s: &McpServerRow) -> Result<i64> {
+        let row: (i64,) = sqlx::query_as(CREATE_MCP_SERVER_PG)
+            .bind(&s.alias)
+            .bind(&s.display_name)
+            .bind(&s.url)
+            .bind(&s.transport)
+            .bind(&s.credential_scope)
+            .bind(s.enabled)
+            .bind(&s.protocol_version)
+            .bind(&s.created_at)
+            .bind(&s.updated_at)
+            .fetch_one(self)
+            .await?;
+        Ok(row.0)
+    }
+
+    async fn get_mcp_server(&self, id: i64) -> Result<Option<McpServerRow>> {
+        sqlx::query_as::<_, McpServerRow>(GET_MCP_SERVER_PG)
+            .bind(id)
+            .fetch_optional(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn get_mcp_server_by_alias(&self, alias: &str) -> Result<Option<McpServerRow>> {
+        sqlx::query_as::<_, McpServerRow>(GET_MCP_SERVER_BY_ALIAS_PG)
+            .bind(alias)
+            .fetch_optional(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn list_mcp_servers(&self) -> Result<Vec<McpServerRow>> {
+        sqlx::query_as::<_, McpServerRow>(LIST_MCP_SERVERS_PG)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn update_mcp_server(&self, s: &McpServerRow) -> Result<()> {
+        sqlx::query(UPDATE_MCP_SERVER_PG)
+            .bind(&s.display_name)
+            .bind(&s.url)
+            .bind(&s.transport)
+            .bind(&s.credential_scope)
+            .bind(s.enabled)
+            .bind(&s.protocol_version)
+            .bind(&s.updated_at)
+            .bind(s.id)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn delete_mcp_server(&self, id: i64) -> Result<()> {
+        let mut tx = self.begin().await?;
+        sqlx::query(DELETE_MCP_TOOL_CATALOG_PG)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(DELETE_MCP_TOKENS_BY_SERVER_PG)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(DELETE_MCP_SERVER_PG)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn create_mcp_token(&self, t: &McpServerTokenRow) -> Result<i64> {
+        let row: (i64,) = sqlx::query_as(CREATE_MCP_TOKEN_PG)
+            .bind(t.server_id)
+            .bind(&t.owner_type)
+            .bind(&t.owner_id)
+            .bind(&t.token_name)
+            .bind(&t.token_value)
+            .bind(t.enabled)
+            .bind(&t.expires_at)
+            .bind(&t.created_by)
+            .bind(&t.created_at)
+            .bind(&t.updated_at)
+            .fetch_one(self)
+            .await?;
+        Ok(row.0)
+    }
+
+    async fn get_mcp_token(&self, id: i64) -> Result<Option<McpServerTokenRow>> {
+        sqlx::query_as::<_, McpServerTokenRow>(GET_MCP_TOKEN_PG)
+            .bind(id)
+            .fetch_optional(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn list_mcp_tokens(&self, server_id: i64) -> Result<Vec<McpServerTokenRow>> {
+        sqlx::query_as::<_, McpServerTokenRow>(LIST_MCP_TOKENS_PG)
+            .bind(server_id)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn default_mcp_token(
+        &self,
+        server_id: i64,
+        owner_type: &str,
+        owner_id: &str,
+    ) -> Result<Option<McpServerTokenRow>> {
+        sqlx::query_as::<_, McpServerTokenRow>(DEFAULT_MCP_TOKEN_PG)
+            .bind(server_id)
+            .bind(owner_type)
+            .bind(owner_id)
+            .fetch_optional(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn set_default_mcp_token(
+        &self,
+        server_id: i64,
+        owner_type: &str,
+        owner_id: &str,
+        token_id: i64,
+    ) -> Result<()> {
+        let mut tx = self.begin().await?;
+        sqlx::query(CLEAR_MCP_TOKEN_DEFAULT_PG)
+            .bind(server_id)
+            .bind(owner_type)
+            .bind(owner_id)
+            .execute(&mut *tx)
+            .await?;
+        let promoted = sqlx::query(SET_MCP_TOKEN_DEFAULT_PG)
+            .bind(token_id)
+            .bind(server_id)
+            .bind(owner_type)
+            .bind(owner_id)
+            .execute(&mut *tx)
+            .await?;
+        if promoted.rows_affected() == 0 {
+            return Err(DbError::NotFound(format!(
+                "MCP token {token_id} does not belong to owner {owner_type}/{} on server {server_id}",
+                if owner_id.is_empty() { "-" } else { owner_id }
+            )));
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn update_mcp_token(&self, t: &McpServerTokenRow) -> Result<()> {
+        sqlx::query(UPDATE_MCP_TOKEN_PG)
+            .bind(&t.token_name)
+            .bind(&t.token_value)
+            .bind(t.enabled)
+            .bind(&t.expires_at)
+            .bind(&t.updated_at)
+            .bind(t.id)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn delete_mcp_token(&self, id: i64) -> Result<()> {
+        sqlx::query(DELETE_MCP_TOKEN_PG)
+            .bind(id)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn list_mcp_servers_paged(
+        &self,
+        limit: i64,
+        offset: i64,
+        status: Option<&str>,
+        search: Option<&str>,
+        sort_by: Option<&str>,
+        sort_order: Option<&str>,
+    ) -> Result<Vec<McpServerRow>> {
+        let sort_col = mcp_sort_column(sort_by);
+        let order = mcp_sort_order(sort_order);
+        let status = mcp_status_filter(status);
+        let search = mcp_search_pattern(search);
+        let sql = format!(
+            "SELECT {MCP_SERVER_PROJECTION}, COALESCE(COUNT(c.id), 0)::bigint AS tool_count \
+             FROM mcp_servers s LEFT JOIN mcp_tool_catalog c ON c.server_id = s.id \
+             WHERE ($1::boolean IS NULL OR s.enabled = $1) \
+               AND ($2::text IS NULL OR s.alias ILIKE '%' || $2 || '%' ESCAPE '\\' \
+                    OR s.display_name ILIKE '%' || $2 || '%' ESCAPE '\\') \
+             GROUP BY {MCP_SERVER_GROUP_BY} \
+             ORDER BY s.{} {} LIMIT $3 OFFSET $4",
+            sort_col, order
+        );
+        sqlx::query_as::<_, McpServerRow>(&sql)
+            .bind(status)
+            .bind(search)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn count_mcp_servers(&self, status: Option<&str>, search: Option<&str>) -> Result<i64> {
+        let status = mcp_status_filter(status);
+        let search = mcp_search_pattern(search);
+        let row: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM mcp_servers s \
+             WHERE ($1::boolean IS NULL OR s.enabled = $1) \
+               AND ($2::text IS NULL OR s.alias ILIKE '%' || $2 || '%' ESCAPE '\\' \
+                    OR s.display_name ILIKE '%' || $2 || '%' ESCAPE '\\')",
+        )
+        .bind(status)
+        .bind(search)
+        .fetch_one(self)
+        .await?;
+        Ok(row.0)
+    }
+
+    async fn replace_mcp_tool_catalog(&self, server_id: i64, rows: &[McpToolRow]) -> Result<()> {
+        let mut tx = self.begin().await?;
+        sqlx::query(DELETE_MCP_TOOL_CATALOG_PG)
+            .bind(server_id)
+            .execute(&mut *tx)
+            .await?;
+        for row in rows {
+            sqlx::query(INSERT_MCP_TOOL_CATALOG_PG)
+                .bind(row.server_id)
+                .bind(&row.tool_name)
+                .bind(&row.description)
+                .bind(&row.input_schema)
+                .bind(&row.annotations)
+                .bind(row.has_conflict)
+                .bind(&row.fetched_at)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn list_mcp_tool_catalog(&self, server_id: i64) -> Result<Vec<McpToolRow>> {
+        sqlx::query_as::<_, McpToolRow>(LIST_MCP_TOOL_CATALOG_PG)
+            .bind(server_id)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn count_mcp_tool_catalog(&self, server_id: i64) -> Result<i64> {
+        let row: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM mcp_tool_catalog WHERE server_id = $1")
+                .bind(server_id)
+                .fetch_one(self)
+                .await?;
+        Ok(row.0)
+    }
+
+    async fn mcp_tool_names_elsewhere(&self, server_id: i64) -> Result<Vec<String>> {
+        let rows: Vec<(String,)> = sqlx::query_as(COLLIDING_MCP_TOOL_NAMES_PG)
+            .bind(server_id)
+            .fetch_all(self)
+            .await?;
+        Ok(rows.into_iter().map(|r| r.0).collect())
+    }
+
+    async fn clear_mcp_tool_catalog(&self) -> Result<()> {
+        sqlx::query(CLEAR_MCP_TOOL_CATALOG_PG).execute(self).await?;
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl McpCallLogStore for PgPool {
+    async fn insert_mcp_call_log(&self, row: &McpCallLogRow) -> Result<()> {
+        sqlx::query(INSERT_MCP_CALL_LOG_PG)
+            .bind(&row.call_id)
+            .bind(&row.server_alias)
+            .bind(&row.tool_name)
+            .bind(&row.method)
+            .bind(&row.key_id)
+            .bind(&row.user_id)
+            .bind(&row.token_owner)
+            .bind(&row.status)
+            .bind(&row.error_code)
+            .bind(row.latency_ms)
+            .bind(row.request_bytes)
+            .bind(row.response_bytes)
+            .bind(&row.created_at)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn list_mcp_call_log(
+        &self,
+        server_alias: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<McpCallLogRow>> {
+        sqlx::query_as::<_, McpCallLogRow>(LIST_MCP_CALL_LOG_PG)
+            .bind(server_alias)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// McpToolAllowlistStore / McpCallQueryStore — Stage 144
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Tool-level ACL rows (`032_mcp_tool_allowlist`). Separate from
+/// [`McpStore`] because the write unit is the whole set for one server, not a
+/// row: the admin endpoint replaces it wholesale, which is also what makes
+/// "delete a rule" expressible.
+///
+/// `ToolRule` carries no `server_id`, so every statement here selects and binds
+/// the four rule columns explicitly — a `SELECT *` would hand `FromRow` five
+/// columns and fail at runtime rather than at compile time.
+#[async_trait]
+pub trait McpToolAllowlistStore {
+    /// Delete every rule for `server_id` and insert `rules`, in one transaction.
+    async fn replace_mcp_tool_allowlist(&self, server_id: i64, rules: &[ToolRule]) -> Result<()>;
+    async fn list_mcp_tool_allowlist(&self, server_id: i64) -> Result<Vec<ToolRule>>;
+}
+
+/// Filters for `GET /admin/mcp/calls`. Every field is an AND; `None` means "no
+/// filter on this column", which is why the SQL starts each clause with
+/// `(?N IS NULL OR ...)`.
+#[derive(Debug, Clone, Default)]
+pub struct McpCallFilter {
+    pub server_alias: Option<String>,
+    pub tool_name: Option<String>,
+    pub status: Option<String>,
+    pub from: Option<String>,
+    pub to: Option<String>,
+}
+
+/// Reads behind `GET /admin/mcp/calls`. Kept apart from [`McpCallLogStore`],
+/// whose `list_mcp_call_log` takes only an alias and already has live callers —
+/// widening that signature would touch every one of them for one caller's gain.
+#[async_trait]
+pub trait McpCallQueryStore {
+    async fn list_mcp_call_log_filtered(
+        &self,
+        filter: &McpCallFilter,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<McpCallLogRow>>;
+    async fn count_mcp_call_log(&self, filter: &McpCallFilter) -> Result<i64>;
+}
+
+const LIST_MCP_CALL_LOG_FILTERED_SQLITE: &str = r#"
+SELECT call_id, server_alias, tool_name, method, key_id, user_id, token_owner, status, error_code, latency_ms, request_bytes, response_bytes, created_at
+FROM mcp_call_log
+WHERE (?1 IS NULL OR server_alias = ?1)
+  AND (?2 IS NULL OR LOWER(tool_name) LIKE LOWER('%' || ?2 || '%') ESCAPE '\')
+  AND (?3 IS NULL OR status = ?3)
+  AND (?4 IS NULL OR created_at >= ?4)
+  AND (?5 IS NULL OR created_at <= ?5)
+ORDER BY created_at DESC, call_id DESC LIMIT ?6 OFFSET ?7
+"#;
+const COUNT_MCP_CALL_LOG_SQLITE: &str = r#"
+SELECT COUNT(*) FROM mcp_call_log
+WHERE (?1 IS NULL OR server_alias = ?1)
+  AND (?2 IS NULL OR LOWER(tool_name) LIKE LOWER('%' || ?2 || '%') ESCAPE '\')
+  AND (?3 IS NULL OR status = ?3)
+  AND (?4 IS NULL OR created_at >= ?4)
+  AND (?5 IS NULL OR created_at <= ?5)
+"#;
+
+const LIST_MCP_CALL_LOG_FILTERED_PG: &str = r#"
+SELECT call_id, server_alias, tool_name, method, key_id, user_id, token_owner, status, error_code, latency_ms, request_bytes, response_bytes, created_at
+FROM mcp_call_log
+WHERE ($1::text IS NULL OR server_alias = $1)
+  AND ($2::text IS NULL OR LOWER(tool_name) LIKE LOWER('%' || $2 || '%') ESCAPE '\')
+  AND ($3::text IS NULL OR status = $3)
+  AND ($4::text IS NULL OR created_at >= $4)
+  AND ($5::text IS NULL OR created_at <= $5)
+ORDER BY created_at DESC, call_id DESC LIMIT $6 OFFSET $7
+"#;
+const COUNT_MCP_CALL_LOG_PG: &str = r#"
+SELECT COUNT(*) FROM mcp_call_log
+WHERE ($1::text IS NULL OR server_alias = $1)
+  AND ($2::text IS NULL OR LOWER(tool_name) LIKE LOWER('%' || $2 || '%') ESCAPE '\')
+  AND ($3::text IS NULL OR status = $3)
+  AND ($4::text IS NULL OR created_at >= $4)
+  AND ($5::text IS NULL OR created_at <= $5)
+"#;
+
+const LIST_MCP_CALL_LOG_FILTERED_MYSQL: &str = r#"
+SELECT call_id, server_alias, tool_name, method, key_id, user_id, token_owner, status, error_code, latency_ms, request_bytes, response_bytes, created_at
+FROM mcp_call_log
+WHERE (? IS NULL OR server_alias = ?)
+  AND (? IS NULL OR LOWER(tool_name) LIKE LOWER(CONCAT('%', ?, '%')) ESCAPE '\\')
+  AND (? IS NULL OR status = ?)
+  AND (? IS NULL OR created_at >= ?)
+  AND (? IS NULL OR created_at <= ?)
+ORDER BY created_at DESC, call_id DESC LIMIT ? OFFSET ?
+"#;
+const COUNT_MCP_CALL_LOG_MYSQL: &str = r#"
+SELECT COUNT(*) FROM mcp_call_log
+WHERE (? IS NULL OR server_alias = ?)
+  AND (? IS NULL OR LOWER(tool_name) LIKE LOWER(CONCAT('%', ?, '%')) ESCAPE '\\')
+  AND (? IS NULL OR status = ?)
+  AND (? IS NULL OR created_at >= ?)
+  AND (? IS NULL OR created_at <= ?)
+"#;
+
+const DELETE_MCP_TOOL_ALLOWLIST_SQLITE: &str =
+    r#"DELETE FROM mcp_tool_allowlist WHERE server_id = ?"#;
+const INSERT_MCP_TOOL_ALLOWLIST_SQLITE: &str = r#"
+INSERT INTO mcp_tool_allowlist (server_id, tool_name, scope_type, scope_id, allowed)
+VALUES (?, ?, ?, ?, ?)
+"#;
+const LIST_MCP_TOOL_ALLOWLIST_SQLITE: &str = r#"
+SELECT tool_name, scope_type, scope_id, allowed
+FROM mcp_tool_allowlist WHERE server_id = ? ORDER BY tool_name, scope_type, scope_id
+"#;
+
+const DELETE_MCP_TOOL_ALLOWLIST_MYSQL: &str =
+    r#"DELETE FROM mcp_tool_allowlist WHERE server_id = ?"#;
+const INSERT_MCP_TOOL_ALLOWLIST_MYSQL: &str = r#"
+INSERT INTO mcp_tool_allowlist (server_id, tool_name, scope_type, scope_id, allowed)
+VALUES (?, ?, ?, ?, ?)
+"#;
+const LIST_MCP_TOOL_ALLOWLIST_MYSQL: &str = r#"
+SELECT tool_name, scope_type, scope_id, allowed
+FROM mcp_tool_allowlist WHERE server_id = ? ORDER BY tool_name, scope_type, scope_id
+"#;
+
+const DELETE_MCP_TOOL_ALLOWLIST_PG: &str = r#"DELETE FROM mcp_tool_allowlist WHERE server_id = $1"#;
+const INSERT_MCP_TOOL_ALLOWLIST_PG: &str = r#"
+INSERT INTO mcp_tool_allowlist (server_id, tool_name, scope_type, scope_id, allowed)
+VALUES ($1, $2, $3, $4, $5)
+"#;
+const LIST_MCP_TOOL_ALLOWLIST_PG: &str = r#"
+SELECT tool_name, scope_type, scope_id, allowed
+FROM mcp_tool_allowlist WHERE server_id = $1 ORDER BY tool_name, scope_type, scope_id
+"#;
+
+#[async_trait]
+impl McpToolAllowlistStore for SqlitePool {
+    async fn replace_mcp_tool_allowlist(&self, server_id: i64, rules: &[ToolRule]) -> Result<()> {
+        let mut tx = self.begin().await?;
+        sqlx::query(DELETE_MCP_TOOL_ALLOWLIST_SQLITE)
+            .bind(server_id)
+            .execute(&mut *tx)
+            .await?;
+        for rule in rules {
+            sqlx::query(INSERT_MCP_TOOL_ALLOWLIST_SQLITE)
+                .bind(server_id)
+                .bind(&rule.tool_name)
+                .bind(&rule.scope_type)
+                .bind(&rule.scope_id)
+                .bind(rule.allowed)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn list_mcp_tool_allowlist(&self, server_id: i64) -> Result<Vec<ToolRule>> {
+        sqlx::query_as::<_, ToolRule>(LIST_MCP_TOOL_ALLOWLIST_SQLITE)
+            .bind(server_id)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
+    }
+}
+
+#[async_trait]
+impl McpToolAllowlistStore for MySqlPool {
+    async fn replace_mcp_tool_allowlist(&self, server_id: i64, rules: &[ToolRule]) -> Result<()> {
+        let mut tx = self.begin().await?;
+        sqlx::query(DELETE_MCP_TOOL_ALLOWLIST_MYSQL)
+            .bind(server_id)
+            .execute(&mut *tx)
+            .await?;
+        for rule in rules {
+            sqlx::query(INSERT_MCP_TOOL_ALLOWLIST_MYSQL)
+                .bind(server_id)
+                .bind(&rule.tool_name)
+                .bind(&rule.scope_type)
+                .bind(&rule.scope_id)
+                .bind(rule.allowed)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn list_mcp_tool_allowlist(&self, server_id: i64) -> Result<Vec<ToolRule>> {
+        sqlx::query_as::<_, ToolRule>(LIST_MCP_TOOL_ALLOWLIST_MYSQL)
+            .bind(server_id)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
+    }
+}
+
+#[async_trait]
+impl McpToolAllowlistStore for PgPool {
+    async fn replace_mcp_tool_allowlist(&self, server_id: i64, rules: &[ToolRule]) -> Result<()> {
+        let mut tx = self.begin().await?;
+        sqlx::query(DELETE_MCP_TOOL_ALLOWLIST_PG)
+            .bind(server_id)
+            .execute(&mut *tx)
+            .await?;
+        for rule in rules {
+            sqlx::query(INSERT_MCP_TOOL_ALLOWLIST_PG)
+                .bind(server_id)
+                .bind(&rule.tool_name)
+                .bind(&rule.scope_type)
+                .bind(&rule.scope_id)
+                .bind(rule.allowed)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn list_mcp_tool_allowlist(&self, server_id: i64) -> Result<Vec<ToolRule>> {
+        sqlx::query_as::<_, ToolRule>(LIST_MCP_TOOL_ALLOWLIST_PG)
+            .bind(server_id)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
+    }
+}
+
+#[async_trait]
+impl McpCallQueryStore for SqlitePool {
+    async fn list_mcp_call_log_filtered(
+        &self,
+        filter: &McpCallFilter,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<McpCallLogRow>> {
+        let tool = mcp_search_pattern(filter.tool_name.as_deref());
+        sqlx::query_as::<_, McpCallLogRow>(LIST_MCP_CALL_LOG_FILTERED_SQLITE)
+            .bind(filter.server_alias.as_deref())
+            .bind(tool)
+            .bind(filter.status.as_deref())
+            .bind(filter.from.as_deref())
+            .bind(filter.to.as_deref())
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn count_mcp_call_log(&self, filter: &McpCallFilter) -> Result<i64> {
+        let tool = mcp_search_pattern(filter.tool_name.as_deref());
+        let row: (i64,) = sqlx::query_as(COUNT_MCP_CALL_LOG_SQLITE)
+            .bind(filter.server_alias.as_deref())
+            .bind(tool)
+            .bind(filter.status.as_deref())
+            .bind(filter.from.as_deref())
+            .bind(filter.to.as_deref())
+            .fetch_one(self)
+            .await?;
+        Ok(row.0)
+    }
+}
+
+#[async_trait]
+impl McpCallQueryStore for MySqlPool {
+    async fn list_mcp_call_log_filtered(
+        &self,
+        filter: &McpCallFilter,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<McpCallLogRow>> {
+        let tool = mcp_search_pattern(filter.tool_name.as_deref());
+        sqlx::query_as::<_, McpCallLogRow>(LIST_MCP_CALL_LOG_FILTERED_MYSQL)
+            .bind(filter.server_alias.as_deref())
+            .bind(filter.server_alias.as_deref())
+            .bind(tool.as_deref())
+            .bind(tool.as_deref())
+            .bind(filter.status.as_deref())
+            .bind(filter.status.as_deref())
+            .bind(filter.from.as_deref())
+            .bind(filter.from.as_deref())
+            .bind(filter.to.as_deref())
+            .bind(filter.to.as_deref())
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn count_mcp_call_log(&self, filter: &McpCallFilter) -> Result<i64> {
+        let tool = mcp_search_pattern(filter.tool_name.as_deref());
+        let row: (i64,) = sqlx::query_as(COUNT_MCP_CALL_LOG_MYSQL)
+            .bind(filter.server_alias.as_deref())
+            .bind(filter.server_alias.as_deref())
+            .bind(tool.as_deref())
+            .bind(tool.as_deref())
+            .bind(filter.status.as_deref())
+            .bind(filter.status.as_deref())
+            .bind(filter.from.as_deref())
+            .bind(filter.from.as_deref())
+            .bind(filter.to.as_deref())
+            .bind(filter.to.as_deref())
+            .fetch_one(self)
+            .await?;
+        Ok(row.0)
+    }
+}
+
+#[async_trait]
+impl McpCallQueryStore for PgPool {
+    async fn list_mcp_call_log_filtered(
+        &self,
+        filter: &McpCallFilter,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<McpCallLogRow>> {
+        let tool = mcp_search_pattern(filter.tool_name.as_deref());
+        sqlx::query_as::<_, McpCallLogRow>(LIST_MCP_CALL_LOG_FILTERED_PG)
+            .bind(filter.server_alias.as_deref())
+            .bind(tool)
+            .bind(filter.status.as_deref())
+            .bind(filter.from.as_deref())
+            .bind(filter.to.as_deref())
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn count_mcp_call_log(&self, filter: &McpCallFilter) -> Result<i64> {
+        let tool = mcp_search_pattern(filter.tool_name.as_deref());
+        let row: (i64,) = sqlx::query_as(COUNT_MCP_CALL_LOG_PG)
+            .bind(filter.server_alias.as_deref())
+            .bind(tool)
+            .bind(filter.status.as_deref())
+            .bind(filter.from.as_deref())
+            .bind(filter.to.as_deref())
+            .fetch_one(self)
+            .await?;
+        Ok(row.0)
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Database enum dispatch — MCP store
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+impl Database {
+    pub async fn create_mcp_server(&self, s: &McpServerRow) -> Result<i64> {
+        match self {
+            Database::Sqlite(pool) => pool.create_mcp_server(s).await,
+            Database::Mysql(pool) => pool.create_mcp_server(s).await,
+            Database::Postgres(pool) => pool.create_mcp_server(s).await,
+        }
+    }
+    pub async fn get_mcp_server(&self, id: i64) -> Result<Option<McpServerRow>> {
+        match self {
+            Database::Sqlite(pool) => pool.get_mcp_server(id).await,
+            Database::Mysql(pool) => pool.get_mcp_server(id).await,
+            Database::Postgres(pool) => pool.get_mcp_server(id).await,
+        }
+    }
+    pub async fn get_mcp_server_by_alias(&self, alias: &str) -> Result<Option<McpServerRow>> {
+        match self {
+            Database::Sqlite(pool) => pool.get_mcp_server_by_alias(alias).await,
+            Database::Mysql(pool) => pool.get_mcp_server_by_alias(alias).await,
+            Database::Postgres(pool) => pool.get_mcp_server_by_alias(alias).await,
+        }
+    }
+    pub async fn list_mcp_servers(&self) -> Result<Vec<McpServerRow>> {
+        match self {
+            Database::Sqlite(pool) => pool.list_mcp_servers().await,
+            Database::Mysql(pool) => pool.list_mcp_servers().await,
+            Database::Postgres(pool) => pool.list_mcp_servers().await,
+        }
+    }
+    pub async fn update_mcp_server(&self, s: &McpServerRow) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.update_mcp_server(s).await,
+            Database::Mysql(pool) => pool.update_mcp_server(s).await,
+            Database::Postgres(pool) => pool.update_mcp_server(s).await,
+        }
+    }
+    pub async fn delete_mcp_server(&self, id: i64) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.delete_mcp_server(id).await,
+            Database::Mysql(pool) => pool.delete_mcp_server(id).await,
+            Database::Postgres(pool) => pool.delete_mcp_server(id).await,
+        }
+    }
+    pub async fn create_mcp_token(&self, t: &McpServerTokenRow) -> Result<i64> {
+        match self {
+            Database::Sqlite(pool) => pool.create_mcp_token(t).await,
+            Database::Mysql(pool) => pool.create_mcp_token(t).await,
+            Database::Postgres(pool) => pool.create_mcp_token(t).await,
+        }
+    }
+    pub async fn get_mcp_token(&self, id: i64) -> Result<Option<McpServerTokenRow>> {
+        match self {
+            Database::Sqlite(pool) => pool.get_mcp_token(id).await,
+            Database::Mysql(pool) => pool.get_mcp_token(id).await,
+            Database::Postgres(pool) => pool.get_mcp_token(id).await,
+        }
+    }
+    pub async fn list_mcp_tokens(&self, server_id: i64) -> Result<Vec<McpServerTokenRow>> {
+        match self {
+            Database::Sqlite(pool) => pool.list_mcp_tokens(server_id).await,
+            Database::Mysql(pool) => pool.list_mcp_tokens(server_id).await,
+            Database::Postgres(pool) => pool.list_mcp_tokens(server_id).await,
+        }
+    }
+    pub async fn default_mcp_token(
+        &self,
+        server_id: i64,
+        owner_type: &str,
+        owner_id: &str,
+    ) -> Result<Option<McpServerTokenRow>> {
+        match self {
+            Database::Sqlite(pool) => {
+                pool.default_mcp_token(server_id, owner_type, owner_id)
+                    .await
+            }
+            Database::Mysql(pool) => {
+                pool.default_mcp_token(server_id, owner_type, owner_id)
+                    .await
+            }
+            Database::Postgres(pool) => {
+                pool.default_mcp_token(server_id, owner_type, owner_id)
+                    .await
+            }
+        }
+    }
+    pub async fn set_default_mcp_token(
+        &self,
+        server_id: i64,
+        owner_type: &str,
+        owner_id: &str,
+        token_id: i64,
+    ) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => {
+                pool.set_default_mcp_token(server_id, owner_type, owner_id, token_id)
+                    .await
+            }
+            Database::Mysql(pool) => {
+                pool.set_default_mcp_token(server_id, owner_type, owner_id, token_id)
+                    .await
+            }
+            Database::Postgres(pool) => {
+                pool.set_default_mcp_token(server_id, owner_type, owner_id, token_id)
+                    .await
+            }
+        }
+    }
+    pub async fn update_mcp_token(&self, t: &McpServerTokenRow) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.update_mcp_token(t).await,
+            Database::Mysql(pool) => pool.update_mcp_token(t).await,
+            Database::Postgres(pool) => pool.update_mcp_token(t).await,
+        }
+    }
+    pub async fn delete_mcp_token(&self, id: i64) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.delete_mcp_token(id).await,
+            Database::Mysql(pool) => pool.delete_mcp_token(id).await,
+            Database::Postgres(pool) => pool.delete_mcp_token(id).await,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn list_mcp_servers_paged(
+        &self,
+        limit: i64,
+        offset: i64,
+        status: Option<&str>,
+        search: Option<&str>,
+        sort_by: Option<&str>,
+        sort_order: Option<&str>,
+    ) -> Result<Vec<McpServerRow>> {
+        match self {
+            Database::Sqlite(pool) => {
+                pool.list_mcp_servers_paged(limit, offset, status, search, sort_by, sort_order)
+                    .await
+            }
+            Database::Mysql(pool) => {
+                pool.list_mcp_servers_paged(limit, offset, status, search, sort_by, sort_order)
+                    .await
+            }
+            Database::Postgres(pool) => {
+                pool.list_mcp_servers_paged(limit, offset, status, search, sort_by, sort_order)
+                    .await
+            }
+        }
+    }
+
+    pub async fn count_mcp_servers(
+        &self,
+        status: Option<&str>,
+        search: Option<&str>,
+    ) -> Result<i64> {
+        match self {
+            Database::Sqlite(pool) => pool.count_mcp_servers(status, search).await,
+            Database::Mysql(pool) => pool.count_mcp_servers(status, search).await,
+            Database::Postgres(pool) => pool.count_mcp_servers(status, search).await,
+        }
+    }
+
+    pub async fn replace_mcp_tool_catalog(
+        &self,
+        server_id: i64,
+        rows: &[McpToolRow],
+    ) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.replace_mcp_tool_catalog(server_id, rows).await,
+            Database::Mysql(pool) => pool.replace_mcp_tool_catalog(server_id, rows).await,
+            Database::Postgres(pool) => pool.replace_mcp_tool_catalog(server_id, rows).await,
+        }
+    }
+
+    pub async fn list_mcp_tool_catalog(&self, server_id: i64) -> Result<Vec<McpToolRow>> {
+        match self {
+            Database::Sqlite(pool) => pool.list_mcp_tool_catalog(server_id).await,
+            Database::Mysql(pool) => pool.list_mcp_tool_catalog(server_id).await,
+            Database::Postgres(pool) => pool.list_mcp_tool_catalog(server_id).await,
+        }
+    }
+
+    pub async fn count_mcp_tool_catalog(&self, server_id: i64) -> Result<i64> {
+        match self {
+            Database::Sqlite(pool) => pool.count_mcp_tool_catalog(server_id).await,
+            Database::Mysql(pool) => pool.count_mcp_tool_catalog(server_id).await,
+            Database::Postgres(pool) => pool.count_mcp_tool_catalog(server_id).await,
+        }
+    }
+
+    pub async fn mcp_tool_names_elsewhere(&self, server_id: i64) -> Result<Vec<String>> {
+        match self {
+            Database::Sqlite(pool) => pool.mcp_tool_names_elsewhere(server_id).await,
+            Database::Mysql(pool) => pool.mcp_tool_names_elsewhere(server_id).await,
+            Database::Postgres(pool) => pool.mcp_tool_names_elsewhere(server_id).await,
+        }
+    }
+
+    pub async fn clear_mcp_tool_catalog(&self) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.clear_mcp_tool_catalog().await,
+            Database::Mysql(pool) => pool.clear_mcp_tool_catalog().await,
+            Database::Postgres(pool) => pool.clear_mcp_tool_catalog().await,
+        }
+    }
+
+    pub async fn insert_mcp_call_log(&self, row: &McpCallLogRow) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.insert_mcp_call_log(row).await,
+            Database::Mysql(pool) => pool.insert_mcp_call_log(row).await,
+            Database::Postgres(pool) => pool.insert_mcp_call_log(row).await,
+        }
+    }
+
+    pub async fn list_mcp_call_log(
+        &self,
+        server_alias: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<McpCallLogRow>> {
+        match self {
+            Database::Sqlite(pool) => pool.list_mcp_call_log(server_alias, limit, offset).await,
+            Database::Mysql(pool) => pool.list_mcp_call_log(server_alias, limit, offset).await,
+            Database::Postgres(pool) => pool.list_mcp_call_log(server_alias, limit, offset).await,
+        }
+    }
+
+    pub async fn replace_mcp_tool_allowlist(
+        &self,
+        server_id: i64,
+        rules: &[ToolRule],
+    ) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.replace_mcp_tool_allowlist(server_id, rules).await,
+            Database::Mysql(pool) => pool.replace_mcp_tool_allowlist(server_id, rules).await,
+            Database::Postgres(pool) => pool.replace_mcp_tool_allowlist(server_id, rules).await,
+        }
+    }
+
+    pub async fn list_mcp_tool_allowlist(&self, server_id: i64) -> Result<Vec<ToolRule>> {
+        match self {
+            Database::Sqlite(pool) => pool.list_mcp_tool_allowlist(server_id).await,
+            Database::Mysql(pool) => pool.list_mcp_tool_allowlist(server_id).await,
+            Database::Postgres(pool) => pool.list_mcp_tool_allowlist(server_id).await,
+        }
+    }
+
+    pub async fn list_mcp_call_log_filtered(
+        &self,
+        filter: &McpCallFilter,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<McpCallLogRow>> {
+        match self {
+            Database::Sqlite(pool) => pool.list_mcp_call_log_filtered(filter, limit, offset).await,
+            Database::Mysql(pool) => pool.list_mcp_call_log_filtered(filter, limit, offset).await,
+            Database::Postgres(pool) => {
+                pool.list_mcp_call_log_filtered(filter, limit, offset).await
+            }
+        }
+    }
+
+    pub async fn count_mcp_call_log(&self, filter: &McpCallFilter) -> Result<i64> {
+        match self {
+            Database::Sqlite(pool) => pool.count_mcp_call_log(filter).await,
+            Database::Mysql(pool) => pool.count_mcp_call_log(filter).await,
+            Database::Postgres(pool) => pool.count_mcp_call_log(filter).await,
+        }
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Database enum proxy dispatch
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -9117,6 +11056,9 @@ mod tests {
         "proxies",
         "web_search_providers",
         "web_search_instances",
+        "mcp_servers",
+        "mcp_server_tokens",
+        "mcp_tool_catalog",
     ];
 
     fn make_test_key(token_hash: &str, key_alias: &str) -> VirtualKey {
@@ -10253,6 +12195,267 @@ mod tests {
             second.is_err(),
             "UNIQUE(name) must reject a duplicate provider name"
         );
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // MCP server/token store tests (Stage 140)
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    fn make_test_mcp_server(alias: &str) -> McpServerRow {
+        let now = Utc::now().to_rfc3339();
+        McpServerRow {
+            id: 0,
+            alias: alias.to_string(),
+            display_name: format!("{alias} server"),
+            url: "https://mcp.example.com/mcp".to_string(),
+            transport: "streamable_http".to_string(),
+            credential_scope: CredentialScope::SharedOrUser.as_str().to_string(),
+            enabled: true,
+            protocol_version: None,
+            tool_count: 0,
+            created_at: now.clone(),
+            updated_at: now,
+        }
+    }
+
+    fn make_test_mcp_token(
+        server_id: i64,
+        owner_type: &str,
+        owner_id: &str,
+        name: &str,
+    ) -> McpServerTokenRow {
+        let now = Utc::now().to_rfc3339();
+        McpServerTokenRow {
+            id: 0,
+            server_id,
+            owner_type: owner_type.to_string(),
+            owner_id: owner_id.to_string(),
+            token_name: name.to_string(),
+            token_value: crate::mcp::seal_token("plain-secret", "test-master-key").expect("seal"),
+            is_default: false,
+            enabled: true,
+            expires_at: None,
+            created_by: "admin".to_string(),
+            created_at: now.clone(),
+            updated_at: now,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_mcp_server_crud_roundtrip() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let mut s = make_test_mcp_server("github");
+        let id = db.create_mcp_server(&s).await.expect("create");
+        assert!(id > 0);
+
+        let got = db.get_mcp_server(id).await.expect("get").unwrap();
+        assert_eq!(got.alias, "github");
+        assert_eq!(got.transport, "streamable_http");
+        assert_eq!(got.scope(), CredentialScope::SharedOrUser);
+        assert!(got.enabled);
+        assert_eq!(got.protocol_version, None);
+
+        let by_alias = db
+            .get_mcp_server_by_alias("github")
+            .await
+            .expect("by alias")
+            .unwrap();
+        assert_eq!(by_alias.id, id);
+        assert_eq!(db.list_mcp_servers().await.expect("list").len(), 1);
+
+        s.id = id;
+        s.display_name = "GitHub".to_string();
+        s.credential_scope = CredentialScope::UserRequired.as_str().to_string();
+        s.enabled = false;
+        db.update_mcp_server(&s).await.expect("update");
+        let upd = db.get_mcp_server(id).await.expect("get").unwrap();
+        assert_eq!(upd.display_name, "GitHub");
+        assert_eq!(upd.scope(), CredentialScope::UserRequired);
+        assert!(!upd.enabled);
+
+        db.delete_mcp_server(id).await.expect("delete");
+        assert!(db.get_mcp_server(id).await.expect("get").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_mcp_server_alias_is_unique() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        db.create_mcp_server(&make_test_mcp_server("wiki"))
+            .await
+            .expect("first");
+        assert!(
+            db.create_mcp_server(&make_test_mcp_server("wiki"))
+                .await
+                .is_err(),
+            "UNIQUE(alias) must reject a duplicate alias"
+        );
+    }
+
+    /// The token lands in the DB as ciphertext, and switching the default
+    /// clears the previous one for that owner only.
+    #[tokio::test]
+    async fn test_mcp_token_default_switch() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let sid = db
+            .create_mcp_server(&make_test_mcp_server("github"))
+            .await
+            .expect("create server");
+
+        let server_token = db
+            .create_mcp_token(&make_test_mcp_token(sid, "server", "", "svc-account"))
+            .await
+            .expect("server token");
+        db.set_default_mcp_token(sid, "server", "", server_token)
+            .await
+            .expect("set server default");
+
+        let first = db
+            .create_mcp_token(&make_test_mcp_token(sid, "user", "u_1", "personal-a"))
+            .await
+            .expect("user token a");
+        let second = db
+            .create_mcp_token(&make_test_mcp_token(sid, "user", "u_1", "personal-b"))
+            .await
+            .expect("user token b");
+
+        db.set_default_mcp_token(sid, "user", "u_1", first)
+            .await
+            .expect("default a");
+        assert_eq!(
+            db.default_mcp_token(sid, "user", "u_1")
+                .await
+                .expect("read default")
+                .unwrap()
+                .id,
+            first
+        );
+
+        db.set_default_mcp_token(sid, "user", "u_1", second)
+            .await
+            .expect("default b");
+        let default = db
+            .default_mcp_token(sid, "user", "u_1")
+            .await
+            .expect("read default")
+            .unwrap();
+        assert_eq!(default.id, second);
+        assert!(default.is_default);
+        assert!(
+            !db.get_mcp_token(first)
+                .await
+                .expect("get")
+                .unwrap()
+                .is_default,
+            "switching the default must clear the previous one"
+        );
+
+        // The server owner's default is untouched by the user-owner switch.
+        let server_default = db
+            .default_mcp_token(sid, "server", "")
+            .await
+            .expect("server default")
+            .unwrap();
+        assert_eq!(server_default.id, server_token);
+        assert!(server_default.is_default);
+
+        // Read back what is actually stored: ciphertext, never plaintext.
+        let stored = db.get_mcp_token(second).await.expect("get").unwrap();
+        assert!(
+            stored.token_value.starts_with("v2:gcm:"),
+            "token must be stored as a v2:gcm: envelope"
+        );
+        assert_ne!(stored.token_value, "plain-secret");
+    }
+
+    /// Promotion is scoped to the owner whose flags were just cleared: a token
+    /// id belonging to another owner must be rejected, not promoted.
+    #[tokio::test]
+    async fn test_mcp_token_default_rejects_foreign_token() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let sid = db
+            .create_mcp_server(&make_test_mcp_server("github"))
+            .await
+            .expect("create server");
+        let mine = db
+            .create_mcp_token(&make_test_mcp_token(sid, "user", "u_1", "mine"))
+            .await
+            .expect("user token");
+        let theirs = db
+            .create_mcp_token(&make_test_mcp_token(sid, "user", "u_2", "theirs"))
+            .await
+            .expect("other user token");
+
+        let err = db
+            .set_default_mcp_token(sid, "user", "u_1", theirs)
+            .await
+            .expect_err("promoting another owner's token must fail");
+        assert!(matches!(err, DbError::NotFound(_)), "got {err:?}");
+
+        assert!(
+            !db.get_mcp_token(theirs)
+                .await
+                .expect("get")
+                .unwrap()
+                .is_default,
+            "the rejected promotion must not leave a default behind"
+        );
+
+        db.set_default_mcp_token(sid, "user", "u_1", mine)
+            .await
+            .expect("own token promotes");
+        assert!(
+            db.default_mcp_token(sid, "user", "u_1")
+                .await
+                .expect("read default")
+                .unwrap()
+                .is_default
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mcp_server_delete_cascades_tokens() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let sid = db
+            .create_mcp_server(&make_test_mcp_server("wiki"))
+            .await
+            .expect("create server");
+        db.create_mcp_token(&make_test_mcp_token(sid, "server", "", "svc"))
+            .await
+            .expect("server token");
+        let uid = db
+            .create_mcp_token(&make_test_mcp_token(sid, "user", "u_1", "mine"))
+            .await
+            .expect("user token");
+
+        db.delete_mcp_server(sid).await.expect("delete");
+
+        assert!(
+            db.list_mcp_tokens(sid).await.expect("list").is_empty(),
+            "tokens must not survive their server"
+        );
+        assert!(db.get_mcp_token(uid).await.expect("get").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_mcp_token_owner_name_is_unique() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let sid = db
+            .create_mcp_server(&make_test_mcp_server("wiki"))
+            .await
+            .expect("create server");
+        db.create_mcp_token(&make_test_mcp_token(sid, "user", "u_1", "dup"))
+            .await
+            .expect("first");
+        assert!(
+            db.create_mcp_token(&make_test_mcp_token(sid, "user", "u_1", "dup"))
+                .await
+                .is_err(),
+            "UNIQUE(server_id, owner_type, owner_id, token_name) must hold"
+        );
+        // Same name under a different owner is a different row.
+        db.create_mcp_token(&make_test_mcp_token(sid, "user", "u_2", "dup"))
+            .await
+            .expect("different owner");
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

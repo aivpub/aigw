@@ -1296,6 +1296,277 @@ pub struct WebSearchInstanceRow {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// MCP gateway models (Phase 55, Stage 140)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Whose upstream credential a server uses on egress.
+///
+/// `UserRequired` deliberately never falls back to the shared token: falling
+/// back would make it `SharedOrUser`, which is a security-semantics error, not
+/// a preference.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CredentialScope {
+    Shared,
+    SharedOrUser,
+    UserRequired,
+}
+
+impl CredentialScope {
+    pub const DEFAULT: CredentialScope = CredentialScope::SharedOrUser;
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CredentialScope::Shared => "shared",
+            CredentialScope::SharedOrUser => "shared_or_user",
+            CredentialScope::UserRequired => "user_required",
+        }
+    }
+
+    /// Unknown values parse to [`CredentialScope::UserRequired`], not to
+    /// [`CredentialScope::DEFAULT`]: a value this binary never wrote means the
+    /// row is corrupt or foreign, and the safe direction is to withhold the
+    /// shared token instead of silently granting it.
+    pub fn parse(value: &str) -> CredentialScope {
+        match value {
+            "shared" => CredentialScope::Shared,
+            "shared_or_user" => CredentialScope::SharedOrUser,
+            _ => CredentialScope::UserRequired,
+        }
+    }
+}
+
+/// One registered MCP upstream server. `alias` prefixes its tool names
+/// (`{alias}__{tool}`) and is validated by [`crate::mcp::alias::validate_alias`].
+///
+/// `tool_count` is a projection, not a column: the list/paged reads aggregate
+/// `mcp_tool_catalog` (`COALESCE(COUNT(c.id), 0)`). `#[sqlx(default)]` covers the
+/// queries that carry no aggregate — `McpServerRow::tool_count` is then 0, not an
+/// error. Defaults do **not** cover NULL, which is why the aggregate coalesces.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct McpServerRow {
+    pub id: i64,
+    pub alias: String,
+    pub display_name: String,
+    pub url: String,
+    pub transport: String,
+    pub credential_scope: String,
+    pub enabled: bool,
+    pub protocol_version: Option<String>,
+    #[sqlx(default)]
+    pub tool_count: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl McpServerRow {
+    pub fn scope(&self) -> CredentialScope {
+        CredentialScope::parse(&self.credential_scope)
+    }
+}
+
+/// One upstream credential. `token_value` is the `v2:gcm:` ciphertext as
+/// stored; plaintext never leaves the decrypt-at-egress path.
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct McpServerTokenRow {
+    pub id: i64,
+    pub server_id: i64,
+    pub owner_type: String,
+    pub owner_id: String,
+    pub token_name: String,
+    pub token_value: String,
+    pub is_default: bool,
+    pub enabled: bool,
+    pub expires_at: Option<String>,
+    pub created_by: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+pub const MCP_OWNER_SERVER: &str = "server";
+pub const MCP_OWNER_USER: &str = "user";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateMcpServerRequest {
+    pub alias: String,
+    pub display_name: String,
+    pub url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transport: Option<String>,
+    #[serde(default)]
+    pub credential_scope: Option<CredentialScope>,
+    /// Absent means enabled. The dialog always sends it, and dropping it
+    /// silently would create an enabled server behind a switched-off toggle.
+    #[serde(default)]
+    pub enabled: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateMcpServerRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential_scope: Option<CredentialScope>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+}
+
+/// Token metadata in responses — `token_value` is always `***`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpTokenResponse {
+    pub id: i64,
+    pub server_id: i64,
+    pub owner_type: String,
+    pub owner_id: String,
+    pub token_name: String,
+    pub token_redacted: String,
+    pub is_default: bool,
+    pub enabled: bool,
+    pub expires_at: Option<String>,
+    pub created_by: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+impl From<&McpServerTokenRow> for McpTokenResponse {
+    fn from(row: &McpServerTokenRow) -> Self {
+        McpTokenResponse {
+            id: row.id,
+            server_id: row.server_id,
+            owner_type: row.owner_type.clone(),
+            owner_id: row.owner_id.clone(),
+            token_name: row.token_name.clone(),
+            token_redacted: crate::mcp::credential::redact_token(&row.token_value),
+            is_default: row.is_default,
+            enabled: row.enabled,
+            expires_at: row.expires_at.clone(),
+            created_by: row.created_by.clone(),
+            created_at: row.created_at.clone(),
+            updated_at: row.updated_at.clone(),
+        }
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// MCP tool catalog (Phase 55, Stage 141)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// One row of `mcp_tool_catalog`: a tool as the upstream named it, snapshot
+/// semantics (a probe replaces the whole set for its server).
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct McpToolRow {
+    pub id: i64,
+    pub server_id: i64,
+    pub tool_name: String,
+    pub description: String,
+    #[sqlx(default)]
+    pub input_schema: serde_json::Value,
+    #[sqlx(default)]
+    pub annotations: Option<serde_json::Value>,
+    pub has_conflict: bool,
+    pub fetched_at: String,
+}
+
+/// A tool on the wire: the catalog columns without `id`/`server_id`/`fetched_at`,
+/// which are storage facts rather than tool facts. Field names are the column
+/// names — the frontend reads the same table through the same names.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UpstreamTool {
+    pub tool_name: String,
+    pub description: String,
+    pub input_schema: serde_json::Value,
+    pub annotations: Option<serde_json::Value>,
+    pub has_conflict: bool,
+}
+
+impl UpstreamTool {
+    pub fn from_row(row: &McpToolRow) -> Self {
+        UpstreamTool {
+            tool_name: row.tool_name.clone(),
+            description: row.description.clone(),
+            input_schema: row.input_schema.clone(),
+            annotations: row.annotations.clone(),
+            has_conflict: row.has_conflict,
+        }
+    }
+}
+
+/// What one probe learned about a server — the `POST .../probe` body, pinned by
+/// Stage 142.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProbeOutcome {
+    pub protocol_version: String,
+    pub server_info: Option<serde_json::Value>,
+    pub ttl_ms: Option<i64>,
+    pub tools: Vec<UpstreamTool>,
+    pub conflicts: Vec<String>,
+}
+
+/// `GET /admin/mcp/servers/{id}/tools` — the stored snapshot. No snapshot and an
+/// empty snapshot are the same answer here; the distinction lives in `fetched_at`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CatalogSnapshot {
+    pub tools: Vec<UpstreamTool>,
+    pub conflicts: Vec<String>,
+    pub fetched_at: Option<String>,
+}
+
+impl CatalogSnapshot {
+    pub fn from_rows(rows: &[McpToolRow]) -> Self {
+        CatalogSnapshot {
+            tools: rows.iter().map(UpstreamTool::from_row).collect(),
+            conflicts: conflict_names(rows),
+            // One snapshot is written with one timestamp, but the rows arrive
+            // `ORDER BY tool_name` — `first()` would make the answer depend on
+            // alphabetical order rather than on the write.
+            fetched_at: rows.iter().map(|r| r.fetched_at.clone()).max(),
+        }
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// MCP call log (Phase 55, Stage 143)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// One row of `mcp_call_log` — written whether the call succeeded or failed.
+///
+/// `method` is the MCP method name, not the HTTP verb. `key_id` is a
+/// `token_hash` and is always populated (master key requests carry the literal
+/// `*master*`); only `user_id` can be absent.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, FromRow)]
+pub struct McpCallLogRow {
+    pub call_id: String,
+    pub server_alias: String,
+    pub tool_name: Option<String>,
+    pub method: String,
+    pub key_id: Option<String>,
+    pub user_id: Option<String>,
+    pub token_owner: String,
+    pub status: String,
+    pub error_code: Option<String>,
+    pub latency_ms: i64,
+    pub request_bytes: i64,
+    pub response_bytes: i64,
+    pub created_at: String,
+}
+
+pub const MCP_CALL_STATUS_SUCCESS: &str = "success";
+pub const MCP_CALL_STATUS_FAILED: &str = "failed";
+
+fn conflict_names(rows: &[McpToolRow]) -> Vec<String> {
+    let mut names: Vec<String> = rows
+        .iter()
+        .filter(|r| r.has_conflict)
+        .map(|r| r.tool_name.clone())
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Health Check models
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -1327,4 +1598,76 @@ pub struct ClaudeDelta {
     /// Used for input_json_delta — Anthropic requires "partial_json", not "text"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub partial_json: Option<String>,
+}
+
+#[cfg(test)]
+mod credential_scope_tests {
+    use super::CredentialScope;
+
+    #[test]
+    fn unknown_scope_parses_to_the_restrictive_variant() {
+        assert_eq!(CredentialScope::parse("shared"), CredentialScope::Shared);
+        assert_eq!(
+            CredentialScope::parse("shared_or_user"),
+            CredentialScope::SharedOrUser
+        );
+        assert_eq!(
+            CredentialScope::parse("user_required"),
+            CredentialScope::UserRequired
+        );
+        assert_eq!(
+            CredentialScope::parse("nonsense"),
+            CredentialScope::UserRequired
+        );
+        assert_eq!(CredentialScope::parse(""), CredentialScope::UserRequired);
+    }
+}
+
+#[cfg(test)]
+mod catalog_snapshot_tests {
+    use super::{CatalogSnapshot, McpToolRow};
+    use serde_json::json;
+
+    fn row(tool_name: &str, fetched_at: &str, has_conflict: bool) -> McpToolRow {
+        McpToolRow {
+            id: 0,
+            server_id: 1,
+            tool_name: tool_name.to_string(),
+            description: String::new(),
+            input_schema: json!({}),
+            annotations: None,
+            has_conflict,
+            fetched_at: fetched_at.to_string(),
+        }
+    }
+
+    #[test]
+    fn fetched_at_is_the_snapshot_write_not_the_alphabetically_first_row() {
+        let rows = vec![
+            row("aaa", "2026-01-01T00:00:00Z", false),
+            row("zzz", "2026-05-05T00:00:00Z", false),
+        ];
+        assert_eq!(
+            CatalogSnapshot::from_rows(&rows).fetched_at.as_deref(),
+            Some("2026-05-05T00:00:00Z")
+        );
+    }
+
+    #[test]
+    fn an_empty_snapshot_has_no_timestamp_and_no_conflicts() {
+        let snapshot = CatalogSnapshot::from_rows(&[]);
+        assert!(snapshot.tools.is_empty());
+        assert!(snapshot.conflicts.is_empty());
+        assert_eq!(snapshot.fetched_at, None);
+    }
+
+    #[test]
+    fn conflicts_are_the_sorted_deduplicated_flagged_names() {
+        let rows = vec![
+            row("b", "2026-01-01T00:00:00Z", true),
+            row("a", "2026-01-01T00:00:00Z", true),
+            row("c", "2026-01-01T00:00:00Z", false),
+        ];
+        assert_eq!(CatalogSnapshot::from_rows(&rows).conflicts, vec!["a", "b"]);
+    }
 }

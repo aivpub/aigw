@@ -165,6 +165,14 @@ pub struct GeneralSettings {
     /// log-only.
     #[serde(rename = "alert_webhook", skip_serializing_if = "Option::is_none")]
     pub alert_webhook: Option<String>,
+
+    /// Turn off `/mcp-rest/*` (Stage 143). The debug endpoints skip protocol
+    /// negotiation, so their behaviour differs from the agent path; production
+    /// is expected to switch them off. Enforced in the handler rather than by
+    /// not registering the routes — a route table that changes shape with
+    /// config is harder to construct in tests than a 404.
+    #[serde(rename = "mcp_disable_rest", default)]
+    pub mcp_disable_rest: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

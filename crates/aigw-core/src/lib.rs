@@ -33,6 +33,7 @@ pub mod deployment;
 pub mod engine;
 pub mod image_tokens;
 pub mod instance;
+pub mod mcp;
 pub mod metrics;
 pub mod middleware;
 pub mod models;
