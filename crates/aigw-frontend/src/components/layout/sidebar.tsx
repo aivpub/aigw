@@ -16,6 +16,7 @@ import {
   PiggyBank,
   Network,
   Globe,
+  Plug,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -81,6 +82,7 @@ function useNavGroups(): NavGroup[] {
           labelKey: "sidebar.nav.webSearch",
           icon: Globe,
         },
+        { to: "/dash/mcp", labelKey: "sidebar.nav.mcp", icon: Plug },
         { to: "/dash/jobs", labelKey: "sidebar.nav.jobs", icon: Activity },
         {
           to: "/dash/budgets",

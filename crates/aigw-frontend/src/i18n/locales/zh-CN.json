@@ -80,7 +80,8 @@
       "jobs": "任务管理",
       "budgets": "预算管理",
       "proxies": "代理服务",
-      "webSearch": "内置搜索"
+      "webSearch": "内置搜索",
+      "mcp": "MCP"
     },
     "expandSidebar": "展开侧边栏",
     "collapseSidebar": "折叠侧边栏"
@@ -832,7 +833,18 @@
       "curl": "curl",
       "sdk": "SDK (Python)"
     },
-    "heicUnsupported": "此浏览器无法预览 HEIC/HEIF 图片——请在 Safari 中打开或转换为 JPEG/PNG。"
+    "heicUnsupported": "此浏览器无法预览 HEIC/HEIF 图片——请在 Safari 中打开或转换为 JPEG/PNG。",
+    "mcpArguments": "参数（JSON）",
+    "mcpFailed": "失败",
+    "mcpIdle": "选择 server 与工具，然后发送调用。",
+    "mcpInvalidArgs": "参数必须是合法 JSON。",
+    "mcpOk": "成功",
+    "mcpSelectServer": "选择 server",
+    "mcpSelectTool": "选择工具",
+    "mcpServer": "Server",
+    "mcpTool": "工具",
+    "tabChat": "聊天",
+    "tabMcp": "MCP"
   },
   "routerSettings": {
     "title": "路由设置",
@@ -1353,6 +1365,205 @@
       "saveFailed": "保存失败",
       "deleted": "OAuth 凭证已删除",
       "deleteFailed": "删除失败"
+    }
+  },
+  "mcp": {
+    "title": "MCP Server 管理",
+    "subtitle": "注册 MCP 上游 server、探测其工具、管理出站凭据",
+    "tabs": {
+      "servers": "Server 管理",
+      "mine": "我的凭据"
+    },
+    "newServer": "新建 Server",
+    "reloadAll": "全部重新探测",
+    "allServers": "全部 Server",
+    "searchPlaceholder": "按 alias 或显示名搜索...",
+    "notProbed": "未探测",
+    "table": {
+      "alias": "Alias",
+      "displayName": "显示名",
+      "url": "URL",
+      "protocol": "协议版本",
+      "toolCount": "工具数",
+      "credentialScope": "凭据模式",
+      "status": "状态",
+      "actions": "操作"
+    },
+    "scope": {
+      "shared": "共享",
+      "sharedOrUser": "共享或用户",
+      "userRequired": "必须用户"
+    },
+    "scopeHint": {
+      "shared": "所有用户共用同一个 token；没配 token 就匿名访问",
+      "sharedOrUser": "用户填了自己的就用他的，没填用共享的",
+      "userRequired": "只认用户自己的 token；没填的用户看不到这个 server 的工具"
+    },
+    "actions": {
+      "probe": "探测",
+      "tools": "工具",
+      "credentials": "凭据",
+      "logs": "调用日志",
+      "enable": "启用",
+      "disable": "停用"
+    },
+    "dialog": {
+      "titleCreate": "新建 MCP Server",
+      "titleEdit": "编辑 MCP Server",
+      "description": "alias 会作为工具名前缀：{alias}__{tool}。",
+      "aliasLabel": "Alias",
+      "aliasPlaceholder": "例如：github",
+      "aliasHint": "最长 32 字符，仅限 A-Za-z0-9_.-，不得含 '__'、不得以下划线结尾。",
+      "aliasErrors": {
+        "required": "Alias 必填",
+        "doubleUnderscore": "Alias 不得包含 '__' —— 它是工具名的分隔符",
+        "trailingUnderscore": "Alias 不得以下划线结尾",
+        "charset": "Alias 只能包含 A-Za-z0-9_.-",
+        "tooLong": "Alias 最长 32 字符"
+      },
+      "aliasDuplicate": "该 alias 已被注册",
+      "displayNameLabel": "显示名",
+      "displayNamePlaceholder": "例如：GitHub",
+      "displayNameRequired": "显示名必填",
+      "urlLabel": "上游 URL",
+      "urlPlaceholder": "https://mcp.example.com/mcp",
+      "urlInvalid": "URL 必须以 http:// 或 https:// 开头",
+      "scopeLabel": "凭据模式",
+      "enabledLabel": "启用"
+    },
+    "token": {
+      "title": "凭据",
+      "scopeLabel": "凭据模式",
+      "sharedSection": "共享 token",
+      "sharedEmpty": "尚无共享 token —— 将以匿名身份出站。",
+      "newShared": "新建共享 token",
+      "userSection": "用户 token（{{n}} 位用户已配置）",
+      "userEmpty": "尚无用户配置 token。",
+      "userHint": "用户 token 在此处只可设默认 / 删除，值永不回显。",
+      "unset": "未设置",
+      "default": "默认",
+      "setDefault": "设为默认",
+      "nameLabel": "Token 名称",
+      "namePlaceholder": "例如：svc-account-2026",
+      "valueLabel": "Token 值",
+      "valueHint": "写入即加密，之后永不回显。保存后此值即不可再读出。",
+      "expiresLabel": "过期时间",
+      "makeDefault": "设为默认",
+      "create": "创建",
+      "nameValueRequired": "Token 名称与值均必填"
+    },
+    "probe": {
+      "title": "探测结果",
+      "ok": "探测成功",
+      "protocolVersion": "协议版本",
+      "server": "Server",
+      "ttl": "缓存",
+      "toolCount": "工具数",
+      "conflictTitle": "冲突工具（{{n}}）",
+      "conflictHint": "这些工具名与其它 server 冲突，建议修改本 server 的 alias 以消除冲突。",
+      "inProgress": "探测中..."
+    },
+    "tools": {
+      "title": "工具目录",
+      "count": "共 {{n}} 个工具",
+      "empty": "目录为空 —— 请先探测该 server。",
+      "name": "工具名",
+      "description": "描述",
+      "conflict": "冲突",
+      "conflictBadge": "冲突",
+      "probedAt": "探测时间",
+      "acl": "限制",
+      "aclOpen": "不限",
+      "aclAllowed": "允许",
+      "aclDenied": "禁止",
+      "aclEdit": "限制",
+      "aclFormTitle": "{{tool}} 的限制",
+      "aclScopeType": "范围类型",
+      "aclScopeId": "范围 ID",
+      "aclScope": {
+        "key": "API Key",
+        "team": "团队",
+        "org": "组织"
+      },
+      "aclHint": "没有规则的工具不受限制。禁止规则不会让工具从列表消失，只会在调用时拒绝。"
+    },
+    "toast": {
+      "created": "Server 已创建",
+      "updated": "修改已保存",
+      "deleted": "已删除",
+      "toggleDone": "状态已切换",
+      "probed": "探测完成",
+      "probeFailed": "探测失败",
+      "reloaded": "已全部重新探测",
+      "tokenCreated": "Token 已保存",
+      "defaultSet": "默认 token 已切换",
+      "reloadPartial": "重新探测完成，{{failed}} 个失败",
+      "aclSaved": "限制已保存",
+      "myTokenSaved": "你的 token 已保存",
+      "myTokenDeleted": "你的 token 已删除"
+    },
+    "empty": {
+      "title": "尚无 MCP Server",
+      "body": "注册一个上游 server，即可通过本网关把它的工具提供给 agent。",
+      "noMatch": "没有匹配筛选条件的 server"
+    },
+    "myCredentials": {
+      "title": "我的凭据",
+      "explainer": "这里只列出你能用的 server。标为「必须用户」的 server 需要你先填自己的 token，它的工具才会对你开放。",
+      "server": "Server",
+      "scope": "凭据模式",
+      "myToken": "我的 token",
+      "notNeeded": "无需配置",
+      "configured": "已配置",
+      "missing": "未配置",
+      "missingHint": "未配置时，该 server 的工具对你不开放",
+      "optionalHint": "可选 —— 不填则使用共享 token",
+      "set": "设置",
+      "replace": "替换",
+      "empty": "暂时没有对你开放的 server。"
+    },
+    "myToken": {
+      "title": "我的 Token",
+      "description": "该 token 仅以你的身份使用；加密存储，保存后不再回显。",
+      "configured": "已配置",
+      "unset": "你还没有为这个 server 配置 token。",
+      "expired": "已过期",
+      "expiresAt": "过期时间 {{date}}",
+      "noExpiry": "长期有效",
+      "nameLabel": "Token 名称",
+      "valueLabel": "Token 值",
+      "valueHint": "仅代表你发送给该 server；保存后明文即被丢弃。",
+      "expiresLabel": "过期时间",
+      "nameValueRequired": "Token 名称和值必填",
+      "save": "保存 token",
+      "set": "设置 token",
+      "replace": "替换 token",
+      "delete": "删除我的 token",
+      "deleteWarning": "删除后，该 server 的工具将不再对你开放"
+    },
+    "calls": {
+      "title": "MCP 调用日志",
+      "description": "经过本网关的每一次工具调用，成败都记录。",
+      "descriptionFiltered": "{{alias}} 的工具调用记录",
+      "toolPlaceholder": "按工具名过滤...",
+      "server": "Server",
+      "tool": "工具",
+      "owner": {
+        "server": "Server",
+        "user": "用户",
+        "anonymous": "匿名"
+      },
+      "ownerLabel": "身份",
+      "status": "状态",
+      "latency": "耗时",
+      "time": "时间",
+      "statusSuccess": "成功",
+      "statusError": "失败",
+      "empty": "当前筛选下没有调用记录。"
+    },
+    "deleteDialog": {
+      "title": "删除 MCP Server",
+      "description": "删除「{{alias}}」会同时移除它的凭据与工具目录，且无法撤销。"
     }
   }
 }

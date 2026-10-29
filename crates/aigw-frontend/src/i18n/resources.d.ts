@@ -97,6 +97,7 @@ declare module "i18next" {
       budgets: string;
       proxies: string;
       webSearch: string;
+      mcp: string;
     },
     expandSidebar: string;
     collapseSidebar: string;
@@ -849,6 +850,17 @@ declare module "i18next" {
       sdk: string;
     },
     heicUnsupported: string;
+    mcpArguments: string;
+    mcpFailed: string;
+    mcpIdle: string;
+    mcpInvalidArgs: string;
+    mcpOk: string;
+    mcpSelectServer: string;
+    mcpSelectTool: string;
+    mcpServer: string;
+    mcpTool: string;
+    tabChat: string;
+    tabMcp: string;
   },
   routerSettings: {
     title: string;
@@ -1369,6 +1381,205 @@ declare module "i18next" {
       saveFailed: string;
       deleted: string;
       deleteFailed: string;
+    },
+  },
+  mcp: {
+    title: string;
+    subtitle: string;
+    tabs: {
+      servers: string;
+      mine: string;
+    },
+    newServer: string;
+    reloadAll: string;
+    allServers: string;
+    searchPlaceholder: string;
+    notProbed: string;
+    table: {
+      alias: string;
+      displayName: string;
+      url: string;
+      protocol: string;
+      toolCount: string;
+      credentialScope: string;
+      status: string;
+      actions: string;
+    },
+    scope: {
+      shared: string;
+      sharedOrUser: string;
+      userRequired: string;
+    },
+    scopeHint: {
+      shared: string;
+      sharedOrUser: string;
+      userRequired: string;
+    },
+    actions: {
+      probe: string;
+      tools: string;
+      credentials: string;
+      logs: string;
+      enable: string;
+      disable: string;
+    },
+    dialog: {
+      titleCreate: string;
+      titleEdit: string;
+      description: string;
+      aliasLabel: string;
+      aliasPlaceholder: string;
+      aliasHint: string;
+      aliasErrors: {
+        required: string;
+        doubleUnderscore: string;
+        trailingUnderscore: string;
+        charset: string;
+        tooLong: string;
+      },
+      aliasDuplicate: string;
+      displayNameLabel: string;
+      displayNamePlaceholder: string;
+      displayNameRequired: string;
+      urlLabel: string;
+      urlPlaceholder: string;
+      urlInvalid: string;
+      scopeLabel: string;
+      enabledLabel: string;
+    },
+    token: {
+      title: string;
+      scopeLabel: string;
+      sharedSection: string;
+      sharedEmpty: string;
+      newShared: string;
+      userSection: string;
+      userEmpty: string;
+      userHint: string;
+      unset: string;
+      default: string;
+      setDefault: string;
+      nameLabel: string;
+      namePlaceholder: string;
+      valueLabel: string;
+      valueHint: string;
+      expiresLabel: string;
+      makeDefault: string;
+      create: string;
+      nameValueRequired: string;
+    },
+    probe: {
+      title: string;
+      ok: string;
+      protocolVersion: string;
+      server: string;
+      ttl: string;
+      toolCount: string;
+      conflictTitle: string;
+      conflictHint: string;
+      inProgress: string;
+    },
+    tools: {
+      title: string;
+      count: string;
+      empty: string;
+      name: string;
+      description: string;
+      conflict: string;
+      conflictBadge: string;
+      probedAt: string;
+      acl: string;
+      aclOpen: string;
+      aclAllowed: string;
+      aclDenied: string;
+      aclEdit: string;
+      aclFormTitle: string;
+      aclScopeType: string;
+      aclScopeId: string;
+      aclScope: {
+        key: string;
+        team: string;
+        org: string;
+      },
+      aclHint: string;
+    },
+    toast: {
+      created: string;
+      updated: string;
+      deleted: string;
+      toggleDone: string;
+      probed: string;
+      probeFailed: string;
+      reloaded: string;
+      tokenCreated: string;
+      defaultSet: string;
+      reloadPartial: string;
+      aclSaved: string;
+      myTokenSaved: string;
+      myTokenDeleted: string;
+    },
+    empty: {
+      title: string;
+      body: string;
+      noMatch: string;
+    },
+    myCredentials: {
+      title: string;
+      explainer: string;
+      server: string;
+      scope: string;
+      myToken: string;
+      notNeeded: string;
+      configured: string;
+      missing: string;
+      missingHint: string;
+      optionalHint: string;
+      set: string;
+      replace: string;
+      empty: string;
+    },
+    myToken: {
+      title: string;
+      description: string;
+      configured: string;
+      unset: string;
+      expired: string;
+      expiresAt: string;
+      noExpiry: string;
+      nameLabel: string;
+      valueLabel: string;
+      valueHint: string;
+      expiresLabel: string;
+      nameValueRequired: string;
+      save: string;
+      set: string;
+      replace: string;
+      delete: string;
+      deleteWarning: string;
+    },
+    calls: {
+      title: string;
+      description: string;
+      descriptionFiltered: string;
+      toolPlaceholder: string;
+      server: string;
+      tool: string;
+      owner: {
+        server: string;
+        user: string;
+        anonymous: string;
+      },
+      ownerLabel: string;
+      status: string;
+      latency: string;
+      time: string;
+      statusSuccess: string;
+      statusError: string;
+      empty: string;
+    },
+    deleteDialog: {
+      title: string;
+      description: string;
     },
   },
       };

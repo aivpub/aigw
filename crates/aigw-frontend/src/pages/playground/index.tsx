@@ -3,6 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import i18n from "@/i18n";
 import { apiGet } from "@/lib/api";
+import { useAuth } from "@/hooks/use-auth";
+import { McpPanel } from "./McpPanel";
 import { compressImage, dataUrlBytes } from "@/lib/image";
 import { marked } from "marked";
 import { toast } from "sonner";
@@ -576,6 +578,9 @@ function SettingsPanel({
 
 export function PlaygroundPage() {
   const { t } = useTranslation();
+  const { userRole } = useAuth();
+  const isAdmin = userRole === "proxy_admin";
+  const [mode, setMode] = useState<"chat" | "mcp">("chat");
   const [settings, setSettings] = useState<SettingsData>(() =>
     loadFromStorage(STORAGE_KEY_SETTINGS, DEFAULT_SETTINGS),
   );
@@ -1064,7 +1069,7 @@ export function PlaygroundPage() {
   return (
     <div className="h-[calc(100vh-5rem)] flex flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between mb-4 shrink-0">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-4 shrink-0">
         <div>
           <h1 className="text-xl font-bold tracking-tight flex items-center gap-2">
             <Gamepad2 className="h-5 w-5" />
@@ -1074,7 +1079,7 @@ export function PlaygroundPage() {
             {t("playground.description")}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button
             variant="outline"
             size="sm"
@@ -1114,7 +1119,22 @@ export function PlaygroundPage() {
       </div>
 
       {/* Main area */}
-      <div className="flex-1 flex gap-4 min-h-0">
+      <Tabs
+        value={mode}
+        onValueChange={(v) => setMode(v as "chat" | "mcp")}
+        defaultValue="chat"
+        className="flex-1 flex flex-col min-h-0"
+      >
+        <TabsList className="mb-3 shrink-0 self-start">
+          <TabsTrigger value="chat" data-testid="playground-tab-chat">
+            {t("playground.tabChat")}
+          </TabsTrigger>
+          <TabsTrigger value="mcp" data-testid="playground-tab-mcp">
+            {t("playground.tabMcp")}
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="chat" className="flex-1 flex gap-4 min-h-0">
         {/* Chat area */}
         <div className="flex-1 flex flex-col min-w-0 min-h-0">
           {/* Messages */}
@@ -1299,7 +1319,6 @@ export function PlaygroundPage() {
         </div>
 
         {/* Mobile settings sheet */}
-        {/* Mobile settings sheet */}
         <Sheet open={settingsOpen} onOpenChange={setSettingsOpen}>
           <SheetContent side="right">
             <SheetHeader>
@@ -1412,7 +1431,12 @@ console.log(response.content);`}</code>
             </Tabs>
           </DialogContent>
         </Dialog>
-      </div>
+        </TabsContent>
+
+        <TabsContent value="mcp" className="flex-1 flex min-h-0">
+          <McpPanel isAdmin={isAdmin} />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

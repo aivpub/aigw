@@ -12,7 +12,7 @@ if [ ! -f "$EN" ] || [ ! -f "$ZH" ]; then
 fi
 
 # 使用 Python 递归提取所有键并比较
-python3 << 'PYEOF'
+python3 - "$EN" "$ZH" << 'PYEOF'
 import json, sys
 
 def extract_keys(obj, prefix=""):
@@ -56,4 +56,4 @@ if not missing_in_zh and not extra_in_zh:
     sys.exit(0)
 else:
     sys.exit(1)
-PYEOF "$EN" "$ZH"
+PYEOF

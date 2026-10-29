@@ -172,6 +172,7 @@ tasks:
       # TD-008b: regenerate i18n translation types from en.json so t('key')
       # stays compile-time checked, then lint + typecheck.
       - sh ../../scripts/fe-i18n-types
+      - sh ../../scripts/check-i18n-keys.sh
       - npm run lint
       - npx tsc -b
       - echo "fe-lint passed"
@@ -369,6 +370,23 @@ tasks:
   # Parses the mock .feature files for `发送 (GET|POST|PUT|DELETE|PATCH) <path>`
   # step patterns and cross-references them against the route table embedded in
   # scripts/bdd-coverage. Exits non-zero when coverage drops below 90%.
+  mcp-mock:
+    desc: "run a mock MCP upstream on 127.0.0.1:8899 for Stage 143/144 acceptance"
+    summary: |
+      Real-client acceptance (Claude Code / Codex CLI against `/mcp/{alias}`)
+      must not depend on a reachable public upstream. This starts a JSON-RPC
+      MCP server on localhost, logging every request (method + inbound
+      Authorization + session id) as one JSON line on stderr — that log is the
+      acceptance evidence.
+
+      Register `http://127.0.0.1:8899/mcp` as an MCP server in aigw, then point
+      the client at `/mcp/{alias}`.
+
+      `task mcp-mock -- --legacy` serves a 2025-06-18 upstream (405 on
+      server/discover) so the legacy outbound branch can be exercised too.
+    cmds:
+      - python3 scripts/mcp-mock-upstream.py {{.CLI_ARGS}}
+
   bdd-coverage:
     desc: "BDD endpoint coverage report (TD-003)"
     cmds:

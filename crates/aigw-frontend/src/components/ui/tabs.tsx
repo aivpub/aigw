@@ -18,6 +18,7 @@ interface TabsProps {
   value?: string;
   onValueChange?: (v: string) => void;
   children: React.ReactNode;
+  className?: string;
 }
 
 export function Tabs({
@@ -25,6 +26,7 @@ export function Tabs({
   value,
   onValueChange,
   children,
+  className,
 }: TabsProps) {
   const [internalValue, setInternalValue] = React.useState(defaultValue);
   const resolvedValue = value ?? internalValue;
@@ -34,7 +36,7 @@ export function Tabs({
     <TabsContext.Provider
       value={{ value: resolvedValue, onValueChange: handleChange }}
     >
-      <div className="space-y-2">{children}</div>
+      <div className={className ?? "space-y-2"}>{children}</div>
     </TabsContext.Provider>
   );
 }
@@ -59,11 +61,8 @@ export function TabsTrigger({
   value,
   children,
   className = "",
-}: {
-  value: string;
-  children: React.ReactNode;
-  className?: string;
-}) {
+  ...rest
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & { value: string }) {
   const { value: selectedValue, onValueChange } = useTabs();
   const isActive = selectedValue === value;
 
@@ -78,6 +77,7 @@ export function TabsTrigger({
           ? "bg-background text-foreground shadow"
           : "hover:bg-background/50"
       } ${className}`}
+      {...rest}
     >
       {children}
     </button>

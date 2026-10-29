@@ -80,7 +80,8 @@
       "jobs": "Jobs",
       "budgets": "Budgets",
       "proxies": "Proxies",
-      "webSearch": "Web Search"
+      "webSearch": "Web Search",
+      "mcp": "MCP"
     },
     "expandSidebar": "Expand sidebar",
     "collapseSidebar": "Collapse sidebar"
@@ -832,7 +833,18 @@
       "curl": "curl",
       "sdk": "SDK (Python)"
     },
-    "heicUnsupported": "HEIC/HEIF images can't be previewed in this browser — open in Safari or convert to JPEG/PNG."
+    "heicUnsupported": "HEIC/HEIF images can't be previewed in this browser — open in Safari or convert to JPEG/PNG.",
+    "mcpArguments": "Arguments (JSON)",
+    "mcpFailed": "Failed",
+    "mcpIdle": "Pick a server and a tool, then send a call.",
+    "mcpInvalidArgs": "Arguments must be valid JSON.",
+    "mcpOk": "Success",
+    "mcpSelectServer": "Select a server",
+    "mcpSelectTool": "Select a tool",
+    "mcpServer": "Server",
+    "mcpTool": "Tool",
+    "tabChat": "Chat",
+    "tabMcp": "MCP"
   },
   "routerSettings": {
     "title": "Router Settings",
@@ -1353,6 +1365,205 @@
       "saveFailed": "Save failed",
       "deleted": "OAuth credential deleted",
       "deleteFailed": "Delete failed"
+    }
+  },
+  "mcp": {
+    "title": "MCP Servers",
+    "subtitle": "Register MCP upstream servers, probe their tools, and manage egress credentials",
+    "tabs": {
+      "servers": "Server Management",
+      "mine": "My Credentials"
+    },
+    "newServer": "New Server",
+    "reloadAll": "Re-probe All",
+    "allServers": "All Servers",
+    "searchPlaceholder": "Search by alias or display name...",
+    "notProbed": "Not probed",
+    "table": {
+      "alias": "Alias",
+      "displayName": "Display Name",
+      "url": "URL",
+      "protocol": "Protocol",
+      "toolCount": "Tools",
+      "credentialScope": "Credential",
+      "status": "Status",
+      "actions": "Actions"
+    },
+    "scope": {
+      "shared": "Shared",
+      "sharedOrUser": "Shared or User",
+      "userRequired": "User Required"
+    },
+    "scopeHint": {
+      "shared": "Every user shares one token; without one, requests go out anonymously.",
+      "sharedOrUser": "A user's own token wins when set; otherwise the shared token is used.",
+      "userRequired": "Only the user's own token is accepted; users without one do not see this server's tools."
+    },
+    "actions": {
+      "probe": "Probe",
+      "tools": "Tools",
+      "credentials": "Credentials",
+      "logs": "Call log",
+      "enable": "Enable",
+      "disable": "Disable"
+    },
+    "dialog": {
+      "titleCreate": "New MCP Server",
+      "titleEdit": "Edit MCP Server",
+      "description": "The alias prefixes every tool name as {alias}__{tool}.",
+      "aliasLabel": "Alias",
+      "aliasPlaceholder": "e.g. github",
+      "aliasHint": "At most 32 chars; A-Za-z0-9_.- only; may not contain '__' and may not end with '_'.",
+      "aliasErrors": {
+        "required": "Alias is required",
+        "doubleUnderscore": "Alias may not contain '__' — it is the tool-name separator",
+        "trailingUnderscore": "Alias may not end with '_'",
+        "charset": "Alias may only contain A-Za-z0-9_.-",
+        "tooLong": "Alias must be at most 32 characters"
+      },
+      "aliasDuplicate": "This alias is already registered",
+      "displayNameLabel": "Display name",
+      "displayNamePlaceholder": "e.g. GitHub",
+      "displayNameRequired": "Display name is required",
+      "urlLabel": "Upstream URL",
+      "urlPlaceholder": "https://mcp.example.com/mcp",
+      "urlInvalid": "URL must start with http:// or https://",
+      "scopeLabel": "Credential mode",
+      "enabledLabel": "Enabled"
+    },
+    "token": {
+      "title": "Credentials",
+      "scopeLabel": "Credential mode",
+      "sharedSection": "Shared token",
+      "sharedEmpty": "No shared token — requests go out anonymously.",
+      "newShared": "New shared token",
+      "userSection": "User tokens ({{n}} configured)",
+      "userEmpty": "No user has configured a token yet.",
+      "userHint": "User tokens are read-only here apart from default/delete — their values are never returned.",
+      "unset": "Not set",
+      "default": "Default",
+      "setDefault": "Set default",
+      "nameLabel": "Token name",
+      "namePlaceholder": "e.g. svc-account-2026",
+      "valueLabel": "Token value",
+      "valueHint": "Encrypted on write and never returned. This value disappears once saved.",
+      "expiresLabel": "Expires at",
+      "makeDefault": "Set as default",
+      "create": "Create",
+      "nameValueRequired": "Token name and value are required"
+    },
+    "probe": {
+      "title": "Probe Result",
+      "ok": "Probe succeeded",
+      "protocolVersion": "Protocol version",
+      "server": "Server",
+      "ttl": "TTL",
+      "toolCount": "Tools",
+      "conflictTitle": "Conflicting tools ({{n}})",
+      "conflictHint": "These tool names collide with another server. Change this server's alias to resolve the collision.",
+      "inProgress": "Probing..."
+    },
+    "tools": {
+      "title": "Tool Catalog",
+      "count": "{{n}} tools",
+      "empty": "No tools in the catalog — probe this server first.",
+      "name": "Tool",
+      "description": "Description",
+      "conflict": "Conflict",
+      "conflictBadge": "Conflict",
+      "probedAt": "Probed at",
+      "acl": "Restriction",
+      "aclOpen": "Unrestricted",
+      "aclAllowed": "Allowed",
+      "aclDenied": "Denied",
+      "aclEdit": "Restrict",
+      "aclFormTitle": "Restriction for {{tool}}",
+      "aclScopeType": "Scope type",
+      "aclScopeId": "Scope ID",
+      "aclScope": {
+        "key": "API key",
+        "team": "Team",
+        "org": "Organization"
+      },
+      "aclHint": "A tool with no rule is unrestricted. A denied rule hides nothing from the tool list; it rejects the call."
+    },
+    "toast": {
+      "created": "Server created",
+      "updated": "Changes saved",
+      "deleted": "Deleted",
+      "toggleDone": "Status toggled",
+      "probed": "Probe finished",
+      "probeFailed": "Probe failed",
+      "reloaded": "All servers re-probed",
+      "tokenCreated": "Token saved",
+      "defaultSet": "Default token switched",
+      "reloadPartial": "Re-probe finished with {{failed}} failure(s)",
+      "aclSaved": "Restriction saved",
+      "myTokenSaved": "Your token was saved",
+      "myTokenDeleted": "Your token was deleted"
+    },
+    "empty": {
+      "title": "No MCP servers yet",
+      "body": "Register an upstream server to expose its tools to agents through this gateway.",
+      "noMatch": "No servers match your filters"
+    },
+    "myCredentials": {
+      "title": "My Credentials",
+      "explainer": "You only see servers you can use. Servers marked \"user required\" need your own token before their tools are opened to you.",
+      "server": "Server",
+      "scope": "Credential mode",
+      "myToken": "My token",
+      "notNeeded": "Not needed",
+      "configured": "Configured",
+      "missing": "Not configured",
+      "missingHint": "Until you configure a token, this server's tools are not available to you.",
+      "optionalHint": "Optional — without one, the shared token is used",
+      "set": "Set",
+      "replace": "Replace",
+      "empty": "No servers are available to you yet."
+    },
+    "myToken": {
+      "title": "My Token",
+      "description": "This token is used only for your identity. It is encrypted on write and never shown again.",
+      "configured": "Configured",
+      "unset": "No token configured for this server yet.",
+      "expired": "Expired",
+      "expiresAt": "Expires {{date}}",
+      "noExpiry": "No expiry",
+      "nameLabel": "Token name",
+      "valueLabel": "Token value",
+      "valueHint": "Sent only to this server on your behalf. The plaintext is discarded after saving.",
+      "expiresLabel": "Expires at",
+      "nameValueRequired": "Token name and value are required",
+      "save": "Save token",
+      "set": "Set token",
+      "replace": "Replace token",
+      "delete": "Delete my token",
+      "deleteWarning": "After deleting, this server's tools will no longer be available to you."
+    },
+    "calls": {
+      "title": "MCP Call Log",
+      "description": "Every tool call through this gateway, successful or not.",
+      "descriptionFiltered": "Tool calls for {{alias}}",
+      "toolPlaceholder": "Filter by tool name...",
+      "server": "Server",
+      "tool": "Tool",
+      "owner": {
+        "server": "Server",
+        "user": "User",
+        "anonymous": "Anonymous"
+      },
+      "ownerLabel": "Identity",
+      "status": "Status",
+      "latency": "Latency",
+      "time": "Time",
+      "statusSuccess": "Success",
+      "statusError": "Failed",
+      "empty": "No calls recorded for this filter."
+    },
+    "deleteDialog": {
+      "title": "Delete MCP server",
+      "description": "Deleting \"{{alias}}\" also removes its credentials and tool catalog. This cannot be undone."
     }
   }
 }
