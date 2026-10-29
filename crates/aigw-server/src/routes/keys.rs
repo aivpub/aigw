@@ -77,6 +77,10 @@ pub struct AppState {
     /// costs nothing, and can still be switched on by adding a provider in the
     /// UI.
     pub web_search: aigw_core::websearch::WebSearchHandle,
+    /// litellm `general_settings.mcp_disable_rest` — when true `/mcp-rest/*`
+    /// answers 404 (Stage 143). The endpoints stay registered so the route
+    /// table does not change shape with configuration.
+    pub mcp_disable_rest: bool,
 }
 
 impl AppState {
@@ -108,6 +112,7 @@ impl AppState {
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
             web_search: aigw_core::websearch::WebSearchHandle::disabled(),
+            mcp_disable_rest: false,
         }
     }
 }
@@ -1109,6 +1114,7 @@ mod tests {
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
             web_search: aigw_core::websearch::WebSearchHandle::disabled(),
+            mcp_disable_rest: false,
         });
         Router::new()
             .route("/key/generate", axum::routing::post(generate_key))
@@ -1160,6 +1166,7 @@ mod tests {
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
             web_search: aigw_core::websearch::WebSearchHandle::disabled(),
+            mcp_disable_rest: false,
         });
         let app = Router::new()
             .route("/key/generate", axum::routing::post(generate_key))
@@ -1220,6 +1227,7 @@ mod tests {
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
             web_search: aigw_core::websearch::WebSearchHandle::disabled(),
+            mcp_disable_rest: false,
         });
         let app = Router::new()
             .route("/key/generate", axum::routing::post(generate_key))
@@ -1359,6 +1367,7 @@ mod tests {
             body_archiver: None,
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
             web_search: aigw_core::websearch::WebSearchHandle::disabled(),
+            mcp_disable_rest: false,
         });
         let app = Router::new()
             .route("/key/generate", axum::routing::post(generate_key))

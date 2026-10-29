@@ -54,8 +54,9 @@ use axum::{middleware, routing::get, Router};
 use clap::Parser;
 use routes::keys::{self, AppState, SharedState, DEFAULT_KEY_TOKEN_LEN};
 use routes::{
-    budget, chat, cors_layer, credentials, docs, embeddings, health, jobs, login, models, org,
-    proxies, responses, router_settings, spend, team, user, v1_messages, websearch,
+    budget, chat, cors_layer, credentials, docs, embeddings, health, jobs, login, mcp, mcp_gateway,
+    mcp_rest, mcp_user, models, org, proxies, responses, router_settings, spend, team, user,
+    v1_messages, websearch,
 };
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -334,6 +335,11 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|c| c.general_settings.as_ref())
         .map(|gs| gs.disable_custom_api_keys)
         .unwrap_or(false);
+    let mcp_disable_rest = config
+        .as_ref()
+        .and_then(|c| c.general_settings.as_ref())
+        .map(|gs| gs.mcp_disable_rest)
+        .unwrap_or(false);
 
     // Stage 119: apply the `cache` config block to the Router — build the
     // memory LRU backend (or disable entirely when `enabled=false`). Defaults
@@ -412,6 +418,7 @@ async fn main() -> anyhow::Result<()> {
         body_archiver: body_archiver_arc.clone(),
         token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
         web_search,
+        mcp_disable_rest,
     });
 
     // Seed `config.model_list` into proxy_models (idempotent; DB-first — rows
@@ -740,6 +747,83 @@ async fn main() -> anyhow::Result<()> {
             "/admin/websearch/enable-all",
             axum::routing::post(websearch::enable_all),
         )
+        // MCP server registry (Phase 55, Stage 141)
+        .route(
+            "/admin/mcp/servers",
+            get(mcp::list_mcp_servers).post(mcp::create_mcp_server),
+        )
+        .route("/admin/mcp/servers/all", get(mcp::list_all_mcp_servers))
+        .route(
+            "/admin/mcp/servers/batch-delete",
+            axum::routing::post(mcp::batch_delete_mcp_servers),
+        )
+        .route(
+            "/admin/mcp/servers/{id}",
+            get(mcp::get_mcp_server)
+                .put(mcp::update_mcp_server)
+                .delete(mcp::delete_mcp_server),
+        )
+        .route(
+            "/admin/mcp/servers/{id}/toggle",
+            axum::routing::post(mcp::toggle_mcp_server),
+        )
+        .route(
+            "/admin/mcp/servers/{id}/probe",
+            axum::routing::post(mcp::probe_mcp_server),
+        )
+        .route(
+            "/admin/mcp/servers/{id}/tools",
+            get(mcp::list_mcp_server_tools),
+        )
+        .route(
+            "/admin/mcp/servers/{id}/allowlist",
+            get(mcp::get_mcp_allowlist).put(mcp::put_mcp_allowlist),
+        )
+        .route(
+            "/admin/mcp/servers/{id}/tokens",
+            get(mcp::list_mcp_tokens).post(mcp::create_mcp_token),
+        )
+        .route(
+            "/admin/mcp/servers/{id}/tokens/{token_id}",
+            axum::routing::delete(mcp::delete_mcp_token),
+        )
+        .route(
+            "/admin/mcp/servers/{id}/tokens/{token_id}/default",
+            axum::routing::post(mcp::set_default_mcp_token),
+        )
+        .route("/admin/mcp/reload", axum::routing::post(mcp::reload_mcp))
+        .route("/admin/mcp/calls", get(mcp::list_mcp_calls))
+        // MCP passthrough (Phase 55, Stage 143). POST carries the JSON-RPC call;
+        // GET and DELETE are the legacy stack's notification stream and session
+        // teardown, and answer 405 to a modern client.
+        .route("/mcp", axum::routing::post(mcp_gateway::post_mcp_aggregate))
+        .route(
+            "/mcp/{alias}",
+            get(mcp_gateway::get_mcp)
+                .post(mcp_gateway::post_mcp)
+                .delete(mcp_gateway::delete_mcp),
+        )
+        // The current identity's own view (Phase 55, Stage 144). Deliberately
+        // *not* admin-gated: a plain user configures their own credential here,
+        // and every handler derives the identity from `KeyIdentity` alone.
+        .route("/v1/mcp/servers", get(mcp_user::list_my_servers))
+        .route(
+            "/v1/mcp/servers/{id}/my-token",
+            get(mcp_user::get_my_token)
+                .put(mcp_user::put_my_token)
+                .delete(mcp_user::delete_my_token),
+        )
+        // Stateless debug endpoints — handler-level 404 when
+        // `general_settings.mcp_disable_rest` is on.
+        .route(
+            "/mcp-rest/tools/list",
+            axum::routing::post(mcp_rest::tools_list),
+        )
+        .route(
+            "/mcp-rest/tools/call",
+            axum::routing::post(mcp_rest::tools_call),
+        )
+        .route("/mcp-rest/health", get(mcp_rest::health))
         // Login/Logout endpoints (litellm-compatible /v2/login/*)
         .route("/v2/login", axum::routing::post(login::login))
         .route(

@@ -159,6 +159,7 @@ dependencies = [
  "cucumber",
  "dotenvy",
  "fastrand",
+ "futures",
  "headers",
  "mime_guess",
  "prometheus",
