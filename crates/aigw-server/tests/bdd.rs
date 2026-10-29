@@ -82,6 +82,7 @@ impl TestWorld {
                         aigw_core::claude_token::TokenProvider::new(),
                     ),
                     web_search: aigw_core::websearch::WebSearchHandle::disabled(),
+                    mcp_disable_rest: false,
                     metrics: None,
                 });
             self.master_key = mk;
@@ -132,7 +133,7 @@ async fn main() {
     // creating sqlite::memory: DBs and running migrations for nothing,
     // since their steps become no-ops when AIGW_REAL_API is set.
     let real_api_mode = std::env::var("AIGW_REAL_API").as_deref() == Ok("1");
-    TestWorld::cucumber()
+    let writer = TestWorld::cucumber()
         .max_concurrent_scenarios(1)
         .before(bdd_steps::real_api_steps::before_scenario_hook)
         .after(bdd_steps::real_api_steps::after_scenario_hook)
@@ -181,4 +182,18 @@ async fn main() {
             mgr.drop_db(info).await.ok();
         }
     }
+
+    // `filter_run` returns the writer and never fails on its own, so a failed
+    // step used to leave the process exiting 0 and `cargo test` reporting `ok`
+    // (TD-023). Assert here rather than switching to `filter_run_and_exit`:
+    // that one panics before the cleanup above, leaking the spawned server and
+    // the throwaway database of every red run.
+    use cucumber::writer::Stats as _;
+    assert!(
+        !writer.execution_has_failed(),
+        "{} BDD step(s) failed, {} parsing error(s), {} hook error(s)",
+        writer.failed_steps(),
+        writer.parsing_errors(),
+        writer.hook_errors(),
+    );
 }
