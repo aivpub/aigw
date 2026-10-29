@@ -1,7 +1,7 @@
 # aigw -- 下一步行动
 
-**上次更新**: 2026-10-16
-**当前阶段**: **Phase 54 ✅ 完成 —— 搜索调用日志可视化（Stage 139 已交付）；总进度 139**（下一 Phase 待立项）
+**上次更新**: 2026-10-29
+**当前阶段**: **Phase 55 收尾 —— MCP Gateway（Stage 140-145，~88h）；5/6 完成 + Stage 143 门禁 7/8（唯一未勾选项：Codex 真机工具调用，ADR-046）**
 
 ---
 
@@ -52,12 +52,63 @@
 **提交**：`81aa21b`（后端）→ `b7a86b3`（前端）→ `93f1f3b`（测试）→ `a56bab3`（文档组，含本文件），
 均 `--signoff`。⚠️ 这四个提交**已推送至 `origin/main`**（非本次会话执行，见下）。
 
-### 下一步：Phase 55 立项
+### 下一步：Phase 55 收尾（MCP Gateway，Stage 140/141/142/144/145 已完成，143 门禁 7/8 —— Codex 真机调用卡在客户端，ADR-046）
 
-候选（按 ADR-039 与 Phase 54 遗留）：
+**目标**：agent 只连 aigw 一个 MCP 端点，上游 server 纳管 / 工具聚合 / 上游凭据注入 / 工具级鉴权 / 调用审计都在网关内完成。
+
+**六个 Stage，按前后端分工切分、严格串行**：
+
+| Stage | 类型 | 内容 | 预估 |
+|---|---|---|---|
+| 140 | 后端 | ✅ 迁移 ×3 方言（`mcp_servers` + `mcp_server_tokens`）+ store ×3 + **凭据解析纯函数** + `alias` 校验 | 14h |
+| 141 | 🟢 Gate 4 整改已落，待 lint/fmt 复验 | Gate 4 的 H1/H2 + M1/M4/M5 已落并经主 Agent 逐条读码复核：`reload_keeps_a_disabled_servers_snapshot`（`mcp.rs:2101`）、`reload_flags_a_shared_tool_name_on_both_servers`（`:2135`）、`MAX_NAME_LEN`/`validate_len`（`:155`，8 处调用含 allowlist 的 `tool_name`/`scope_id` `:941`）、`LOWER(...) LIKE LOWER(...) ESCAPE '\'`（`db.rs:6658-6686` SQLite/PG、`6860` MySQL、`7050` PG）、M2 token_name 竞态改 409（`:315`）、M4 batch-delete 只报真删的行（`:428-442`）、M5 page offset 用 `i64` 并补溢出 UT（`:2003`）。**`task test` 绿**：`/tmp/stage141-test2-1793218604.log` 1455 passed / 0 failed。**三方言 real BDD 全绿且数字一致**：SQLite `/tmp/stage141-sqlite-1793219145.log`、PG `/tmp/stage141-bdd-real-pg-1793219646.log` 均 18 features / 77 scenarios (77 passed) / 421 steps、`✘`=0；**MySQL 已在 143/144 落定后补跑** —— `/tmp/final-mysql.log` 19 features / 80 scenarios (80 passed) / 452 steps、`✘`=0（feature/scenario 数比 141 档多，是 143/144 新增的 MCP 场景）。`task lint`/`task fmt` 的红点全在 `mcp_gateway.rs`（143/144 的文件），已由 144 改 `CallTail` 结构体收口，待复验 |
+| 142 | 前端 | `/dash/mcp` 管理页 + tab 容器 + 四对话框（日志为占位按钮）+ i18n | 18h |
+| 143 | 后端 | `/mcp/{alias}` 单 server 透传 + 协议双栈 + SSE 中继 + `/mcp-rest/*` + `mcp_call_log` | 20h |
+| 144 | 后端 | `/mcp` 聚合端点 + `{alias}__{tool}` 前缀 + 工具级 ACL + `/v1/mcp/*` 用户凭据 | 20h |
+| 145 | 前端 | 「我的凭据」tab + Playground MCP 标签 + 补齐 142 的调用日志与 ACL 开关 | 8h |
+
+#### Phase 55 实时进度（2026-10-29 06:40）
+
+| Stage | 状态 | 证据 |
+|---|---|---|
+| 140 | ✅ 完成 | `task test` 1325 全绿；Gate 4 的 3 MED / 4 LOW 已由 ADR-044 收口（`set_default_mcp_token` 加 owner 作用域 + `rows_affected` 检查、`is_default` 收敛单一写者、`CredentialScope::parse` 未知值改 `UserRequired`、删死 DTO） |
+| 141 | 🟢 Gate 4 整改已落，待 lint/fmt 复验 | Gate 4 的 H1/H2 + M1/M4/M5 已落并经主 Agent 逐条读码复核：`reload_keeps_a_disabled_servers_snapshot`（`mcp.rs:2101`）、`reload_flags_a_shared_tool_name_on_both_servers`（`:2135`）、`MAX_NAME_LEN`/`validate_len`（`:155`，8 处调用含 allowlist 的 `tool_name`/`scope_id` `:941`）、`LOWER(...) LIKE LOWER(...) ESCAPE '\'`（`db.rs:6658-6686` SQLite/PG、`6860` MySQL、`7050` PG）、M2 token_name 竞态改 409（`:315`）、M4 batch-delete 只报真删的行（`:428-442`）、M5 page offset 用 `i64` 并补溢出 UT（`:2003`）。**`task test` 绿**：`/tmp/stage141-test2-1793218604.log` 1455 passed / 0 failed。**三方言 real BDD 全绿且数字一致**：SQLite `/tmp/stage141-sqlite-1793219145.log`、PG `/tmp/stage141-bdd-real-pg-1793219646.log` 均 18 features / 77 scenarios (77 passed) / 421 steps、`✘`=0；**MySQL 已在 143/144 落定后补跑** —— `/tmp/final-mysql.log` 19 features / 80 scenarios (80 passed) / 452 steps、`✘`=0（feature/scenario 数比 141 档多，是 143/144 新增的 MCP 场景）。`task lint`/`task fmt` 的红点全在 `mcp_gateway.rs`（143/144 的文件），已由 144 改 `CallTail` 结构体收口，待复验 |
+| 142 | 🟢 Gate 4 整改已落并签收 | Gate 3 全绿：`/tmp/fe-bdd-145-r3.log` **582 passed / 3 skipped / 0 failed**、`task fe-lint` EXIT=0（含新接入的 `check-i18n-keys.sh`，输出 `✅ All i18n keys aligned`）、`task fe-build` EXIT=0。Gate 4 **BLOCK（2 HIGH / 7 MED / 7 LOW）** 的 9 条 H/M 已由 145 agent 在同批文件落修，主 Agent 按 file:line 逐条复核通过（H1 `TokenDialog.tsx:139`/`MyTokenDialog.tsx:93` 的 `T00:00:00Z` 归一、H2 `token-closed`/`tools-closed`、M1 `PaginationBar` 移出 `hidden md:block` `:327`、M2 `reloadPartial` `:211`、M3 失效 `mcp-server-tools` `:171`、M4 `mcp-delete-confirm` `:102`、M5 `key={id}-{open}` `:625`、M6/M7 真断言）。余 7 条 LOW 见 `stage-142.md` §8 |
+| 143 | 🟡 门禁 7/8（代码与 BDD 全绿；Codex 真机调用未达成，ADR-046） | **`x-call-id` 缺陷已修**：根因是 `main.rs` 只挂 `PropagateRequestIdLayer(x-call-id)` —— 它复制**同名请求头**，而 `SetRequestIdLayer` 设的是 `x-request-id`（`responses.rs` 能过 TD-006 是显式写头）。现 `mcp_relay::stamp_call_id` 统一盖章，**五条路径**共用：`relay()`（buffered + SSE）、`finish`、legacy `open_stream`、`mcp_rest.rs` 的 `tools_list`/`tools_call`。**ADR-045 的 ACL 覆盖面已补齐**：`check_tool_allowed`（`mcp_gateway.rs:234`）抽成共用函数，`post_mcp`（`:412`，registry → ACL → credential）与 `mcp_rest::tools_call`（`:246`）都接上；`tools/list` 仍不过滤。4 条新 BDD（两条拒绝对 `/mcp/{alias}` 与 `/mcp-rest/tools/call` 断言 403 + `-32003` + 上游零调用 + 一行 `failed` 日志，两条正对照断言未禁的工具仍 200）。**五门禁全绿（主 Agent 亲读日志）**：`/tmp/stage143-test-final.log` **1497 passed / 0 failed / 22 个 test result**；`/tmp/stage143-bdd.log` 362 场景 344 passed / 18 skipped、2087 steps、`✘`=0；`/tmp/stage143-bdd-real-sqlite.log` 19 features / 80 scenarios (80 passed) / 452 steps、`✘`=0；**PG `/tmp/final-pg.log` 与 MySQL `/tmp/final-mysql.log` 与 SQLite 数字完全一致**（19 features / 80 scenarios / 452 steps，`✘`=0，PG_EXIT=0 / MYSQL_EXIT=0）；`/tmp/stage143-lint.log` `lint passed`；`task fmt` `fmt passed`。**真机验收（ADR-046）**：CC 2.1.312 端到端 PASS（`server/discover` → `tools/list` → `tools/call`，`/tmp/mcp-mock.log:6/:10/:13` 带的是上游 secret，`/tmp/acc-cc-stream.jsonl` 的 tool_result = `mock upstream ran search with {"query": "rust"}`）；**Codex 0.154.0 只到协议/传输层** —— 握手与列表全部中继成功，但没有任何 Codex 回合产生 `tools/call`，断点是 Codex 给模型的工具清单只有 namespace `mcp__acc_legacy` 加裸子名、没有平铺的 `mcp__acc_legacy__search`（模型被提示成平铺名后 `tools::router` 本地直接回 `unsupported call`，绕过 aigw 直连上游同样如此）。**一条曾被误判的证据**：`/admin/mcp/calls` 里 `22:01:55 acc-legacy tools/call` 是手工 curl —— 判别靠字节数（102B 手写 / 85B Codex `tools/list` / 217B `initialize`），UUIDv7 前缀同秒内会误导。已登记 TD-027（日志缺客户端指纹）；**复跑证据更新**：`/tmp/p55-final-test3.log` 1508 passed / 0 failed / 13 ignored / 22 个 test result，BDD 半程 47 features / 362 scenarios (349 passed, 13 skipped) / 2109 steps、`✘`=0；`task lint` / `task fmt` 均 passed |
+| 144 | ✅ Gate 3 绿（Gate 4 整改后全量复跑） | **Phase B 全部落地**：`mcp_gateway.rs` 聚合入口（`AGGREGATE_ALIAS="*aggregate*"`、`list_aggregate_tools` / `call_aggregate_tool`，顺序 prefix → registry → ACL → credential）、`main.rs` 五组路由（`/mcp`、allowlist `:779`、`/admin/mcp/calls` `:795`、非 admin 的 `/v1/mcp/*` `:809`）、`mcp.rs` 的 allowlist/calls handler、**BDD 交付补齐**（`mcp_aggregate.feature` 11 场景 + `real/mcp_aggregate_real.feature` 3 场景 + 两个 steps 文件并在 `bdd_steps/mod.rs:20`/`:33` 注册）、**`mcp_user.rs` 6 条 handler UT**、**`list_aggregate_tools` 改 `join_all` 并发**（`mcp_gateway.rs:789`）。**四门禁全绿（主 Agent 亲读日志）**：`/tmp/agg_test2.log` 1497 passed / 0 failed / 22 个 test result；`/tmp/agg_bdd.log` 358 场景 340 passed / 18 skipped、2045 steps、`✘`=0；`/tmp/agg_fmt.log` `fmt passed`；`/tmp/agg_lint.log` `lint passed`。**Gate 4 整改后复跑**：`/tmp/p55-final-test3.log` 1508 个 UT / 0 failed、BDD 362 场景 349 passed / 13 skipped、`✘`=0；`/tmp/p55-final-lint.log`、`/tmp/p55-final-fmt.log` 均 passed。**一处假绿已修**：本 Stage 的 `mcp_aggregate.feature` 5 个 `tools/list` 场景因 expr 里裸 `/` 被 cucumber 当 alternation，自 Stage 144 起一直静默 skipped，`/tmp/agg_bdd.log` 里那 18 个 skip 有 5 个属于此；改 `tools\/list` 后首次真实执行并全绿（`/tmp/p55-bdd-fix.log:1019-1116`），技术债见 TD-028。`CallTail<'a>`（`:423`）把 `method`/`tool`/`request_bytes`/`started` 收成一个值 + `stamp()`，`relay_forwarded` 降到 5 参数。**遗留**：`real_mcp_aggregate_steps.rs` 的非 real 分支有两处裸 `return;`（`when_read_allowlist`、`when_query_calls`），会把上一 step 的 mock body 留下来 —— 已在 `/tmp/stage141-test-1793220911.log` 里以 `real 调用日志 total_count 为 1` 失败现形（`left: None`，body 停在上一 step 的 `{"result":{"content":[]}}`），主 Agent 定位后转回 144 修 |
+| 145 | ✅ Gate 3 绿（三个 task 全过） | **`saveAcl` 静默数据丢失已修**：原 `filter(r => r.tool_name !== aclTool)` 会连带删掉同一 tool 其它 scope 的规则，现键为 `(tool_name, scope_type, scope_id)` 三元组（`ToolsDialog.tsx:96-115`）；新场景 `Adding a rule for a second scope keeps the first` 在 r3 的 desktop `✓117` / mobile `✓287` / tablet `✓473` 三 viewport 全绿。**`task fe-bdd` 全量 r3 绿**：`/tmp/fe-bdd-145-r3.log` **582 passed / 3 skipped / 0 failed**（24.7m，`✘`=0，3 个 skip 是 `login.feature` 既有 `@skip`）；`task fe-lint`、`task fe-build` 均 EXIT=0。**Gate 4 整改后收口复跑**：`/tmp/p55-fe-bdd.log` **585 passed / 3 skipped / 0 failed**（24.6m，`FE_BDD_EXIT=0`；3 个 skip 是 `login.feature` 既有 `@skip`），新增场景 `A non-admin sees the tools of the server it selected` 三 viewport 全绿（`:172`/`:337`/`:545`）。142 Gate 4 的 2 HIGH + 7 MED 逐条复核落地（H1 `T00:00:00Z` 归一 `TokenDialog.tsx:139`/`MyTokenDialog.tsx:93`、H2 `token-closed`/`tools-closed`、M1 `PaginationBar` 移出 `hidden md:block`、M2 `reloadPartial`、M3 失效 `mcp-server-tools`、M4 `mcp-delete-confirm`、M5 `key={id}-{open}`、M6/M7 真断言）。顺带修两处移动端横向溢出（MCP `TabsList` 328px@320、playground 头部按钮行 619px@320），只改容器不改内容。**145 agent 报的「四组接口 mock-only」已不成立**：主 Agent 亲查 `main.rs:779/795/809/811`，allowlist、`/admin/mcp/calls`、`/v1/mcp/*` 三组路由均已注册 |
+
+### Stage 140 交付（2026-10-29）
+
+Phase 55 的数据层与纯逻辑：**没有 HTTP 路由**，只有表、store、凭据解析和校验。
+
+| 层 | 落地 |
+|----|------|
+| migration | `029_mcp_gateway.sql` × 三方言：`mcp_servers` + `mcp_server_tokens`。MySQL 表级 `CONSTRAINT fk_… FOREIGN KEY`、时间列 `VARCHAR(64)`、布尔 `TINYINT`；PG 布尔 `BOOLEAN` + 部分唯一索引写 `WHERE is_default`（PG 无 `boolean = integer` 运算符） |
+| core | `McpServerRow` / `McpServerTokenRow` / `CredentialScope`（`parse` 未知值回落默认，不让坏数据 500 整个 `tools/list`）/ `McpTokenResponse`（`token_redacted` = `"***"` 或空串，DTO 上不存在 `token_value` 字段） |
+| core | `mcp/credential.rs`：`resolve_outbound_token(scope, user_token, server_token) -> Option<TokenSource>` —— **签名里没有任何客户端凭据入参**，H1「绝不转发客户端 key」是编译期保证而非注释；`is_token_usable` 在 Rust 侧比时间（三方言拼 datetime 比较各不相同）；不可解析的 `expires_at` 视为已过期（安全方向） |
+| core | `mcp/alias.rs`：禁 `__`、禁下划线结尾、≤32、`[A-Za-z0-9_.-]` —— 前缀拆分只找第一个 `__`，歧义在注册时消除 |
+| db | `McpStore` trait（13 方法）+ 三份 impl + `Database` 分发；`set_default_mcp_token` 三方言统一 `begin → CLEAR → SET → commit`（MySQL 无部分唯一索引，统一走事务而非按方言分支）；`delete_mcp_server` 在同事务内显式删 token，不依赖 FK 级联 |
+
+**验证**：`task test` **aigw-core 684 / aigw-server 217 + 224**，全绿；`task bdd` **315 场景（302 passed / 13 skip）**；`task bdd-real-pg` 与 `task bdd-real-mysql` 各 **68/68**；`fmt` / `lint` / `doctor` 全绿。另在真实 PG 上验证部分唯一索引确实拒绝第二条默认行、在真实 MySQL 上验证表级 FK 级联确实删除了 token（不是惰性的）。
+
+**关键决策（ADR-041）**：catalog 内存缓存放**进程级静态**（`mcp/catalog_cache.rs`），不挂 `AppState` —— `AppState` 有 39 处结构体字面量构造，加字段要改 39 处样板，而缓存本身不需要按实例注入。探测的测试替身用**每测试自绑端口的 axum router**，不用固定形状的 `mock_upstream.rs`。
+
+**认证方向（钉死）**：上游 token 是 **aigw → MCP server**；客户端带来的 `Authorization` 是 aigw 自己的 virtual key，**绝不转发**（MCP 规范 MUST NOT 透传客户端凭据）。
+
+**凭据三态 `credential_scope`**：`shared`（只用共享默认 token）/ `shared_or_user`（**默认**：用户 token 优先 → 回落共享）/ `user_required`（只有用户 token，无则此 server 对该用户不可见）。token 表 `mcp_server_tokens`，`owner_type = server | user`。
+
+**设计文档**：`docs/plans/2026-10-28-mcp-gateway.md`（15 节）+ 6 张 drawio/SVG 架构图（SVG 内嵌 drawio 源）+ `docs/stages/stage-140.md` ~ `stage-145.md`。
+
+**立项前置已完成**：`docs/01-charter.md:47` 的 NG3 已由 **ADR-040（Accepted，2026-10-29 用户批准）** 改写为「MCP 协议能力扩展（resources / prompts / sampling / elicitation）永久跳过；MCP 网关本身进入范围，只做 `tools` 原语」，Stage 140 可直接开工，无章程阻塞。
+
+**已剥离、排在 Phase 55 之后**：两处 `anthropic-beta` 既存缺陷（`/v1/messages` 不转发客户端 beta、OAuth 路径写死 beta 且**写入点有两处**）→ 登记为 **TD-021a / TD-021b**（P1，见 `docs/12-technical-debt.md`）。后果是 Claude Code 的 tool search 静默失效、自动退回全量预加载工具（「能用但很贵」，无报错）。**不阻塞任何 MCP Stage，MCP 阶段不要顺手夹带。**
+
+### 其它候选（Phase 55 之后）
 
 | 方向 | 状态 |
 |------|------|
+| Phase 56：MCP OAuth 发现（`/.well-known/oauth-protected-resource` + `WWW-Authenticate` 引导） | CC 能零配置完成授权；依赖 Phase 55 的 401 响应形状 |
 | 设计 A（短路）：让 Claude Code WebSearch 按钮可用 | 唯一能解锁该按钮的路径；**必须配套 `srvtoolu_` 前缀剥离**，否则第二轮 400 |
 | 设计 B（agentic loop） | 硬前提「上游是否认网关注入的 function 工具」**仍未实测** |
 | 按 provider / 实例聚合花费与搜索量趋势 | Phase 54 遗留；`search` 投影块已带出 `instance`，是现成输入 |

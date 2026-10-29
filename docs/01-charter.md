@@ -44,7 +44,7 @@
 |------|-----------|------|------|
 | NG1 | SSO / OAuth / JWT 登录鉴权 | 永久跳过 | Claude Code / Codex 使用 Virtual Key 鉴权，不需要用户登录 |
 | NG2 | Guardrails / Policy Engine / 内容审核 | 长期路线 Phase 3 | 不是最小版本的交付范围 |
-| NG3 | MCP Server 管理 | 长期路线 Phase 3 | 不是当前使用场景 |
+| NG3 | MCP 协议能力扩展（resources / prompts / sampling / elicitation） | 永久跳过 | 只做 `tools` 原语；MCP **网关**本身已进入范围（Phase 55，ADR-040） |
 | NG4 | 语义缓存（Redis 缓存层） | 长期路线 Phase 2 | 性能优化项，非功能必须 |
 | NG5 | Adaptive Router（贝叶斯统计路由） | 长期路线 Phase 3 | 高级路由策略 |
 | NG6 | Prometheus / OTEL metrics 导出 | 长期路线 Phase 2 | 运维增强项 |

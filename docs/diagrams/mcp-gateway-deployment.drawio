@@ -1,0 +1,25 @@
+<mxfile host="app.diagrams.net" type="device">
+<diagram id="mcp-gateway-deployment" name="mcp-gateway-deployment">
+<mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1000" pageHeight="700" math="0" shadow="0">
+<root>
+<mxCell id="0" />
+<mxCell id="1" parent="0" />
+<mxCell id="c1" value="部署形态：会话归属与缓存一致性" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;fontSize=16;fontStyle=1;" vertex="1" parent="1"><mxGeometry x="40" y="14" width="600" height="30" as="geometry"/></mxCell>
+<mxCell id="c2" value="负载均衡" style="rounded=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=12;" vertex="1" parent="1"><mxGeometry x="170" y="62" width="160" height="50" as="geometry"/></mxCell>
+<mxCell id="c3" value="aigw 副本 A" style="rounded=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;" vertex="1" parent="1"><mxGeometry x="40" y="152" width="170" height="50" as="geometry"/></mxCell>
+<mxCell id="c4" value="aigw 副本 B" style="rounded=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;" vertex="1" parent="1"><mxGeometry x="300" y="152" width="170" height="50" as="geometry"/></mxCell>
+<mxCell id="c5" value="共享 DB&#10;mcp_servers / catalog / call_log" style="rounded=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1"><mxGeometry x="40" y="288" width="180" height="76" as="geometry"/></mxCell>
+<mxCell id="c6" value="upstream MCP&#10;（每请求重建连接）" style="rounded=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=12;" vertex="1" parent="1"><mxGeometry x="300" y="288" width="180" height="76" as="geometry"/></mxCell>
+<mxCell id="c7" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;endFill=1;strokeColor=#555555;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="c2" target="c3"><mxGeometry relative="1" as="geometry"></mxGeometry></mxCell>
+<mxCell id="c8" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;endFill=1;strokeColor=#555555;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="c2" target="c4"><mxGeometry relative="1" as="geometry"></mxGeometry></mxCell>
+<mxCell id="c9" value="读写" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;endFill=1;strokeColor=#555555;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="c3" target="c5"><mxGeometry relative="1" as="geometry"></mxGeometry></mxCell>
+<mxCell id="c10" value="带完整凭据" style="edgeStyle=orthogonalEdgeStyle;rounded=1;endArrow=block;endFill=1;strokeColor=#555555;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="c4" target="c6"><mxGeometry relative="1" as="geometry"></mxGeometry></mxCell>
+<mxCell id="c11" value="两个副本对称：任一副本都同时读写 DB 与上游，图中的边只画了一半。" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;fontSize=11;fontColor=#666666;" vertex="1" parent="1"><mxGeometry x="40" y="404" width="900" height="22" as="geometry"/></mxCell>
+<mxCell id="c12" value="现代上游（2026-07-28）无会话，副本间可自由切换 —— 这是优先支持的形态。" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;fontSize=11;fontColor=#666666;" vertex="1" parent="1"><mxGeometry x="40" y="450" width="900" height="22" as="geometry"/></mxCell>
+<mxCell id="c13" value="旧版上游（2025-11-25）的 Mcp-Session-Id 归属在上游：P1 不复用上游会话，每请求带凭据重连，绕开会话粘滞。" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;fontSize=11;fontColor=#666666;" vertex="1" parent="1"><mxGeometry x="40" y="496" width="900" height="22" as="geometry"/></mxCell>
+<mxCell id="c14" value="catalog 缓存是每副本一份，重启即失效；但排序必须确定性（按 alias, tool），否则上游 prompt cache 全废。" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;fontSize=11;fontColor=#666666;" vertex="1" parent="1"><mxGeometry x="40" y="542" width="900" height="22" as="geometry"/></mxCell>
+<mxCell id="c15" value="不引入 Redis —— 当前无该依赖，且现代上游根本不需要会话存储。" style="text;strokeColor=none;fillColor=none;align=left;verticalAlign=top;fontSize=11;fontColor=#666666;" vertex="1" parent="1"><mxGeometry x="40" y="588" width="900" height="22" as="geometry"/></mxCell>
+</root>
+</mxGraphModel>
+</diagram>
+</mxfile>

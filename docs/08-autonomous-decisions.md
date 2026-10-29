@@ -778,3 +778,214 @@
   - 候选清单（不进 Phase 53）：设计 A / 设计 B / Tavily 与博查客户端 / Serper 与 ScrapingDog 后备 provider /
     `search_count` 专列 / 按实例花费下钻 / 配额加权 LB。
   - 与设计 A 捆绑的必要工作（不是可选项）：`srvtoolu_` 前缀标记 + 发往上游前剥离 + 多轮回放 e2e。
+
+---
+
+## ADR-040: MCP 网关进入范围（改写章程 NG3）；上游凭据方向与三态模型
+
+- **Date**: 2026-10-28
+- **Status**: **Accepted**（2026-10-29 用户批准；`docs/01-charter.md:47` NG3 已同步改写）
+- **Related Stage**: Phase 55（Stage 140-145）
+- **Decision**:
+  - **改写章程 NG3**。`docs/01-charter.md:47` 原文为
+    `| NG3 | MCP Server 管理 | 长期路线 Phase 3 | 不是当前使用场景 |`，改写为
+    `| NG3 | MCP 协议能力扩展（resources / prompts / sampling / elicitation） | 永久跳过 | 只做 tools 原语；MCP 网关本身已进入范围（Phase 55，ADR-040） |`。
+    即 **MCP 网关本身进入范围，但只做 `tools`**。理由：网关的价值在工具聚合与治理，
+    `resources` / `prompts` / `sampling` / `elicitation` 是另一套抽象，与 LLM 代理业务无交集。
+  - **上游凭据方向钉死**：MCP 网关出站到上游 server 的 `Authorization` **只**来自
+    `mcp_server_tokens` 解密结果；客户端带来的 `Authorization` 是 aigw 自己的 virtual key，
+    **只用于认证与身份解析，绝不转发**。依据：MCP 规范对网关明确要求 MUST NOT 透传客户端凭据。
+  - **凭据三态 `credential_scope`**：`shared` / `shared_or_user`（默认）/ `user_required`。
+    这是**解析行为**的三档，不是三张表。token 存 `mcp_server_tokens`（新表），
+    `owner_type = server | user`，同一 owner 至多一条 `is_default=1`。
+  - **不复用既有 `credentials` 表**：它是网关级加密键值桶，**没有 owner 维度**
+    （`created_by` 两条写路径都硬编码 `None`，且无端点能设）。用户级 token 塞进去只能拼 key 名或加列，
+    两条路都比新表脏。**复用加密函数（`encrypt_litellm_value_gcm` / `decrypt_litellm_value`），不复用表。**
+  - **用户 token 绑 `user_id` 而非 `key_id`**：一个人可能有多把 virtual key，绑 key 会让人每换一把 key 就重填一次。
+  - **只接 Streamable HTTP 上游，不接 stdio**：stdio 等于让共享网关在本机起子进程执行任意命令，是主机 RCE 面。
+- **Background**: 用户 2026-10-28 决策。调研基于**自建探针 MCP server 抓到的真实字节**而非仅读规范：
+  Claude Code 2.1.312 是双栈（先发 `server/discover`，拿到 `supportedVersions` 后整会话不再 `initialize`）；
+  Codex CLI 0.154.0 是纯旧版（只发 `initialize`，从不发 `server/discover` / `Mcp-Method` / `Mcp-Name`）。
+- **Consequences**:
+  - 双栈是**底线**而非加分项 —— 只实现现代路径等于 Codex 完全不可用。
+  - 两处 `anthropic-beta` 既存缺陷（`crates/aigw-server/src/routes/v1_messages.rs:901` 不转发客户端 `anthropic-beta`、
+    `crates/aigw-core/src/oauth_pipeline.rs:64` 把 beta 串写死，**写入点有两处**：`apply_cc_headers:259` 与 `send:325`）
+    导致 Claude Code 的 tool search 静默失效并自动退回全量预加载工具（用户看到「能用但很贵」，没有任何报错）。
+    **不在本 Phase 修** —— 用户 2026-10-29 决策：登记为 **TD-021a / TD-021b**（P1），**Phase 55 完成之后单独修**。
+  - **不写 `spend_logs.mcp_namespaced_tool_name`** —— 该列已是 `daily_spend_queue` 聚合复合键的一部分
+    （`docs/11-next-steps.md:280`），填值会把日聚合分组打散。MCP 的账走 `mcp_call_log`，与 LLM 用量解耦。
+  - **不做上游会话复用、不引入 Redis** —— 现代上游无会话；旧版上游的 `Mcp-Session-Id` 归属在上游，
+    而 aigw 副本会轮换。P1 每请求带完整凭据重连。为一个可能用不上的场景加基础设施违反奥卡姆剃刀。
+  - 设计文档：`docs/plans/2026-10-28-mcp-gateway.md`；Stage 文档：`docs/stages/stage-140.md` ~ `stage-145.md`。
+
+---
+
+## ADR-041: MCP catalog 缓存放置、探测测试替身、tab 容器归属
+
+- **Date**: 2026-10-29
+- **Status**: Accepted
+- **Related Stage**: Phase 55（Stage 141 / 142 / 144 / 145）
+- **Decision**:
+  - **catalog 内存缓存放进程级静态，不挂 `AppState`**。位置 `aigw-core/src/mcp/catalog_cache.rs`，
+    形状 `static CACHE: OnceLock<Mutex<HashMap<i64, Entry>>>`，`Entry { tools: Arc<Vec<McpToolRow>>, fetched_at, ttl_ms }`，
+    暴露 `get` / `put` / `invalidate(server_id)` / `clear()`。**`MutexGuard` 必须在任何 `.await` 之前释放** ——
+    `get` 克隆出 `Arc<Vec<McpToolRow>>` 后立即 drop guard，再去连上游；持有 guard 跨 await 会在
+    tokio 多线程 runtime 上阻塞整个 worker（`std::sync::Mutex` 不是 async 感知的）。`websearch/mod.rs:68-130`
+    的 `Arc<std::sync::RwLock<...>>` 先例没有这个陷阱，因为它从不跨 await 持锁 —— 这里必须显式照做。
+    理由：设计文档 §14 D2 已定「内存为主 + `mcp_tool_catalog` 做持久快照」，§7 已定「每副本一份，重启即失效」——
+    进程级静态正是这两条的直译。**不挂 `AppState`** 的实际原因是成本：`AppState` 现有 39 处结构体字面量构造
+    （`crates/aigw-server/src/` 33 处，其中 `routes/spend.rs` 10 / `routes/chat.rs` 8；`tests/` 6 处），
+    加一个字段要改 39 处样板；
+    而缓存本身不需要按实例注入（每副本一份、无外部配置）。测试需要冷缓存时调 `clear()`。
+  - **探测的测试替身用「每测试自绑端口的 axum router」**，不用 `tests/bdd_support/mock_upstream.rs`。
+    照 `crates/aigw-core/src/websearch/probe.rs:172`（`spawn_stub`）的做法：`TcpListener::bind("127.0.0.1:0")` + 独立 `Router`。
+    理由：`MockUpstream` 是固定形状（为 LLM 上游而写），而探测用例需要**逐用例不同的行为**
+    （405 / 200+HTML / 两页 cursor / 返回自身游标 / 不发 `initialize` 的断言）——塞进一个固定 mock 会让它变成一个
+    带五个开关的怪物，比六个独立 router 更难读。
+  - **tab 容器在 Stage 142 建，Stage 145 只加第二个 tab**。stage-142 §9 原本就写「本 Stage 的页面骨架要预留 tab 容器」，
+    stage-145 §2 又写「加 tab 容器」——两处措辞冲突。取 142 建（单 tab 的容器成本是三行，且避免 145 重写页面骨架），
+    stage-145 §2 的措辞同步改为「加第二个 tab（容器已在 142 预留）」。
+  - **`is_default` 的唯一性在三方言统一靠事务**，即便 SQLite / PG 有部分唯一索引。
+    `set_default_mcp_token` 三份 impl 都是 `begin → CLEAR → SET → commit`；
+    部分唯一索引退化为**兜底约束**（防应用层漏调事务），不作为唯一手段。理由：两条路径（索引 / 事务）都实现等于
+    同一规则两处维护，而 MySQL 只有事务一条路——统一走事务，索引只留在 SQLite / PG 上做防御。
+- **Background**: 2026-10-29 执行 `/rdd-loop --to --stage 145` 时，Stage 141 的设计评审暴露了四处「设计文档没说清、
+  但会实打实改变代码形状」的空白。按用户「尽可能通过 ADR 自主决策推进」的指令就地定夺，不阻塞。
+- **Consequences**:
+  - 缓存是**进程内**的：多副本部署时每个副本各有一份，`POST /admin/mcp/reload` 只清当前副本。
+    这与设计文档 §7 一致（不引入 Redis），但**必须在 UI 上说明**（reload 不是全局广播）。
+  - `catalog_cache::clear()` 成为跨测试的隐式全局状态：任何依赖冷缓存的用例必须先 `clear()`。
+    这条约束写进 Stage 144 的用例前置条件。
+  - 探测的 6 个 UT 各自起一个 router，测试进程会短暂持有 6 个 loopback 端口 —— 无副作用（`websearch/probe.rs` 已如此）。
+
+## ADR-042: MCP 网关实现层的四处归属 —— 中继落位、rest 开关、主密钥、ACL 的 key 口径
+
+- **Date**: 2026-10-29
+- **Status**: Accepted
+- **Related Stage**: Phase 55（Stage 143 / 144）
+- **Decision**:
+  - **SSE 中继 `.rs` 放 `aigw-server/src/routes/`，不放 `aigw-core/src/mcp/`**。
+    本仓唯一的流式中继范式是 `tokio_stream::wrappers::UnboundedReceiverStream` + `Body::from_stream`
+    （`routes/v1_messages.rs:730`），而 `tokio-stream = "0.1"` 只声明在 `crates/aigw-server/Cargo.toml:32`，
+    `aigw-core` 没有这个依赖。中继的产物本来就是 `axum::body::Body`——它是 server 层的类型。
+    备选（给 `aigw-core` 加一个只用一次的依赖）违反奥卡姆剃刀。
+  - **`X-Accel-Buffering: no` 是净新增工作，不是照抄**。全仓 grep `accel-buffering` 零命中；
+    `v1_messages.rs:734-740` 与 `chat.rs:1462-1470` 两处既有 SSE 只设 `content-type` / `cache-control` / `connection`。
+    Stage 143 §1.5 H4 原先写成「已有实现范式可照抄」是错的，已改。
+  - **`/mcp-rest/*` 的关闭开关是 `general_settings.mcp_disable_rest: bool`（默认 false）+ handler 层 404**，
+    不做条件路由注册。`config.rs` 的 `GeneralSettings` 没有 `deny_unknown_fields`，加 `#[serde(default)]` 字段向后兼容；
+    条件注册会让路由表随配置变形，测试构造代价高于收益。
+  - **token 加解密用 `state.aigw_master_key`**，与 `routes/websearch.rs:686-695` 的 `seal_api_key` 同一把钥匙
+    （不是 `state.master_key`）。`bdd.rs` 的默认 `ensure_state()` 是 `aigw_master_key: None`，
+    所以 token 相关 BDD 场景必须走已有的「已配置 master key」given，否则创建 token 会 500 `master_key_missing`。
+  - **ACL 的 `scope_type=key` 用 `KeyIdentity.token_hash` 作 `scope_id`**。
+    `KeyIdentity`（`middleware/mod.rs:36-45`）没有 `key_id` 字段；`mcp_call_log.key_id` 存的也是 `token_hash`。
+    连带修正：master key 时 `token_hash` 是字面量 `"*master*"`（`routes/spend.rs:147`）而不是 `None`，
+    故 `key_id` 恒有值，只有 `user_id` 可能为 `None`。
+- **Background**: Gate 2 设计评审（140–145）报出 21 条，其中 6 条 HIGH 直接落在「文档指的代码形状不存在」上。
+  这些都是「多一个依赖 / 换个文件位置 / 换一个字段名」级别的选择，不需要人工判断，就地定夺并写进 stage 文档。
+- **Consequences**:
+  - `aigw-core` 的 `Cargo.toml` 不变；143 的变更清单里 `relay.rs` 的路径要写到 server 侧。
+  - Stage 143 的 UT 断言 `x-accel-buffering: no` 是本仓第一次给 SSE 加这个头，UT 是唯一守门人。
+  - Phase 56 的 `WWW-Authenticate` 需求从 143 摘除（`AuthError::into_response` 是纯 JSON 构造，没有加头接缝），
+    143 的 UT #1 只断言 401；加头改造仍归 144 §9 的 `auth_challenge()` 接缝。
+  - BDD 必须一个 stage 两个 feature（mock 一个、`@real_api` 一个），因为 `tests/bdd.rs:136-167` 的过滤器按
+    `AIGW_REAL_API` 二分，而 `real_*_steps` 在非 real 模式下直接 return —— 混写会「通过」但零断言。
+
+---
+
+## ADR-043: Stage 143/144 真机验收的 mock 上游由 `task mcp-mock` 承载
+
+- **Date**: 2026-10-29
+- **Status**: Accepted
+- **Related Stage**: Stage 143（§6 / §8）、Stage 144（§6）
+- **Decision**:
+  - 真机验收（真实 Claude Code / Codex CLI 连 `/mcp/{alias}`）的上游一侧用
+    `scripts/mcp-mock-upstream.py`，经 **`task mcp-mock`** 启动，监听 `127.0.0.1:8899/mcp`。
+    不用公网上游：那样验收会被一个连不通的地址阻断，变成不可复现的动作（stage-143 §8 已写明这条要求）。
+  - **必须走 `task`**，不跑裸 `python3` —— 「运行」类动作按项目纪律一律走 Taskfile；
+    且 Taskfile 里原本没有对应 task，本 ADR 就是新增它的依据（而不是因为没 task 就地破规）。
+  - 脚本把每个请求打成一行 JSON 到 stderr，含 **method / `Authorization` / `Mcp-Session-Id`**。
+    这份日志就是验收证据本身：CC 侧应只见 `server/discover`、Codex 侧只见 `initialize`，
+    且 aigw 出站的 `Authorization` 应是 `mcp_server_tokens` 里解封的值，**不是客户端的 aigw virtual key**。
+  - `task mcp-mock -- --legacy` 让同一个脚本扮演 `2025-06-18` 上游（`server/discover` 回 405），
+    从而在一台机器上分别验证 143 的两条出站分支。
+- **Background**: 143 的门禁项「CC 与 Codex 真机各跑通一次」需要一个受控上游。
+  Stage 141 的 BDD 已用自绑端口的 axum stub 做过同类事（ADR-041），但那是测试进程内的；
+  真机验收要跨进程，脚本形态更直接，且不引入新的 crate 依赖。
+- **Consequences**:
+  - `Taskfile.yml` 新增 `mcp-mock`；`scripts/` 下新增一个 Python 文件（仓内 `scripts/` 已有 shell 与 python 混居的先例）。
+  - 该 task 是**验收入口**，不进 `task test` 的自动化链路 —— 真机那一步仍然是人起两个终端。
+  - 生产代码不依赖它；它是 `scripts/` 里的验收工具，与 `bdd-coverage` 同一层。
+
+---
+
+## ADR-044: `is_default` 单一写者 + 凭据 scope 未知值收紧 + default 提升的 owner 作用域
+
+- **Date**: 2026-10-29
+- **Status**: Accepted
+- **Related Stage**: Stage 140（§3.4 / §8）、Stage 141（token 管理路径）
+- **Background**: Stage 140 的独立 Gate 4 评审给 PASS，但留了 3 条 MEDIUM，全部落在
+  `mcp_server_tokens` 的数据层不变量上：`SET_MCP_TOKEN_DEFAULT_*` 用 `WHERE id = ?` 单条件提升，
+  与同一事务里按 owner 作用域的 CLEAR 不对称；`is_default` 有 INSERT / UPDATE / set_default 三个写点；
+  `CredentialScope::parse` 把未知值映射到 `DEFAULT`（= `SharedOrUser`，最宽松的一档）。
+- **Decision**:
+  1. **提升语句带上 owner 作用域**：三个方言的 SET 都改为
+     `WHERE id = ? AND server_id = ? AND owner_type = ? AND owner_id = ?`，并在
+     `rows_affected() == 0` 时返回 `DbError::NotFound`（事务因此回滚，不会留下「已清空、未设上」的半态）。
+  2. **`is_default` 收敛成单一写者**：`create_mcp_token` 与 `update_mcp_token` 的 SQL 与绑定都删掉这一列，
+     `McpStore` 的 trait doc 明写「只有 `set_default_mcp_token` 写 `is_default`」。
+     handler 本来就先插 `false` 再单独 promote，行为不变。
+  3. **未知 scope 映射到收紧方向**：`CredentialScope::parse` 显式认 `shared_or_user`，其余未知值一律
+     `UserRequired`。理由：这一列只由本二进制写，出现别的值说明行被改过或来自别的系统，
+     此时「静默把共享 token 发出去」是错的方向；`UserRequired` 只会让调用因缺个人 token 被拒。
+  4. 顺带删除 core 里无人使用的 `CreateMcpTokenRequest`（handler 用自己的 `CreateMcpTokenBody`，
+     前者只是多带一个明文 `token_value` 字段的死 DTO）。
+- **Why not the alternatives**:
+  - 让 `set_default_mcp_token` 保持 `WHERE id = ?` 而在 handler 侧多查一次归属 —— 校验与写入分离，
+    并发下仍然可错；把不变量放进 SQL 是唯一不受调用方影响的做法。
+  - 给 `is_default` 加 DB 级唯一约束 —— SQLite/PG 已有部分唯一索引，MySQL 没有（无部分索引）；
+    「只允许一个写点」是三种方言都能落实的那一半。
+  - 未知 scope 回落到 `DEFAULT` —— 那是评审判定的错误方向本身。
+- **Consequences**:
+  - 新增 UT `test_mcp_token_default_rejects_foreign_token`（跨 owner 提升被拒 + 被拒者不留 default）
+    与 `unknown_scope_parses_to_the_restrictive_variant`。
+  - 任何未来「直接把 `is_default=true` 插进去」的写法会静默无效（列不被 INSERT 写），
+    这是刻意的：唯一入口就是 `set_default_mcp_token`。
+  - Stage 140 Gate 4 的 L1/L2/L4 有意不修，理由记在 `docs/plans/2026-10-29-stage-140-gate4-remediation.md`。
+
+## ADR-045: 工具级 ACL 在所有三条调用路径上强制执行（`/mcp`、`/mcp/{alias}`、`/mcp-rest/tools/call`）
+
+- **Date**: 2026-10-29
+- **Status**: Accepted
+- **Related Stage**: Stage 143（§3 单 server 透传 / `/mcp-rest/*`）、Stage 144（§3.2 ACL）、Stage 145（ACL 开关 UI）
+- **Background**: Stage 143 对 144 的只读复查发现 `acl::is_allowed` 全仓只有一个生产调用点 —— `call_aggregate_tool`（`mcp_gateway.rs:883`）。另外两条把请求送到同一批上游的路径完全不读 allowlist：`post_mcp` 的 `Some(_)` 分支直接 `relay_forwarded`，`mcp_rest::tools_call` 直接 `session::forward`。而 `general_settings.mcp_disable_rest` 默认 `false`（`main.rs:338-343`、`config.rs:174-175`），`GET /v1/mcp/servers` 又把每个 enabled server 的 `alias` / `credential_scope` / `token_required` 给任意已登录用户。于是「管理员禁掉的工具」只在客户端恰好走 `/mcp` 时被拦住，走另外两个入口照调不误 —— 且 Stage 145 刚把 ACL 开关做进管理页 UI，用户会把它读成强制。
+- **Decision**:
+  1. **ACL 判定抽成一个共用函数**（`check_tool_allowed(state, auth, server, tool, id)`），聚合与单 server 两条网关路径共用；`mcp_rest` 侧同样在 `resolve_bearer` **之前**调用，维持「registry → ACL → credential」的顺序 —— ACL 拒绝时不该先解密上游凭据。
+  2. **只在 `method == tools/call` 且工具有名字时查**。`tools/list` 不查 ACL 是刻意的：列表照给、调用才封（144 §3.2 与 BDD 场景 `ACL 拒绝只封调用，列表仍然照给` 都钉死这条）。
+  3. **拒绝时照常写账**：`Outcome::rpc(FORBIDDEN, …, INSUFFICIENT_SCOPE)` 走既有 `finish`，`mcp_call_log` 落一行 `failed` —— 拒绝也是一次可审计的调用。
+  4. **不把它塞进 `prepare` / `prepare_for`**：那两个函数同时服务 `tools/list`，塞进去会让列表按 ACL 过滤，与决策 2 相反。
+- **Why not the alternatives**:
+  - 只修 `/mcp-rest`（因为它是「调试口」）—— `/mcp/{alias}` 才是 agent 的主路径，漏掉它等于没修。
+  - 直接关掉 `/mcp-rest` —— `mcp_disable_rest` 是给生产关的开关，默认值在 Stage 143 已定；用它替代 ACL 等于用一个全局开关回答一个 per-tool 的问题。
+  - 把 ACL 下沉到 DB 查询（`tools/list` 直接由 SQL 过滤）—— 列表本来就不该过滤，会让「被禁的工具看不见」变成「管理员以为规则没生效」。
+- **Consequences**:
+  - 三条路径的行为一致，ACL 从「建议」变成「强制」；`mcp_disable_rest` 回归它本来的语义（省掉协议协商与旁路风险），不再兼职权限。
+  - 每条 `tools/call` 多一次 `list_mcp_tool_allowlist` 查询。allowlist 表按 `server_id` 建了索引、行数是「每 server 几条」，代价可忽略；不做缓存是因为改规则后必须立即生效。
+  - 新增 BDD：被禁的工具有 `-32003` + 上游零调用 + 一行 `failed` 日志，覆盖 `/mcp/{alias}` 与 `/mcp-rest/tools/call`；正对照（未禁的工具在这两条路径仍然 200）防止把 ACL 做成默认拒绝。
+
+## ADR-046: Stage 143 的真机验收按「协议/传输通过」记录 —— Codex 的 `tools/call` 卡在客户端 namespace 分发，不是网关缺陷
+
+- **Date**: 2026-10-29
+- **Status**: Accepted
+- **Related Stage**: Stage 143 §6/§7（真机验证）
+- **Background**: Stage 143 §6 把「用真实 CC 与 Codex 各跑通一次工具调用」定为本 Stage 唯一有意义的验收方式。CC 2.1.312 达成（`server/discover` → `tools/list` → `tools/call`，上游返回结果进了模型上下文）。Codex 0.154.0 只达成前半段：`initialize` / `notifications/initialized` / `tools/list` / `GET` 全部经 aigw 中继成功、`token_owner=server`，但**没有任何一次 Codex 回合产生过 `tools/call`**。
+- **Decision**: 该项**不勾选**，Stage 143 状态记 `🟡 门禁 7/8`，并把「Codex 真机工具调用未达成」作为残余风险留在 §8.3；不为它改网关代码，也不为它降低门禁判定。
+- **Why not the alternatives**:
+  - **判成通过** —— 唯一能支撑它的「Codex 那行 `tools/call`」经字节数核对是手工 curl：`request_bytes=102` 精确等于手写 body 长度，同 shell 的前一条 `tools/list` 是 46B；Codex 自己发的 `tools/list` 是 85B（带 `_meta.progressToken`）、`initialize` 是 217B（带 `clientInfo`）。UUIDv7 前缀 `01a18488` 覆盖 22:01:13–22:01:55 整段窗口，手工与 Codex 都落在同一前缀里，前缀不能作为归属依据。
+  - **改网关去迎合** —— 断点在客户端：Codex 0.154.0 给模型的工具清单里只有 namespace `mcp__acc_legacy` 加裸子名 `search` / `read_document`，没有平铺的 `mcp__acc_legacy__search`；模型被提示成平铺名后 `codex_core::tools::router` 在本地直接回 `unsupported call`，`duration_ms=0`，不发任何 HTTP。**对照实验把网关完全排除**：把上游直接指向 `127.0.0.1:8899/mcp`（绕过 aigw）得到同样的 `unsupported call`。已试过的绕法全部无效：`--disable tool_search_always_defer_mcp_tools`、`--enable tool_search`、`--enable non_prefixed_mcp_tool_names`（变成 `acc_legacy__search`，仍 unsupported）、`--enable code_mode`（`exec` 回 `tool exec invoked with incompatible payload`）、换模型。
+  - **判成失败并改协议实现** —— 网关对 Codex 需要的旧版路径（`initialize` + `Mcp-Session-Id` + 方法中继）已经全程正确；重新设计它去匹配一个「模型看不到平铺工具名」的客户端分发机制，没有可依据的目标形状。
+- **Consequences**:
+  - Stage 143 的「agent 可接入」在 CC 上被端到端证明；Codex 只被证明到「协议与传输由网关正确承载」这一层，工具调用那一跳归客户端。
+  - 残留一条独立技术债候选（本次未登记、未修）：aigw 把 Responses 的 `custom` 工具降级成 `{"input": string}` 的 function（`adapter.rs:2055`、`:2543`），而出站只回 `function_call`（`:2861`、`:3059`、`:3324`、`:3374`），不还原 `custom_tool_call` —— 这会挡住 Codex code-mode，与 MCP 协议无关。
+  - `mcp_call_log.request_bytes` 目前只是入站 body 字节数，没有可机器判定的客户端指纹；本次靠人工比字节数才把一条 `tools/call` 归到手工 curl。若后续验收需要自动归因，应在日志里落 `clientInfo.name/version`。

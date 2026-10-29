@@ -70,6 +70,8 @@
 
 - **Impact**: 当前双语支持已覆盖 100% 前端 UI 文本，TD-008 a-d 均为增量优化，不阻塞使用。
 - **Resolution**: a/b 已在 Stage 114 解决（2026-08-09）；c/d 视需求触发。
+
+**2026-10-29 补记**：`scripts/check-i18n-keys.sh`（Stage 92 引入，校验 en / zh-CN key 集对齐）从落地起就**跑不起来** —— 参数写在 heredoc 结束标记之后（`PYEOF "$EN" "$ZH"`），python 读到该行抛 `SyntaxError`，脚本 exit 1。修复：参数移到 `<<` 那一行（`python3 - "$EN" "$ZH" << 'PYEOF'`），并把该脚本加进 `task fe-lint`（此前全仓无任何调用者，这正是它坏了 50 个 Stage 没人发现的原因）。Stage 142 的 1201 个 key 对齐由它首次真正校验通过。
 - **Target Phase**: c/d 无固定排期。
 
 ### TD-009: 多模态图片 base64 体积与渲染增强项 ✅ TD-009a/b Resolved 2026-08-09
@@ -266,6 +268,128 @@
 | TD-017d | Phase 41 遗留适配器 UT 缺口（剩余部分） | P3 | Phase 41 记录的「Stage 102 计划 19 个适配器 UT 未落地」——Stage 131 补 13 个、Stage 132 再补 10 个（item 分派 + tool 配对），剩余（streaming SSE 事件映射等）仍待补。 |
 | TD-017e | ~~**Codex 多轮端到端验证缺失**~~ | P2 | ✅ **Resolved 2026-10-05（Stage 132）** — 用假上游驱动 Codex 0.160.0 完成真实一轮 tool 往返（`exec_command` → `echo hello` → 回填 → 收尾），抓包得真实 round-2 body（含 `function_call` / `function_call_output`），固化为 UT fixture + 变换后打真实上游 → 200。 |
 | TD-017f | `developer_role_passthrough` 无自动嗅探 | P3 | Stage 131 新增的 `model_info.developer_role_passthrough` 为**显式配置**（缺省=映射）。aigw 无 litellm 式 provider 能力注册表（`ProviderType::infer` 把所有非 `anthropic` 归 `OpenAICompatible`），无法自动区分「真 OpenAI」与「OpenAI 兼容」上游。若将来引入能力注册表（litellm `get_supported_openai_params` 等价物），可改为自动嗅探。 |
+
+### TD-021a: `/v1/messages` 不转发客户端的 `anthropic-beta` 头
+
+- **Date**: 2026-10-28
+- **Priority**: **P1**（功能静默降级 + 成本翻倍，无任何报错）
+- **Source**: MCP Gateway 设计调研（`docs/plans/2026-10-28-mcp-gateway.md` §2），读码核实，**未实测抓包**
+- **Description**: 非 OAuth 的 AnthropicNative 直通路径（`crates/aigw-server/src/routes/v1_messages.rs:901-911`）只为上游构造 `x-api-key` 与 `anthropic-version`，**客户端的 `anthropic-beta` 头被整体丢弃**（handler 内 `headers` 变量解构了 `anthropic-version`（`:280`）与 `user-agent`（`:422`）等，但**无任何一处读取 `anthropic-beta`** —— `grep -rn "anthropic-beta" crates/` 在 server 侧零命中）。
+- **Impact**: Claude Code 2.1.305+ 的 tool search（`defer_loading` / `tool_reference`）依赖该 beta 串才启用。beta 丢失 → 上游不认识工具搜索 → CC 收到不识别的 4xx/5xx 后**自动退回全量预加载工具**。用户看到的是「能用但很贵」：每一轮请求都携带完整工具目录，tokend 消耗与首字延迟都按工具数线性上涨，**没有任何错误可查**。MCP 网关上线后工具数只会更多，这笔成本会随之放大。
+- **Fix**: 在 handler 内提取 `headers.get("anthropic-beta")`，与 aigw 自身需要的 beta 串**做并集拼接**（不是覆盖），随 `x-api-key` / `anthropic-version` 一同注入上游请求。
+- **Target Phase**: **Phase 55 之后单独修**（用户 2026-10-29 决策：MCP 开发完成后再启动，不阻塞 Phase 55 主线）。
+
+### TD-021b: OAuth 反代路径把 `anthropic-beta` 写死，客户端 beta 被覆盖
+
+- **Date**: 2026-10-28
+- **Priority**: **P1**（与 TD-021a 同一后果，仅影响 OAuth 反代用户）
+- **Source**: 同 TD-021a
+- **Description**: `crates/aigw-core/src/oauth_pipeline.rs:64` 定义常量 `ANTHROPIC_BETA = "oauth-2025-04-20, claude-code-20250219"`，`OauthTarget::beta()`（`:286-292`）按 target 返回该常量或 `TOKEN_COUNTING_BETA`。这个头被写**两次**：`apply_cc_headers`（`:259`，CC 伪装头集的一部分）与 `send()` 的 `build` 闭包（`:325`）。两处的值都只由 aigw 决定；`send()` 的入参里**没有客户端请求头**，所以客户端的 beta 串在这一层**根本不可达** —— 是设计上的缺位，不是漏判。
+- **Impact**: 走 Claude OAuth 订阅反代的用户，其 CC 的 tool search 同样被关掉（上游收到的是固定的两条 beta，不含工具搜索所需的那些）。与 TD-021a 是**两个独立入口、同一个用户可见后果**，必须一起修，否则修了一个另一个还在。
+- **Fix**: `send()` 增加一个「客户端 beta 列表」入参（或 `OauthTarget` 携带），用逗号并集拼接后写一个 `anthropic-beta` 头；`TOKEN_COUNTING_BETA` 与 `ANTHROPIC_BETA` 降级为「aigw 自身必需的两条」，不再整串覆盖。**注意写入点有两处**（`apply_cc_headers:259` 与 `send:325`）—— 走 `apply_cc_headers` 的路径会先设一次，`send` 再覆盖一次，只改一处等于没改。
+- **Target Phase**: 同 TD-021a，**Phase 55 之后单独修**。
+
+### TD-022: `task doctor` 用 `|| true` 吞掉 clippy 失败，报「doctor passed」
+
+- **Date**: 2026-10-29
+- **Priority**: **P2**（门禁假绿，不产出错误数据，但会让「编译检查通过」这一结论失真）
+- **Source**: Phase 55 Stage 143 实际发生 —— `task doctor` EXIT=0 且输出 `doctor passed`，同一时刻 `task lint` EXIT=201（`mcp_rest.rs` 的 `.bare()` 方法不存在）
+- **Description**: `Taskfile.yml:8` 是 `cargo clippy --workspace -- -D warnings 2>/dev/null || true`，`2>/dev/null` 还把失败原因一起丢了；只有 `task lint`（`:261`，裸 `cargo clippy --workspace -- -D warnings`）会真退。而 `CLAUDE.md` 的快速命令表把 `task doctor` 描述成「编译检查（cargo check --workspace + clippy）」——文档承诺与实际行为不一致。
+- **Impact**: 任何以 `task doctor` 当门禁证据的结论都可能把 clippy 错误当通过。Stage 143 期间主 Agent 差点据此判绿；真正的 clippy 错误只从 `task lint` 才看到。
+- **Fix**: 二选一 —— ① 去掉 `|| true` 与 `2>/dev/null`，让 doctor 真的失败（代价：doctor 从「宽口径健康检查」变成硬门禁，与 lint 重复）；② 保留宽口径但在输出里明确写 `clippy skipped (use task lint)`，并同步改 `CLAUDE.md` 的措辞。推荐 ②，因为 doctor 的定位是「快速健康快照」，硬门禁应由 lint 承担。
+- **Target Phase**: Phase 55 之后（不影响 MCP Stage 的功能正确性，只是门禁口径问题）。
+
+### TD-023: `task bdd` / `task test` 对 BDD 失败**永不失败** ✅ Resolved 2026-10-29
+
+- **Date**: 2026-10-29
+- **Priority**: **P1**（门禁假绿：BDD 断言失败时 `task test` 仍 EXIT=0 并打印 `test passed`）
+- **Source**: Phase 55 Stage 143 实测 —— `/tmp/stage141-test-1793217824.log` 里 `tests/features/real/mcp_passthrough_real.feature:24` 有 1 处 `✘ Then 响应状态码为 200`（`Expected status 200, got None`），而同一份日志末行是 `test passed`，`grep -c "^test result: FAILED"` 为 0。
+- **Description**: `crates/aigw-server/tests/bdd.rs:140` 用的是 `TestWorld::cucumber()...filter_run(...)`，不是 `filter_run_and_exit`。cucumber-0.21 的 `filter_run` 只返回 writer，失败与否全靠调用方自己看；只有 `filter_run_and_exit`（`cucumber.rs:1250`）会在 `execution_has_failed()`（`writer/mod.rs:150-154`，即 `failed_steps() > 0`）时 `panic!`。所以 `main()` 正常返回 → 测试二进制 exit 0 → `cargo test` 记为 `ok`。
+- **Impact**: **任何以 `task bdd` / `task test` 的退出码作为 Gate 3 证据的结论，都可能是假的**，只要失败只发生在 BDD 步骤上（UT 失败仍会正常报红）。Stage 143 的首轮 4 个 BDD 缺陷就是靠主 Agent 逐行读日志 `grep '✘'` 才发现的，退出码一路是绿的。
+- **Fix**: ✅ 已修（2026-10-29，主 Agent）。没有换成 `filter_run_and_exit`，而是保留 `filter_run` 拿回的 writer，把清理块留在原处，在**清理之后**断言：
+  ```rust
+  use cucumber::writer::Stats as _;
+  assert!(!writer.execution_has_failed(), "{} BDD step(s) failed, ...", writer.failed_steps(), ...);
+  ```
+  这样失败照样让 `main()` panic → 测试二进制非 0 → `cargo test` 记 `failed`；而 `server.stop()` / `mgr.drop_db()` 已在 panic 之前执行，不会像 `filter_run_and_exit` 那样每红一次漏掉一个 server 进程与一次性测试库。
+- **Verified**: 2026-10-29 `/tmp/stage143-bdd-real-sqlite.log` —— 真实 BDD 失败时末段为
+  ```
+  thread 'main' panicked at crates/aigw-server/tests/bdd.rs:192:5:
+  1 BDD step(s) failed, 0 parsing error(s), 0 hook error(s)
+  error: test failed, to rerun pass `-p aigw-server --test bdd`
+  task: Failed to run task "bdd-real-sqlite": exit status 101
+  ```
+  即退出码真的非 0，且清理先跑完。`task` 的 `cmds` 是串行的，`cargo test` 非 0 时后面的 `echo "bdd passed"` 不再执行 —— 所以「日志末尾出现 `bdd passed`」也重新成为一个可信的正向信号。
+- **Residual rule**: 退出码现在可信，但「`✘` 计数为 0」仍是必要的交叉校验 —— 若将来有人把断言删掉或换回 `filter_run`，退出码会再次失真而没人能看出来。门禁证据继续给两个数字。
+- **Target Phase**: ✅ Phase 55 内已修。
+
+### TD-024: `/mcp` 聚合目录的分页游标是下标偏移，目录变动时静默漂移
+
+- **Date**: 2026-10-29
+- **Priority**: **P2**（不丢数据、不报错，只在多页遍历期间出现「跳一条 / 重复一条」）
+- **Source**: Phase 55 Stage 143 对 Stage 144 `catalog::page` 的只读复查（`crates/aigw-core/src/mcp/catalog.rs`）
+- **Description**: `next_cursor` 是 `end` 这个**网关内下标**（`page()` 里 `Some(end)`），下一页从 `entries[end..]` 开始。而 `entries` 每次请求都重新派生：`list_mcp_servers()` → `filter(enabled)` → `resolve_bearer` → `catalog_tools`（命中缓存，或现场探测，10s 超时）。于是两页之间任何一项变化都会让后续所有下标错位：某 server 被启用/禁用、某 `user_required` 用户的个人 token 被加上或删掉（该 alias 整块出现/消失）、冷缓存探测在第一页失败第二页成功（快照回退的工具数不同）、两页之间新注册了 server。
+- **Impact**: 客户端拿到 200、无任何 warning（`warnings` 数组只在凭据/探测失败时触发，不覆盖集合漂移），但会漏掉或重复工具。漂移范围受 `merge` 按 `(alias, tool_name)` 排序约束，是有界的，不是全表乱序。
+- **Why not fix now**: 改成 `(alias, tool_name)` 复合游标（`skip_while(|e| (e.alias, e.tool.tool_name) <= key)`）只需一次比较，但对插入稳定；代价是改 `catalog::page` 的签名与出线格式（cursor 从数字串变成带分隔符的键），并连带改 Stage 144 的分页测试与 BDD 断言。当前工具数（个位数 server × 几十工具）远未到需要多页的规模，`DEFAULT_PAGE_SIZE = 100`，实际只有 >100 工具才翻页。
+- **Target Phase**: Phase 56 或首个 MCP server 数上两位数的阶段。届时一并决定 cursor 是否要带签名的 opaque token。
+- **Related**: 同批复查确认 `merge` 的 `has_conflict` **不上线**（`ToolEntry::to_wire()` 不发该字段、`conflicted()` 无生产消费者），它是「调用方 bug 的防御网」而非线上契约 —— `/mcp` 的 `tools/list` 不带冲突信息，按现状接受，不登记为缺陷。
+
+### TD-025: `task bdd-coverage` 的路由表没有 MCP 的 20 条路由，64% 不代表 Phase 55 之后的真实覆盖率
+
+- **Date**: 2026-10-29
+- **Priority**: **P2**（门禁是回归基线而非绝对目标，但「覆盖率没下降」这句话对新增面是虚假的）
+- **Source**: Phase 55 收官时主 Agent 实跑 `task bdd-coverage`（64%，87 routes / 56 covered）
+- **Description**: `scripts/bdd-coverage:33` 的 `ROUTES` 是一段**手写**的 `"METHOD /path"` 字面量，注释写的是「main.rs 同源」，但没有任何机制保证同步。Phase 55 新增的 20 条路由一条都不在表里：`/admin/mcp/servers` 全家（all / batch-delete / toggle / probe / tools / allowlist / tokens ×3 / reload / calls）、`/mcp`、`/mcp/{alias}`、`/v1/mcp/servers`、`/v1/mcp/servers/{id}/my-token`、`/mcp-rest/{tools/list,tools/call,health}`。于是 87 这个分母是「Phase 54 结束时的路由数」，64% 只描述那张旧表。
+- **Impact**: 两个方向都有害 ——（a）真实覆盖率被高估，新增面没有 BDD 覆盖也看不出来；（b）如果有人把 MCP 路由补进表，分母涨到 107，而 MCP 的 BDD 用 helper 驱动（`发送 /mcp-rest/tools/list 请求且 alias 为 ...`、`用 master key 向聚合端点发送 tools/list`），`scan_dir` 的正则只认 `发送 (GET|POST|PUT|DELETE|PATCH) /path` 这种句式，绝大多数不会命中，百分比会掉到 60% 以下并让门禁红。
+- **Why not fix now**: 补表 + 补扫描规则 + 让 MCP 的 BDD 改写成可扫描句式，是三件事，且第三件会改动一批已绿的 step 文本。Phase 55 的 BDD 覆盖是「按行为场景」写的，本来就不打算让 grep 数路由 —— 用场景覆盖去追平路由表是拿错了尺子。
+- **Target Phase**: Phase 56。届时一并决定：要么把 `ROUTES` 改成从 `main.rs` 自动提取（`rg '\.route\("'` + 方法解析），要么把它降级为「Phase 54 的遗留基线」并停止用它衡量新面。
+- **Related**: TD-003 已经记录了 87 → 55 的预置缺口；本条是「表本身过期」，不是同一件事。
+
+### TD-026: `mcp_disable_rest` 默认 false + SSE 无界通道 + 五处 LOW（Phase 55 Gate 4 的剩余项）
+
+- **Date**: 2026-10-29
+- **Priority**: **P2**（都不是越权或数据错，但前两条在部署形态变化时会放大）
+- **Source**: Phase 55 收官 Gate 4 独立复查（Stage 143/144/145），主 Agent 逐条复核后决定本批不修
+- **Description**: 六项被判定「值得记录、不值得在本 Stage 末尾改」的结果：
+
+| # | 级别 | 事实 | 位置 | 为何不现在修 |
+|---|---|---|---|---|
+| 1 | MED | `mcp_disable_rest` 默认 `false` —— 调试用的 `/mcp-rest/*`（绕过协议协商与 `Mcp-Session-Id`，多一套错误语义）默认在生产可reachable | `config.rs:174`、`main.rs:338-342`、`mcp_rest.rs:189` | 改默认值会同时改掉 143/144 的六条 BDD 与 `real/mcp_passthrough_real.feature` 的前置配置（它们依赖默认开启）；ACL 与凭据仍全程生效，它不是越权面而是「多开一扇门」。**Phase 56 做 OAuth 发现时一并决定**：要么默认 true、测试显式打开，要么在启动日志 WARN |
+| 2 | MED | SSE 中继用 `mpsc::unbounded_channel`：客户端建连不读、上游持续推送时无背压 | `mcp_relay.rs:120`、`:160`、`:174` | 换有界 channel 要求 `send` 带超时/阻塞语义，且断开原因要落一个新的 `error_code`，会把 `relay_event_stream` 的 select 循环重写；当前无已知慢客户端场景。与 TD-024 同批处理（都是「多页/长连」类问题） |
+| 3 | LOW | `catalog_tools` 在 `replace_mcp_tool_catalog` **失败后照样写内存缓存**，且信任上游 `ttl_ms` 无上限、无 single-flight → 冷缓存并发穿透 + 内存/DB 分叉 | `mcp_gateway.rs:745-754`、`catalog_cache.rs:24-30` | 上游 `ttlMs` 是可选字段（ADR-041 的缓存语义本就以进程内为准），DB 快照写失败已在日志可见；single-flight 需要引入 await 持锁，与 ADR-041「访问器不跨 await 持锁」冲突，要先改 ADR |
+| 4 | LOW | `call_status_filter` 对未知状态直接透传 → 查询恒空而不是 400 | `mcp.rs:995-1003` | 是「查询参数拼错」这一类，返回空列表不误导人（列表为空本身就是答案），改成 400 属产品取舍 |
+| 5 | LOW | `MyTokenDialog` 的 queryFn 吞掉所有错误返回 `null` → 403/500 在 UI 上均显示「未配置」 | `MyTokenDialog.tsx:68-69` | 与 142 Gate 4 的 M3 同族（前端错误吞噬），但这里最坏后果是用户在只读场景下看到「未配置」；修它要区分 401/403/500 三态 UI，超出 Phase 55 的收尾范围 |
+| 6 | LOW | `list_aggregate_tools` 对 `user_required` 无凭据的 server **静默丢弃**，`warnings` 里也没有条目 → 客户端无法区分「没注册」与「缺个人凭据」 | `mcp_gateway.rs:836` | 静默剔除是 Stage 144 §3.3 的**有意设计**（列表里看不到，调用才 403），往 `warnings` 里加会改变聚合响应形状；若要做，应作为 Phase 56 的「凭据缺失可见性」一并设计 |
+
+- **Impact**: 单独看都不构成故障。合并来看，它们共享一个形状：**某条路径的状态没有完整表达出来**（默认值没说清、背压没有、缓存与 DB 不一致、查询错误静默、UI 错误静默、剔除静默）。Phase 56 若做 OAuth 发现（会新增交互面与 401 引导），是统一处理这批的时机。
+- **Why not fix now**: 六项里两项会改默认值或改 BDD 前置配置、一项与 ADR-041 直接冲突、三项属产品取舍。Phase 55 的收尾标准是「已确认的正确性缺陷清零」，这不是清零的定义 —— 已确认的 HIGH#1 与 MED#2/#3/#4/#5 已在本日修复并被测试覆盖。
+- **Target Phase**: Phase 56（OAuth 发现），或首个真实部署前。
+- **Related**: ADR-041（缓存语义）、TD-024（同属「长连/多页」）、TD-025（同批 Gate 4 产物）；`stage-143.md` §8.2 / `stage-144.md` §8 记录了本批的逐条判定。
+
+### TD-027: `mcp_call_log` 没有客户端指纹，真机验收的调用归因只能靠人工比字节数
+
+- **Date**: 2026-10-29
+- **Priority**: **P2**（不影响线上行为，只影响「验收能不能被机器判定」）
+- **Source**: Stage 143 真机验收（ADR-046）—— 一条 `tools/call` 曾被误判为 Codex 产生，实际是手工 curl
+- **Description**: `mcp_call_log` 的列里没有 `clientInfo.name` / `clientInfo.version`，`request_bytes` 只是入站 body 的字节数。MCP 客户端在 `initialize` / 每条请求的 `params._meta` 里都会带 `io.modelcontextprotocol/clientInfo`（CC 2.1.312 带 `{"name":"claude-code","version":"2.1.312"}`，Codex 0.154.0 在 `initialize` 的顶层 `clientInfo` 带 `{"name":"codex-mcp-client","version":"0.154.0"}`），`session.rs` 解析时把它丢掉了。
+- **Impact**: 验收一个「两台客户端各跑通一次」的门禁项时，无法从库里区分哪一行是谁打的。本次的判别手段是手工算 body 字节数（`tools/call` 102B = 手写、`tools/list` 85B = Codex 带 `_meta.progressToken`、`initialize` 217B = 带 `clientInfo`）—— 可复现但不能自动化，且 UUIDv7 前缀在这类判断上会误导（同一秒内的手工与 CLI 同前缀）。
+- **Why not fix now**: 要动 `031_mcp_call_log.sql` 的三方言（加两列）、`McpCallLogRow`、三个 store impl、`session.rs` 的解析与 `_meta` 提取路径，以及 141 的 `GET /admin/mcp/calls` 返回体。Phase 55 的验收已经用人工方式完成，为「下次验收更省事」在收尾时改表结构不划算。
+- **Target Phase**: Phase 56，与 OAuth 发现的 `WWW-Authenticate` 引流一并做（那时会新增交互面，客户端识别本来就是刚需）。
+- **Related**: ADR-046（本次归因过程）、`stage-143.md` §8.3、TD-026（同批「状态没被完整表达」类）
+
+### TD-028: BDD 里「步骤匹配不上」被静默算作 skipped，13 个 body_archive 场景从未真正执行
+
+- **Date**: 2026-10-29
+- **Priority**: **P1**（不是功能 bug，是**测试证据的可信度**问题：绿灯掩盖了未执行）
+- **Source**: Phase 55 收口跑 `task test` 时发现 `47 features / 362 scenarios (344 passed, 18 skipped)`，其中 5 个是 `mcp_aggregate.feature` 的 `tools/list` 场景 —— 该 step 的 expr 写了裸 `/`（cucumber expression 里 `/` 是 alternation 分隔符，必须写成 `\/`），于是**所有断言「聚合目录含哪些工具」的场景整段被跳过**，而 Stage 144 的门禁曾把这些场景当作证据。
+- **Description**: 同一类问题在 `body_archive_write.feature` / `body_archive_read.feature` 里还有 13 处，至今仍在跳过：
+  - `body_archive_write.feature:15/20/25` 写 `BodyArchiver.tick()`，而 `body_archive_steps.rs:130/138` 的 expr 是 `BodyArchiver.tick`（少了 `\(\)`）；
+  - `body_archive_write.feature:31/41` 的 `payload = {"hour": ...}` 与 `expr = "async_job_steps 中有一个 pending step，payload = {string}"` 不匹配（gherkin 未加引号的 `{...}` 段被 expression 当作参数，实际文本不是带引号的字符串）；
+  - `body_archive_read.feature` 整文件挂 `@skip` 标签，但 `bdd.rs:144` 的过滤只看 **scenario** 的 tags、不看 feature 的 tags，所以 7 个场景照样进入执行、再因 step 缺失被跳过。
+- **Impact**: `task bdd` 的退出码只由 `writer.execution_has_failed()` 决定，而 cucumber-rs 的 `StepSkipped` **不计为失败**（`runner/basic.rs:1345`）。所以「步骤找不到」与「写好了但 @skip」这两种情况在日志里长一个样（`?` + `Step skipped`），且都让整轮测试以 0 退出。按 skipped 数就能看出来，但没人看。
+- **Why not fix all now**: `mcp_aggregate` 的两条已在 Phase 55 收口时修好（`tools\/list`）并复跑确认 5 个场景转红为绿；`body_archive_*` 属于 Phase 31/78 的遗留，修 expr 后那些场景**第一次真正执行**，断言是否成立未知，需要单独一轮排查与修实现——不属于 Phase 55 的交付面。
+- **Target Phase**: Phase 56 之前单独一轮（与 TD-023 同源：都是「BDD 假绿」）。根治手法是 `bdd.rs` 里加一道 `skipped_steps() == 预期值` 的断言，把「静默跳过」变成硬失败。
+- **Related**: TD-023（BDD 失败不失败，已修）、`stage-144.md` §7（曾把跳过场景当证据，现已改为引用真实执行结果）
 
 ## Resolved Items
 ### TD-017g: Anthropic 服务端工具触发 HTTP 500（Resolved 2026-10-07, Stage 135）
