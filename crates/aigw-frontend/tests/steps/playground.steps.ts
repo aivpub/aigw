@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createBdd } from "playwright-bdd";
 import { expect } from "@playwright/test";
-import { syncCapturedBodies } from "./api-mocks";
+import { setMockIdentity, syncCapturedBodies } from "./api-mocks";
 
 const { Given, When, Then } = createBdd();
 
@@ -419,4 +419,70 @@ Then("the user message should render an image thumbnail", async ({ page }) => {
   await expect(
     page.locator("img[src^='data:image/']").first(),
   ).toBeVisible({ timeout: 5000 });
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Stage 145: MCP debug tab
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+When("I open the playground MCP tab", async ({ page }) => {
+  await page.getByTestId("playground-tab-mcp").click();
+  await expect(page.getByTestId("playground-mcp-server")).toBeVisible({ timeout: 8000 });
+});
+
+When("I log in as a non-admin user", async ({ page }) => {
+  setMockIdentity({ role: "internal_user", userId: "non_admin_user" });
+  await page.reload();
+  await page.waitForLoadState("domcontentloaded");
+  await page.waitForTimeout(1000);
+});
+
+When("I select MCP server {string}", async ({ page }, alias: string) => {
+  await page.getByTestId("playground-mcp-server").click();
+  await page.getByRole("option", { name: alias, exact: true }).click();
+  await page.waitForTimeout(500);
+});
+
+When("I select MCP tool {string}", async ({ page }, tool: string) => {
+  await page.getByTestId("playground-mcp-tool").click();
+  await page.getByRole("option", { name: new RegExp(`(^|__)${tool}$`) }).click();
+  await page.waitForTimeout(300);
+});
+
+When("I fill the MCP arguments with {string}", async ({ page }, args: string) => {
+  await page.getByTestId("playground-mcp-args").fill(args);
+});
+
+When("I send the MCP call", async ({ page }) => {
+  await page.getByTestId("playground-mcp-send").click();
+  await page.waitForTimeout(800);
+});
+
+Then("the MCP response shows {string}", async ({ page }, text: string) => {
+  await expect(page.getByTestId("playground-mcp-response")).toContainText(text, {
+    timeout: 8000,
+  });
+  await expect(page.getByTestId("playground-mcp-status")).toContainText(/success|成功/i);
+});
+
+Then("the MCP response reports invalid arguments", async ({ page }) => {
+  await expect(page.getByTestId("playground-mcp-status")).toContainText(/failed|失败/i, {
+    timeout: 5000,
+  });
+  await expect(page.getByTestId("playground-mcp-response")).toContainText(/JSON/i);
+});
+
+Then("the MCP tool dropdown lists {string}", async ({ page }, option: string) => {
+  await page.getByTestId("playground-mcp-tool").click();
+  await expect(
+    page.getByRole("option", { name: new RegExp(`(^|__)${option}$`) }),
+  ).toBeVisible({ timeout: 8000 });
+});
+
+Then("the MCP tab has no horizontal overflow", async ({ page }) => {
+  const overflow = await page.evaluate(() => {
+    const doc = document.documentElement;
+    return doc.scrollWidth - doc.clientWidth;
+  });
+  expect(overflow).toBeLessThanOrEqual(0);
 });

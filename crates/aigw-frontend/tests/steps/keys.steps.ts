@@ -76,6 +76,10 @@ Given("API endpoints are mocked", async ({ page }) => {
   await mockAllApis(page);
 });
 
+Given("API endpoints are mocked for a non-admin user", async ({ page }) => {
+  await mockAllApis(page, { role: "proxy_user", userId: "fresh_user" });
+});
+
 Given("API endpoints are slow to respond", async ({ page }) => {
   await mockAllApis(page);
 });

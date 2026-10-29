@@ -133,10 +133,311 @@ const WEB_SEARCH_PROBE_OK = {
   probed_at: "2026-10-09T12:00:00Z",
 };
 
+// ── MCP servers (Stage 142) ──
+// Module-scoped like `proxyList`. Tokens keep their plaintext in `plaintext`
+// only so the BDD scenario can grep the page for it; every response goes
+// through `mcpTokenWire`, which drops that field and redacts `token_value` to
+// `***` (stage-141 H5: no response may carry the value).
+const MCP_SEEDED_PLAINTEXT = "ghp_super_secret_plaintext_value";
+
+function seedMcpServers() {
+  return [
+  {
+    id: 1,
+    alias: "github",
+    display_name: "GitHub",
+    url: "https://mcp.github.example.com/mcp",
+    transport: "streamable_http",
+    credential_scope: "shared_or_user",
+    enabled: true,
+    protocol_version: "2026-07-28",
+    tool_count: 3,
+    created_at: "2026-10-01T00:00:00Z",
+    updated_at: "2026-10-01T00:00:00Z",
+  },
+  {
+    id: 2,
+    alias: "internal-wiki",
+    display_name: "Internal Wiki",
+    url: "https://wiki.example.com/mcp",
+    transport: "streamable_http",
+    credential_scope: "shared",
+    enabled: false,
+    protocol_version: null,
+    tool_count: null,
+    created_at: "2026-10-02T00:00:00Z",
+    updated_at: "2026-10-02T00:00:00Z",
+  },
+  {
+    id: 3,
+    alias: "hr-portal",
+    display_name: "HR Portal",
+    url: "https://hr.example.com/mcp",
+    transport: "streamable_http",
+    credential_scope: "user_required",
+    enabled: true,
+    protocol_version: "2025-06-18",
+    tool_count: 2,
+    created_at: "2026-10-03T00:00:00Z",
+    updated_at: "2026-10-03T00:00:00Z",
+  },
+  ];
+}
+
+function seedMcpTokens() {
+  return [
+  {
+    id: 1,
+    server_id: 1,
+    owner_type: "server",
+    owner_id: "",
+    token_name: "svc-account-2026",
+    plaintext: MCP_SEEDED_PLAINTEXT,
+    is_default: true,
+    enabled: true,
+    expires_at: null,
+    created_by: "admin",
+    created_at: "2026-10-01T00:00:00Z",
+    updated_at: "2026-10-20T00:00:00Z",
+  },
+  {
+    id: 2,
+    server_id: 1,
+    owner_type: "server",
+    owner_id: "",
+    token_name: "svc-account-2025",
+    plaintext: `${MCP_SEEDED_PLAINTEXT}_old`,
+    is_default: false,
+    enabled: true,
+    expires_at: null,
+    created_by: "admin",
+    created_at: "2026-09-01T00:00:00Z",
+    updated_at: "2026-09-20T00:00:00Z",
+  },
+  {
+    id: 3,
+    server_id: 1,
+    owner_type: "user",
+    owner_id: "alice",
+    token_name: "personal",
+    plaintext: `${MCP_SEEDED_PLAINTEXT}_alice`,
+    is_default: true,
+    enabled: true,
+    expires_at: null,
+    created_by: "admin",
+    created_at: "2026-10-05T00:00:00Z",
+    updated_at: "2026-10-05T00:00:00Z",
+  },
+  {
+    id: 4,
+    server_id: 1,
+    owner_type: "user",
+    owner_id: "bob",
+    token_name: "personal",
+    plaintext: `${MCP_SEEDED_PLAINTEXT}_bob`,
+    is_default: false,
+    enabled: false,
+    expires_at: null,
+    created_by: "admin",
+    created_at: "2026-10-06T00:00:00Z",
+    updated_at: "2026-10-06T00:00:00Z",
+  },
+  ];
+}
+
+// Re-seeded per page. `seedMcpServers` holds no literal array of its own: a
+// `const` seed would be aliased by every caller, so a scenario's create/delete
+// would leak into the next one.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let mcpServers: any[] = seedMcpServers();
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let mcpTokens: any[] = seedMcpTokens();
+let mcpMyTokens: Record<string, Record<number, Record<string, unknown>>> =
+  seedMcpMyTokens();
+let mcpAllowlist: Record<number, Record<string, unknown>[]> = {};
+let mcpCreateRequests = 0;
+let lastMcpMyTokenPutBody: Record<string, unknown> = {};
+
+export function resetMcpMockStore() {
+  mcpServers = seedMcpServers();
+  mcpTokens = seedMcpTokens();
+  mcpMyTokens = seedMcpMyTokens();
+  mcpAllowlist = structuredClone(MCP_ALLOWLIST_SEED);
+  mcpCreateRequests = 0;
+  lastMcpMyTokenPutBody = {};
+}
+
+export function getMcpCreateRequestCount(): number {
+  return mcpCreateRequests;
+}
+
+export function getLastMcpMyTokenPutBody(): Record<string, unknown> {
+  return lastMcpMyTokenPutBody;
+}
+
+/** Plaintext the seeded tokens "contain" — the BDD scenario greps the page for it. */
+export const MCP_TOKEN_PLAINTEXT = MCP_SEEDED_PLAINTEXT;
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mcpTokenWire(token: any) {
+  const { plaintext, ...rest } = token;
+  void plaintext;
+  return { ...rest, token_redacted: "***" };
+}
+
+const MCP_TOOLS = {
+  1: [
+    { tool_name: "search", description: "Search repositories and issues", input_schema: {}, annotations: null, has_conflict: false },
+    { tool_name: "get_issue", description: "Read one issue by number", input_schema: {}, annotations: null, has_conflict: false },
+    { tool_name: "list_prs", description: "List open pull requests", input_schema: {}, annotations: null, has_conflict: false },
+  ],
+  2: [],
+  3: [
+    { tool_name: "search", description: "Search the HR knowledge base", input_schema: {}, annotations: null, has_conflict: true },
+    { tool_name: "get_issue", description: "Read one HR ticket", input_schema: {}, annotations: null, has_conflict: true },
+  ],
+};
+
+// ── MCP per-user credentials + ACL + call log (Stage 145) ──
+// `mcpMyTokens[userId][serverId]` holds the token the current identity configured
+// itself. `plaintext` never leaves this module: every response goes through
+// `myTokenWire`.
+const MCP_MY_TOKEN_PLAINTEXT = "mcp_my_token_super_secret_value";
+
+/** Plaintext a scenario types into `MyTokenDialog` — must never reach the DOM. */
+export const MCP_MY_TOKEN_PLAINTEXT_VALUE = MCP_MY_TOKEN_PLAINTEXT;
+
+function seedMcpMyTokens() {
+  return {
+    default_user_id: {
+      1: {
+        token_name: "personal",
+        plaintext: `${MCP_SEEDED_PLAINTEXT}_mine`,
+        is_default: true,
+        expires_at: null,
+        updated_at: "2026-10-05T00:00:00Z",
+      },
+    },
+  } as Record<string, Record<number, Record<string, unknown>>>;
+}
+
+const MCP_ALLOWLIST_SEED = {
+  1: [
+    { tool_name: "list_prs", scope_type: "team", scope_id: "team-1", allowed: false },
+  ],
+} as Record<number, Record<string, unknown>[]>;
+
+const MCP_CALL_ROWS = [
+  {
+    call_id: "0192f0c4-0000-7000-8000-000000000001",
+    server_alias: "github",
+    tool_name: "github__search",
+    method: "tools/call",
+    key_id: "hash-abc",
+    user_id: "default_user_id",
+    token_owner: "user",
+    status: "success",
+    error_code: null,
+    latency_ms: 184,
+    request_bytes: 92,
+    response_bytes: 1536,
+    created_at: "2026-10-28T10:00:01Z",
+  },
+  {
+    call_id: "0192f0c4-0000-7000-8000-000000000002",
+    server_alias: "github",
+    tool_name: "github__get_issue",
+    method: "tools/call",
+    key_id: "hash-abc",
+    user_id: null,
+    token_owner: "anonymous",
+    status: "error",
+    error_code: "-32603",
+    latency_ms: 5021,
+    request_bytes: 64,
+    response_bytes: 210,
+    created_at: "2026-10-28T10:00:02Z",
+  },
+  {
+    call_id: "0192f0c4-0000-7000-8000-000000000003",
+    server_alias: "hr-portal",
+    tool_name: "hr-portal__search",
+    method: "tools/call",
+    key_id: "hash-def",
+    user_id: "user-2",
+    token_owner: "server",
+    status: "success",
+    error_code: null,
+    latency_ms: 233,
+    request_bytes: 48,
+    response_bytes: 512,
+    created_at: "2026-10-28T09:58:11Z",
+  },
+];
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function myTokenWire(token: any) {
+  return {
+    token_name: token.token_name,
+    is_default: Boolean(token.is_default),
+    expires_at: token.expires_at ?? null,
+    updated_at: token.updated_at ?? new Date().toISOString(),
+  };
+}
+
+const MCP_REST_TOOLS = [
+  { tool_name: "search", description: "Search repositories and issues", input_schema: {}, annotations: null, has_conflict: false },
+  { tool_name: "get_issue", description: "Read one issue by number", input_schema: {}, annotations: null, has_conflict: false },
+  { tool_name: "list_prs", description: "List open pull requests", input_schema: {}, annotations: null, has_conflict: false },
+];
+
+const MCP_PROBE_OUTCOMES = {
+  1: {
+    protocol_version: "2026-07-28",
+    server_info: { name: "modern", version: "0.0.0" },
+    ttl_ms: 60000,
+    tools: MCP_TOOLS[1],
+    conflicts: [],
+  },
+  2: {
+    protocol_version: "2025-06-18",
+    server_info: { name: "wiki", version: "1.2.0" },
+    ttl_ms: null,
+    tools: [],
+    conflicts: [],
+  },
+  3: {
+    protocol_version: "2025-06-18",
+    server_info: { name: "hr", version: "2.1.0" },
+    ttl_ms: null,
+    tools: MCP_TOOLS[3],
+    conflicts: ["search", "get_issue"],
+  },
+};
+
+
 interface MockOptions {
   role?: string;
+  userId?: string;
   keyCount?: number;
   modelCount?: number;
+}
+
+const DEFAULT_USER_ID = "default_user_id";
+const ADMIN_ROLE = "proxy_admin";
+
+const activeMock: { role: string; userId: string } = {
+  role: ADMIN_ROLE,
+  userId: DEFAULT_USER_ID,
+};
+
+export function setMockIdentity(opts: { role?: string; userId?: string }) {
+  activeMock.role = opts.role ?? ADMIN_ROLE;
+  activeMock.userId = opts.userId ?? DEFAULT_USER_ID;
+}
+
+function loginEnvelope() {
+  return { user_id: activeMock.userId, user_role: activeMock.role, user_email: null };
 }
 
 // Module-scoped credential list (Stage 129): the OAuth exchange handler appends
@@ -859,6 +1160,313 @@ export async function defineMockRoutes(route: Route, request: Request) {
     return route.fulfill({ status: 200, json: provider });
   }
 
+  // ── MCP servers (Stage 142) ──
+  if (url.pathname === "/admin/mcp/servers/all") {
+    return route.fulfill({
+      status: 200,
+      json: { object: "list", data: mcpServers, count: mcpServers.length },
+    });
+  }
+  if (url.pathname === "/admin/mcp/servers/batch-delete" && route.request().method() === "POST") {
+    const body = JSON.parse(request.postData() ?? "{}");
+    return route.fulfill({ status: 200, json: { status: "ok", deleted_ids: body.ids ?? [] } });
+  }
+  if (url.pathname === "/admin/mcp/servers" && route.request().method() === "POST") {
+    const body = JSON.parse(request.postData() ?? "{}");
+    const alias = body.alias ?? "new-server";
+    mcpCreateRequests += 1;
+    if (mcpServers.some((s) => s.alias === alias)) {
+      return route.fulfill({
+        status: 409,
+        json: { error: { message: "alias already exists", type: "MCP_ALIAS_CONFLICT" } },
+      });
+    }
+    const created = {
+      id: mcpServers.length + 1,
+      alias,
+      display_name: body.display_name ?? alias,
+      url: body.url ?? "",
+      transport: body.transport ?? "streamable_http",
+      credential_scope: body.credential_scope ?? "shared_or_user",
+      enabled: body.enabled ?? true,
+      protocol_version: null,
+      tool_count: null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    mcpServers.push(created);
+    return route.fulfill({ status: 200, json: created });
+  }
+  if (url.pathname === "/admin/mcp/servers" && route.request().method() === "GET") {
+    const q = (url.searchParams.get("search") ?? "").toLowerCase();
+    const st = url.searchParams.get("status");
+    let filtered = mcpServers;
+    if (q) {
+      filtered = filtered.filter(
+        (s) =>
+          s.alias.toLowerCase().includes(q) || s.display_name.toLowerCase().includes(q),
+      );
+    }
+    if (st === "enabled") filtered = filtered.filter((s) => s.enabled);
+    if (st === "disabled") filtered = filtered.filter((s) => !s.enabled);
+    return route.fulfill({
+      status: 200,
+      json: {
+        object: "list",
+        data: filtered,
+        count: filtered.length,
+        total_count: filtered.length,
+        page: 1,
+        page_size: 30,
+        total_pages: 1,
+      },
+    });
+  }
+  if (url.pathname === "/admin/mcp/reload" && route.request().method() === "POST") {
+    return route.fulfill({
+      status: 200,
+      json: { status: "ok", reloaded: mcpServers.map((s) => s.alias) },
+    });
+  }
+  if (url.pathname.match(/^\/admin\/mcp\/servers\/\d+\/probe$/)) {
+    const id = Number(url.pathname.split("/")[4]);
+    const outcome = MCP_PROBE_OUTCOMES[id as keyof typeof MCP_PROBE_OUTCOMES];
+    if (!outcome) {
+      return route.fulfill({
+        status: 502,
+        json: { error: { message: "upstream refused the connection" } },
+      });
+    }
+    const server = mcpServers.find((s) => s.id === id);
+    if (server) {
+      server.protocol_version = outcome.protocol_version;
+      server.tool_count = outcome.tools.length;
+    }
+    return route.fulfill({ status: 200, json: outcome });
+  }
+  if (url.pathname.match(/^\/admin\/mcp\/servers\/\d+\/tools$/)) {
+    const id = Number(url.pathname.split("/")[4]);
+    const outcome = MCP_PROBE_OUTCOMES[id as keyof typeof MCP_PROBE_OUTCOMES];
+    const tools = outcome?.tools ?? [];
+    return route.fulfill({
+      status: 200,
+      json: {
+        tools,
+        conflicts: outcome?.conflicts ?? [],
+        fetched_at: tools.length > 0 ? "2026-10-28T10:00:00Z" : null,
+      },
+    });
+  }
+  if (url.pathname.match(/^\/admin\/mcp\/servers\/\d+\/tokens$/)) {
+    const serverId = Number(url.pathname.split("/")[4]);
+    if (route.request().method() === "POST") {
+      const body = JSON.parse(request.postData() ?? "{}");
+      const created = {
+        id: mcpTokens.length + 1,
+        server_id: serverId,
+        owner_type: body.owner_type ?? "server",
+        owner_id: body.owner_id ?? "",
+        token_name: body.token_name ?? "new-token",
+        plaintext: body.token_value ?? "",
+        is_default: Boolean(body.is_default),
+        enabled: true,
+        expires_at: body.expires_at ?? null,
+        created_by: "admin",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      mcpTokens.push(created);
+      return route.fulfill({ status: 200, json: mcpTokenWire(created) });
+    }
+    return route.fulfill({
+      status: 200,
+      json: {
+        object: "list",
+        data: mcpTokens
+          .filter((tk) => tk.server_id === serverId)
+          .map(mcpTokenWire),
+      },
+    });
+  }
+  if (url.pathname.match(/^\/admin\/mcp\/servers\/\d+\/tokens\/\d+\/default$/)) {
+    const parts = url.pathname.split("/");
+    const serverId = Number(parts[4]);
+    const tokenId = Number(parts[6]);
+    const target = mcpTokens.find((tk) => tk.id === tokenId);
+    if (target) {
+      for (const tk of mcpTokens) {
+        if (
+          tk.server_id === serverId &&
+          tk.owner_type === target.owner_type &&
+          tk.owner_id === target.owner_id
+        ) {
+          tk.is_default = tk.id === tokenId;
+        }
+      }
+    }
+    return route.fulfill({ status: 200, json: mcpTokenWire(target ?? {}) });
+  }
+  if (url.pathname.match(/^\/admin\/mcp\/servers\/\d+\/tokens\/\d+$/)) {
+    const tokenId = Number(url.pathname.split("/").pop());
+    const idx = mcpTokens.findIndex((tk) => tk.id === tokenId);
+    if (idx >= 0) mcpTokens.splice(idx, 1);
+    return route.fulfill({ status: 200, json: { status: "deleted", id: tokenId } });
+  }
+  if (url.pathname.match(/^\/admin\/mcp\/servers\/\d+\/toggle$/)) {
+    const id = Number(url.pathname.split("/")[4]);
+    const server = mcpServers.find((s) => s.id === id);
+    if (server) server.enabled = !server.enabled;
+    return route.fulfill({ status: 200, json: server ?? {} });
+  }
+  if (url.pathname.match(/^\/admin\/mcp\/servers\/\d+$/)) {
+    const id = Number(url.pathname.split("/").pop());
+    const idx = mcpServers.findIndex((s) => s.id === id);
+    if (route.request().method() === "DELETE") {
+      if (idx >= 0) mcpServers.splice(idx, 1);
+      return route.fulfill({ status: 200, json: { status: "deleted", id } });
+    }
+    if (route.request().method() === "PUT" && idx >= 0) {
+      const body = JSON.parse(request.postData() ?? "{}");
+      Object.assign(mcpServers[idx], body, { updated_at: new Date().toISOString() });
+      return route.fulfill({ status: 200, json: mcpServers[idx] });
+    }
+    return route.fulfill({ status: 200, json: mcpServers[idx] ?? {} });
+  }
+
+  // ── MCP per-user credentials (Stage 145) ──
+  if (url.pathname === "/v1/mcp/servers" && route.request().method() === "GET") {
+    const me = activeMock.userId;
+    const data = mcpServers.map((s) => {
+      const mine = mcpMyTokens[me]?.[s.id];
+      return {
+        id: s.id,
+        alias: s.alias,
+        display_name: s.display_name,
+        credential_scope: s.credential_scope,
+        enabled: s.enabled,
+        has_my_token: Boolean(mine),
+        token_required: s.credential_scope === "user_required" && !mine,
+      };
+    });
+    return route.fulfill({
+      status: 200,
+      json: { object: "list", data, count: data.length },
+    });
+  }
+  if (url.pathname.match(/^\/v1\/mcp\/servers\/\d+\/my-token$/)) {
+    const serverId = Number(url.pathname.split("/")[4]);
+    const me = activeMock.userId;
+    const store = (mcpMyTokens[me] ??= {});
+    if (route.request().method() === "PUT") {
+      const body = JSON.parse(request.postData() ?? "{}");
+      lastMcpMyTokenPutBody = body;
+      const created = {
+        token_name: body.token_name ?? "personal",
+        plaintext: body.token_value ?? "",
+        is_default: true,
+        expires_at: body.expires_at ?? null,
+        updated_at: new Date().toISOString(),
+      };
+      store[serverId] = created;
+      return route.fulfill({ status: 200, json: myTokenWire(created) });
+    }
+    if (route.request().method() === "DELETE") {
+      delete store[serverId];
+      return route.fulfill({ status: 200, json: { status: "deleted", server_id: serverId } });
+    }
+    const mine = store[serverId];
+    if (!mine) {
+      return route.fulfill({
+        status: 404,
+        json: { error: { message: "no token configured for this server" } },
+      });
+    }
+    return route.fulfill({ status: 200, json: myTokenWire(mine) });
+  }
+
+  // ── MCP tool ACL (Stage 145, contract: stage-144 §3.3) ──
+  if (url.pathname.match(/^\/admin\/mcp\/servers\/\d+\/allowlist$/)) {
+    const serverId = Number(url.pathname.split("/")[4]);
+    if (route.request().method() === "PUT") {
+      const body = JSON.parse(request.postData() ?? "{}");
+      mcpAllowlist[serverId] = body.rules ?? [];
+    }
+    const rules = mcpAllowlist[serverId] ?? [];
+    return route.fulfill({
+      status: 200,
+      json: { object: "list", data: rules, count: rules.length },
+    });
+  }
+
+  // ── MCP call log (Stage 145) ──
+  if (url.pathname === "/admin/mcp/calls" && route.request().method() === "GET") {
+    const alias = url.searchParams.get("server_alias");
+    const status = url.searchParams.get("status");
+    const tool = url.searchParams.get("tool_name");
+    let rows = MCP_CALL_ROWS;
+    if (alias) rows = rows.filter((r) => r.server_alias === alias);
+    if (status) rows = rows.filter((r) => r.status === status);
+    if (tool) rows = rows.filter((r) => r.tool_name.includes(tool));
+    return route.fulfill({
+      status: 200,
+      json: {
+        object: "list",
+        data: rows,
+        count: rows.length,
+        total_count: rows.length,
+        page: 1,
+        page_size: 30,
+        total_pages: 1,
+      },
+    });
+  }
+
+  // ── MCP debug endpoints (Stage 143 §3.4: both are POST) ──
+  if (url.pathname === "/mcp-rest/tools/list" && route.request().method() === "POST") {
+    const body = JSON.parse(request.postData() ?? "{}");
+    const tools = body.alias
+      ? MCP_REST_TOOLS
+      : mcpServers
+          .filter((s) => s.enabled)
+          .flatMap((s) =>
+            MCP_REST_TOOLS.map((tk) => ({
+              tool_name: `${s.alias}__${tk.tool_name}`,
+              description: tk.description,
+              input_schema: tk.input_schema,
+              annotations: tk.annotations,
+              has_conflict: tk.has_conflict,
+            })),
+          );
+    return route.fulfill({
+      status: 200,
+      json: {
+        tools,
+        servers: mcpServers
+          .filter((s) => s.enabled)
+          .map((s) => ({
+            alias: s.alias,
+            tool_count: s.tool_count ?? MCP_REST_TOOLS.length,
+            protocol_version: s.protocol_version,
+          })),
+      },
+    });
+  }
+  if (url.pathname === "/mcp-rest/tools/call" && route.request().method() === "POST") {
+    const body = JSON.parse(request.postData() ?? "{}");
+    return route.fulfill({
+      status: 200,
+      json: {
+        content: [
+          {
+            type: "text",
+            text: `[${body.alias}] ${body.tool} returned 1 result for ${JSON.stringify(body.arguments ?? {})}`,
+          },
+        ],
+        isError: false,
+      },
+    });
+  }
+
   // Spend
   if (url.pathname === "/spend/logs") {
     // Include the multimodal + embedding rows so the detail scenarios can click them.
@@ -1036,12 +1644,13 @@ export async function defineMockRoutes(route: Route, request: Request) {
     return route.fulfill({ status: 200, json: { message: "Router settings saved" } });
   }
 
-  // Login (for Stage 26)
+  // Login (for Stage 26) — identity comes from `activeMock` so a scenario can
+  // log in as a non-admin (`mockAllApis(page, { role: "internal_user" })`).
   if (url.pathname === "/v2/login") {
-    return route.fulfill({ status: 200, json: { user_id: "default_user_id", user_role: "proxy_admin", user_email: null } });
+    return route.fulfill({ status: 200, json: loginEnvelope() });
   }
   if (url.pathname === "/v2/login/check") {
-    return route.fulfill({ status: 200, json: { user_id: "default_user_id", user_role: "proxy_admin" } });
+    return route.fulfill({ status: 200, json: loginEnvelope() });
   }
 
   // Health
@@ -1189,13 +1798,15 @@ export function disableAllWebSearchRows() {
   }
 }
 
-export async function mockAllApis(page: Page, _opts?: MockOptions) {
+export async function mockAllApis(page: Page, opts?: MockOptions) {
   if (mockedPages.has(page)) return;
   mockedPages.add(page);
   // Fresh captured bodies per page so "no request sent" assertions aren't
   // polluted by a previous scenario in the same worker (Stage 114 TD-009b).
   lastChatBody = {};
   lastMessagesBody = {};
+  resetMcpMockStore();
+  setMockIdentity({ role: opts?.role, userId: opts?.userId });
   await page.route("**/*", defineMockRoutes);
   exposeCapturedBodies(page);
 }
@@ -1217,7 +1828,7 @@ function unauthenticatedHandler(route: Route, request: Request) {
     if (body.includes("wrong-password")) {
       return route.fulfill({ status: 401, json: { error: { message: "Invalid credentials" } } });
     }
-    return route.fulfill({ status: 200, json: { user_id: "default_user_id", user_role: "proxy_admin", user_email: null } });
+    return route.fulfill({ status: 200, json: loginEnvelope() });
   }
   // Fallback to standard mock routes for all other endpoints
   return defineMockRoutes(route, request);

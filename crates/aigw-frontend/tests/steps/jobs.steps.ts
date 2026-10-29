@@ -140,7 +140,15 @@ Then("the Job Detail panel opens for the new job", async ({ page }) => {
 // ── Non-admin ──
 
 Given("I am logged in as a non-admin user", async ({ page }) => {
-  // Non-admin — trigger card should not be visible
+  await page.context().addCookies([{
+    name: "aigw_master_key",
+    value: "sk-user-change-me",
+    path: "/",
+    domain: "localhost",
+  }]);
+  await page.goto("/dash/usage");
+  await page.waitForLoadState("domcontentloaded");
+  await page.waitForTimeout(2000);
 });
 
 Then("the Manual Trigger card is not visible", async () => {

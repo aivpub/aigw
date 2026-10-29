@@ -115,3 +115,31 @@ Feature: Playground Chat
     Then I should see the HEIC-unsupported toast
     And I should see 0 image preview
 
+
+  # ── Stage 145: MCP debug tab ──
+
+  Scenario: Calling an MCP tool from the MCP tab renders the raw response
+    When I open the playground MCP tab
+    And I select MCP server "github"
+    And I select MCP tool "search"
+    And I fill the MCP arguments with '{"query": "rust axum"}'
+    And I send the MCP call
+    Then the MCP response shows "[github] search returned 1 result"
+
+  Scenario: MCP arguments that are not JSON are rejected before sending
+    When I open the playground MCP tab
+    And I select MCP server "github"
+    And I select MCP tool "search"
+    And I fill the MCP arguments with 'not-json'
+    And I send the MCP call
+    Then the MCP response reports invalid arguments
+
+  Scenario: A non-admin sees the tools of the server it selected
+    When I log in as a non-admin user
+    And I open the playground MCP tab
+    And I select MCP server "github"
+    Then the MCP tool dropdown lists "search"
+
+  Scenario: The MCP tab has no horizontal page scroll on every viewport
+    When I open the playground MCP tab
+    Then the MCP tab has no horizontal overflow
