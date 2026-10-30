@@ -1,7 +1,23 @@
 # aigw -- 下一步行动
 
-**上次更新**: 2026-10-29
-**当前阶段**: **Phase 55 收尾 —— MCP Gateway（Stage 140-145，~88h）；5/6 完成 + Stage 143 门禁 7/8（唯一未勾选项：Codex 真机工具调用，ADR-046）**
+**上次更新**: 2026-10-31
+**当前阶段**: **Phase 56 已规划（Stage 146-148，~40h，规划态未开工）—— MCP Gateway 生产反馈迭代**；Phase 55 代码全部交付（143 门禁 7/8，唯一未勾选项是 Codex 真机工具调用，ADR-046）
+
+---
+
+## 下一步：Phase 56 —— MCP Gateway 生产反馈迭代（Stage 146-148，~40h，规划态未开工）
+
+**来源**：2026-10-30 把本地 Claude Code 的 Streamable-HTTP MCP 全部接入生产网关（`9.135.87.221:4001`）时暴露的三条实测反馈。Phase 55 解决了「能不能接进来」，本 Phase 解决「接进来之后好不好用」。
+
+| Stage | 内容 | 预估 |
+|---|---|---|
+| 146 | **自定义认证头名 + 额外上游请求头** —— `033_mcp_server_headers.sql` × 三方言；`UpstreamAuth` 枚举统一出站构造的四处；受保护头黑名单；**探测必须用同一套头**；`ServerDialog` 三组控件（值恒 `***`、留空即不改） | ~16h |
+| 147 | **MCP 调用日志独立页** —— `McpCallFilter` 加 `user_id` + 新增 `GET /v1/mcp/calls`（用户只看自己的）+ `034` 索引 × 三方言；`/dash/mcp` 第三个 tab，Alias/工具名/时间/状态四过滤 + 分页 + 抽屉；删除 `CallLogDialog` | ~14h |
+| 148 | **探测进度指示** —— `ProbeRun` 进程内注册表 + `POST /admin/mcp/reload` 改 `202 + run_id`（并发 409）+ `GET /reload/{run_id}`、`/reload/latest` + 并发探测 + 进度对话框（500ms 轮询） | ~10h |
+
+**依赖**：146 → 148 串行；147 可并行。规划文档 `docs/stages/stage-146.md` / `stage-147.md` / `stage-148.md`。
+
+**为什么 OAuth 发现让位**：原文档里 22 处「Phase 56 = OAuth 发现」是 Phase 55 时期的占位，没有真实上游提出需求（yehe 是唯一需要 OAuth 的）。本 Phase 三条反馈全部来自生产实测，且第 1 条直接决定「两个现成上游能不能用」。OAuth 顺延 **Phase 57**，旧引用已全部改写。
 
 ---
 
@@ -104,11 +120,11 @@ Phase 55 的数据层与纯逻辑：**没有 HTTP 路由**，只有表、store�
 
 **已剥离、排在 Phase 55 之后**：两处 `anthropic-beta` 既存缺陷（`/v1/messages` 不转发客户端 beta、OAuth 路径写死 beta 且**写入点有两处**）→ 登记为 **TD-021a / TD-021b**（P1，见 `docs/12-technical-debt.md`）。后果是 Claude Code 的 tool search 静默失效、自动退回全量预加载工具（「能用但很贵」，无报错）。**不阻塞任何 MCP Stage，MCP 阶段不要顺手夹带。**
 
-### 其它候选（Phase 55 之后）
+### 其它候选（Phase 56 之后）
 
 | 方向 | 状态 |
 |------|------|
-| Phase 56：MCP OAuth 发现（`/.well-known/oauth-protected-resource` + `WWW-Authenticate` 引导） | CC 能零配置完成授权；依赖 Phase 55 的 401 响应形状 |
+| Phase 57：MCP OAuth 发现（`/.well-known/oauth-protected-resource` + `WWW-Authenticate` 引导） | CC 能零配置完成授权；依赖 Phase 55 的 401 响应形状（原编号 Phase 56，2026-10-31 顺延） |
 | 设计 A（短路）：让 Claude Code WebSearch 按钮可用 | 唯一能解锁该按钮的路径；**必须配套 `srvtoolu_` 前缀剥离**，否则第二轮 400 |
 | 设计 B（agentic loop） | 硬前提「上游是否认网关注入的 function 工具」**仍未实测** |
 | 按 provider / 实例聚合花费与搜索量趋势 | Phase 54 遗留；`search` 投影块已带出 `instance`，是现成输入 |

@@ -234,7 +234,7 @@ pub fn validate_alias(alias: &str) -> Result<(), &'static str>
 
 - **MySQL 无部分唯一索引** —— 已在 §3.4 用「统一事务 + 读侧 `ORDER BY`」兜住，不按方言分支。若将来出现真并发竞争，读侧的 `LIMIT 1` 保证行为可预期。**2026-10-29 补强（ADR-044）**：提升语句本身也带上 `(server_id, owner_type, owner_id)` 作用域，跨 owner 的 token id 会被 `NotFound` 拒绝而不是静默变成第二个 default；`is_default` 收敛为单一写者（INSERT / UPDATE 都不写这一列）。
 - **`expires_at` 存的是文本** —— 三个方言的「晚于当前时间」比较写法不同（SQLite `datetime()` / PG `::timestamptz` / MySQL `STR_TO_DATE`）。本 Stage 的选择是**在 Rust 侧比较**（读出后在内存里判），代价是每条 token 要多读一个字段，换来的是一处逻辑、三方言无分支。数据量是「每 server 每用户至多几条」，不值得为它写方言 SQL。
-- **`transport` 列** 目前只有一个合法值。保留它是为了将来若要接旧版 HTTP+SSE 上游时不必再加迁移 —— 但若 Phase 56 之前仍只有一个值，应在技术债里登记「这是空列」。
+- **`transport` 列** 目前只有一个合法值。保留它是为了将来若要接旧版 HTTP+SSE 上游时不必再加迁移 —— 但若 Phase 57 之前仍只有一个值，应在技术债里登记「这是空列」。
 
 ---
 

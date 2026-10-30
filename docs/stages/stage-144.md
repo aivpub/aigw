@@ -42,7 +42,7 @@ Stage 143 做的是「单 server 透传」——一个 alias 对应一个上游�
 
 **不做**（明确排除）：
 - **不做前端** —— 142 的 `CallLogDialog` / ACL 开关由 145 一并补（见 §9）
-- **不做 OAuth 发现** —— Phase 56
+- **不做 OAuth 发现** —— Phase 57
 - **不做按 key 隔离的上游授权** —— 项目无此机制，且多数上游不支持细粒度授权
 - **不做跨 server 的工具重命名/别名表** —— 用户改 alias 即可，加映射表是过度设计
 
@@ -250,4 +250,4 @@ POST /mcp  (method=tools/call, params.name = "github__search")
 ## 9. 对后续 Stage 的影响
 
 - **145** 消费本 Stage 的 `/v1/mcp/*` 与 `/admin/mcp/calls`，并回头补 142 的 `CallLogDialog` 与 ACL 开关。
-- Phase 56（OAuth 发现）会在 143 / 144 的 401 响应上追加 `WWW-Authenticate: Bearer resource_metadata=...`。本 Stage 的 401 / 403 响应构造应留出加头的空间（不要在 handler 里硬编码完整响应，抽一个 `auth_challenge()` 函数）。
+- Phase 57（OAuth 发现）会在 143 / 144 的 401 响应上追加 `WWW-Authenticate: Bearer resource_metadata=...`。本 Stage 的 401 / 403 响应构造应留出加头的空间（不要在 handler 里硬编码完整响应，抽一个 `auth_challenge()` 函数）。

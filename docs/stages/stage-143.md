@@ -44,7 +44,7 @@
 - **不做工具级 ACL** —— 144（此时只有「server 级是否可见」）
 - **不做 `{alias}__{tool}` 前缀** —— 单 server 透传不加前缀（前缀是聚合端点的消歧手段，单 server 语境下无意义且会污染上游工具名）
 - **不做上游会话复用** —— 每请求带凭据重连（见 §3.4）
-- **不做 OAuth 发现** —— Phase 56
+- **不做 OAuth 发现** —— Phase 57
 
 ---
 
@@ -137,7 +137,7 @@ POST /mcp/{alias}
 
 | # | 用例 | 期望 |
 |---|---|---|
-| 1 | 无 `Authorization` | 401（`WWW-Authenticate` 留给 Phase 56 —— 现有 `AuthError::into_response` 是纯 JSON 构造，没有加头的接缝，见 §4.3 注） |
+| 1 | 无 `Authorization` | 401（`WWW-Authenticate` 留给 Phase 57 —— 现有 `AuthError::into_response` 是纯 JSON 构造，没有加头的接缝，见 §4.3 注） |
 | 2 | 未知 alias | 404 + `-32601` |
 | 3 | `alias` 存在但 `enabled=0` | 404 + `-32601` |
 | 4 | `server/discover` | 回 `supportedVersions`，**不含** `initialize` 的响应字段 |
@@ -172,7 +172,7 @@ POST /mcp/{alias}
 
 两个文件都要在 `tests/bdd_steps/mod.rs` 注册；real steps 用一个独立模块，开头照 `real_websearch_steps.rs:144` 的 `real_api_enabled()` 守卫。
 
-**UT #1 的 `WWW-Authenticate` 不在本 Stage 做** —— `crates/aigw-core/src/middleware/mod.rs:64-77` 的 `AuthError::into_response` 直接构造 JSON 响应，没有加头的接缝；144 §9 已把 `auth_challenge()` 定为 Phase 56 的改造点。本 Stage 只断言 401。
+**UT #1 的 `WWW-Authenticate` 不在本 Stage 做** —— `crates/aigw-core/src/middleware/mod.rs:64-77` 的 `AuthError::into_response` 直接构造 JSON 响应，没有加头的接缝；144 §9 已把 `auth_challenge()` 定为 Phase 57 的改造点。本 Stage 只断言 401。
 
 ---
 

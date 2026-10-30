@@ -45,7 +45,7 @@ Stage 144 之后后端功能完整了，但两件事在界面上还是黑盒：
 **不做**（明确排除）：
 - **不做 playgound 的 MCP 工具参数自动表单** —— 从 `input_schema` 生成表单是独立功能，本 Stage 只给 JSON 文本框
 - **不做凭据使用量统计** —— 需要 `mcp_call_log` 聚合，属后续
-- **不做 OAuth 授权流程 UI** —— Phase 56
+- **不做 OAuth 授权流程 UI** —— Phase 57
 
 ---
 
@@ -184,5 +184,5 @@ hr-portal     | 必须用户   | ⚠ 未配置            | 设置     ← 整�
 
 ## 9. 对后续 Stage 的影响
 
-- Phase 55 至此收官。Phase 56 的 OAuth 发现需要在前端加「连接并授权」按钮，落点在本 Stage 的 `MyTokenDialog` 同位置（OAuth 与手动 token 是同一件事的两种获取方式）。
-- 凭据使用量统计、按 provider/实例聚合的趋势，都是 Phase 56 之后的候选。
+- Phase 55 至此收官。Phase 57 的 OAuth 发现需要在前端加「连接并授权」按钮，落点在本 Stage 的 `MyTokenDialog` 同位置（OAuth 与手动 token 是同一件事的两种获取方式）。
+- 凭据使用量统计、按 provider/实例聚合的趋势，都是 Phase 57 之后的候选。

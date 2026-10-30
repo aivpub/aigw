@@ -347,7 +347,7 @@ Codex 只走 `initialize`（`2025-06-18`），网关必须为它保留旧版路�
 |---|---|---|---|---|
 | **P1** | 数据层 + admin CRUD + 探测 + 前端管理页 + `/mcp/{alias}` 单 server 透传 + 共享 token | 140 / 141 / 142 / 143 | 无 | CC 与 Codex 都能通过 `aigw` 调通一个真实上游 |
 | **P2** | `/mcp` 聚合端点 + `{alias}__{tool}` 前缀 + 工具级 ACL + 用户级 token + 「我的凭据」页 | 144 / 145 | P1 | 两个上游合并成一个目录，冲突可见，越权调用被 403，用户补 token 后由不可见变可见 |
-| **P3** | `/.well-known/oauth-protected-resource` + AS 发现 + `WWW-Authenticate` 引导 | 未立项（Phase 56） | P2 | CC 能零配置完成 OAuth 授权 |
+| **P3** | `/.well-known/oauth-protected-resource` + AS 发现 + `WWW-Authenticate` 引导 | 未立项（Phase 57） | P2 | CC 能零配置完成 OAuth 授权 |
 
 Stage 级拆分与前后端分工见 `docs/stages/stage-roadmap.md` 的 Phase 55 一节。
 

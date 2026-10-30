@@ -331,7 +331,7 @@
 - **Description**: `next_cursor` 是 `end` 这个**网关内下标**（`page()` 里 `Some(end)`），下一页从 `entries[end..]` 开始。而 `entries` 每次请求都重新派生：`list_mcp_servers()` → `filter(enabled)` → `resolve_bearer` → `catalog_tools`（命中缓存，或现场探测，10s 超时）。于是两页之间任何一项变化都会让后续所有下标错位：某 server 被启用/禁用、某 `user_required` 用户的个人 token 被加上或删掉（该 alias 整块出现/消失）、冷缓存探测在第一页失败第二页成功（快照回退的工具数不同）、两页之间新注册了 server。
 - **Impact**: 客户端拿到 200、无任何 warning（`warnings` 数组只在凭据/探测失败时触发，不覆盖集合漂移），但会漏掉或重复工具。漂移范围受 `merge` 按 `(alias, tool_name)` 排序约束，是有界的，不是全表乱序。
 - **Why not fix now**: 改成 `(alias, tool_name)` 复合游标（`skip_while(|e| (e.alias, e.tool.tool_name) <= key)`）只需一次比较，但对插入稳定；代价是改 `catalog::page` 的签名与出线格式（cursor 从数字串变成带分隔符的键），并连带改 Stage 144 的分页测试与 BDD 断言。当前工具数（个位数 server × 几十工具）远未到需要多页的规模，`DEFAULT_PAGE_SIZE = 100`，实际只有 >100 工具才翻页。
-- **Target Phase**: Phase 56 或首个 MCP server 数上两位数的阶段。届时一并决定 cursor 是否要带签名的 opaque token。
+- **Target Phase**: Phase 57 或首个 MCP server 数上两位数的阶段。届时一并决定 cursor 是否要带签名的 opaque token。
 - **Related**: 同批复查确认 `merge` 的 `has_conflict` **不上线**（`ToolEntry::to_wire()` 不发该字段、`conflicted()` 无生产消费者），它是「调用方 bug 的防御网」而非线上契约 —— `/mcp` 的 `tools/list` 不带冲突信息，按现状接受，不登记为缺陷。
 
 ### TD-025: `task bdd-coverage` 的路由表没有 MCP 的 20 条路由，64% 不代表 Phase 55 之后的真实覆盖率
@@ -342,7 +342,8 @@
 - **Description**: `scripts/bdd-coverage:33` 的 `ROUTES` 是一段**手写**的 `"METHOD /path"` 字面量，注释写的是「main.rs 同源」，但没有任何机制保证同步。Phase 55 新增的 20 条路由一条都不在表里：`/admin/mcp/servers` 全家（all / batch-delete / toggle / probe / tools / allowlist / tokens ×3 / reload / calls）、`/mcp`、`/mcp/{alias}`、`/v1/mcp/servers`、`/v1/mcp/servers/{id}/my-token`、`/mcp-rest/{tools/list,tools/call,health}`。于是 87 这个分母是「Phase 54 结束时的路由数」，64% 只描述那张旧表。
 - **Impact**: 两个方向都有害 ——（a）真实覆盖率被高估，新增面没有 BDD 覆盖也看不出来；（b）如果有人把 MCP 路由补进表，分母涨到 107，而 MCP 的 BDD 用 helper 驱动（`发送 /mcp-rest/tools/list 请求且 alias 为 ...`、`用 master key 向聚合端点发送 tools/list`），`scan_dir` 的正则只认 `发送 (GET|POST|PUT|DELETE|PATCH) /path` 这种句式，绝大多数不会命中，百分比会掉到 60% 以下并让门禁红。
 - **Why not fix now**: 补表 + 补扫描规则 + 让 MCP 的 BDD 改写成可扫描句式，是三件事，且第三件会改动一批已绿的 step 文本。Phase 55 的 BDD 覆盖是「按行为场景」写的，本来就不打算让 grep 数路由 —— 用场景覆盖去追平路由表是拿错了尺子。
-- **Target Phase**: Phase 56。届时一并决定：要么把 `ROUTES` 改成从 `main.rs` 自动提取（`rg '\.route\("'` + 方法解析），要么把它降级为「Phase 54 的遗留基线」并停止用它衡量新面。
+- **Target Phase**: Phase 57。届时一并决定：要么把 `ROUTES` 改成从 `main.rs` 自动提取（`rg '\.route\("'` + 方法解析），要么把它降级为「Phase 54 的遗留基线」并停止用它衡量新面。
+- **Phase 56 补充（2026-10-31）**: Phase 56 还会再加 4 条 MCP 路由（`GET /v1/mcp/calls`、`GET /admin/mcp/reload/{run_id}`、`GET /admin/mcp/reload/latest`，以及 146 不新增但会改响应的 `POST /admin/mcp/servers`），差距继续扩大。这三条都是查询类端点，由 Stage 147/148 的 BDD 场景覆盖，不靠 grep 数路由。
 - **Related**: TD-003 已经记录了 87 → 55 的预置缺口；本条是「表本身过期」，不是同一件事。
 
 ### TD-026: `mcp_disable_rest` 默认 false + SSE 无界通道 + 五处 LOW（Phase 55 Gate 4 的剩余项）
@@ -354,16 +355,16 @@
 
 | # | 级别 | 事实 | 位置 | 为何不现在修 |
 |---|---|---|---|---|
-| 1 | MED | `mcp_disable_rest` 默认 `false` —— 调试用的 `/mcp-rest/*`（绕过协议协商与 `Mcp-Session-Id`，多一套错误语义）默认在生产可reachable | `config.rs:174`、`main.rs:338-342`、`mcp_rest.rs:189` | 改默认值会同时改掉 143/144 的六条 BDD 与 `real/mcp_passthrough_real.feature` 的前置配置（它们依赖默认开启）；ACL 与凭据仍全程生效，它不是越权面而是「多开一扇门」。**Phase 56 做 OAuth 发现时一并决定**：要么默认 true、测试显式打开，要么在启动日志 WARN |
+| 1 | MED | `mcp_disable_rest` 默认 `false` —— 调试用的 `/mcp-rest/*`（绕过协议协商与 `Mcp-Session-Id`，多一套错误语义）默认在生产可reachable | `config.rs:174`、`main.rs:338-342`、`mcp_rest.rs:189` | 改默认值会同时改掉 143/144 的六条 BDD 与 `real/mcp_passthrough_real.feature` 的前置配置（它们依赖默认开启）；ACL 与凭据仍全程生效，它不是越权面而是「多开一扇门」。**Phase 57 做 OAuth 发现时一并决定**：要么默认 true、测试显式打开，要么在启动日志 WARN |
 | 2 | MED | SSE 中继用 `mpsc::unbounded_channel`：客户端建连不读、上游持续推送时无背压 | `mcp_relay.rs:120`、`:160`、`:174` | 换有界 channel 要求 `send` 带超时/阻塞语义，且断开原因要落一个新的 `error_code`，会把 `relay_event_stream` 的 select 循环重写；当前无已知慢客户端场景。与 TD-024 同批处理（都是「多页/长连」类问题） |
 | 3 | LOW | `catalog_tools` 在 `replace_mcp_tool_catalog` **失败后照样写内存缓存**，且信任上游 `ttl_ms` 无上限、无 single-flight → 冷缓存并发穿透 + 内存/DB 分叉 | `mcp_gateway.rs:745-754`、`catalog_cache.rs:24-30` | 上游 `ttlMs` 是可选字段（ADR-041 的缓存语义本就以进程内为准），DB 快照写失败已在日志可见；single-flight 需要引入 await 持锁，与 ADR-041「访问器不跨 await 持锁」冲突，要先改 ADR |
 | 4 | LOW | `call_status_filter` 对未知状态直接透传 → 查询恒空而不是 400 | `mcp.rs:995-1003` | 是「查询参数拼错」这一类，返回空列表不误导人（列表为空本身就是答案），改成 400 属产品取舍 |
 | 5 | LOW | `MyTokenDialog` 的 queryFn 吞掉所有错误返回 `null` → 403/500 在 UI 上均显示「未配置」 | `MyTokenDialog.tsx:68-69` | 与 142 Gate 4 的 M3 同族（前端错误吞噬），但这里最坏后果是用户在只读场景下看到「未配置」；修它要区分 401/403/500 三态 UI，超出 Phase 55 的收尾范围 |
-| 6 | LOW | `list_aggregate_tools` 对 `user_required` 无凭据的 server **静默丢弃**，`warnings` 里也没有条目 → 客户端无法区分「没注册」与「缺个人凭据」 | `mcp_gateway.rs:836` | 静默剔除是 Stage 144 §3.3 的**有意设计**（列表里看不到，调用才 403），往 `warnings` 里加会改变聚合响应形状；若要做，应作为 Phase 56 的「凭据缺失可见性」一并设计 |
+| 6 | LOW | `list_aggregate_tools` 对 `user_required` 无凭据的 server **静默丢弃**，`warnings` 里也没有条目 → 客户端无法区分「没注册」与「缺个人凭据」 | `mcp_gateway.rs:836` | 静默剔除是 Stage 144 §3.3 的**有意设计**（列表里看不到，调用才 403），往 `warnings` 里加会改变聚合响应形状；若要做，应作为 Phase 57 的「凭据缺失可见性」一并设计 |
 
-- **Impact**: 单独看都不构成故障。合并来看，它们共享一个形状：**某条路径的状态没有完整表达出来**（默认值没说清、背压没有、缓存与 DB 不一致、查询错误静默、UI 错误静默、剔除静默）。Phase 56 若做 OAuth 发现（会新增交互面与 401 引导），是统一处理这批的时机。
+- **Impact**: 单独看都不构成故障。合并来看，它们共享一个形状：**某条路径的状态没有完整表达出来**（默认值没说清、背压没有、缓存与 DB 不一致、查询错误静默、UI 错误静默、剔除静默）。Phase 57 若做 OAuth 发现（会新增交互面与 401 引导），是统一处理这批的时机。
 - **Why not fix now**: 六项里两项会改默认值或改 BDD 前置配置、一项与 ADR-041 直接冲突、三项属产品取舍。Phase 55 的收尾标准是「已确认的正确性缺陷清零」，这不是清零的定义 —— 已确认的 HIGH#1 与 MED#2/#3/#4/#5 已在本日修复并被测试覆盖。
-- **Target Phase**: Phase 56（OAuth 发现），或首个真实部署前。
+- **Target Phase**: Phase 57（OAuth 发现），或首个真实部署前。
 - **Related**: ADR-041（缓存语义）、TD-024（同属「长连/多页」）、TD-025（同批 Gate 4 产物）；`stage-143.md` §8.2 / `stage-144.md` §8 记录了本批的逐条判定。
 
 ### TD-027: `mcp_call_log` 没有客户端指纹，真机验收的调用归因只能靠人工比字节数
@@ -374,7 +375,7 @@
 - **Description**: `mcp_call_log` 的列里没有 `clientInfo.name` / `clientInfo.version`，`request_bytes` 只是入站 body 的字节数。MCP 客户端在 `initialize` / 每条请求的 `params._meta` 里都会带 `io.modelcontextprotocol/clientInfo`（CC 2.1.312 带 `{"name":"claude-code","version":"2.1.312"}`，Codex 0.154.0 在 `initialize` 的顶层 `clientInfo` 带 `{"name":"codex-mcp-client","version":"0.154.0"}`），`session.rs` 解析时把它丢掉了。
 - **Impact**: 验收一个「两台客户端各跑通一次」的门禁项时，无法从库里区分哪一行是谁打的。本次的判别手段是手工算 body 字节数（`tools/call` 102B = 手写、`tools/list` 85B = Codex 带 `_meta.progressToken`、`initialize` 217B = 带 `clientInfo`）—— 可复现但不能自动化，且 UUIDv7 前缀在这类判断上会误导（同一秒内的手工与 CLI 同前缀）。
 - **Why not fix now**: 要动 `031_mcp_call_log.sql` 的三方言（加两列）、`McpCallLogRow`、三个 store impl、`session.rs` 的解析与 `_meta` 提取路径，以及 141 的 `GET /admin/mcp/calls` 返回体。Phase 55 的验收已经用人工方式完成，为「下次验收更省事」在收尾时改表结构不划算。
-- **Target Phase**: Phase 56，与 OAuth 发现的 `WWW-Authenticate` 引流一并做（那时会新增交互面，客户端识别本来就是刚需）。
+- **Target Phase**: Phase 57，与 OAuth 发现的 `WWW-Authenticate` 引流一并做（那时会新增交互面，客户端识别本来就是刚需）。
 - **Related**: ADR-046（本次归因过程）、`stage-143.md` §8.3、TD-026（同批「状态没被完整表达」类）
 
 ### TD-028: BDD 里「步骤匹配不上」被静默算作 skipped，13 个 body_archive 场景从未真正执行
@@ -388,8 +389,30 @@
   - `body_archive_read.feature` 整文件挂 `@skip` 标签，但 `bdd.rs:144` 的过滤只看 **scenario** 的 tags、不看 feature 的 tags，所以 7 个场景照样进入执行、再因 step 缺失被跳过。
 - **Impact**: `task bdd` 的退出码只由 `writer.execution_has_failed()` 决定，而 cucumber-rs 的 `StepSkipped` **不计为失败**（`runner/basic.rs:1345`）。所以「步骤找不到」与「写好了但 @skip」这两种情况在日志里长一个样（`?` + `Step skipped`），且都让整轮测试以 0 退出。按 skipped 数就能看出来，但没人看。
 - **Why not fix all now**: `mcp_aggregate` 的两条已在 Phase 55 收口时修好（`tools\/list`）并复跑确认 5 个场景转红为绿；`body_archive_*` 属于 Phase 31/78 的遗留，修 expr 后那些场景**第一次真正执行**，断言是否成立未知，需要单独一轮排查与修实现——不属于 Phase 55 的交付面。
-- **Target Phase**: Phase 56 之前单独一轮（与 TD-023 同源：都是「BDD 假绿」）。根治手法是 `bdd.rs` 里加一道 `skipped_steps() == 预期值` 的断言，把「静默跳过」变成硬失败。
+- **Target Phase**: Phase 57 之前单独一轮（与 TD-023 同源：都是「BDD 假绿」）。根治手法是 `bdd.rs` 里加一道 `skipped_steps() == 预期值` 的断言，把「静默跳过」变成硬失败。
 - **Related**: TD-023（BDD 失败不失败，已修）、`stage-144.md` §7（曾把跳过场景当证据，现已改为引用真实执行结果）
+
+### TD-029: `mcp_servers.transport` 是只有一个合法值的空列
+
+- **Date**: 2026-10-31
+- **Priority**: **P3**（不影响行为，只影响 schema 的可读性）
+- **Source**: Stage 140 §9 预留（「若 Phase 57 之前仍只有一个值，应在技术债里登记『这是空列』」）；Stage 146 重新评估后仍未删
+- **Description**: `mcp_servers.transport`（三方言迁移 `029_mcp_gateway.sql`）唯一取值是 `streamable_http`，写入点是 `create_mcp_server` 的 `body.transport.as_deref().unwrap_or("streamable_http")`，读取点没有任何分支依赖它。保留的理由是「将来接旧版 HTTP+SSE 上游时不必再加迁移」。
+- **Impact**: 读者会把这一列当成已实现的多传输支持，而实际只有一条路径；真正的多传输（旧版 SSE 上游）需要的不只是这一列 —— `mcp/session.rs` 的 `post_jsonrpc` 只发 POST，`GET /sse` 的事件流没有实现（生产上 `goose-spec` 正是因此接不进来）。
+- **Why not fix now**: 删除要改三方言迁移（新增 `033`/`034` 之外的 drop-column 迁移，SQLite 需重建表）+ `McpServerRow` 的 9 处字面量 + 前端 `ServerDialog`，而收益只是少一个常量。与 Stage 146/147 的变更面（同两张表）重叠，现在动会让 Three-dialect 迁移顺序变复杂。
+- **Target Phase**: 首个真正需要接旧版 SSE 上游的 Phase（届时要么实现它，要么删掉这一列）；最迟 Phase 57 收尾时复核。
+- **Related**: Stage 140 §9、Stage 146 §3.5、`stage-146.md` §8
+
+### TD-030: `mcp_call_log` 无保留期与清理，日志表会无界增长
+
+- **Date**: 2026-10-31
+- **Priority**: **P2**（低频事件，但无上限的表最终会变成运维问题）
+- **Source**: Stage 147 §8（把日志页做成第一类查询面时暴露：能查全历史，但没有任何人负责删）
+- **Description**: `mcp_call_log`（`031_mcp_call_log.sql`，三方言）每次 MCP 请求落一行，成功失败都落。项目里已有 `async_jobs` + `async_job_steps` 的定时任务框架（`crates/aigw-core/src/engine.rs`）与 `body_archive` 的清理先例，但没有任何任务清理 `mcp_call_log`。Stage 147 新增的 `(user_id, created_at)` 索引会随行数一起变大。
+- **Impact**: 单机自建场景下每天几十到几千行，一年最大百万级，SQLite/PG 都还能扛；但索引维护与备份体积会稳定增长，且**没有配置项**告诉运维「保留多久」。
+- **Why not fix now**: 清理策略是产品决策（保留 30 天？90 天？按 alias 分级？），且要新建一个 `step_type`（`async_jobs.step_type` 的取值集在三方言的检查/文档里都出现过）。Stage 147 的交付面是「能查」，不是「能自动删」。
+- **Target Phase**: Phase 57 或首个出现「日志表体积报警」的部署；与 body archive 的生命周期策略（LT-BodyLifecycle）一起设计更省事。
+- **Related**: `stage-147.md` §8、LT-BodyLifecycle
 
 ## Resolved Items
 ### TD-017g: Anthropic 服务端工具触发 HTTP 500（Resolved 2026-10-07, Stage 135）

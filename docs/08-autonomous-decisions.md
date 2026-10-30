@@ -887,7 +887,7 @@
 - **Consequences**:
   - `aigw-core` 的 `Cargo.toml` 不变；143 的变更清单里 `relay.rs` 的路径要写到 server 侧。
   - Stage 143 的 UT 断言 `x-accel-buffering: no` 是本仓第一次给 SSE 加这个头，UT 是唯一守门人。
-  - Phase 56 的 `WWW-Authenticate` 需求从 143 摘除（`AuthError::into_response` 是纯 JSON 构造，没有加头接缝），
+  - Phase 57 的 `WWW-Authenticate` 需求从 143 摘除（`AuthError::into_response` 是纯 JSON 构造，没有加头接缝），
     143 的 UT #1 只断言 401；加头改造仍归 144 §9 的 `auth_challenge()` 接缝。
   - BDD 必须一个 stage 两个 feature（mock 一个、`@real_api` 一个），因为 `tests/bdd.rs:136-167` 的过滤器按
     `AIGW_REAL_API` 二分，而 `real_*_steps` 在非 real 模式下直接 return —— 混写会「通过」但零断言。
@@ -989,3 +989,22 @@
   - Stage 143 的「agent 可接入」在 CC 上被端到端证明；Codex 只被证明到「协议与传输由网关正确承载」这一层，工具调用那一跳归客户端。
   - 残留一条独立技术债候选（本次未登记、未修）：aigw 把 Responses 的 `custom` 工具降级成 `{"input": string}` 的 function（`adapter.rs:2055`、`:2543`），而出站只回 `function_call`（`:2861`、`:3059`、`:3324`、`:3374`），不还原 `custom_tool_call` —— 这会挡住 Codex code-mode，与 MCP 协议无关。
   - `mcp_call_log.request_bytes` 目前只是入站 body 字节数，没有可机器判定的客户端指纹；本次靠人工比字节数才把一条 `tools/call` 归到手工 curl。若后续验收需要自动归因，应在日志里落 `clientInfo.name/version`。
+
+## ADR-047: Phase 56 给「MCP 网关生产反馈迭代」，OAuth 发现顺延 Phase 57
+
+- **Date**: 2026-10-31
+- **Status**: Accepted
+- **Related Stage**: Stage 146 / 147 / 148；Phase 55（Stage 140-145）
+- **Background**: Phase 55 的收尾文档里 22 处写成「Phase 56 = MCP OAuth 发现」，那是立项时的占位，从未立项、也没有真实上游提出过需求（需要 OAuth 的只有 yehe 一个）。2026-10-30 把本地 Claude Code 的 Streamable-HTTP MCP 全部接入生产网关（`9.135.87.221:4001`）时，暴露的三条问题全部来自实测：① 出站只注入 `Authorization: Bearer`（`crates/aigw-core/src/mcp/session.rs:227-229`），TAPD 要 `X-Tapd-Access-Token`、工蜂要 `PRIVATE-TOKEN`，两个现成上游因此接不进来；② `GET /admin/mcp/calls` 首行 `require_admin`（`crates/aigw-server/src/routes/mcp.rs:1028`），普通用户对自己的调用零可见性；③ `reload_mcp`（`:626`）串行跑完全部 server 才返回，`PROBE_TIMEOUT=10s` × N 的阻塞期只有一个 spinner。
+- **Decision**:
+  1. Phase 56 定为 **MCP Gateway 生产反馈迭代**（Stage 146-148，~40h）：自定义认证头名 + 额外头、调用日志独立页、探测进度。
+  2. OAuth 发现顺延 **Phase 57**，内容不变（`/.well-known/oauth-protected-resource` + `WWW-Authenticate` 引导 + `auth_challenge()` 接缝）。
+  3. 全仓 22 处「Phase 56」引用一次性改写为「Phase 57」（`08` / `11` / `12` 的 TD-024~TD-028 / `plans/2026-10-28-mcp-gateway.md` / `stage-140/141/143/144/145.md` / 本文件 ADR-042）。**不保留「Phase 56 曾指 OAuth」这一层说明** —— 历史在 git 里，文档只写当下事实。
+- **Why not the alternatives**:
+  - **让 OAuth 占住 Phase 56、新增 Phase 57 放这三条反馈** —— 编号只影响阅读顺序，但「下一件事是什么」比「编号连续」重要：三条反馈是当前生产的阻塞，OAuth 不是。用一个空号占位反而让读者以为 OAuth 更紧急。
+  - **把三条反馈塞进 Phase 55 的收尾** —— Phase 55 的门禁已按 ADR-046 记录完毕，146 要动表结构（`033`）、147 要动 SQL 与索引、148 要改 `reload` 的返回码，任何一条都会让 Phase 55 的既有证据失效。
+  - **拆成三个独立 Phase** —— 三者共享同一批文件（`routes/mcp.rs`、`/dash/mcp`），一个 Phase 内按 Stage 串行/并行编排即可，拆 Phase 只会让 roadmap 更难读。
+- **Consequences**:
+  - roadmap 的整体进度多一行 `Phase 56: 0% (0/3)`；TD-024~TD-028 的 Target Phase 统一指向 Phase 57。
+  - Stage 148 依赖 Stage 146（`probe_server` 签名变更），所以 146 必须排在 148 之前；147 与二者无耦合。
+  - 若 yehe 的接入需求提前变成阻塞，OAuth 可以插到 147 与 148 之间而不改编号 —— 顺序由 roadmap 的依赖关系表达，不由编号表达。
