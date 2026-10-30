@@ -91,9 +91,23 @@ impl std::fmt::Display for UpstreamError {
     }
 }
 
+/// How the resolved upstream credential is put on the wire.
+///
+/// Two variants rather than one `Header` variant: `bearer_auth` is what the MCP
+/// spec prescribes and what `reqwest` normalises, while a custom header is an
+/// operator's setting that must go out verbatim (TAPD and 工蜂 want the bare
+/// token, no `Bearer ` prefix). Keeping them apart also keeps the semantics
+/// legible in review — "the protocol's Bearer" is not "a configured header".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpstreamAuth<'a> {
+    Bearer(&'a str),
+    Header { name: &'a str, value: &'a str },
+}
+
 pub struct UpstreamTarget<'a> {
     pub url: &'a str,
-    pub bearer: Option<&'a str>,
+    pub auth: Option<UpstreamAuth<'a>>,
+    pub extra_headers: &'a [(String, String)],
     pub stack: UpstreamStack,
     pub timeout: Duration,
 }
@@ -224,8 +238,14 @@ fn request_builder(
         .header("Content-Type", "application/json")
         .header("Accept", "application/json, text/event-stream")
         .header("MCP-Protocol-Version", protocol_version);
-    if let Some(bearer) = target.bearer {
-        req = req.bearer_auth(bearer);
+    if let Some(auth) = target.auth {
+        req = match auth {
+            UpstreamAuth::Bearer(token) => req.bearer_auth(token),
+            UpstreamAuth::Header { name, value } => req.header(name, value),
+        };
+    }
+    for (name, value) in target.extra_headers {
+        req = req.header(name, value);
     }
     if let Some(session) = session {
         req = req.header("Mcp-Session-Id", session);
@@ -317,20 +337,18 @@ pub async fn forward(
     }
 }
 
-/// One `server/discover` round trip, used only for `/mcp-rest/health`. Any HTTP
+/// One `server/discover` round trip, used only by `/mcp-rest/health`. Any HTTP
 /// answer means the upstream is reachable — a 405 is a legacy server saying so.
-pub async fn reachable(url: &str, bearer: Option<&str>, timeout: Duration) -> Option<u16> {
-    let target = UpstreamTarget {
-        url,
-        bearer,
-        stack: UpstreamStack::Modern,
-        timeout,
-    };
+///
+/// Takes the full [`UpstreamTarget`] rather than a bearer: a health check that
+/// authenticates differently from the call path reports "unreachable" for every
+/// upstream using a custom header, which is exactly the server it matters for.
+pub async fn reachable(target: &UpstreamTarget<'_>) -> Option<u16> {
     let body = json!({"jsonrpc": "2.0", "id": 1, "method": METHOD_DISCOVER});
-    match post_jsonrpc(&target, &body, MODERN_PROTOCOL_VERSION, None).await {
+    match post_jsonrpc(target, &body, MODERN_PROTOCOL_VERSION, None).await {
         Ok(resp) => Some(resp.status().as_u16()),
         Err(e) => {
-            warn!(error = %e, url, "MCP health probe failed");
+            warn!(error = %e, url = target.url, "MCP health probe failed");
             None
         }
     }
@@ -427,5 +445,73 @@ mod tests {
         let err = check_tool_spellings_consistency(&json!({"params": {"name": "a", "tool": "b"}}))
             .unwrap_err();
         assert!(err.contains("a") && err.contains("b"), "{err}");
+    }
+
+    fn request_headers(
+        auth: Option<UpstreamAuth<'_>>,
+        extra: &[(String, String)],
+    ) -> reqwest::header::HeaderMap {
+        let target = UpstreamTarget {
+            url: "http://127.0.0.1:1/mcp",
+            auth,
+            extra_headers: extra,
+            stack: UpstreamStack::Modern,
+            timeout: Duration::from_secs(1),
+        };
+        request_builder(&target, MODERN_PROTOCOL_VERSION, Some("sess-1"))
+            .build()
+            .expect("build")
+            .headers()
+            .clone()
+    }
+
+    #[test]
+    fn bearer_auth_is_written_with_the_protocol_prefix() {
+        let headers = request_headers(Some(UpstreamAuth::Bearer("tk")), &[]);
+        assert_eq!(headers.get("authorization").unwrap(), "Bearer tk");
+    }
+
+    #[test]
+    fn a_custom_auth_header_carries_the_bare_token_and_no_authorization() {
+        let headers = request_headers(
+            Some(UpstreamAuth::Header {
+                name: "X-Tapd-Access-Token",
+                value: "tk",
+            }),
+            &[],
+        );
+        assert_eq!(headers.get("x-tapd-access-token").unwrap(), "tk");
+        assert!(headers.get("authorization").is_none());
+    }
+
+    #[test]
+    fn extra_headers_are_attached_alongside_the_auth_header() {
+        let extra = vec![
+            ("X-Project-Id".to_string(), "p-1".to_string()),
+            ("X-Tenant".to_string(), "t-1".to_string()),
+        ];
+        let headers = request_headers(Some(UpstreamAuth::Bearer("tk")), &extra);
+        assert_eq!(headers.get("x-project-id").unwrap(), "p-1");
+        assert_eq!(headers.get("x-tenant").unwrap(), "t-1");
+        assert_eq!(headers.get("authorization").unwrap(), "Bearer tk");
+    }
+
+    #[test]
+    fn no_credential_means_no_auth_header_but_extras_still_go_out() {
+        let extra = vec![("X-Project-Id".to_string(), "p-1".to_string())];
+        let headers = request_headers(None, &extra);
+        assert!(headers.get("authorization").is_none());
+        assert_eq!(headers.get("x-project-id").unwrap(), "p-1");
+    }
+
+    #[test]
+    fn the_gateway_still_owns_the_protocol_headers() {
+        let headers = request_headers(None, &[]);
+        assert_eq!(
+            headers.get("mcp-protocol-version").unwrap(),
+            MODERN_PROTOCOL_VERSION
+        );
+        assert_eq!(headers.get("mcp-session-id").unwrap(), "sess-1");
+        assert_eq!(headers.get("content-type").unwrap(), "application/json");
     }
 }

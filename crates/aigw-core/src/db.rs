@@ -6353,19 +6353,19 @@ pub trait McpCallLogStore {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 const CREATE_MCP_SERVER_SQLITE: &str = r#"
-INSERT INTO mcp_servers (alias, display_name, url, transport, credential_scope, enabled, protocol_version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO mcp_servers (alias, display_name, url, transport, credential_scope, enabled, protocol_version, auth_header_name, auth_header_value, extra_headers, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 "#;
 const GET_MCP_SERVER_SQLITE: &str = r#"
-SELECT id, alias, display_name, url, transport, credential_scope, enabled, protocol_version, created_at, updated_at FROM mcp_servers WHERE id = ?
+SELECT id, alias, display_name, url, transport, credential_scope, enabled, protocol_version, auth_header_name, auth_header_value, extra_headers, created_at, updated_at FROM mcp_servers WHERE id = ?
 "#;
 const GET_MCP_SERVER_BY_ALIAS_SQLITE: &str = r#"
-SELECT id, alias, display_name, url, transport, credential_scope, enabled, protocol_version, created_at, updated_at FROM mcp_servers WHERE alias = ?
+SELECT id, alias, display_name, url, transport, credential_scope, enabled, protocol_version, auth_header_name, auth_header_value, extra_headers, created_at, updated_at FROM mcp_servers WHERE alias = ?
 "#;
 const LIST_MCP_SERVERS_SQLITE: &str = r#"
-SELECT id, alias, display_name, url, transport, credential_scope, enabled, protocol_version, created_at, updated_at FROM mcp_servers ORDER BY id
+SELECT id, alias, display_name, url, transport, credential_scope, enabled, protocol_version, auth_header_name, auth_header_value, extra_headers, created_at, updated_at FROM mcp_servers ORDER BY id
 "#;
 const UPDATE_MCP_SERVER_SQLITE: &str = r#"
-UPDATE mcp_servers SET display_name = ?, url = ?, transport = ?, credential_scope = ?, enabled = ?, protocol_version = ?, updated_at = ? WHERE id = ?
+UPDATE mcp_servers SET display_name = ?, url = ?, transport = ?, credential_scope = ?, enabled = ?, protocol_version = ?, auth_header_name = ?, auth_header_value = ?, extra_headers = ?, updated_at = ? WHERE id = ?
 "#;
 const DELETE_MCP_SERVER_SQLITE: &str = r#"DELETE FROM mcp_servers WHERE id = ?"#;
 const CREATE_MCP_TOKEN_SQLITE: &str = r#"
@@ -6396,13 +6396,15 @@ const DELETE_MCP_TOKENS_BY_SERVER_SQLITE: &str =
 
 /// Column list shared by every read that decodes into [`McpServerRow`].
 const MCP_SERVER_PROJECTION: &str = "s.id, s.alias, s.display_name, s.url, s.transport, \
-     s.credential_scope, s.enabled, s.protocol_version, s.created_at, s.updated_at";
+     s.credential_scope, s.enabled, s.protocol_version, s.auth_header_name, \
+     s.auth_header_value, s.extra_headers, s.created_at, s.updated_at";
 
 /// Every selected column in `MCP_SERVER_PROJECTION` except the aggregate, spelled
 /// out for `GROUP BY` — PostgreSQL rejects `SELECT *`-style grouping, and sqlx
 /// binds no column names.
 const MCP_SERVER_GROUP_BY: &str = "s.id, s.alias, s.display_name, s.url, s.transport, \
-     s.credential_scope, s.enabled, s.protocol_version, s.created_at, s.updated_at";
+     s.credential_scope, s.enabled, s.protocol_version, s.auth_header_name, \
+     s.auth_header_value, s.extra_headers, s.created_at, s.updated_at";
 
 /// Wire `status` filter → the boolean the column holds. `None` means no filter.
 fn mcp_status_filter(status: Option<&str>) -> Option<bool> {
@@ -6480,6 +6482,9 @@ impl McpStore for SqlitePool {
             .bind(&s.credential_scope)
             .bind(s.enabled)
             .bind(&s.protocol_version)
+            .bind(&s.auth_header_name)
+            .bind(&s.auth_header_value)
+            .bind(&s.extra_headers)
             .bind(&s.created_at)
             .bind(&s.updated_at)
             .execute(self)
@@ -6518,6 +6523,9 @@ impl McpStore for SqlitePool {
             .bind(&s.credential_scope)
             .bind(s.enabled)
             .bind(&s.protocol_version)
+            .bind(&s.auth_header_name)
+            .bind(&s.auth_header_value)
+            .bind(&s.extra_headers)
             .bind(&s.updated_at)
             .bind(s.id)
             .execute(self)
@@ -6791,19 +6799,19 @@ impl McpCallLogStore for SqlitePool {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 const CREATE_MCP_SERVER_MYSQL: &str = r#"
-INSERT INTO mcp_servers (alias, display_name, url, transport, credential_scope, enabled, protocol_version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO mcp_servers (alias, display_name, url, transport, credential_scope, enabled, protocol_version, auth_header_name, auth_header_value, extra_headers, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 "#;
 const GET_MCP_SERVER_MYSQL: &str = r#"
-SELECT id, alias, display_name, url, transport, credential_scope, enabled, protocol_version, created_at, updated_at FROM mcp_servers WHERE id = ?
+SELECT id, alias, display_name, url, transport, credential_scope, enabled, protocol_version, auth_header_name, auth_header_value, extra_headers, created_at, updated_at FROM mcp_servers WHERE id = ?
 "#;
 const GET_MCP_SERVER_BY_ALIAS_MYSQL: &str = r#"
-SELECT id, alias, display_name, url, transport, credential_scope, enabled, protocol_version, created_at, updated_at FROM mcp_servers WHERE alias = ?
+SELECT id, alias, display_name, url, transport, credential_scope, enabled, protocol_version, auth_header_name, auth_header_value, extra_headers, created_at, updated_at FROM mcp_servers WHERE alias = ?
 "#;
 const LIST_MCP_SERVERS_MYSQL: &str = r#"
-SELECT id, alias, display_name, url, transport, credential_scope, enabled, protocol_version, created_at, updated_at FROM mcp_servers ORDER BY id
+SELECT id, alias, display_name, url, transport, credential_scope, enabled, protocol_version, auth_header_name, auth_header_value, extra_headers, created_at, updated_at FROM mcp_servers ORDER BY id
 "#;
 const UPDATE_MCP_SERVER_MYSQL: &str = r#"
-UPDATE mcp_servers SET display_name = ?, url = ?, transport = ?, credential_scope = ?, enabled = ?, protocol_version = ?, updated_at = ? WHERE id = ?
+UPDATE mcp_servers SET display_name = ?, url = ?, transport = ?, credential_scope = ?, enabled = ?, protocol_version = ?, auth_header_name = ?, auth_header_value = ?, extra_headers = ?, updated_at = ? WHERE id = ?
 "#;
 const DELETE_MCP_SERVER_MYSQL: &str = r#"DELETE FROM mcp_servers WHERE id = ?"#;
 const CREATE_MCP_TOKEN_MYSQL: &str = r#"
@@ -6872,6 +6880,9 @@ impl McpStore for MySqlPool {
             .bind(&s.credential_scope)
             .bind(s.enabled)
             .bind(&s.protocol_version)
+            .bind(&s.auth_header_name)
+            .bind(&s.auth_header_value)
+            .bind(&s.extra_headers)
             .bind(&s.created_at)
             .bind(&s.updated_at)
             .execute(self)
@@ -6910,6 +6921,9 @@ impl McpStore for MySqlPool {
             .bind(&s.credential_scope)
             .bind(s.enabled)
             .bind(&s.protocol_version)
+            .bind(&s.auth_header_name)
+            .bind(&s.auth_header_value)
+            .bind(&s.extra_headers)
             .bind(&s.updated_at)
             .bind(s.id)
             .execute(self)
@@ -7185,19 +7199,19 @@ impl McpCallLogStore for MySqlPool {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 const CREATE_MCP_SERVER_PG: &str = r#"
-INSERT INTO mcp_servers (alias, display_name, url, transport, credential_scope, enabled, protocol_version, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id
+INSERT INTO mcp_servers (alias, display_name, url, transport, credential_scope, enabled, protocol_version, auth_header_name, auth_header_value, extra_headers, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id
 "#;
 const GET_MCP_SERVER_PG: &str = r#"
-SELECT id, alias, display_name, url, transport, credential_scope, enabled, protocol_version, created_at, updated_at FROM mcp_servers WHERE id = $1
+SELECT id, alias, display_name, url, transport, credential_scope, enabled, protocol_version, auth_header_name, auth_header_value, extra_headers, created_at, updated_at FROM mcp_servers WHERE id = $1
 "#;
 const GET_MCP_SERVER_BY_ALIAS_PG: &str = r#"
-SELECT id, alias, display_name, url, transport, credential_scope, enabled, protocol_version, created_at, updated_at FROM mcp_servers WHERE alias = $1
+SELECT id, alias, display_name, url, transport, credential_scope, enabled, protocol_version, auth_header_name, auth_header_value, extra_headers, created_at, updated_at FROM mcp_servers WHERE alias = $1
 "#;
 const LIST_MCP_SERVERS_PG: &str = r#"
-SELECT id, alias, display_name, url, transport, credential_scope, enabled, protocol_version, created_at, updated_at FROM mcp_servers ORDER BY id
+SELECT id, alias, display_name, url, transport, credential_scope, enabled, protocol_version, auth_header_name, auth_header_value, extra_headers, created_at, updated_at FROM mcp_servers ORDER BY id
 "#;
 const UPDATE_MCP_SERVER_PG: &str = r#"
-UPDATE mcp_servers SET display_name = $1, url = $2, transport = $3, credential_scope = $4, enabled = $5, protocol_version = $6, updated_at = $7 WHERE id = $8
+UPDATE mcp_servers SET display_name = $1, url = $2, transport = $3, credential_scope = $4, enabled = $5, protocol_version = $6, auth_header_name = $7, auth_header_value = $8, extra_headers = $9, updated_at = $10 WHERE id = $11
 "#;
 const DELETE_MCP_SERVER_PG: &str = r#"DELETE FROM mcp_servers WHERE id = $1"#;
 const CREATE_MCP_TOKEN_PG: &str = r#"
@@ -7260,6 +7274,9 @@ impl McpStore for PgPool {
             .bind(&s.credential_scope)
             .bind(s.enabled)
             .bind(&s.protocol_version)
+            .bind(&s.auth_header_name)
+            .bind(&s.auth_header_value)
+            .bind(&s.extra_headers)
             .bind(&s.created_at)
             .bind(&s.updated_at)
             .fetch_one(self)
@@ -7298,6 +7315,9 @@ impl McpStore for PgPool {
             .bind(&s.credential_scope)
             .bind(s.enabled)
             .bind(&s.protocol_version)
+            .bind(&s.auth_header_name)
+            .bind(&s.auth_header_value)
+            .bind(&s.extra_headers)
             .bind(&s.updated_at)
             .bind(s.id)
             .execute(self)
@@ -12212,6 +12232,9 @@ mod tests {
             credential_scope: CredentialScope::SharedOrUser.as_str().to_string(),
             enabled: true,
             protocol_version: None,
+            auth_header_name: None,
+            auth_header_value: None,
+            extra_headers: None,
             tool_count: 0,
             created_at: now.clone(),
             updated_at: now,

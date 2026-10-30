@@ -17,6 +17,12 @@ export function scopeI18nKey(scope: string): "shared" | "sharedOrUser" | "userRe
   return SCOPE_I18N_KEY[scope as CredentialScope] ?? "shared";
 }
 
+export interface McpExtraHeader {
+  name: string;
+  /** `***` in every response; the plaintext value is write-only. */
+  value: string;
+}
+
 export interface McpServer {
   id: number;
   alias: string;
@@ -26,9 +32,45 @@ export interface McpServer {
   credential_scope: CredentialScope;
   enabled: boolean;
   protocol_version: string | null;
+  /** `null` = the protocol's `Authorization: Bearer`. */
+  auth_header_name: string | null;
+  /** `***` when configured, `null` when not. Never the value. */
+  auth_header_value: string | null;
+  extra_headers: McpExtraHeader[] | null;
   tool_count?: number | null;
   created_at: string;
   updated_at: string;
+}
+
+/** Headers the gateway writes itself; the backend rejects them with 400. */
+export const RESERVED_HEADERS = [
+  "content-type",
+  "accept",
+  "mcp-protocol-version",
+  "mcp-session-id",
+  "host",
+  "content-length",
+];
+
+const HEADER_NAME_RE = /^[A-Za-z0-9!#$%&'*+\-.^_`|~]+$/;
+
+export function validateHeaderName(
+  name: string,
+): "reserved" | "charset" | "tooLong" | null {
+  const trimmed = name.trim();
+  if (trimmed.length > 256) return "tooLong";
+  if (!HEADER_NAME_RE.test(trimmed)) return "charset";
+  if (RESERVED_HEADERS.includes(trimmed.toLowerCase())) return "reserved";
+  return null;
+}
+
+/** The wire shape `ExtraHeader` expects: names in clear, values as sent. */
+export function extraHeaderPayload(
+  rows: { name: string; value: string }[],
+): McpExtraHeader[] {
+  return rows
+    .map((row) => ({ name: row.name.trim(), value: row.value }))
+    .filter((row) => row.name.length > 0);
 }
 
 export interface McpServerListResponse {

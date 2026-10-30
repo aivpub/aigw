@@ -151,6 +151,9 @@ function seedMcpServers() {
     credential_scope: "shared_or_user",
     enabled: true,
     protocol_version: "2026-07-28",
+    auth_header_name: null,
+    auth_header_value: null,
+    extra_headers: null,
     tool_count: 3,
     created_at: "2026-10-01T00:00:00Z",
     updated_at: "2026-10-01T00:00:00Z",
@@ -164,6 +167,11 @@ function seedMcpServers() {
     credential_scope: "shared",
     enabled: false,
     protocol_version: null,
+    // Stage 146: a server whose credential rides a custom header, so the edit
+    // dialog has a stored-but-masked value to keep.
+    auth_header_name: "PRIVATE-TOKEN",
+    auth_header_value: "***",
+    extra_headers: null,
     tool_count: null,
     created_at: "2026-10-02T00:00:00Z",
     updated_at: "2026-10-02T00:00:00Z",
@@ -177,6 +185,9 @@ function seedMcpServers() {
     credential_scope: "user_required",
     enabled: true,
     protocol_version: "2025-06-18",
+    auth_header_name: null,
+    auth_header_value: null,
+    extra_headers: null,
     tool_count: 2,
     created_at: "2026-10-03T00:00:00Z",
     updated_at: "2026-10-03T00:00:00Z",
@@ -257,6 +268,7 @@ let mcpMyTokens: Record<string, Record<number, Record<string, unknown>>> =
 let mcpAllowlist: Record<number, Record<string, unknown>[]> = {};
 let mcpCreateRequests = 0;
 let lastMcpMyTokenPutBody: Record<string, unknown> = {};
+let lastMcpServerBody: Record<string, unknown> = {};
 
 export function resetMcpMockStore() {
   mcpServers = seedMcpServers();
@@ -265,10 +277,16 @@ export function resetMcpMockStore() {
   mcpAllowlist = structuredClone(MCP_ALLOWLIST_SEED);
   mcpCreateRequests = 0;
   lastMcpMyTokenPutBody = {};
+  lastMcpServerBody = {};
 }
 
 export function getMcpCreateRequestCount(): number {
   return mcpCreateRequests;
+}
+
+/** The last `POST`/`PUT` body the MCP server dialog sent, for header round-trip assertions. */
+export function getLastMcpServerBody(): Record<string, unknown> {
+  return lastMcpServerBody;
 }
 
 export function getLastMcpMyTokenPutBody(): Record<string, unknown> {
@@ -1173,6 +1191,7 @@ export async function defineMockRoutes(route: Route, request: Request) {
   }
   if (url.pathname === "/admin/mcp/servers" && route.request().method() === "POST") {
     const body = JSON.parse(request.postData() ?? "{}");
+    lastMcpServerBody = body;
     const alias = body.alias ?? "new-server";
     mcpCreateRequests += 1;
     if (mcpServers.some((s) => s.alias === alias)) {
@@ -1190,6 +1209,12 @@ export async function defineMockRoutes(route: Route, request: Request) {
       credential_scope: body.credential_scope ?? "shared_or_user",
       enabled: body.enabled ?? true,
       protocol_version: null,
+      auth_header_name: body.auth_header_name || null,
+      auth_header_value: body.auth_header_value ? "***" : null,
+      extra_headers:
+        body.extra_headers?.length
+          ? body.extra_headers.map((h: any) => ({ name: h.name, value: "***" }))
+          : null,
       tool_count: null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -1327,8 +1352,20 @@ export async function defineMockRoutes(route: Route, request: Request) {
     }
     if (route.request().method() === "PUT" && idx >= 0) {
       const body = JSON.parse(request.postData() ?? "{}");
-      Object.assign(mcpServers[idx], body, { updated_at: new Date().toISOString() });
-      return route.fulfill({ status: 200, json: mcpServers[idx] });
+      lastMcpServerBody = body;
+      const merged = { ...mcpServers[idx], ...body, updated_at: new Date().toISOString() };
+      if (body.auth_header_value) merged.auth_header_value = "***";
+      if (body.auth_header_name === "") {
+        merged.auth_header_name = null;
+        merged.auth_header_value = null;
+      }
+      if (Array.isArray(body.extra_headers)) {
+        merged.extra_headers = body.extra_headers.length
+          ? body.extra_headers.map((h: any) => ({ name: h.name, value: "***" }))
+          : null;
+      }
+      mcpServers[idx] = merged;
+      return route.fulfill({ status: 200, json: merged });
     }
     return route.fulfill({ status: 200, json: mcpServers[idx] ?? {} });
   }

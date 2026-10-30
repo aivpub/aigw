@@ -414,6 +414,17 @@
 - **Target Phase**: Phase 57 或首个出现「日志表体积报警」的部署；与 body archive 的生命周期策略（LT-BodyLifecycle）一起设计更省事。
 - **Related**: `stage-147.md` §8、LT-BodyLifecycle
 
+### TD-031: MCP 静态头值（`auth_header_value` / `extra_headers`）没有换 key 的迁移路径
+
+- **Date**: 2026-10-31
+- **Priority**: **P2**（平时零成本，换 key 时会把所有 MCP 上游凭据变成不可读）
+- **Source**: Stage 146 Gate 4（ADR-048 把「解不开就静默清空」改成「500 拦住」，从而把这个缺口从「数据被毁」降级为「功能不可用」）
+- **Description**: `mcp_servers.auth_header_value` 与 `extra_headers` 用 `seal_token`（`v2:gcm:` AIGW master key）加密，与 `mcp_server_tokens.token_value`、`websearch` 的 api_key 同源。`aigw-migrate` 的 `rotate_json_fields` 只覆盖 litellm 导入/导出的 JSON 字段路径，**不遍历 aigw 自己的表**；仓库里也没有「换 master key」的运维脚本。换 key 之后：`mcp_server_tokens` 走 `token_unseal_failed`（500，可归因），`auth_header_value` 走 `unseal_value` 的 warn + 静默不带凭据，`extra_headers` 走严格解密 → 管理页编辑 500。
+- **Impact**: key 泄露需要轮换时，MCP 部分的凭据必须逐个在 UI 里重输。server 数量是「管理员个位数」，所以代价低；但**没有任何地方写着这件事**，运维会以为换 key 是一次纯配置变更。
+- **Why not fix now**: 写一个 `aigw rotate-master-key`（读旧 key、遍历加密列、写新 key、事务）是独立的一次交付，涉及 `mcp_servers` / `mcp_server_tokens` / `websearch_instances` / `credentials` 至少四张表的列枚举，与 Stage 146/147/148 的交付面无交集。
+- **Target Phase**: 与 OAuth（Phase 57）同批 —— 那时 `auth_header_value` 会变成「可能由刷新流程写入的槽位」，两者都要求先有一个明确的 key 生命周期。
+- **Related**: ADR-048、`stage-146.md` §8、`crates/aigw-core/migrations/{sqlite,postgres,mysql}/033_mcp_server_headers.sql`
+
 ## Resolved Items
 ### TD-017g: Anthropic 服务端工具触发 HTTP 500（Resolved 2026-10-07, Stage 135）
 

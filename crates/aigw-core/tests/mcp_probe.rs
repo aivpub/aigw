@@ -11,13 +11,23 @@ use std::sync::{Arc, Mutex};
 
 use aigw_core::mcp::probe::{
     parse_jsonrpc_body, parse_jsonrpc_body_for, parse_upstream_tool, read_jsonrpc_response,
-    ProbeError, MAX_TOOL_PAGES,
+    ProbeError, ProbeTarget, MAX_TOOL_PAGES,
 };
+use aigw_core::mcp::session::UpstreamAuth;
 use axum::http::HeaderMap;
 use axum::response::IntoResponse;
 use axum::routing::post;
 use axum::{Json, Router};
 use serde_json::{json, Value};
+
+/// A probe target for a server with no extras and (optionally) a bearer.
+fn target<'a>(url: &'a str, bearer: Option<&'a str>) -> ProbeTarget<'a> {
+    ProbeTarget {
+        url,
+        auth: bearer.map(UpstreamAuth::Bearer),
+        extra_headers: &[],
+    }
+}
 
 struct Upstream {
     base_url: String,
@@ -108,7 +118,7 @@ async fn discover_selects_the_newest_supported_version_and_skips_initialize() {
     ))
     .await;
 
-    let outcome = aigw_core::mcp::probe_server(&upstream.base_url, None, &[])
+    let outcome = aigw_core::mcp::probe_server(&target(&upstream.base_url, None), &[])
         .await
         .expect("probe");
 
@@ -178,7 +188,7 @@ async fn discover_405_falls_back_to_initialize_and_carries_the_session_id() {
     ))
     .await;
 
-    let outcome = aigw_core::mcp::probe_server(&upstream.base_url, None, &[])
+    let outcome = aigw_core::mcp::probe_server(&target(&upstream.base_url, None), &[])
         .await
         .expect("probe");
 
@@ -244,7 +254,7 @@ async fn tools_list_follows_next_cursor_across_pages() {
     ))
     .await;
 
-    let outcome = aigw_core::mcp::probe_server(&upstream.base_url, None, &[])
+    let outcome = aigw_core::mcp::probe_server(&target(&upstream.base_url, None), &[])
         .await
         .expect("probe");
     let names: Vec<&str> = outcome.tools.iter().map(|t| t.tool_name.as_str()).collect();
@@ -288,7 +298,7 @@ async fn a_tool_name_repeated_across_pages_is_kept_once() {
     ))
     .await;
 
-    let outcome = aigw_core::mcp::probe_server(&upstream.base_url, None, &[])
+    let outcome = aigw_core::mcp::probe_server(&target(&upstream.base_url, None), &[])
         .await
         .expect("a repeated name must not fail the probe");
     let names: Vec<&str> = outcome.tools.iter().map(|t| t.tool_name.as_str()).collect();
@@ -308,7 +318,7 @@ async fn a_200_with_an_html_body_is_a_failure() {
     ))
     .await;
 
-    let err = aigw_core::mcp::probe_server(&upstream.base_url, None, &[])
+    let err = aigw_core::mcp::probe_server(&target(&upstream.base_url, None), &[])
         .await
         .expect_err("HTML is not a JSON-RPC answer");
     match err {
@@ -355,7 +365,7 @@ async fn an_upstream_echoing_its_own_cursor_stops_at_the_page_cap() {
     ))
     .await;
 
-    let outcome = aigw_core::mcp::probe_server(&upstream.base_url, None, &[])
+    let outcome = aigw_core::mcp::probe_server(&target(&upstream.base_url, None), &[])
         .await
         .expect("probe");
     assert_eq!(outcome.tools.len(), MAX_TOOL_PAGES);
@@ -392,7 +402,7 @@ async fn an_sse_body_yields_the_same_tools_as_the_json_branch() {
     ))
     .await;
 
-    let outcome = aigw_core::mcp::probe_server(&upstream.base_url, None, &[])
+    let outcome = aigw_core::mcp::probe_server(&target(&upstream.base_url, None), &[])
         .await
         .expect("probe");
     let names: Vec<&str> = outcome.tools.iter().map(|t| t.tool_name.as_str()).collect();
@@ -414,7 +424,7 @@ async fn a_server_error_surfaces_the_status_and_the_truncated_body() {
     ))
     .await;
 
-    let err = aigw_core::mcp::probe_server(&upstream.base_url, None, &[])
+    let err = aigw_core::mcp::probe_server(&target(&upstream.base_url, None), &[])
         .await
         .expect_err("502 is a failure");
     assert_eq!(err.upstream_status(), Some(502));
@@ -451,7 +461,7 @@ async fn the_authorization_header_carries_the_resolved_token() {
     ))
     .await;
 
-    aigw_core::mcp::probe_server(&upstream.base_url, Some("sk-upstream"), &[])
+    aigw_core::mcp::probe_server(&target(&upstream.base_url, Some("sk-upstream")), &[])
         .await
         .expect("probe");
     assert_eq!(

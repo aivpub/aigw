@@ -25,8 +25,8 @@ use tracing::warn;
 
 use super::keys::SharedState;
 use super::mcp_gateway::{
-    call_row, check_tool_allowed, finish, mark, request_id_of, resolve_bearer, target, CallContext,
-    Outcome,
+    call_row, check_tool_allowed, effective_owner, finish, mark, outbound_headers, request_id_of,
+    resolve_bearer, target, CallContext, Outcome,
 };
 use super::mcp_relay;
 use super::spend::SpendAuth;
@@ -297,11 +297,13 @@ pub async fn tools_call(
             .await;
         }
     };
+    let headers = outbound_headers(&state, &server, bearer.as_deref());
+    let token_owner = effective_owner(&headers, token_owner);
     row.token_owner = token_owner.to_string();
 
     let ctx = CallContext {
+        headers,
         server,
-        bearer,
         token_owner,
     };
     let envelope = json!({
@@ -362,7 +364,15 @@ pub async fn health(State(state): State<SharedState>, SpendAuth(auth): SpendAuth
                 continue;
             }
         };
-        let status = session::reachable(&server.url, bearer.as_deref(), PROBE_TIMEOUT).await;
+        let headers = outbound_headers(&state, &server, bearer.as_deref());
+        let target = session::UpstreamTarget {
+            url: &server.url,
+            auth: headers.auth(),
+            extra_headers: headers.extra(),
+            stack: session::upstream_stack(server.protocol_version.as_deref()),
+            timeout: PROBE_TIMEOUT,
+        };
+        let status = session::reachable(&target).await;
         servers.push(json!({
             "alias": server.alias,
             "reachable": status.is_some(),

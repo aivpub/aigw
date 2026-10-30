@@ -3,7 +3,7 @@
 **所属**: Phase 56（MCP Gateway 生产反馈迭代）
 **预估**: ~16h（迁移 ×3 + store ×3 + 出站注入四处 + 探测 + 管理 API + 前端 ServerDialog + BDD）
 **依赖**: Stage 140（`mcp_servers` 表与 `McpServerRow`）、Stage 141（probe / reload）、Stage 143（`session::UpstreamTarget` / `request_builder`）、Stage 142（`ServerDialog`）
-**状态**: 📋 规划中（待批准）
+**状态**: ✅ 完成（2026-10-31）
 
 **提交**: —
 
@@ -83,7 +83,7 @@
 
 **值永不出网关**：
 - `GET /admin/mcp/servers` 与 `GET /admin/mcp/servers/{id}`：`auth_header_name` 明文回显（它是配置，得让人看见自己在配什么）；`auth_header_value` 已配置回 `"***"`、未配置回 `null`；`extra_headers[].value` 恒 `"***"`（`name` 明文）。
-- **LIST 不解密**：列表页不需要值，解密 32 个 server 的密文纯属浪费；脱敏在序列化层按「非空即 `***`」判定，不需要明文。
+- **LIST 解密（与规划时的判断相反，2026-10-31 修正）**：原方案写的是「列表页不需要值，不解密」，实现时发现列表行正是编辑对话框的入口 —— 不解密就只有一个头名、没有值，`extra_headers` 会显示成空列表，下一次保存就把用户配的头全删了（`extra_headers` 是整块替换）。所以列表也解密，只用于取出**名字**，值在 `server_wire` 里一律换成 `***`。代价是每行一次 `unseal_token`（AES-GCM，微秒级）；分页上限 100 行，可接受。复用的是同一个 `decrypt_litellm_value`，`v2:gcm:` 走 GCM 分支；若历史行是明文/NaCl 形态会落到 PBKDF2（600k 次）那条慢路径 —— 与 token 表同一既有行为，不额外处理。
 - 编辑语义：`PUT` 时 `auth_header_value` / `extra_headers` **缺省 = 不改**，空串 / 空数组 = **清除**。前端「值」输入框 `type="password"`、编辑时 placeholder 写「留空则不修改」、旁边显示 `***`——与 `MyTokenDialog`「只能替换不能编辑」同一语义。
 
 ### 3.2 注入：一个头名 + 一个值，`UpstreamAuth` 枚举
@@ -281,14 +281,14 @@ pub async fn probe_server(target: &ProbeTarget<'_>, other_server_tool_names: &[S
 
 ## 7. 门禁
 
-- [ ] 库里的 `auth_header_value` 与 `extra_headers` 不含明文，以 `v2:gcm:` 开头且可 `unseal_token` 还原（real BDD 直读，三方言）
-- [ ] `GET /admin/mcp/servers` 与 `/{id}` 响应里 `auth_header_value` / `extra_headers[].value` 一律 `***`，响应体不出现明文
-- [ ] 受保护头（六个）注册被拒并给出 `invalid_header_name`；`auth_header_name` 与 `extra_headers` 重名给 `duplicate_header_name`；配名不配值给 `auth_value_required`
-- [ ] 默认 Bearer 路径零回归：未配新字段的 server，出站头与 Stage 143 逐字节相同（UT + BDD 各一条）
-- [ ] 探测与运行路径用同一套头：`probe.rs` 与 `session.rs` 共用 `UpstreamAuth`，BDD 断言两者到达上游的头序列一致
-- [ ] 三方言 real BDD 全绿（含 `033` 迁移应用成功、值缺省不改 / 空串清除在三方言一致）
-- [ ] 前端编辑已有 server 时不把 `***` 当值写回（值框不预填，UT/BDD 断言提交体里不含 `***`）
-- [ ] `task test` / `task bdd` / `fmt` / `lint` 全绿
+- [x] 库里的 `auth_header_value` 与 `extra_headers` 不含明文，以 `v2:gcm:` 开头且可 `unseal_token` 还原（real BDD 直读，三方言）—— `real_mcp_headers_steps.rs` 直读三方言库断言密文前缀与明文，`bdd-real-sqlite|pg|mysql` 各 84/84
+- [x] `GET /admin/mcp/servers` 与 `/{id}` 响应里 `auth_header_value` / `extra_headers[].value` 一律 `***`，响应体不出现明文 —— UT `a_saved_response_redacts_both_secrets`；`server_wire` 是唯一序列化点（list / all / get / create / update / toggle 全部经它）
+- [x] 受保护头（六个）注册被拒并给出 `invalid_header_name`；`auth_header_name` 与 `extra_headers` 重名给 `duplicate_header_name`；配名不配值给 `auth_value_required` —— `reserved_names_are_rejected_case_insensitively` 覆盖全部六个；`a_reserved_auth_name_is_rejected` / `an_extra_header_colliding_with_the_auth_name_is_rejected` / `a_name_without_a_value_is_rejected`
+- [x] 默认 Bearer 路径零回归：未配新字段的 server，出站头与 Stage 143 逐字节相同 —— `OutboundHeaders::resolve` 在无名字无静态值时就产 `UpstreamAuth::Bearer(token)`，BDD 场景 `默认 Bearer 不回归`；`an_unset_auth_name_still_owns_the_authorization_header` 钉死「未配名字时 `Authorization` 仍属协议凭据」
+- [x] 探测与运行路径用同一套头：`probe.rs` 与 `session.rs` 共用 `UpstreamAuth`，BDD 断言两者到达上游的头序列一致 —— `mcp_server_headers.feature` 的「探测与调用到达上游的头一致」；`user_required` 的例外见 ADR-048 决策 2（探测显式抹掉静态值，与真实调用一致）
+- [x] 三方言 real BDD 全绿（含 `033` 迁移应用成功、值缺省不改 / 空串清除在三方言一致）—— 2026-10-31 在 §8.1 的七条修正**之后**重跑 `bdd-real-sqlite` / `bdd-real-pg` / `bdd-real-mysql`，各 `84 scenarios (84 passed) / 473 steps`，exit 0
+- [x] 前端编辑已有 server 时不把 `***` 当值写回（值框不预填，UT/BDD 断言提交体里不含 `***`）—— 值框只读 placeholder；后端另加 `ValueIsRedacted` 兜底（ADR-048 决策 5），任何客户端回写 `***` 都是 400
+- [x] `task test` / `task bdd` / `fmt` / `lint` 全绿 —— `task test` 全量 1576 passed / 0 failed；`task bdd` 见下方证据；`task fmt` / `task lint` / `task doctor` 均通过；`task fe-bdd` 594 passed / 3 skipped
 
 ---
 
@@ -302,6 +302,22 @@ pub async fn probe_server(target: &ProbeTarget<'_>, other_server_tool_names: &[S
 - **`reachable` 签名改动波及 `/mcp-rest/health`**（`mcp_rest.rs:365`），这条路径的响应形状不变，但它现在也会带自定义头——意味着 health 探测对 TAPD 这类上游从「401 不可达」变为「可达」，这是修复而非回归，需要在 §6 手工验证里确认一次。
 - **`transport` 空列** 仍保留（§3.5），技术债照旧登记。
 - **`probe_bearer` → `probe_credential` 的改名是语义纠偏** —— 旧名会让后来者以为「探测只能带 bearer」，从而在 probe 里再分叉一次，正是本 Stage 要消灭的形态。
+
+### 8.1 Gate 4 复查后的修正（2026-10-31）
+
+独立复查找出的问题全部在**失败路径**上，已按 ADR-048 修完并各补一条测试：
+
+| # | 问题 | 修正 |
+|---|------|------|
+| 1 | `decrypt_extra_headers` 解密失败返回空列表，而这个空列表会进 `PUT` 的整表替换 → 换 key 后保存一次就把密文覆写成 `NULL` | 新增严格版 `try_decrypt_extra_headers`；管理读写路径用它，解不开就 500 且密文不动 |
+| 2 | `OutboundHeaders::resolve` 对 `user_required` 仍回落静态值 → 探测成功但真实调用永远 403 | `probe_and_store` 显式抹掉静态值，与 `prepare_for` 的判定一致 |
+| 3 | `token_owner` 只认 token 行 → 只有静态值的 server 每次调用都记 `anonymous` | 新增 `effective_owner`：凭据实际出站就记 `server` |
+| 4 | `validate_value` 只拒 CR/LF，非 ASCII / 控制字符存进去后每次调用都是不可归因的传输错误 | 与 `HeaderValue::from_str` 同集合：只接受可打印 ASCII + tab |
+| 5 | `***` 可当值提交 → `GET→改→PUT` 的客户端把真凭据换成三个星号且看不出来 | 新增 `ValueIsRedacted`，仍归 `invalid_header_value` |
+| 6 | `auth_header_value` 无 `auth_header_name` 时 200 且丢弃 | 400 `auth_value_required` |
+| 7 | 仅大小写变化的改名被当成改名，要求重输值 | 改名判定用 `eq_ignore_ascii_case` |
+
+第 1 条的另一半是**换 key 没有迁移路径**这件事本身 —— 已登记 **TD-031**，不在本 Stage 处理。
 
 ---
 

@@ -26,6 +26,12 @@ use aigw_core::db::McpCallFilter;
 use aigw_core::mcp::acl::{is_known_scope, ToolRule};
 use aigw_core::mcp::catalog_cache::{self, DEFAULT_TTL_MS};
 use aigw_core::mcp::credential::{is_token_usable, seal_token, unseal_token};
+use aigw_core::mcp::headers::{
+    self, decrypt_extra_headers, encode_extra_headers, redact, try_decrypt_extra_headers,
+    validate_extra_headers, validate_name, validate_value, ExtraHeader, HeaderError,
+    OutboundHeaders, REDACTED,
+};
+use aigw_core::mcp::probe::ProbeTarget;
 use aigw_core::mcp::{probe_server, validate_alias, ProbeError};
 use aigw_core::models::{
     CatalogSnapshot, CreateMcpServerRequest, CredentialScope, McpServerRow, McpServerTokenRow,
@@ -139,6 +145,92 @@ fn now_rfc3339() -> String {
     chrono::Utc::now().to_rfc3339()
 }
 
+/// The header fields of a server as they will be stored, after validation.
+///
+/// Every write path funnels through this so the stored blob and the outbound
+/// header set always describe the same configuration — the failure mode of
+/// validating in the handler and encrypting somewhere else is a server whose
+/// admin view disagrees with what goes on the wire.
+struct HeaderColumns {
+    auth_header_name: Option<String>,
+    auth_header_value: Option<String>,
+    extra_headers: Option<String>,
+}
+
+fn header_error(e: HeaderError) -> (StatusCode, Json<Value>) {
+    bad_request(e.to_string(), e.kind())
+}
+
+fn auth_value_required() -> (StatusCode, Json<Value>) {
+    bad_request(
+        "auth_header_value is required when auth_header_name is set",
+        "auth_value_required",
+    )
+}
+
+fn seal(plain: &str, master_key: Option<&str>) -> Result<String, (StatusCode, Json<Value>)> {
+    let mk = master_key.ok_or_else(master_key_missing)?;
+    seal_token(plain, mk).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {
+                "message": format!("could not encrypt the header value: {e}"),
+                "type": "token_seal_failed",
+            }})),
+        )
+    })
+}
+
+/// Validate and encode a fully-resolved header configuration.
+///
+/// `value` is plaintext (or `None`); the returned column is sealed. `extras` is
+/// the complete list, not a delta — the store is whole-table replacement, which
+/// is what makes "the list you see is the list that goes out" true.
+fn encode_headers(
+    name: Option<String>,
+    value: Option<String>,
+    extras: Vec<ExtraHeader>,
+    master_key: Option<&str>,
+) -> Result<HeaderColumns, (StatusCode, Json<Value>)> {
+    if let Some(name) = name.as_deref() {
+        validate_name(name).map_err(header_error)?;
+    }
+    let extras = headers::normalize(&extras);
+    validate_extra_headers(&extras, name.as_deref()).map_err(header_error)?;
+
+    let sealed_value = match (&name, value.filter(|v| !v.trim().is_empty())) {
+        (Some(_), Some(plain)) => {
+            validate_value(name.as_deref().unwrap_or_default(), &plain).map_err(header_error)?;
+            Some(seal(&plain, master_key)?)
+        }
+        // A name with no value would send an empty header, which some upstreams
+        // read as "credential present but wrong" — a 401 that looks like a
+        // permissions problem rather than a configuration gap.
+        (Some(_), None) => return Err(auth_value_required()),
+        // A value with no name has nowhere to go: the gateway would seal it,
+        // answer 200, and never send it. Reject rather than accept a credential
+        // that is silently inert.
+        (None, Some(_)) => {
+            return Err(bad_request(
+                "auth_header_value requires auth_header_name",
+                "auth_value_required",
+            ))
+        }
+        (None, None) => None,
+    };
+
+    let sealed_extras = match encode_extra_headers(&extras) {
+        Some(json) => Some(seal(&json, master_key)?),
+        None => None,
+    };
+
+    Ok(HeaderColumns {
+        auth_header_name: name,
+        auth_header_value: sealed_value,
+        extra_headers: sealed_extras,
+    })
+}
+
 fn validate_url(url: &str) -> Result<(), (StatusCode, Json<Value>)> {
     if url.trim().is_empty() {
         return Err(bad_request("url must not be empty", "invalid_url"));
@@ -211,6 +303,42 @@ async fn with_tool_count(
     Ok(server)
 }
 
+/// The response shape of a server row.
+///
+/// Serialising [`McpServerRow`] directly would ship the ciphertext of the
+/// credential columns to the browser and — worse — let the edit dialog round-trip
+/// `***` back over a real value. `auth_header_name` stays in clear (an operator
+/// has to see what they configured); the two secret columns come back as `***`.
+///
+/// The list decrypts too, though §3.1 of the stage doc expected it not to: the
+/// edit dialog is opened from a list row, so without the decrypted names the
+/// dialog would show an empty header list and the next save would delete them.
+fn server_wire(server: &McpServerRow, master_key: Option<&str>) -> Value {
+    let mut value = serde_json::to_value(server).unwrap_or_else(|_| json!({}));
+    value["auth_header_value"] = match server
+        .auth_header_value
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        Some(_) => json!(REDACTED),
+        None => Value::Null,
+    };
+    value["extra_headers"] = match master_key {
+        Some(mk) => json!(redact(&decrypt_extra_headers(
+            server.extra_headers.as_deref(),
+            mk
+        ))),
+        None => Value::Null,
+    };
+    value
+}
+
+fn wire_all(state: &SharedState, servers: &[McpServerRow]) -> Vec<Value> {
+    let mk = state.aigw_master_key.as_deref();
+    servers.iter().map(|s| server_wire(s, mk)).collect()
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Servers
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -249,7 +377,7 @@ pub async fn list_mcp_servers(
 
     Ok(Json(json!({
         "object": "list",
-        "data": rows,
+        "data": wire_all(&state, &rows),
         "count": rows.len(),
         "total_count": total_count,
         "page": page,
@@ -264,9 +392,11 @@ pub async fn list_all_mcp_servers(
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     require_admin(&auth)?;
     let rows = state.db.list_mcp_servers().await.map_err(db_error)?;
-    Ok(Json(
-        json!({"object": "list", "data": rows, "count": rows.len()}),
-    ))
+    Ok(Json(json!({
+        "object": "list",
+        "data": wire_all(&state, &rows),
+        "count": rows.len(),
+    })))
 }
 
 pub async fn create_mcp_server(
@@ -321,6 +451,12 @@ pub async fn create_mcp_server(
     }
 
     let now = now_rfc3339();
+    let columns = encode_headers(
+        headers::auth_header_name(body.auth_header_name.as_deref()),
+        body.auth_header_value,
+        merge_extra_values(body.extra_headers.unwrap_or_default(), &[])?,
+        state.aigw_master_key.as_deref(),
+    )?;
     let row = McpServerRow {
         id: 0,
         alias: body.alias.clone(),
@@ -334,13 +470,19 @@ pub async fn create_mcp_server(
             .to_string(),
         enabled: body.enabled.unwrap_or(true),
         protocol_version: None,
+        auth_header_name: columns.auth_header_name,
+        auth_header_value: columns.auth_header_value,
+        extra_headers: columns.extra_headers,
         tool_count: 0,
         created_at: now.clone(),
         updated_at: now,
     };
     let id = state.db.create_mcp_server(&row).await.map_err(db_error)?;
     let created = fetch_server(&state, id).await?;
-    Ok(Json(serde_json::to_value(created).unwrap_or(json!({}))))
+    Ok(Json(server_wire(
+        &created,
+        state.aigw_master_key.as_deref(),
+    )))
 }
 
 pub async fn get_mcp_server(
@@ -351,7 +493,7 @@ pub async fn get_mcp_server(
     require_admin(&auth)?;
     let server = fetch_server(&state, id).await?;
     let server = with_tool_count(&state, server).await?;
-    Ok(Json(serde_json::to_value(server).unwrap_or(json!({}))))
+    Ok(Json(server_wire(&server, state.aigw_master_key.as_deref())))
 }
 
 pub async fn update_mcp_server(
@@ -395,6 +537,70 @@ pub async fn update_mcp_server(
     if let Some(enabled) = body.enabled {
         server.enabled = enabled;
     }
+
+    // Absent leaves the stored configuration alone; present replaces all three
+    // together. Replacing together is what keeps the cross-field rules (name
+    // required with value, no collision with extras) checkable at all.
+    if body.auth_header_name.is_some()
+        || body.auth_header_value.is_some()
+        || body.extra_headers.is_some()
+    {
+        let mk = state.aigw_master_key.as_deref();
+        let stored_name = headers::auth_header_name(server.auth_header_name.as_deref());
+        let name = match body.auth_header_name {
+            Some(name) => headers::auth_header_name(name.as_deref()),
+            None => stored_name.clone(),
+        };
+        // A renamed header with the old value absent would pair a new name with
+        // whatever the old one held. That is sometimes wanted but never
+        // obviously right, so it is rejected rather than guessed at — the
+        // operator retypes the value, or leaves the name alone. Case alone is
+        // not a rename: HTTP header names are case-insensitive, and the stored
+        // value is already the right credential for the same header.
+        let renamed = match (&name, &stored_name) {
+            (Some(new), Some(old)) => !new.eq_ignore_ascii_case(old),
+            (None, None) => false,
+            _ => true,
+        };
+        let value = match body.auth_header_value {
+            Some(Some(value)) if !value.trim().is_empty() => Some(value),
+            Some(_) if renamed && name.is_some() => return Err(auth_value_required()),
+            Some(_) => None,
+            None if renamed && name.is_some() => return Err(auth_value_required()),
+            // Clearing the name drops the value with it, so there is nothing to
+            // read back — and a value that cannot be unsealed must not block an
+            // operation whose whole point is to discard it.
+            None if name.is_none() => None,
+            None => unseal_or_none(server.auth_header_value.as_deref(), mk)?,
+        };
+        // The strict read is load-bearing here: this list is fed back into a
+        // whole-list replacement, so an unreadable blob read leniently would
+        // become "configured empty" and the next save would null the column.
+        let stored_extras = match (mk, server.extra_headers.as_deref()) {
+            (Some(mk), _) => try_decrypt_extra_headers(server.extra_headers.as_deref(), mk)
+                .map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({"error": {
+                            "message": format!("could not decrypt the stored extra headers: {e}"),
+                            "type": "token_unseal_failed",
+                        }})),
+                    )
+                })?,
+            (None, None) => Vec::new(),
+            (None, Some(_)) => return Err(master_key_missing()),
+        };
+        let extras = match body.extra_headers {
+            Some(extras) => merge_extra_values(extras, &stored_extras)?,
+            None => stored_extras,
+        };
+        let columns = encode_headers(name, value, extras, mk)?;
+        server.auth_header_name = columns.auth_header_name;
+        server.auth_header_value = columns.auth_header_value;
+        server.extra_headers = columns.extra_headers;
+        catalog_cache::invalidate(id);
+    }
+
     server.updated_at = now_rfc3339();
 
     state
@@ -404,7 +610,32 @@ pub async fn update_mcp_server(
         .map_err(db_error)?;
     let updated = fetch_server(&state, id).await?;
     let updated = with_tool_count(&state, updated).await?;
-    Ok(Json(serde_json::to_value(updated).unwrap_or(json!({}))))
+    Ok(Json(server_wire(
+        &updated,
+        state.aigw_master_key.as_deref(),
+    )))
+}
+
+/// The current plaintext value, needed when the client changes the header name
+/// but not the value: the two are stored as separate fields, so leaving the
+/// ciphertext alone would keep the old name's value under the new name.
+fn unseal_or_none(
+    sealed: Option<&str>,
+    master_key: Option<&str>,
+) -> Result<Option<String>, (StatusCode, Json<Value>)> {
+    let Some(sealed) = sealed.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    let mk = master_key.ok_or_else(master_key_missing)?;
+    unseal_token(sealed, mk).map(Some).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": {
+                "message": format!("could not decrypt the stored header value: {e}"),
+                "type": "token_unseal_failed",
+            }})),
+        )
+    })
 }
 
 pub async fn delete_mcp_server(
@@ -459,19 +690,61 @@ pub async fn toggle_mcp_server(
         .await
         .map_err(db_error)?;
     let server = with_tool_count(&state, server).await?;
-    Ok(Json(serde_json::to_value(server).unwrap_or(json!({}))))
+    Ok(Json(server_wire(&server, state.aigw_master_key.as_deref())))
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Probe
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+/// Fill in values the client cannot send back.
+///
+/// Extra-header values are `***` in every response, so an edit dialog can only
+/// echo the names. A row that arrives with an empty value and a name that is
+/// already stored therefore means "keep what is there" — the alternative is an
+/// edit that silently blanks every extra header, which is the very failure this
+/// stage has to avoid for the auth header value.
+fn merge_extra_values(
+    incoming: Vec<ExtraHeader>,
+    stored: &[ExtraHeader],
+) -> Result<Vec<ExtraHeader>, (StatusCode, Json<Value>)> {
+    incoming
+        .into_iter()
+        .map(|header| {
+            if !header.value.trim().is_empty() {
+                return Ok(header);
+            }
+            match stored
+                .iter()
+                .find(|s| s.name.eq_ignore_ascii_case(header.name.trim()))
+            {
+                Some(old) => Ok(ExtraHeader {
+                    name: header.name,
+                    value: old.value.clone(),
+                }),
+                None => Err(bad_request(
+                    format!(
+                        "value of extra header \"{}\" must not be empty",
+                        header.name
+                    ),
+                    "invalid_header_value",
+                )),
+            }
+        })
+        .collect()
+}
+
 /// The credential a probe puts on the wire.
+///
+/// Named for the credential, not the header: since the header name is
+/// configurable, calling this `probe_bearer` would invite the next reader to
+/// think the probe can only send `Authorization: Bearer` — the exact split this
+/// stage removes.
 ///
 /// `user_required` gets none: the admin probe has no user identity, and falling
 /// back to the shared token would make the probe succeed against a server the
 /// actual caller cannot reach.
-async fn probe_bearer(
+async fn probe_credential(
     state: &SharedState,
     server: &McpServerRow,
 ) -> Result<Option<String>, (StatusCode, Json<Value>)> {
@@ -527,8 +800,27 @@ async fn probe_and_store(
     server: &McpServerRow,
     others: &[String],
 ) -> Result<(aigw_core::models::ProbeOutcome, Vec<McpToolRow>), (StatusCode, Json<Value>)> {
-    let bearer = probe_bearer(state, server).await?;
-    let outcome = probe_server(&server.url, bearer.as_deref(), others)
+    let credential = probe_credential(state, server).await?;
+    // The probe sends exactly what the call path sends. Assembling the target
+    // through `OutboundHeaders` rather than passing a bearer is what makes
+    // "probe succeeded" mean "a call with this configuration can succeed".
+    let mut headers = OutboundHeaders::resolve(
+        server,
+        credential.as_deref(),
+        state.aigw_master_key.as_deref(),
+    );
+    if server.scope() == CredentialScope::UserRequired {
+        // A caller on a `user_required` server always brings their own token,
+        // and never the static value — so a probe that sends the static value
+        // reports a reachability no real call can reproduce.
+        headers.auth_header_value = None;
+    }
+    let target = ProbeTarget {
+        url: &server.url,
+        auth: headers.auth(),
+        extra_headers: headers.extra(),
+    };
+    let outcome = probe_server(&target, others)
         .await
         .map_err(|e| probe_failed(&e))?;
 
@@ -1085,7 +1377,7 @@ mod tests {
     use aigw_core::models::VirtualKey;
     use axum::http::Method;
     use axum::Router;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     use tower::util::ServiceExt;
 
     const MK: &str = "sk-master-test";
@@ -1327,6 +1619,54 @@ mod tests {
             let _ = axum::serve(listener, app).await;
         });
         format!("http://{addr}/mcp")
+    }
+
+    /// The same stub, recording the credential each request carried.
+    async fn spawn_probe_stub_recording_auth() -> (String, Arc<Mutex<Vec<Option<String>>>>) {
+        use axum::routing::post;
+        let seen: Arc<Mutex<Vec<Option<String>>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        let app = Router::new().route(
+            "/mcp",
+            post(
+                move |headers: axum::http::HeaderMap, Json(request): Json<Value>| {
+                    let sink = sink.clone();
+                    async move {
+                        sink.lock().unwrap().push(
+                            headers
+                                .get("authorization")
+                                .and_then(|v| v.to_str().ok())
+                                .map(str::to_string),
+                        );
+                        let id = request.get("id").cloned().unwrap_or(Value::Null);
+                        let method = request
+                            .get("method")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default();
+                        let result = match method {
+                            "server/discover" => json!({
+                                "supportedVersions": ["2026-07-28"],
+                                "ttlMs": 60_000,
+                                "serverInfo": {"name": "mcp-test-stub"},
+                            }),
+                            "tools/list" => {
+                                json!({"tools": [{"name": "search", "description": "s"}]})
+                            }
+                            _ => json!({}),
+                        };
+                        Json(json!({"jsonrpc": "2.0", "id": id, "result": result}))
+                    }
+                },
+            ),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind probe stub");
+        let addr = listener.local_addr().expect("probe stub addr");
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (format!("http://{addr}/mcp"), seen)
     }
 
     async fn seed_catalog(state: &SharedState, server_id: i64, names: &[&str]) {
@@ -2765,5 +3105,391 @@ mod tests {
         let (s, body) = send(&app, Method::GET, "/admin/mcp/calls", &raw, None).await;
         assert_eq!(s, 403);
         assert_eq!(body["error"]["type"], "forbidden");
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // Stage 146 — custom auth header and extra headers
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    fn custom_body(alias: &str) -> Value {
+        json!({
+            "alias": alias,
+            "display_name": format!("{alias} server"),
+            "url": "http://127.0.0.1:1/mcp",
+            "auth_header_name": "X-Tapd-Access-Token",
+            "auth_header_value": "tapd-secret",
+            "extra_headers": [{"name": "X-Project-Id", "value": "12345"}],
+        })
+    }
+
+    async fn stored(state: &SharedState, id: i64) -> McpServerRow {
+        state
+            .db
+            .get_mcp_server(id)
+            .await
+            .unwrap()
+            .expect("server row")
+    }
+
+    #[tokio::test]
+    async fn a_custom_auth_header_and_extras_land_sealed() {
+        let state = test_state().await;
+        let app = build_router(state.clone());
+        let (s, body) = send(
+            &app,
+            Method::POST,
+            "/admin/mcp/servers",
+            MK,
+            Some(custom_body("tapd")),
+        )
+        .await;
+        assert_eq!(s, 200, "{body}");
+
+        let row = stored(&state, body["id"].as_i64().unwrap()).await;
+        assert_eq!(row.auth_header_name.as_deref(), Some("X-Tapd-Access-Token"));
+        let value = row.auth_header_value.expect("sealed value");
+        assert!(value.starts_with("v2:gcm:"), "value not sealed: {value}");
+        assert!(!value.contains("tapd-secret"));
+        let extras = row.extra_headers.expect("sealed extras");
+        assert!(extras.starts_with("v2:gcm:"), "extras not sealed: {extras}");
+        assert!(!extras.contains("12345"));
+
+        let plain = aigw_core::mcp::headers::decrypt_extra_headers(Some(&extras), MK);
+        assert_eq!(
+            plain,
+            vec![aigw_core::mcp::headers::ExtraHeader {
+                name: "X-Project-Id".to_string(),
+                value: "12345".to_string(),
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_saved_response_redacts_both_secrets() {
+        let state = test_state().await;
+        let app = build_router(state.clone());
+        let (_, created) = send(
+            &app,
+            Method::POST,
+            "/admin/mcp/servers",
+            MK,
+            Some(custom_body("tapd")),
+        )
+        .await;
+        let id = created["id"].as_i64().unwrap();
+
+        for (uri, pick) in [
+            (
+                "/admin/mcp/servers".to_string(),
+                Box::new(|b: &Value| b["data"][0].clone()) as Box<dyn Fn(&Value) -> Value>,
+            ),
+            (
+                format!("/admin/mcp/servers/{id}"),
+                Box::new(|b: &Value| b.clone()) as Box<dyn Fn(&Value) -> Value>,
+            ),
+        ] {
+            let (s, body) = send(&app, Method::GET, &uri, MK, None).await;
+            assert_eq!(s, 200, "{body}");
+            let row = pick(&body);
+            assert_eq!(
+                row["auth_header_name"],
+                json!("X-Tapd-Access-Token"),
+                "{uri}"
+            );
+            assert_eq!(row["auth_header_value"], json!(REDACTED), "{uri}");
+            assert_eq!(
+                row["extra_headers"][0]["name"],
+                json!("X-Project-Id"),
+                "{uri}"
+            );
+            assert_eq!(row["extra_headers"][0]["value"], json!(REDACTED), "{uri}");
+            let text = body.to_string();
+            assert!(!text.contains("tapd-secret"), "plaintext leaked: {text}");
+            assert!(!text.contains("12345"), "extra value leaked: {text}");
+            assert!(!text.contains("v2:gcm:"), "ciphertext leaked: {text}");
+        }
+    }
+
+    #[tokio::test]
+    async fn an_absent_value_on_update_keeps_the_stored_one() {
+        let state = test_state().await;
+        let app = build_router(state.clone());
+        let (_, created) = send(
+            &app,
+            Method::POST,
+            "/admin/mcp/servers",
+            MK,
+            Some(custom_body("tapd")),
+        )
+        .await;
+        let id = created["id"].as_i64().unwrap();
+
+        let (s, body) = send(
+            &app,
+            Method::PUT,
+            &format!("/admin/mcp/servers/{id}"),
+            MK,
+            Some(json!({"display_name": "renamed"})),
+        )
+        .await;
+        assert_eq!(s, 200, "{body}");
+        let row = stored(&state, id).await;
+        let sealed = row.auth_header_value.clone().expect("value survived");
+        assert_eq!(
+            unseal_or_none(Some(&sealed), Some(MK)).unwrap(),
+            Some("tapd-secret".to_string())
+        );
+        assert_eq!(row.auth_header_name.as_deref(), Some("X-Tapd-Access-Token"));
+        assert!(row.extra_headers.is_some(), "extras survived");
+    }
+
+    #[tokio::test]
+    async fn clearing_the_name_does_not_need_the_value_to_unseal() {
+        let state = test_state().await;
+        let app = build_router(state.clone());
+        let (_, created) = send(
+            &app,
+            Method::POST,
+            "/admin/mcp/servers",
+            MK,
+            Some(custom_body("stale")),
+        )
+        .await;
+        let id = created["id"].as_i64().unwrap();
+        let mut row = stored(&state, id).await;
+        row.auth_header_value = Some("v2:gcm:unreadable".to_string());
+        state.db.update_mcp_server(&row).await.unwrap();
+
+        let (s, body) = send(
+            &app,
+            Method::PUT,
+            &format!("/admin/mcp/servers/{id}"),
+            MK,
+            Some(json!({"auth_header_name": ""})),
+        )
+        .await;
+        assert_eq!(s, 200, "{body}");
+        let row = stored(&state, id).await;
+        assert!(row.auth_header_name.is_none(), "name cleared");
+        assert!(row.auth_header_value.is_none(), "value dropped with it");
+    }
+
+    #[tokio::test]
+    async fn an_empty_value_on_update_clears_the_column() {
+        let state = test_state().await;
+        let app = build_router(state.clone());
+        let (_, created) = send(
+            &app,
+            Method::POST,
+            "/admin/mcp/servers",
+            MK,
+            Some(custom_body("tapd")),
+        )
+        .await;
+        let id = created["id"].as_i64().unwrap();
+
+        let (s, body) = send(
+            &app,
+            Method::PUT,
+            &format!("/admin/mcp/servers/{id}"),
+            MK,
+            Some(json!({"auth_header_name": "", "extra_headers": []})),
+        )
+        .await;
+        assert_eq!(s, 200, "{body}");
+        let row = stored(&state, id).await;
+        assert!(row.auth_header_name.is_none(), "name cleared");
+        assert!(row.auth_header_value.is_none(), "value cleared");
+        assert!(row.extra_headers.is_none(), "extras cleared");
+    }
+
+    #[tokio::test]
+    async fn a_probe_sends_no_static_credential_for_a_user_required_server() {
+        let state = test_state().await;
+        let (url, seen) = spawn_probe_stub_recording_auth().await;
+        let mut body = custom_body("locked");
+        body["url"] = json!(url);
+        body["credential_scope"] = json!("user_required");
+        let app = build_router(state.clone());
+        let id = create_server(&app, "locked", body).await;
+
+        let (s, resp) = send(
+            &app,
+            Method::POST,
+            &format!("/admin/mcp/servers/{id}/probe"),
+            MK,
+            None,
+        )
+        .await;
+        // The upstream accepts it either way; what matters is what the probe
+        // sent. A call through this server always brings a user token and never
+        // the static value, so a probe that sends it reports a reachability no
+        // real call can reproduce.
+        assert_eq!(s, 200, "{resp}");
+        assert!(
+            seen.lock().unwrap().iter().all(|a| a.is_none()),
+            "user_required probe must not send the server's static credential: {:?}",
+            seen.lock().unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_reserved_auth_name_is_rejected() {
+        let app = build_router(test_state().await);
+        let mut body = custom_body("reserved");
+        body["auth_header_name"] = json!("Mcp-Session-Id");
+        let (s, resp) = send(&app, Method::POST, "/admin/mcp/servers", MK, Some(body)).await;
+        assert_eq!(s, 400, "{resp}");
+        assert_eq!(resp["error"]["type"], "invalid_header_name");
+    }
+
+    #[tokio::test]
+    async fn an_extra_header_colliding_with_the_auth_name_is_rejected() {
+        let app = build_router(test_state().await);
+        let mut body = custom_body("collide");
+        body["extra_headers"] = json!([{"name": "x-tapd-access-token", "value": "other"}]);
+        let (s, resp) = send(&app, Method::POST, "/admin/mcp/servers", MK, Some(body)).await;
+        assert_eq!(s, 400, "{resp}");
+        assert_eq!(resp["error"]["type"], "duplicate_header_name");
+    }
+
+    #[tokio::test]
+    async fn a_name_without_a_value_is_rejected() {
+        let app = build_router(test_state().await);
+        let mut body = custom_body("no-value");
+        body.as_object_mut().unwrap().remove("auth_header_value");
+        let (s, resp) = send(&app, Method::POST, "/admin/mcp/servers", MK, Some(body)).await;
+        assert_eq!(s, 400, "{resp}");
+        assert_eq!(resp["error"]["type"], "auth_value_required");
+    }
+
+    #[tokio::test]
+    async fn a_header_value_with_a_newline_is_rejected() {
+        let app = build_router(test_state().await);
+        let mut body = custom_body("injection");
+        body["extra_headers"] = json!([{"name": "X-Evil", "value": "a\r\nX-Injected: 1"}]);
+        let (s, resp) = send(&app, Method::POST, "/admin/mcp/servers", MK, Some(body)).await;
+        assert_eq!(s, 400, "{resp}");
+        assert_eq!(resp["error"]["type"], "invalid_header_value");
+    }
+
+    #[tokio::test]
+    async fn a_non_ascii_header_value_is_rejected_before_it_is_stored() {
+        let app = build_router(test_state().await);
+        let mut body = custom_body("unicode");
+        body["auth_header_value"] = json!("口令-123");
+        let (s, resp) = send(&app, Method::POST, "/admin/mcp/servers", MK, Some(body)).await;
+        assert_eq!(s, 400, "{resp}");
+        assert_eq!(resp["error"]["type"], "invalid_header_value");
+    }
+
+    #[tokio::test]
+    async fn a_value_without_a_name_is_rejected() {
+        let app = build_router(test_state().await);
+        let mut body = base_body("value-only");
+        body["auth_header_value"] = json!("orphan");
+        let (s, resp) = send(&app, Method::POST, "/admin/mcp/servers", MK, Some(body)).await;
+        assert_eq!(s, 400, "{resp}");
+        assert_eq!(resp["error"]["type"], "auth_value_required");
+    }
+
+    #[tokio::test]
+    async fn the_redaction_placeholder_is_rejected_as_a_value() {
+        let state = test_state().await;
+        let app = build_router(state.clone());
+        let (_, created) = send(
+            &app,
+            Method::POST,
+            "/admin/mcp/servers",
+            MK,
+            Some(custom_body("roundtrip")),
+        )
+        .await;
+        let id = created["id"].as_i64().unwrap();
+        let (s, resp) = send(
+            &app,
+            Method::PUT,
+            &format!("/admin/mcp/servers/{id}"),
+            MK,
+            Some(json!({"auth_header_value": REDACTED})),
+        )
+        .await;
+        assert_eq!(s, 400, "{resp}");
+        assert_eq!(resp["error"]["type"], "invalid_header_value");
+        let row = stored(&state, id).await;
+        assert_eq!(
+            unseal_or_none(row.auth_header_value.as_deref(), Some(MK)).unwrap(),
+            Some("tapd-secret".to_string()),
+            "the real credential must survive a GET-modify-PUT round trip"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_case_only_rename_keeps_the_stored_value() {
+        let state = test_state().await;
+        let app = build_router(state.clone());
+        let (_, created) = send(
+            &app,
+            Method::POST,
+            "/admin/mcp/servers",
+            MK,
+            Some(custom_body("case")),
+        )
+        .await;
+        let id = created["id"].as_i64().unwrap();
+        let (s, resp) = send(
+            &app,
+            Method::PUT,
+            &format!("/admin/mcp/servers/{id}"),
+            MK,
+            Some(json!({"auth_header_name": "x-tapd-access-token"})),
+        )
+        .await;
+        assert_eq!(s, 200, "{resp}");
+        let row = stored(&state, id).await;
+        assert_eq!(row.auth_header_name.as_deref(), Some("x-tapd-access-token"));
+        assert_eq!(
+            unseal_or_none(row.auth_header_value.as_deref(), Some(MK)).unwrap(),
+            Some("tapd-secret".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_extra_headers_blob_blocks_the_edit_instead_of_erasing_it() {
+        let state = test_state().await;
+        let app = build_router(state.clone());
+        let (_, created) = send(
+            &app,
+            Method::POST,
+            "/admin/mcp/servers",
+            MK,
+            Some(custom_body("stale-extras")),
+        )
+        .await;
+        let id = created["id"].as_i64().unwrap();
+        let mut row = stored(&state, id).await;
+        let decoy = seal_token("[]", "sk-other-master").unwrap();
+        row.extra_headers = Some(decoy.clone());
+        state.db.update_mcp_server(&row).await.unwrap();
+
+        let (s, resp) = send(
+            &app,
+            Method::PUT,
+            &format!("/admin/mcp/servers/{id}"),
+            MK,
+            // What the dialog sends when it could not read the list: the empty
+            // set. Read leniently that would encode as "no headers" and null a
+            // column nobody asked to clear.
+            Some(json!({"extra_headers": []})),
+        )
+        .await;
+        assert_eq!(s, 500, "{resp}");
+        assert_eq!(resp["error"]["type"], "token_unseal_failed");
+        let row = stored(&state, id).await;
+        assert_eq!(
+            row.extra_headers.as_deref(),
+            Some(decoy.as_str()),
+            "the ciphertext must be left untouched"
+        );
     }
 }

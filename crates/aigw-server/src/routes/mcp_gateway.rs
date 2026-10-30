@@ -29,7 +29,8 @@ use aigw_core::mcp::catalog_cache::{self, DEFAULT_TTL_MS};
 use aigw_core::mcp::credential::{
     is_token_usable, resolve_outbound_token, unseal_token, TokenSource,
 };
-use aigw_core::mcp::probe::probe_server;
+use aigw_core::mcp::headers::OutboundHeaders;
+use aigw_core::mcp::probe::{self, probe_server};
 use aigw_core::mcp::session::{self, UpstreamStack, UpstreamTarget};
 use aigw_core::middleware::KeyIdentity;
 use aigw_core::models::{
@@ -126,9 +127,13 @@ impl Outcome {
 }
 
 /// Everything a call needs after the registry lookup and credential resolution.
+///
+/// The credential arrives already unsealed inside [`OutboundHeaders`]: decryption
+/// happens once, on the path that has the master key, and the request builder
+/// (which has none) only puts it on the wire.
 pub(crate) struct CallContext {
     pub server: McpServerRow,
-    pub bearer: Option<String>,
+    pub headers: OutboundHeaders,
     pub token_owner: &'static str,
 }
 
@@ -137,6 +142,20 @@ fn token_owner(source: Option<TokenSource>) -> &'static str {
         Some(TokenSource::Server) => "server",
         Some(TokenSource::User) => "user",
         None => "anonymous",
+    }
+}
+
+/// What the call log should say about the credential that actually left.
+///
+/// No token row plus a configured static header value still authenticates — the
+/// static value is the server's own credential, so the row says `server` rather
+/// than `anonymous`. Reporting `anonymous` for a call that carried a credential
+/// makes the log lie about the very case the static value exists for.
+pub(crate) fn effective_owner(headers: &OutboundHeaders, owner: &'static str) -> &'static str {
+    if owner == "anonymous" && headers.auth_header_value.is_some() {
+        "server"
+    } else {
+        owner
     }
 }
 
@@ -263,6 +282,16 @@ pub(crate) async fn check_tool_allowed(
     ))
 }
 
+/// Build the outbound header set for one call. Secrets are decrypted exactly
+/// here, once: the request builder and the probe never hold a master key.
+pub(crate) fn outbound_headers(
+    state: &SharedState,
+    server: &McpServerRow,
+    credential: Option<&str>,
+) -> OutboundHeaders {
+    OutboundHeaders::resolve(server, credential, state.aigw_master_key.as_deref())
+}
+
 /// The credential half of [`prepare`], for a caller that already has the row.
 async fn prepare_for(
     state: &SharedState,
@@ -272,11 +301,15 @@ async fn prepare_for(
     id: Option<&Value>,
 ) -> Result<CallContext, Outcome> {
     match resolve_bearer(state, auth, &server).await {
-        Ok((bearer, token_owner)) => Ok(CallContext {
-            server,
-            bearer,
-            token_owner,
-        }),
+        Ok((credential, owner)) => {
+            let headers = outbound_headers(state, &server, credential.as_deref());
+            let token_owner = effective_owner(&headers, owner);
+            Ok(CallContext {
+                server,
+                headers,
+                token_owner,
+            })
+        }
         Err(reason) if reason == "user_required" => Err(Outcome::rpc(
             StatusCode::FORBIDDEN,
             id,
@@ -304,7 +337,8 @@ async fn prepare(
 pub(crate) fn target(ctx: &CallContext) -> UpstreamTarget<'_> {
     UpstreamTarget {
         url: &ctx.server.url,
-        bearer: ctx.bearer.as_deref(),
+        auth: ctx.headers.auth(),
+        extra_headers: ctx.headers.extra(),
         stack: session::upstream_stack(ctx.server.protocol_version.as_deref()),
         timeout: session::UPSTREAM_TIMEOUT,
     }
@@ -743,7 +777,7 @@ pub async fn post_mcp_aggregate(
 async fn catalog_tools(
     state: &SharedState,
     server: &McpServerRow,
-    bearer: Option<&str>,
+    credential: Option<&str>,
 ) -> (Vec<UpstreamTool>, Option<String>) {
     if let Some(entry) = catalog_cache::get(server.id) {
         return (entry.upstream_tools(), None);
@@ -755,7 +789,17 @@ async fn catalog_tools(
         .await
         .unwrap_or_default();
 
-    match probe_server(&server.url, bearer, &others).await {
+    // One header set for both the cold-cache probe here and every forwarded
+    // call: a refresh that authenticates differently from the call path would
+    // list tools the caller can then never invoke.
+    let headers = outbound_headers(state, server, credential);
+    let target = probe::ProbeTarget {
+        url: &server.url,
+        auth: headers.auth(),
+        extra_headers: headers.extra(),
+    };
+
+    match probe_server(&target, &others).await {
         Ok(outcome) => {
             let fetched_at = chrono::Utc::now().to_rfc3339();
             let rows: Vec<McpToolRow> = outcome
@@ -856,7 +900,7 @@ async fn list_aggregate_tools(
     let mut warnings: Vec<Value> = Vec::new();
     for server in servers.into_iter().filter(|s| s.enabled) {
         match resolve_bearer(state, auth, &server).await {
-            Ok((bearer, _)) => visible.push((server, bearer)),
+            Ok((credential, _)) => visible.push((server, credential)),
             Err(reason) if reason == "user_required" => continue,
             Err(reason) => {
                 warn!(alias = %server.alias, reason, "MCP credential resolution failed");
@@ -872,7 +916,7 @@ async fn list_aggregate_tools(
     let collected = futures::future::join_all(
         visible
             .iter()
-            .map(|(server, bearer)| catalog_tools(state, server, bearer.as_deref())),
+            .map(|(server, credential)| catalog_tools(state, server, credential.as_deref())),
     )
     .await;
 
@@ -1059,6 +1103,9 @@ mod tests {
             credential_scope: scope.to_string(),
             enabled: true,
             protocol_version: protocol.map(str::to_string),
+            auth_header_name: None,
+            auth_header_value: None,
+            extra_headers: None,
             tool_count: 0,
             created_at: "2026-01-01T00:00:00Z".to_string(),
             updated_at: "2026-01-01T00:00:00Z".to_string(),
@@ -1779,6 +1826,40 @@ mod tests {
         assert_eq!(
             rows[0].token_owner, "anonymous",
             "the row must say no credential went out, not name the token it declined to send"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_static_auth_value_with_no_token_row_is_logged_as_the_server() {
+        let state = test_state().await;
+        let (url, recorder) = spawn_recording_stub(false).await;
+        let mut server = server_row("static", &url, "shared", None);
+        server.auth_header_value = Some(seal_token("sk-static", MK).expect("seal"));
+        insert_server(&state, server, None).await;
+        let app = build_router(state.clone());
+        let (status, _, _) = send(
+            &app,
+            Method::POST,
+            "/mcp/static",
+            Some(MK),
+            &[],
+            tools_call_body(),
+        )
+        .await;
+        assert_eq!(status, 200);
+        let (_, authorizations) = recorded(&recorder);
+        assert!(!authorizations.is_empty(), "the upstream answered a call");
+        assert!(
+            authorizations
+                .iter()
+                .all(|a| a.as_deref() == Some("Bearer sk-static")),
+            "the server's own static value is the credential: {authorizations:?}"
+        );
+        let rows = call_log(&state.db, "static").await;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].token_owner, "server",
+            "a call that carried a credential must not be logged as anonymous"
         );
     }
 

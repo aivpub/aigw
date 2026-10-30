@@ -1429,7 +1429,24 @@
       "urlPlaceholder": "https://mcp.example.com/mcp",
       "urlInvalid": "URL must start with http:// or https://",
       "scopeLabel": "Credential mode",
-      "enabledLabel": "Enabled"
+      "enabledLabel": "Enabled",
+      "authLabel": "Authentication",
+      "authBearer": "Authorization: Bearer (default)",
+      "authCustom": "Custom header",
+      "authNamePlaceholder": "e.g. X-Tapd-Access-Token",
+      "authNameRequired": "A header name is required for a custom header",
+      "authValueRequired": "A credential value is required for a custom header",
+      "secretPlaceholder": "Credential value",
+      "secretKeepPlaceholder": "Leave blank to keep the current value",
+      "extraHeadersLabel": "Extra request headers",
+      "extraHeaderAdd": "Add",
+      "extraHeadersHint": "Saved as a whole list; a blank value on an existing row keeps the stored one.",
+      "extraHeaderNamePlaceholder": "e.g. X-Project-Id",
+      "headerErrors": {
+        "reserved": "This header is written by the gateway and cannot be configured",
+        "charset": "A header name may only contain letters, digits and !#$%&'*+-.^_`|~",
+        "tooLong": "A header name may be at most 256 characters"
+      }
     },
     "token": {
       "title": "Credentials",

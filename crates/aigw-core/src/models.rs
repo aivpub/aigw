@@ -1343,6 +1343,11 @@ impl CredentialScope {
 /// `mcp_tool_catalog` (`COALESCE(COUNT(c.id), 0)`). `#[sqlx(default)]` covers the
 /// queries that carry no aggregate — `McpServerRow::tool_count` is then 0, not an
 /// error. Defaults do **not** cover NULL, which is why the aggregate coalesces.
+///
+/// `auth_header_name` is `NULL` for the protocol's `Authorization: Bearer`.
+/// `auth_header_value` and `extra_headers` hold `v2:gcm:` ciphertext exactly as
+/// `mcp_server_tokens.token_value` does — the plaintext exists only between
+/// [`crate::mcp::credential::unseal_token`] and the outbound request builder.
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct McpServerRow {
     pub id: i64,
@@ -1353,6 +1358,9 @@ pub struct McpServerRow {
     pub credential_scope: String,
     pub enabled: bool,
     pub protocol_version: Option<String>,
+    pub auth_header_name: Option<String>,
+    pub auth_header_value: Option<String>,
+    pub extra_headers: Option<String>,
     #[sqlx(default)]
     pub tool_count: i64,
     pub created_at: String,
@@ -1399,8 +1407,22 @@ pub struct CreateMcpServerRequest {
     /// silently would create an enabled server behind a switched-off toggle.
     #[serde(default)]
     pub enabled: Option<bool>,
+    /// `None` / empty = the protocol's `Authorization: Bearer`.
+    #[serde(default)]
+    pub auth_header_name: Option<String>,
+    /// Plaintext, write-only. Never echoed back.
+    #[serde(default)]
+    pub auth_header_value: Option<String>,
+    #[serde(default)]
+    pub extra_headers: Option<Vec<crate::mcp::headers::ExtraHeader>>,
 }
 
+/// The three header fields follow one rule, and it is the rule that is easiest to
+/// get wrong: **absent means "leave alone", empty means "clear"**. A plain
+/// `Option<String>` cannot express that, so `auth_header_name` and
+/// `auth_header_value` are `Option<Option<String>>` — `None` for absent, `Some("")`
+/// for a deliberate clear. Without it an operator could never remove a value they
+/// once configured.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateMcpServerRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1411,6 +1433,12 @@ pub struct UpdateMcpServerRequest {
     pub credential_scope: Option<CredentialScope>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_header_name: Option<Option<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_header_value: Option<Option<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra_headers: Option<Vec<crate::mcp::headers::ExtraHeader>>,
 }
 
 /// Token metadata in responses — `token_value` is always `***`.

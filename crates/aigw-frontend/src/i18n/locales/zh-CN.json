@@ -1429,7 +1429,24 @@
       "urlPlaceholder": "https://mcp.example.com/mcp",
       "urlInvalid": "URL 必须以 http:// 或 https:// 开头",
       "scopeLabel": "凭据模式",
-      "enabledLabel": "启用"
+      "enabledLabel": "启用",
+      "authLabel": "认证方式",
+      "authBearer": "Authorization: Bearer（默认）",
+      "authCustom": "自定义请求头",
+      "authNamePlaceholder": "例如：X-Tapd-Access-Token",
+      "authNameRequired": "自定义认证方式下，请求头名称必填",
+      "authValueRequired": "自定义认证方式下，凭据值必填",
+      "secretPlaceholder": "凭据值",
+      "secretKeepPlaceholder": "留空则不修改",
+      "extraHeadersLabel": "额外请求头",
+      "extraHeaderAdd": "添加",
+      "extraHeadersHint": "保存时整体替换；已配置的行值留空表示不修改。",
+      "extraHeaderNamePlaceholder": "例如：X-Project-Id",
+      "headerErrors": {
+        "reserved": "该请求头由网关自身写入，不可配置",
+        "charset": "请求头名称只能包含字母、数字与 !#$%&'*+-.^_`|~",
+        "tooLong": "请求头名称最长 256 字符"
+      }
     },
     "token": {
       "title": "凭据",

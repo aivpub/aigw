@@ -14,6 +14,7 @@ pub mod alias;
 pub mod catalog;
 pub mod catalog_cache;
 pub mod credential;
+pub mod headers;
 pub mod probe;
 pub mod session;
 
@@ -21,5 +22,8 @@ pub use alias::validate_alias;
 pub use credential::{
     is_token_usable, redact_token, resolve_outbound_token, seal_token, unseal_token, ResolvedToken,
     TokenSource,
+};
+pub use headers::{
+    validate_extra_headers, validate_name, validate_value, ExtraHeader, HeaderError,
 };
 pub use probe::{probe_server, read_jsonrpc_response, read_jsonrpc_response_for, ProbeError};

@@ -1446,6 +1446,23 @@ declare module "i18next" {
       urlInvalid: string;
       scopeLabel: string;
       enabledLabel: string;
+      authLabel: string;
+      authBearer: string;
+      authCustom: string;
+      authNamePlaceholder: string;
+      authNameRequired: string;
+      authValueRequired: string;
+      secretPlaceholder: string;
+      secretKeepPlaceholder: string;
+      extraHeadersLabel: string;
+      extraHeaderAdd: string;
+      extraHeadersHint: string;
+      extraHeaderNamePlaceholder: string;
+      headerErrors: {
+        reserved: string;
+        charset: string;
+        tooLong: string;
+      },
     },
     token: {
       title: string;

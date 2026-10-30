@@ -26,6 +26,7 @@ use std::time::Duration;
 use serde_json::{json, Value};
 use tracing::warn;
 
+use crate::mcp::session::UpstreamAuth;
 use crate::models::{ProbeOutcome, UpstreamTool};
 
 pub const MODERN_PROTOCOL_VERSION: &str = "2026-07-28";
@@ -366,13 +367,42 @@ pub fn apply_conflicts(
     conflicts
 }
 
+/// What the probe sends to the upstream. The probe deliberately reuses
+/// [`UpstreamAuth`] rather than taking a bearer string: a probe that
+/// authenticates differently from the call path is worthless as a check —
+/// its whole job is to prove the operator's configuration works.
+pub struct ProbeTarget<'a> {
+    pub url: &'a str,
+    pub auth: Option<UpstreamAuth<'a>>,
+    pub extra_headers: &'a [(String, String)],
+}
+
 struct Session {
     client: reqwest::Client,
     url: String,
-    bearer: Option<String>,
+    auth: Option<OwnedAuth>,
+    extra_headers: Vec<(String, String)>,
     protocol_version: String,
     session_id: Option<String>,
     next_id: u64,
+}
+
+#[derive(Clone)]
+enum OwnedAuth {
+    Bearer(String),
+    Header { name: String, value: String },
+}
+
+impl OwnedAuth {
+    fn from_borrowed(auth: UpstreamAuth<'_>) -> Self {
+        match auth {
+            UpstreamAuth::Bearer(token) => OwnedAuth::Bearer(token.to_string()),
+            UpstreamAuth::Header { name, value } => OwnedAuth::Header {
+                name: name.to_string(),
+                value: value.to_string(),
+            },
+        }
+    }
 }
 
 impl Session {
@@ -384,8 +414,14 @@ impl Session {
             .header("Accept", "application/json, text/event-stream")
             .header("MCP-Protocol-Version", &self.protocol_version)
             .json(body);
-        if let Some(bearer) = self.bearer.as_deref() {
-            req = req.bearer_auth(bearer);
+        if let Some(auth) = &self.auth {
+            req = match auth {
+                OwnedAuth::Bearer(token) => req.bearer_auth(token),
+                OwnedAuth::Header { name, value } => req.header(name.as_str(), value.as_str()),
+            };
+        }
+        for (name, value) in &self.extra_headers {
+            req = req.header(name.as_str(), value.as_str());
         }
         if let Some(session) = self.session_id.as_deref() {
             req = req.header("Mcp-Session-Id", session);
@@ -442,8 +478,7 @@ impl Session {
 /// servers, so `has_conflict` describes the gateway-wide truth rather than this
 /// server's snapshot.
 pub async fn probe_server(
-    url: &str,
-    bearer: Option<&str>,
+    target: &ProbeTarget<'_>,
     other_server_tool_names: &[String],
 ) -> Result<ProbeOutcome, ProbeError> {
     let client = reqwest::Client::builder()
@@ -453,8 +488,9 @@ pub async fn probe_server(
 
     let mut session = Session {
         client,
-        url: url.to_string(),
-        bearer: bearer.map(str::to_string),
+        url: target.url.to_string(),
+        auth: target.auth.map(OwnedAuth::from_borrowed),
+        extra_headers: target.extra_headers.to_vec(),
         protocol_version: MODERN_PROTOCOL_VERSION.to_string(),
         session_id: None,
         next_id: 1,

@@ -1008,3 +1008,31 @@
   - roadmap 的整体进度多一行 `Phase 56: 0% (0/3)`；TD-024~TD-028 的 Target Phase 统一指向 Phase 57。
   - Stage 148 依赖 Stage 146（`probe_server` 签名变更），所以 146 必须排在 148 之前；147 与二者无耦合。
   - 若 yehe 的接入需求提前变成阻塞，OAuth 可以插到 147 与 148 之间而不改编号 —— 顺序由 roadmap 的依赖关系表达，不由编号表达。
+
+## ADR-048: 认证头的失败路径按「宁可拒绝」处理 —— 五个静默失败点全部改为显式错误
+
+- **Date**: 2026-10-31
+- **Status**: Accepted
+- **Related Stage**: Stage 146 §3.3 / §3.4 / §8；`crates/aigw-core/src/mcp/headers.rs`、`crates/aigw-server/src/routes/{mcp,mcp_gateway,mcp_rest}.rs`
+- **Background**: Stage 146 Gate 4 的独立复查在**失败路径**上找出五处「配错了但一切看起来正常」，全部集中在「值出不去 / 值被悄悄换掉」这一类：
+  1. `decrypt_extra_headers` 解密失败返回空列表，而这个空列表既用于 GET 响应、又用于 `PUT` 的 `stored_extras`。换 master key 后，管理员改个 `display_name` 保存一次（前端总会带上 `extra_headers`），整块密文就被覆写成 `NULL` —— 旧 key 换回来也救不回。
+  2. `OutboundHeaders::resolve` 在 `user_required` 的 server 上仍回落到 `auth_header_value`，于是**探测**带着静态凭据并成功，而真实调用（`resolve_bearer` 先拒 `user_required` 无用户 token）永远 403。探测把不可达报成可达。
+  3. `mcp_call_log.token_owner` 只在 token 行上取值。TAPD 那类「只有静态值、没有 token 行」的 server 每次调用都记成 `anonymous` —— 日志对本 Stage 唯一要解决的场景撒谎。
+  4. `validate_value` 只拒 CR/LF。`http::HeaderValue` 还拒 `0x00..0x1f`、`0x7f` 与全部非 ASCII，而 `reqwest` 把这个错延迟到 `.send()`：值存进去了、回显 `***`、之后每一次探测与调用都 `builder error`，错误里既没有头名也没有配置项。
+  5. 值的脱敏占位 `***` 可以当值提交。任何做 `GET → 改 → PUT` 的客户端都会把真凭据换成三个星号，而响应仍然显示 `***`，看起来毫无异常。
+- **Decision**:
+  1. **管理员读写路径用严格版解密**（新增 `try_decrypt_extra_headers`），解不开 → `500 token_unseal_failed`，密文原样不动；宽松版（返回空列表）只留给出站调用路径 —— 那里「少一个头仍然可达」比「整条调用失败」好。
+  2. **`user_required` 的探测显式抹掉静态值**（`prepare` 与 `probe_and_store` 用同一判定），探测发的就是真实调用会发的东西。
+  3. **`token_owner` 由「实际出站的头」决定**（`effective_owner`）：没有 token 行但静态值出站 → `server`，不写 `anonymous`。
+  4. **值只接受可打印 ASCII + tab**（与 `HeaderValue::from_str` 同集合），在写入时 400 `invalid_header_value`，而不是等到发送时变成一个无法归因的传输错误。
+  5. **`***` 恒被拒**（新错误变体 `ValueIsRedacted`，仍归 `invalid_header_value`）：脱敏占位不是凭据。
+  6. 顺带两条同源修正：`auth_header_value` 无 `auth_header_name` → 400 `auth_value_required`（原来 200 且丢弃）；改名判定改 `eq_ignore_ascii_case`（大小写变化不算改名，不值得让人重输值）。
+- **Why not the alternatives**:
+  - **保持宽松、只在 UI 上防** —— API 是公开面，任何脚本/另一个客户端都能触发；而且这五条里有四条是「数据被毁」或「探测撒谎」，不是显示问题。
+  - **把 `user_required` 的探测直接判失败** —— 管理员的真实诉求是「这个上游能不能连上」。带静态值探测虽然不忠实，但改判失败会让这类 server 永远无法探测。抹掉静态值后探测的是「上游是否接受匿名 / 是否需要用户凭据」，这是它能给出的最诚实答案。
+  - **只加 `tracing::warn!` 不加严格解密** —— 日志没人看，而这里丢的是不可恢复的密文。
+- **Consequences**:
+  - 换 master key 后编辑带额外头的 server 会被 500 拦住，而不是静默清空 —— 这是刻意的：先恢复 key 或先在 UI 里重新输入，再改别的字段。
+  - `token_owner` 多了 `server` 的第二种来源（静态值），前端 `McpTokenOwner` 的取值集不变。
+  - 非 ASCII 的头值（如中文 API key）被拒。当前没有任何真实上游需要它；若出现，放宽点在这里，不是在校验里开个后门。
+  - 新增 6 条 UT/HT（严格解密、可打印 ASCII、`***` 拒绝、孤儿值拒绝、大小写改名、严格解密挡住编辑）+ 1 条 `user_required` 探测断言 + 1 条静态值 `token_owner` 断言。

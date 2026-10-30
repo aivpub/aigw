@@ -109,3 +109,35 @@ Feature: MCP Servers
     And the MCP server "hr-portal" is still listed
     When I confirm the MCP deletion
     Then the MCP server "hr-portal" is not listed
+
+  Scenario: A custom auth header is sent with the credential and its value is never echoed
+    When I click "New Server" on the MCP page
+    And I fill MCP alias with "tapd"
+    And I fill MCP display name with "TAPD"
+    And I fill MCP URL with "https://mcpgw.example.com/tapd/"
+    And I choose the custom auth header in the MCP server dialog
+    And I fill MCP auth header name with "X-Tapd-Access-Token"
+    And I fill MCP auth header value with "tapd-secret"
+    And I add an MCP extra header "X-Project-Id" with value "12345"
+    And I click the save button in the MCP server dialog
+    Then the MCP server dialog closes
+    And the last MCP server request names the auth header "X-Tapd-Access-Token"
+    And the last MCP server request carries the extra header "X-Project-Id"
+    And the typed MCP auth value never appears in the page
+
+  Scenario: A header the gateway writes itself is rejected inline
+    When I click "New Server" on the MCP page
+    And I fill MCP alias with "reserved-header"
+    And I fill MCP display name with "Reserved"
+    And I fill MCP URL with "https://mcp.example.com/mcp"
+    And I choose the custom auth header in the MCP server dialog
+    And I fill MCP auth header name with "Mcp-Session-Id"
+    Then the MCP auth name error mentions a reserved header
+    And no MCP create request was sent
+
+  Scenario: Editing an existing server keeps the stored secret and never sends the mask back
+    When I click the edit button on the "internal-wiki" MCP server
+    Then the MCP auth value is shown masked
+    And the MCP auth value input is empty
+    When I click the save button in the MCP server dialog
+    Then the last MCP server request does not carry a masked auth value

@@ -11,7 +11,7 @@
 - **Phase 51 明细**（历史，总进度当时为 134）: Stage 126-127（2026-08-19）：credentials 表 OAuth 结构化扩展 + Cookie→Token 3 步交换（PKCE S256 经代理）+ `claude_token.rs` TokenProvider 三层自愈 + needs_reauth 告警。**Stage 128（2026-08-20）**：OAuth 反代管线（`oauth_pipeline.rs` billing 指纹字节对齐 sub2api/Parrot + 协议转换 + CC 伪装 + 401 刷新重试 + count_tokens + embeddings 400 + 代理出口）+ 四入口接线。**Stage 129（2026-08-24）**：CredentialsTab OAuth 前端入口 + `POST /credential/oauth/refresh`。**Stage 130（2026-08-24 ✅，134/134）**：real BDD 三后端 OAuth 凭证 CRUD + 加密落库直读断言 + in-use 守卫（**58/58 × 3 全绿**）+ 安全审计 8 项全部通过 + **`/credential/new` OAuth 凭证逐字段 AES-256-GCM 加密落库**（新增 `aigw-core::crypto::encrypt_litellm_value_gcm`）+ **TD-015a 全库收窄**（`chat::upstream_error_message` 接线 4 handler）+ ADR-034 收尾。验证：aigw-core **502** + aigw-server **157** UT、mock BDD **278（265 pass / 13 skip）**、real BDD 三端 **58/58 × 3**、fmt + lint green。详见 `docs/stages/stage-126.md` ~ `stage-130.md` + `stage-130-review-log.md`。
 - **上一 Phase**: **Phase 53 ✅ 完成（Stage 134-138；总进度 138）**——搜索后端抽象层 + 三入口接线 + 按次计费 + 调用日志展现 + **provider/实例/定价 DB 化与管理 UI** 全部交付：搜索真正可用、成本入账、四级预算扣减、日志可见、**改价不重启生效**。三真实后端 sqlite / pg / mysql 各 68/68。
 - **当前 Phase**: **Phase 54 ✅ 完成（Stage 139；总进度 139）**——搜索调用日志**结果可视化**：Stage 136 已把检索结果写进 `response.results[]`，但界面一条都看不到（通用 `OutputCard` 不认该形状 → 渲染成空白）。本 Phase 交付：后端 `search` 投影块（`project_search_view` 纯函数，9 条 UT）+ 列表搜索行换渲染（`{provider} · N 条结果` + 命中实例）+ 抽屉信息分四格指标 + **抽屉输出区 `SearchResultsPanel` 结果卡片**（标题按 http/https 白名单可点 / 域名 / 摘要 line-clamp / score 徽标），保留「视觉 / 原始」双标签。`task test` 1224 / `bdd` 315（302 pass / 13 skip）/ `fe-bdd` 507 passed / 3 skipped 全绿 + **真实库核对**（`aigw.db` 12 行 × 36 条结果；推翻 H2「计数会不一致」假设）。⚠️ **Gate 4 独立代码评审未做**。
-- **下一里程碑**: **Phase 56 已规划（Stage 146-148，~40h，规划态未开工）** —— **MCP Gateway 生产反馈迭代**：2026-10-30 把本地 CC 的 Streamable-HTTP MCP 全部接入生产网关后暴露的三条反馈：① 出站只支持 `Authorization: Bearer`，TAPD（要 `X-Tapd-Access-Token`）与工蜂（要 `PRIVATE-TOKEN`）接不进来 → Stage 146 自定义认证头名 + 额外头 + `ServerDialog` 配套；② MCP 调用日志只有 admin 能在对话框里看最近 30 条 → Stage 147 独立日志页（用户只看自己的，Alias/工具名/时间过滤，仿消费日志页）；③ 「全部重新探测」串行阻塞、无进度 → Stage 148 进度指示（run registry + 500ms 轮询 + 逐 server 明细）。**原「Phase 56 = OAuth 发现」顺延为 Phase 57**，22 处旧引用已改写。其余候选见 ADR-039（Claude Code WebSearch 设计 A/B）、Tavily / 博查客户端、Phase 54 遗留（按 provider/实例聚合花费与趋势）、中期 M1 guardrails / M2 Redis 分布式层、OAuth TD-015d / TD-015e、Codex TD-017b、**TD-021a / TD-021b（`anthropic-beta`）**、TD-024~TD-028（均指向 Phase 57）。
+- **下一里程碑**: **Phase 56 进行中（Stage 146-148，~40h，Stage 146 ✅ 2026-10-31，147/148 待开工）** —— **MCP Gateway 生产反馈迭代**：2026-10-30 把本地 CC 的 Streamable-HTTP MCP 全部接入生产网关后暴露的三条反馈：① 出站只支持 `Authorization: Bearer`，TAPD（要 `X-Tapd-Access-Token`）与工蜂（要 `PRIVATE-TOKEN`）接不进来 → Stage 146 自定义认证头名 + 额外头 + `ServerDialog` 配套；② MCP 调用日志只有 admin 能在对话框里看最近 30 条 → Stage 147 独立日志页（用户只看自己的，Alias/工具名/时间过滤，仿消费日志页）；③ 「全部重新探测」串行阻塞、无进度 → Stage 148 进度指示（run registry + 500ms 轮询 + 逐 server 明细）。**原「Phase 56 = OAuth 发现」顺延为 Phase 57**，22 处旧引用已改写。其余候选见 ADR-039（Claude Code WebSearch 设计 A/B）、Tavily / 博查客户端、Phase 54 遗留（按 provider/实例聚合花费与趋势）、中期 M1 guardrails / M2 Redis 分布式层、OAuth TD-015d / TD-015e、Codex TD-017b、**TD-021a / TD-021b（`anthropic-beta`）**、TD-024~TD-028（均指向 Phase 57）。
 
 ### 整体进度
 
@@ -65,7 +65,7 @@ Phase 52:   ████████████████████ 100% (3
 Phase 53:   ████████████████████ 100% (5/5 Stages) ✅ 内建 Web Search (Stage 134-138) — 总进度 138
 Phase 54:   ████████████████████ 100% (1/1 Stage)  ✅ 搜索调用日志可视化 (Stage 139) — 总进度 139
 Phase 55:   █████████████████░░░  83% (5/6 Stages) 🟡 MCP Gateway (Stage 140-145) — 143 门禁 7/8（Codex 真机调用未达成，ADR-046）
-Phase 56:   ░░░░░░░░░░░░░░░░░░░░   0% (0/3 Stages) 📋 MCP Gateway 生产反馈迭代 (Stage 146-148) — 规划态未开工
+Phase 56:   ██████░░░░░░░░░░░░░░  33% (1/3 Stages) 🚧 MCP Gateway 生产反馈迭代 (Stage 146-148) — Stage 146 ✅ 2026-10-31
 
 ---
 
@@ -288,7 +288,7 @@ Phase 56:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 ---
 
-## Phase 56：MCP Gateway 生产反馈迭代 📋（Stage 146-148，规划态未开工，~40h）
+## Phase 56：MCP Gateway 生产反馈迭代 🚧（Stage 146-148，Stage 146 ✅，~40h）
 
 > **来源**: 2026-10-30 把本地 Claude Code 的 Streamable-HTTP MCP 全部接入生产网关（9.135.87.221:4001）时的三条实测反馈。Phase 55 把「能不能接进来」解决了；本 Phase 解决「接进来之后好用不好用」。**OAuth 发现顺延为 Phase 57**（原 22 处「Phase 56」引用已改写）。
 
@@ -302,7 +302,7 @@ Phase 56:   ░░░░░░░░░░░░░░░░░░░░   0% (0
 
 | Stage | 状态 | 目标 | 类型 | 预估 |
 |-------|------|------|------|------|
-| Stage 146 | 📋 规划中 | **自定义认证头名 + 额外上游请求头** — `033_mcp_server_headers.sql` × 三方言（`mcp_servers` 加 `auth_header_name` / `auth_header_value`（密文）/ `extra_headers`（整块密文 JSON）三列）；`UpstreamAuth` 枚举（`Bearer` / `Header{name,value}`）替换 `UpstreamTarget.bearer`，出站构造的**四处**（`session::request_builder` / `session::reachable` / `probe::Session::build_request` / `mcp_gateway::target`）统一走它；受保护头黑名单（`Content-Type`/`Accept`/`MCP-Protocol-Version`/`Mcp-Session-Id`/`Host`/`Content-Length`）+ RFC 7230 头名校验 + CRLF 拒绝；**探测与运行路径必须用同一套头**（探测是这套配置唯一的验证手段）；`ServerDialog` 加「认证方式 / 凭据值 / 额外头」三组控件，值恒 `***` 回显、编辑时留空即不改 | 后端+前端+测试 | ~16h |
+| Stage 146 | ✅ 完成（2026-10-31） | **自定义认证头名 + 额外上游请求头** — `033_mcp_server_headers.sql` × 三方言（`mcp_servers` 加 `auth_header_name` / `auth_header_value`（密文）/ `extra_headers`（整块密文 JSON）三列）；`UpstreamAuth` 枚举（`Bearer` / `Header{name,value}`）替换 `UpstreamTarget.bearer`，出站构造的**四处**（`session::request_builder` / `session::reachable` / `probe::Session::build_request` / `mcp_gateway::target`）统一走它；受保护头黑名单（`Content-Type`/`Accept`/`MCP-Protocol-Version`/`Mcp-Session-Id`/`Host`/`Content-Length`）+ RFC 7230 头名校验 + CRLF 拒绝；**探测与运行路径必须用同一套头**（探测是这套配置唯一的验证手段）；`ServerDialog` 加「认证方式 / 凭据值 / 额外头」三组控件，值恒 `***` 回显、编辑时留空即不改 | 后端+前端+测试 | ~16h |
 | Stage 147 | 📋 规划中 | **MCP 调用日志独立页** — `McpCallFilter` 加 `user_id`（三方言 SQL × 6 + 绑定 + 计数同步，防 TD-025 类「分页条显示全量」回归）；新增 `GET /v1/mcp/calls`（身份只从 `KeyIdentity` 取、**不接受 `user_id` 入参**，与 `/v1/mcp/*` 同一防越权原则）与 `/admin/mcp/calls?user_id=`；`034_mcp_call_log_user_index.sql` × 三方言 `(user_id, created_at)` 索引；`/dash/mcp` 加第三个 tab「调用日志」（**两角色都可见**），Alias（精确）+ 工具名（子串）+ 时间范围（预设 1h/24h/7d/30d/自定义，默认 24h）+ 状态四个过滤、`PaginationBar`、行点击 `Sheet` 抽屉；`presetRange` / `toDatetimeLocalValue` 从 spend-logs 抽到 `lib/datetime.ts` 共用；**删除 `CallLogDialog`**，行内按钮改为切 tab 并预填 alias（单一渲染路径） | 后端+前端+测试 | ~14h |
 | Stage 148 | 📋 规划中 | **探测与「全部重新探测」进度指示** — 进程内 `ProbeRun` 注册表（`mcp/probe_runs.rs`，纯状态机可单测，`OnceLock<Mutex<Option<ProbeRun>>>` 照 ADR-041 不挂 `AppState`）；`POST /admin/mcp/reload` 改「启动即返回 `202 {run_id,total}`」，并发 `409 reload_in_progress`；新增 `GET /admin/mcp/reload/{run_id}` 与 `/reload/latest`；探测串行改 `buffer_unordered(4)`（单 server 失败不连累其它）；前端 `components/ui/progress.tsx` + `ProbeProgressDialog.tsx`（逐行 pending/running/ok/failed + 工具数 + 协议版本 + 错误摘要，关闭不取消、重开用 `latest` 恢复）；单 server 探测保持同步，只加行内 spinner + disable。**取舍：轮询（500ms）而非复用 `sse_response`** —— 粗粒度状态不需要流式，且轮询天然可测、刷新后免费恢复 | 后端+前端+测试 | ~10h |
 

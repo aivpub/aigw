@@ -1,6 +1,10 @@
 import { createBdd } from "playwright-bdd";
 import { expect, type Page } from "@playwright/test";
-import { mockAllApis, MCP_TOKEN_PLAINTEXT } from "./api-mocks";
+import {
+  mockAllApis,
+  MCP_TOKEN_PLAINTEXT,
+  getLastMcpServerBody,
+} from "./api-mocks";
 
 const { Given, When, Then } = createBdd();
 
@@ -196,4 +200,72 @@ Then("the MCP server {string} is shown as disabled", async ({ page }, alias: str
 When("I click the delete button on the {string} MCP server", async ({ page }, alias: string) => {
   await serverRow(page, alias).getByTestId("mcp-server-delete").click();
   await page.waitForTimeout(800);
+});
+
+When("I click the edit button on the {string} MCP server", async ({ page }, alias: string) => {
+  await serverRow(page, alias).getByTestId("mcp-server-edit").click();
+  await page.waitForTimeout(500);
+});
+
+When("I choose the custom auth header in the MCP server dialog", async ({ page }) => {
+  await mcpDialog(page).getByTestId("mcp-auth-custom").click();
+});
+
+When("I fill MCP auth header name with {string}", async ({ page }, value: string) => {
+  await mcpDialog(page).getByTestId("mcp-auth-name-input").fill(value);
+});
+
+When("I fill MCP auth header value with {string}", async ({ page }, value: string) => {
+  await mcpDialog(page).getByTestId("mcp-auth-value-input").fill(value);
+});
+
+When(
+  "I add an MCP extra header {string} with value {string}",
+  async ({ page }, name: string, value: string) => {
+    const dialog = mcpDialog(page);
+    await dialog.getByTestId("mcp-extra-header-add").click();
+    await dialog.getByTestId("mcp-extra-header-name-0").fill(name);
+    await dialog.getByTestId("mcp-extra-header-value-0").fill(value);
+  },
+);
+
+Then(
+  "the last MCP server request names the auth header {string}",
+  async ({}, name: string) => {
+    expect(getLastMcpServerBody().auth_header_name).toBe(name);
+  },
+);
+
+Then(
+  "the last MCP server request carries the extra header {string}",
+  async ({}, name: string) => {
+    const headers = getLastMcpServerBody().extra_headers as { name: string }[];
+    expect(headers.map((h) => h.name)).toContain(name);
+  },
+);
+
+Then("the MCP auth name error mentions a reserved header", async ({ page }) => {
+  await expect(page.getByTestId("mcp-auth-name-error")).toContainText(/gateway|网关/i, {
+    timeout: 5000,
+  });
+});
+
+Then("the MCP auth value is shown masked", async ({ page }) => {
+  await expect(page.getByTestId("mcp-auth-value-masked")).toHaveText("***");
+});
+
+Then("the MCP auth value input is empty", async ({ page }) => {
+  await expect(page.getByTestId("mcp-auth-value-input")).toHaveValue("");
+});
+
+Then(
+  "the last MCP server request does not carry a masked auth value",
+  async ({}) => {
+    const value = getLastMcpServerBody().auth_header_value;
+    expect(value ?? "").not.toBe("***");
+  },
+);
+
+Then("the typed MCP auth value never appears in the page", async ({ page }) => {
+  expect(await page.content()).not.toContain("tapd-secret");
 });
