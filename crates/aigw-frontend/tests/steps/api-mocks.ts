@@ -435,9 +435,18 @@ function mcpTokenWire(token: any) {
   return { ...rest, token_redacted: "***" };
 }
 
+const MCP_SEARCH_SCHEMA = {
+  type: "object",
+  properties: {
+    query: { type: "string", description: "Keywords to look for" },
+    limit: { type: "integer", description: "How many results to return" },
+  },
+  required: ["query"],
+};
+
 const MCP_TOOLS = {
   1: [
-    { tool_name: "search", description: "Search repositories and issues", input_schema: {}, annotations: null, has_conflict: false },
+    { tool_name: "search", description: "Search repositories and issues", input_schema: MCP_SEARCH_SCHEMA, annotations: null, has_conflict: false },
     { tool_name: "get_issue", description: "Read one issue by number", input_schema: {}, annotations: null, has_conflict: false },
     { tool_name: "list_prs", description: "List open pull requests", input_schema: {}, annotations: null, has_conflict: false },
   ],
@@ -659,7 +668,7 @@ function mcpRejectionsResponse(params: URLSearchParams) {
 }
 
 const MCP_REST_TOOLS = [
-  { tool_name: "search", description: "Search repositories and issues", input_schema: {}, annotations: null, has_conflict: false },
+  { tool_name: "search", description: "Search repositories and issues", input_schema: MCP_SEARCH_SCHEMA, annotations: null, has_conflict: false },
   { tool_name: "get_issue", description: "Read one issue by number", input_schema: {}, annotations: null, has_conflict: false },
   { tool_name: "list_prs", description: "List open pull requests", input_schema: {}, annotations: null, has_conflict: false },
 ];

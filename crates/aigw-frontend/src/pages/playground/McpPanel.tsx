@@ -17,17 +17,33 @@ import {
 import { Play } from "lucide-react";
 import type { McpServerListResponse, McpVisibleServerList, McpTool } from "@/pages/mcp/types";
 
-interface RestToolEntry {
-  tool_name: string;
-  description?: string;
-}
-
 interface RestToolsResponse {
-  tools: RestToolEntry[];
+  tools: McpTool[];
 }
 
 interface AdminToolsResponse {
   tools: McpTool[];
+}
+
+interface UsageParam {
+  name: string;
+  type: string;
+  description?: string;
+  required: boolean;
+}
+
+function usageParams(schema?: Record<string, unknown>): UsageParam[] {
+  const properties = (schema?.properties ?? {}) as Record<
+    string,
+    { type?: string; description?: string } | undefined
+  >;
+  const required = new Set((schema?.required as string[] | undefined) ?? []);
+  return Object.entries(properties).map(([name, spec]) => ({
+    name,
+    type: spec?.type ?? "any",
+    description: spec?.description,
+    required: required.has(name),
+  }));
 }
 
 export function McpPanel({ isAdmin }: { isAdmin: boolean }) {
@@ -72,13 +88,25 @@ export function McpPanel({ isAdmin }: { isAdmin: boolean }) {
     enabled: !isAdmin && alias !== "",
   });
 
-  const toolNames = useMemo(
-    () =>
-      isAdmin
-        ? (adminTools?.tools ?? []).map((tk) => tk.tool_name)
-        : (restTools?.tools ?? []).map((tk) => tk.tool_name),
+  const tools = useMemo(
+    () => (isAdmin ? (adminTools?.tools ?? []) : (restTools?.tools ?? [])),
     [isAdmin, adminTools, restTools],
   );
+
+  const toolNames = useMemo(() => tools.map((tk) => tk.tool_name), [tools]);
+
+  const selectedTool = useMemo(
+    () => tools.find((tk) => tk.tool_name === tool),
+    [tools, tool],
+  );
+
+  const params = useMemo(() => usageParams(selectedTool?.input_schema), [selectedTool]);
+
+  const fillSchema = useCallback(() => {
+    const skeleton: Record<string, unknown> = {};
+    for (const p of params) skeleton[p.name] = p.type;
+    setArgs(JSON.stringify(skeleton, null, 2));
+  }, [params]);
 
   const send = useCallback(async () => {
     if (!alias || !tool) return;
@@ -193,6 +221,65 @@ export function McpPanel({ isAdmin }: { isAdmin: boolean }) {
           </p>
         )}
       </div>
+
+      {selectedTool && (
+        <div
+          className="shrink-0 space-y-2 rounded-md border p-3"
+          data-testid="playground-mcp-usage"
+        >
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <p className="font-mono text-xs font-medium">{selectedTool.tool_name}</p>
+            {params.length > 0 && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-6 px-1 text-xs"
+                onClick={fillSchema}
+                data-testid="playground-mcp-fill-schema"
+              >
+                {t("playground.mcpFillSchema")}
+              </Button>
+            )}
+          </div>
+          <p
+            className="text-xs text-muted-foreground"
+            data-testid="playground-mcp-usage-description"
+          >
+            {selectedTool.description || t("playground.mcpUsageNoDescription")}
+          </p>
+          {params.length > 0 ? (
+            <ul className="space-y-1" data-testid="playground-mcp-usage-params">
+              {params.map((p) => (
+                <li
+                  key={p.name}
+                  className="flex flex-wrap items-baseline gap-x-2 text-xs"
+                  data-testid="playground-mcp-usage-param"
+                >
+                  <code className="font-mono">{p.name}</code>
+                  <Badge variant="outline" className="px-1 py-0 text-[10px]">
+                    {p.type}
+                  </Badge>
+                  <span className="text-muted-foreground">
+                    {p.required
+                      ? t("playground.mcpUsageRequired")
+                      : t("playground.mcpUsageOptional")}
+                  </span>
+                  {p.description && (
+                    <span className="text-muted-foreground">{p.description}</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-xs text-muted-foreground" data-testid="playground-mcp-usage-noschema">
+              {t("playground.mcpUsageNoSchema")}
+            </p>
+          )}
+          {params.length > 0 && (
+            <p className="text-xs text-muted-foreground">{t("playground.mcpFillSchemaHint")}</p>
+          )}
+        </div>
+      )}
     </div>
   );
 }

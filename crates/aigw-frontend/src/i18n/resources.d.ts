@@ -852,6 +852,8 @@ declare module "i18next" {
     heicUnsupported: string;
     mcpArguments: string;
     mcpFailed: string;
+    mcpFillSchema: string;
+    mcpFillSchemaHint: string;
     mcpIdle: string;
     mcpInvalidArgs: string;
     mcpOk: string;
@@ -859,6 +861,10 @@ declare module "i18next" {
     mcpSelectTool: string;
     mcpServer: string;
     mcpTool: string;
+    mcpUsageNoDescription: string;
+    mcpUsageNoSchema: string;
+    mcpUsageOptional: string;
+    mcpUsageRequired: string;
     tabChat: string;
     tabMcp: string;
   },

@@ -487,6 +487,42 @@ Then("the MCP tab has no horizontal overflow", async ({ page }) => {
   expect(overflow).toBeLessThanOrEqual(0);
 });
 
+Then("the MCP usage panel shows the description {string}", async ({ page }, text: string) => {
+  await expect(page.getByTestId("playground-mcp-usage")).toBeVisible({ timeout: 5000 });
+  await expect(page.getByTestId("playground-mcp-usage-description")).toContainText(text);
+});
+
+Then("the MCP usage panel lists the parameters {string}", async ({ page }, expected: string) => {
+  const rows = page.getByTestId("playground-mcp-usage-param");
+  await expect(rows).toHaveCount(expected.split(",").length);
+  for (const [i, raw] of expected.split(",").entries()) {
+    const [name, type, requirement] = raw.trim().split(":");
+    await expect(rows.nth(i)).toContainText(name);
+    await expect(rows.nth(i)).toContainText(type);
+    await expect(rows.nth(i)).toContainText(
+      requirement === "required" ? /required|必填/i : /optional|可选/i,
+    );
+  }
+});
+
+Then("the MCP usage panel reports no input parameters", async ({ page }) => {
+  await expect(page.getByTestId("playground-mcp-usage-noschema")).toBeVisible({ timeout: 5000 });
+  await expect(page.getByTestId("playground-mcp-usage-params")).toHaveCount(0);
+});
+
+When("I fill the MCP arguments from the tool schema", async ({ page }) => {
+  await page.getByTestId("playground-mcp-fill-schema").click();
+});
+
+Then("the MCP arguments hold the keys {string}", async ({ page }, expected: string) => {
+  const raw = await page.getByTestId("playground-mcp-args").inputValue();
+  const parsed = JSON.parse(raw) as Record<string, unknown>;
+  const wanted = Object.fromEntries(
+    expected.split(",").map((pair) => pair.trim().split("=")),
+  );
+  expect(parsed).toEqual(wanted);
+});
+
 // ── Stage 151: the tabs are page routes ──
 
 Then("the MCP server selector is visible", async ({ page }) => {

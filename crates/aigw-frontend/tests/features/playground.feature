@@ -144,6 +144,35 @@ Feature: Playground Chat
     When I open the playground MCP tab
     Then the MCP tab has no horizontal overflow
 
+  # ── Playground MCP usage instructions ──
+
+  Scenario: Selecting a tool shows its description and parameters
+    When I open the playground MCP tab
+    And I select MCP server "github"
+    And I select MCP tool "search"
+    Then the MCP usage panel shows the description "Search repositories and issues"
+    And the MCP usage panel lists the parameters "query:string:required,limit:integer:optional"
+
+  Scenario: Filling the arguments from the schema builds a parameter skeleton
+    When I open the playground MCP tab
+    And I select MCP server "github"
+    And I select MCP tool "search"
+    And I fill the MCP arguments from the tool schema
+    Then the MCP arguments hold the keys "query=string,limit=integer"
+
+  Scenario: A tool without an input schema says so
+    When I open the playground MCP tab
+    And I select MCP server "github"
+    And I select MCP tool "get_issue"
+    Then the MCP usage panel reports no input parameters
+
+  Scenario: A non-admin also sees the usage instructions
+    When I log in as a non-admin user
+    And I open the playground MCP tab
+    And I select MCP server "github"
+    And I select MCP tool "search"
+    Then the MCP usage panel shows the description "Search repositories and issues"
+
   # ── Stage 151: the chat/mcp tabs are page routes ──
 
   Scenario: The bare playground path lands on the chat tab
