@@ -4,6 +4,7 @@
 **预估**: ~14h（聚合 owner 归并 + cursor 修复 + 名称批量补全 + 前端列改造 + 测试）
 **依赖**: Stage 147（`/dash/mcp` 调用日志页与 `/v1/mcp/calls`）、Stage 144（`/mcp` 聚合端点与 `McpCallFilter`）
 **状态**: ✅ 完成（2026-10-31）
+**提交**: `af79061`（Phase 58 四个 Stage 合并的代码提交）+ `2add376`（四个 stage 文档与 ADR/技术债/roadmap 回写），均 `--signoff`，未 push。
 
 ---
 
