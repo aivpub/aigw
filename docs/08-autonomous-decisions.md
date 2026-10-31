@@ -1082,3 +1082,98 @@
   - `034` 新增 `(user_id, created_at)` 索引 × 三方言：前导列是等值条件，`created_at` 才能走范围扫描并省掉一次排序。
   - 这个范式（身份来自 extractor、不接受身份入参、共用 filter/store 只换来源）可被将来的「我的开销 / 我的用量」直接复用。
   - 前端 `CallLogDialog` 被 `CallLogTab` 取代，行内按钮改为切 tab 并预填 alias —— 单一渲染路径，不再维护两套筛选能力。
+
+---
+
+## ADR-051: 聚合请求的 `token_owner` 用「四面归并 + `mixed` 第四值」，不取最弱也不取最强
+
+- **Date**: 2026-10-31
+- **Status**: Accepted
+- **Related Stage**: Stage 149 §3.1 / §3.2；`crates/aigw-server/src/routes/mcp_gateway.rs`（`list_aggregate_tools`、`effective_owner`）、`crates/aigw-core/src/mcp/catalog.rs`（`merge_owners`）
+- **Background**: 生产实测：同一把 master key，聚合 `/mcp` 的 `tools/list` 记 `token_owner=anonymous`，而 4 秒后单 server `/mcp/iwiki` 的同类调用记 `server`。聚合路径给 5 个上游各解出了 server token（100 个工具就是证据），账上却说「没有凭据出站」。根因：`list_aggregate_tools` 把 `resolve_bearer` 的 owner 丢弃（`Ok((credential, _))`）且从不赋值 `row.token_owner`，保留 `call_row` 的默认值。
+- **Decision**:
+  1. **保留 owner 并归并**：`merge_owners(&[&str]) -> &'static str`。零个上游 → `anonymous`（「没有凭据出站」这件事为真）；全部相同 → 该值；**混合 → `mixed`**（新的第四值）。
+  2. **聚合路径同样走 `effective_owner`**：静态头（`auth_header_value`）出站算 `server`，与单 server 路径同一把尺子。否则「用静态头出站」的聚合请求会记 `anonymous`，与 ADR-048 / Stage 146 Gate 4 #3 修掉的是同一类谎言。
+  3. **`outbound_headers` 提到循环外算一次并传给 `catalog_tools`**：原实现里 `catalog_tools` 内部自己再算一次（`:795`）。两次 AES-GCM 解封是浪费，更重要的是**两处参数若不一致会得到不同的头**——那正是 Stage 146 要求「探测与运行用同一套头」防的同一类隐患。
+  4. **`mixed` 同步到前端 `McpTokenOwner` 与 i18n**，徽章样式与 `anonymous` 区分（`anonymous` 是 amber 警告色，`mixed` 不是警告）。
+- **Why not the alternatives**:
+  - **取最弱（任一 `anonymous` 就写 `anonymous`）** —— 「5 个 server 里 4 个带凭据」会报匿名，正是本 ADR 要修的谎言换了个触发条件。
+  - **取最强（任一有凭据就写 `server`）** —— 「1 个带凭据 4 个匿名」会报 `server`，同样撒谎，而且方向更危险（读者会以为全部有凭据）。
+  - **按 server 拆成多行日志** —— 一次请求一行是 `mcp_call_log` 的结构前提（`call_id` 是 PK），拆行要改表与所有消费方，收益只是「悬停能看到哪几个匿名」，不值。
+  - **不记（保持现状 `anonymous`）** —— 现状就是 bug。
+- **Consequences**:
+  - `token_owner` 词表从三值变四值。后端是 `String` 无编译期约束，前端 `McpTokenOwner` 是唯一 union 类型（`rg` 可穷举），但将来的导出/告警规则若穷举三值会漏掉 `mixed`。
+  - 归并只看「被实际联系的 server」：`user_required` 且无用户 token 的 server 会被静默跳过（H4 既有行为），**不参与归并**——它没有被联系，就谈不上它的凭据出站。
+  - 这条 ADR 与 Stage 143 决策 #2（过期 token → 出站无头 → 记 `anonymous`）不冲突：那条讲的是「单个上游的凭据没发出去」，这条讲的是「多个上游的凭据怎么归并成一个词」。
+
+---
+
+## ADR-052: 日志的人可读名称在**响应时**补，不写进 `mcp_call_log`
+
+- **Date**: 2026-10-31
+- **Status**: Accepted
+- **Related Stage**: Stage 149 §3.3；`crates/aigw-server/src/routes/mcp.rs`（`call_log_response`）、`crates/aigw-core/src/db.rs`（`mcp_call_key_names` / `mcp_call_user_names`）
+- **Background**: 日志页把 `key_id`（SHA256 全长 64 字符）与 `user_id` 直接铺在表格里。`mcp_call_log` 只有 id 与 hash，没有名称。消费日志页早有先例（`spend-logs/index.tsx:956`：`log.key_name || truncate8(log.api_key)`）。
+- **Decision**:
+  1. **名称在响应层补**：`call_log_response` 拿到当页行后，收集去重后的 `key_id` / `user_id` 各做**一次**批量查询，补 `key_name`（`key_name` → `key_alias`）与 `user_name`（`user_alias` → `user_email`）两个只读字段。
+  2. **`mcp_call_log` 不加列、不改写入路径**。`McpCallLogRow` 保持与表的一一映射（stage-144 §3.5 的约定），名称只在响应 JSON 上出现。
+  3. **回退链终止于原 id**：`*master*` 映射为 `"master"`；查不到的 id 显示原值，不显示空白。
+- **Why not the alternatives**:
+  - **写入时固化（加两列）** —— 严格审计语义下更对（日志应记录当时的事实），但写入时手上**没有**名称（`KeyIdentity` 只有 `token_hash`），补一次就是**每次调用**多一次查询；响应时补是每**页**两次。
+  - **前端拿 id 去 `/key/list` 自己 join** —— 前端要多拉全量 key 列表（可能几千条）只为显示 30 个名称；且普通用户的 `/v1/mcp/calls` 路径不该有权限拉全量 key。
+  - **显示 hash 前 8 位** —— 消费日志的 `truncate8(api_key)` 是兜底（key 本身有明文可截），MCP 这边只有不可逆 hash，截 8 位既不唯一也不可读音。
+- **Consequences**:
+  - **key 改名后历史行显示新名**。审计事实是 `key_id`/`user_id`，两者仍原样保留，所以「改名导致历史不可追溯」不成立；但「历史行显示的是当下的名字」这一点必须清楚，否则会误以为改名会污染历史。
+  - 每页最多两次批量查询，页大小上限 100（`call_log_response` 的 clamp）保证 IN 列表不超过 SQLite 的 999 参数上限——**这个耦合要写进注释**，否则将来放开页大小会撞上 SQLite 的限制。
+  - 补名称失败不影响行返回（查不到就是 null），但 DB 错误会让整页 500——与列表查询本身的错误处理一致。
+
+---
+
+## ADR-053: 认证拒绝审计用独立表 + 提取器，不塞进 `mcp_call_log`、不用中间件
+
+- **Date**: 2026-10-31
+- **Status**: Accepted
+- **Related Stage**: Stage 150 §3.1 / §3.2 / §3.3；`crates/aigw-server/src/routes/mcp_gateway.rs`（`McpAuditAuth`）、`crates/aigw-core/src/retention.rs`
+- **Background**: 生产实测：先取 `total_count`=51，连发 14 次必然失败的 MCP 请求（7 次无头 + 7 次假 token），再取仍为 51。`SpendAuth` 在 handler 之前拒绝，`call_row` 从未执行，连 `x-call-id` 都没有。未授权的探测尝试在 DB 与 `/dash/mcp` 里完全不可见，只能翻 tracing 日志（且没有 IP、没有可查询的时间窗口）。
+- **Decision**:
+  1. **新表 `mcp_auth_rejection`**：`reason` / `token_hash`（**只存哈希，不存明文也不存前缀**）/ `client_ip` / `user_agent` / `path` / `http_method`。**不建外键、不存请求体**。
+  2. **提取器而非中间件**：`McpAuditAuth` 包装 `SpendAuth`，`Err` 分支先 best-effort 写一行再抛**原错误**。中间件方案要重新解析 Authorization 头、重新判断「这个请求最终会不会被拒绝」，等于把 `SpendAuth` 复制一份。
+  3. **审计写失败不改变响应**：内部 `warn!` 后返回原 `AuthError`。与 `mcp_relay::record` 的既有约定一致——审计写不进去不能把 401 变成 500。
+  4. **`client_ip` 复用 `ip_extractor` 的解析规则**（`X-Forwarded-For` 最右一跳），把解析逻辑提成 `pub(crate) fn`，extractor 与审计路径共用同一份实现。
+  5. **保留期走既有 `AsyncTask` 引擎**（`McpLogRetention`），与 `BodyArchiver` / `BudgetResetter` 同一注册点；**默认值保守**（90/30 天），`0` 表示不删。
+- **Why not the alternatives**:
+  - **塞进 `mcp_call_log`** —— 那张表的 `key_id`/`user_id` 语义是「谁在调用」，被拒的请求恰恰**没有身份**；塞 NULL 会让 `/v1/mcp/calls` 的 `user_id = ?` 等值过滤（天然排除 NULL）与既有 BDD 全部失真。
+  - **中间件 + `route_layer`** —— 见决策 2；且中间件拿不到「拒绝原因」的枚举（要自己从状态码反推），而提取器拿到的就是 `AuthError`。
+  - **只记日志不落库** —— 现状就是这样，问题是无法回答「有没有人在扫」「哪个 IP 在试哪把 key」。
+  - **保留期硬编码** —— 不同部署的合规要求不同；硬编码要么太短（查不到）要么太长（无界）。
+  - **保留期默认关闭（照 `body_archive.auto_archive`）** —— 那条默认关是因为「归档」改变了数据位置、可能出错；「删除」是危险的，所以默认值必须是**保守的长周期**，而不是默认不删（TD-030 的问题正是「没有清理路径」）。
+- **Consequences**:
+  - `token_hash` 让「谁把 key 发错了端点」可被追溯——这是想要的（排查手段），但也是隐私面：仅 admin 可见，且不可逆。
+  - 公网端点会被扫描器灌行。缓解：30 天保留期 + 分批删；若量级失控，下一步是「同 IP 同 reason 在 N 分钟内合并计数」（新的聚合表，不在本 Stage）。
+  - `client_ip` 可被伪造（`X-Forwarded-For`），**不能作为封禁依据**。
+  - `SpendAuth` 实际只产生 `MissingHeader` / `InvalidFormat` / `TokenNotFound` 三种变体（`TokenExpired` / `TokenBlocked` 在枚举里但从无生产者），因此 `reason` 只有三个合法值。
+
+---
+
+## ADR-054: body 默认留存、显式不做冷存储；tab 用路径段而非 query
+
+- **Date**: 2026-10-31
+- **Status**: Accepted
+- **Related Stage**: Stage 152 §3.4 / §3.6；Stage 151 §3.1 / §3.2
+- **Background**: 两件互相独立但在同一 Phase 里定的事。(a) `mcp_call_log` 只存字节数，MCP 路径完全没接 `BodyArchiver`，「312 字节里是什么」不可见；而 `body_archive` 现成的 writer 是 LLM 专用 schema（`BodyRow{model, messages, response, ...}`）。(b) `/dash/mcp` 与 Playground 的 tab 都是组件内 `useState`，链接不可分享、刷新回默认、后退离页。
+- **Decision**:
+  1. **MCP body 单独一张表 `mcp_call_body`**（`call_id` PK、不加 FK），**默认开启**（与 `body_archive.auto_archive` 的默认关闭相反），单条上限 64 KiB、按 UTF-8 合法边界截断，二进制存占位。
+  2. **不做冷存储**：body 与日志同寿命（保留期到了同删）。`mcp_call_body` 不加 `archived` / `parquet_path` 两列。
+  3. **tab 用路径段**（`/dash/mcp/calls`、`/dash/playground/mcp`），`index` 按角色重定向，权限判定留在组件内（非 admin 访问 admin-only 子路径 → 重定向到 mine，不是空白页）。
+  4. **`CallLogTab` 的四个筛选进 `useSearchParams`**：默认值不进 URL、页码留 URL、筛选变更用 `replace: true`（否则每敲一个字符都进历史），tab 切换用 `push`（后退回上一个 tab 是期望行为）。
+- **Why not the alternatives**:
+  - **复用 `body_archive` 的 `BodyRow` + `write_parquet_shards`** —— 会把 LLM 与 MCP 两种 schema 混进同一套 Parquet，而读取端（`query.rs`）按列名取 `messages`/`response`；且 `write_parquet_shards` 写死 `BodyRow`，要复用就得先做抽取重构——这是本 Stage 最贵的一块，而收益（省存储）在 MCP 的 KB 级数据量下为零。
+  - **body 写进 `mcp_call_log` 的列** —— 主表是列表页的热路径，加两个 TEXT 列会让「每页 30 行」的查询把大字段一起捞出来。
+  - **body 默认关闭** —— 那会让这个功能在「已经出问题之后」才被打开，而那时历史已经没了。
+  - **tab 用 `?tab=calls`** —— 深链的 alias/时间筛选也堆在同一个 query string 上，「切 tab 时保留哪些参数」没有正确答案；路径分段后 `/dash/mcp/calls?alias=iwiki&from=...` 的语义无歧义。
+  - **权限判定搬到 `App.tsx` 路由** —— 要在路由层注入 `useAuth`，且「非 admin 访问 servers」的正确行为是重定向而非 403 空白页，那本来就是组件内 `<Navigate>` 一行的事。
+- **Consequences**:
+  - **存储增长**是本 Phase 唯一真的会长期增长的数据（90 天 × 每调用 2 条 body）。触发做冷存储的条件写进 Stage 152 §8：`mcp_call_body` 超过 1 GB 或日增超过 50 MB。
+  - body 里可能含敏感业务数据（内网文档 id、代码片段、日志查询语句）。与 `spend_logs.messages` 同级，访问控制一致（admin 看全部、用户看自己的），**不做内容级脱敏**——这是明确取舍。
+  - SSE 拼接的 body 是截断的，末尾错误信息可能被切掉；`error_code` 不依赖 body 留存（来自 HTTP 状态与 JSON-RPC error 对象）。
+  - **Playground 的 chat state 留在 `ChatPanel`，不上提到 layout**（Stage 151 §9）：`messages` 落 `sessionStorage`、`settings` 落 `localStorage`，切换 tab 卸载后重挂载会重新读到，会话不丢。代价是 `input` 草稿（本就不持久化）与进行中的请求，已由 BDD 钉死「切回 chat 后 messages 条数不变」。

@@ -1,7 +1,22 @@
 # aigw -- 下一步行动
 
 **上次更新**: 2026-10-31
-**当前阶段**: **Phase 56 ✅ 完成（Stage 146-148，2026-10-31）—— MCP Gateway 生产反馈迭代**，总进度 148；Phase 55 代码全部交付（143 门禁 7/8，唯一未勾选项是 Codex 真机工具调用，ADR-046）
+**当前阶段**: **Phase 58 ✅ 完成（Stage 149-152 全部交付）—— MCP 日志与审计完善**，总进度 152；Phase 56 ✅ 完成（Stage 146-148）
+
+---
+
+## 已收官：Phase 58 —— MCP 日志与审计完善（Stage 149-152 ✅）
+
+**来源**：2026-10-31 在生产网关（`9.135.87.221:4001`）做「带/不带 token 的对照实验」时，`mcp_call_log` 与日志页暴露的五处缺口，全部实测（见 `stage-roadmap.md` 的 Phase 58 段与各 stage §1）。
+
+| Stage | 内容 | 预估 |
+|---|---|---|
+| 149 ✅ | **日志数据正确性与可读性** —— 聚合 `tools/list` 的 `token_owner` 恒 `anonymous`（`list_aggregate_tools` 丢 owner）→ `merge_owners` + `mixed` 第四值；`cursor` 传数字静默回放第一页 → 同时接受字符串与数字；id → 名称（响应层批量补 `key_name`/`user_name`，id 进 tooltip） | ~14h |
+| 150 ✅ | **认证拒绝审计 + 保留期** —— 401 一条都不落库（`SpendAuth` 在 handler 之前拒绝）→ `035_mcp_auth_rejection.sql` ×3 + `McpAuditAuth` 提取器；TD-030 → `McpLogRetention`（`AsyncTask`，默认 90/30 天，`0` 不删） | ~16h |
+| 151 ✅ | **tab 进路由** —— `/dash/mcp/{servers,mine,calls,rejections}` + `/dash/playground/{chat,mcp}`；`CallLogTab` 四筛选进 `useSearchParams`（行内「调用日志」按钮因此可分享） | ~8h |
+| 152 ✅ | **body 留存与查看** —— `036_mcp_call_body.sql` ×3；三条写入路径接请求体；64 KiB 上限 + UTF-8 边界截断；`/admin/mcp/calls/{id}/body` + `/v1/mcp/calls/{id}/body`；**显式不做冷存储** | ~18h |
+
+**下一阶段**：Phase 57（MCP OAuth 发现）仍是空号，未开工；剩余候选见 roadmap 的「下一里程碑」段（Tavily / 博查客户端、Phase 54 遗留、M1 guardrails / M2 Redis 分布式层、TD-015d/015e、TD-017b、TD-021a/021b、TD-024~028）。冷存储与全文搜索在 Stage 152 §8 有明确的触发条件，现在不做。
 
 ---
 
@@ -120,11 +135,12 @@ Phase 55 的数据层与纯逻辑：**没有 HTTP 路由**，只有表、store�
 
 **已剥离、排在 Phase 55 之后**：两处 `anthropic-beta` 既存缺陷（`/v1/messages` 不转发客户端 beta、OAuth 路径写死 beta 且**写入点有两处**）→ 登记为 **TD-021a / TD-021b**（P1，见 `docs/12-technical-debt.md`）。后果是 Claude Code 的 tool search 静默失效、自动退回全量预加载工具（「能用但很贵」，无报错）。**不阻塞任何 MCP Stage，MCP 阶段不要顺手夹带。**
 
-### 其它候选（Phase 56 之后）
+### 其它候选（Phase 58 之后）
 
 | 方向 | 状态 |
 |------|------|
-| Phase 57：MCP OAuth 发现（`/.well-known/oauth-protected-resource` + `WWW-Authenticate` 引导） | CC 能零配置完成授权；依赖 Phase 55 的 401 响应形状（原编号 Phase 56，2026-10-31 顺延） |
+| **Phase 58：MCP 日志与审计完善**（Stage 149-152，~56h） | ✅ **已完成**（2026-10-31，总进度 152）。149 日志数据正确性 + 150 认证拒绝审计与保留期（TD-030 Resolved）+ 151 tab 进路由 + 152 body 留存。详见上方「已收官」节 |
+| Phase 57：MCP OAuth 发现（`/.well-known/oauth-protected-resource` + `WWW-Authenticate` 引导） | CC 能零配置完成授权；依赖 Phase 55 的 401 响应形状（原编号 Phase 56，2026-10-31 顺延）。**内容未变，仍待开工** |
 | 设计 A（短路）：让 Claude Code WebSearch 按钮可用 | 唯一能解锁该按钮的路径；**必须配套 `srvtoolu_` 前缀剥离**，否则第二轮 400 |
 | 设计 B（agentic loop） | 硬前提「上游是否认网关注入的 function 工具」**仍未实测** |
 | 按 provider / 实例聚合花费与搜索量趋势 | Phase 54 遗留；`search` 投影块已带出 `instance`，是现成输入 |

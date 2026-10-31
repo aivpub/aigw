@@ -408,13 +408,15 @@
 ### TD-030: `mcp_call_log` 无保留期与清理，日志表会无界增长
 
 - **Date**: 2026-10-31
+- **Status**: ✅ Resolved 2026-10-31（Phase 58 / Stage 150）
 - **Priority**: **P2**（低频事件，但无上限的表最终会变成运维问题）
 - **Source**: Stage 147 §8（把日志页做成第一类查询面时暴露：能查全历史，但没有任何人负责删）
 - **Description**: `mcp_call_log`（`031_mcp_call_log.sql`，三方言）每次 MCP 请求落一行，成功失败都落。项目里已有 `async_jobs` + `async_job_steps` 的定时任务框架（`crates/aigw-core/src/engine.rs`）与 `body_archive` 的清理先例，但没有任何任务清理 `mcp_call_log`。Stage 147 新增的 `(user_id, created_at)` 索引会随行数一起变大。
 - **Impact**: 单机自建场景下每天几十到几千行，一年最大百万级，SQLite/PG 都还能扛；但索引维护与备份体积会稳定增长，且**没有配置项**告诉运维「保留多久」。
 - **Why not fix now**: 清理策略是产品决策（保留 30 天？90 天？按 alias 分级？），且要新建一个 `step_type`（`async_jobs.step_type` 的取值集在三方言的检查/文档里都出现过）。Stage 147 的交付面是「能查」，不是「能自动删」。
-- **Target Phase**: Phase 57 或首个出现「日志表体积报警」的部署；与 body archive 的生命周期策略（LT-BodyLifecycle）一起设计更省事。
-- **Related**: `stage-147.md` §8、LT-BodyLifecycle
+- **Target Phase**: **Phase 58 / Stage 150**（`McpLogRetention`，`AsyncTask` 照 `BodyArchiver` 的注册点，分批删两张表，默认 90 天、`0` 表示不删）；body archive 的生命周期策略（LT-BodyLifecycle）仍单独设计。
+- **Resolution**: `crates/aigw-core/src/retention.rs` 的 `McpLogRetention`（`AsyncTask`，`step_type = "mcp_log_retention"`）在 `main.rs` 注册到同一个 `Engine`，分批删 `mcp_call_log` 与 `mcp_auth_rejection`（`stale_*_ids` → `delete_*_ids`，避开 PG 没有的 `DELETE ... LIMIT`）。配置 `mcp_log_retention.{call_log_days=90, rejection_days=30, batch_size=5000, check_interval_secs=3600}`，`0` = 该表永不删；配置块缺省时仍以默认为准（无主的表比「默认删」更危险）。三方言 real BDD 各跑一次 `batch_size=1` 的全量排空（`mcp_log_retention_real.feature`）。
+- **Related**: `stage-147.md` §8、`stage-150.md` §3.4、LT-BodyLifecycle、ADR-053
 
 ### TD-031: MCP 静态头值（`auth_header_value` / `extra_headers`）没有换 key 的迁移路径
 
@@ -426,6 +428,39 @@
 - **Why not fix now**: 写一个 `aigw rotate-master-key`（读旧 key、遍历加密列、写新 key、事务）是独立的一次交付，涉及 `mcp_servers` / `mcp_server_tokens` / `websearch_instances` / `credentials` 至少四张表的列枚举，与 Stage 146/147/148 的交付面无交集。
 - **Target Phase**: 与 OAuth（Phase 57）同批 —— 那时 `auth_header_value` 会变成「可能由刷新流程写入的槽位」，两者都要求先有一个明确的 key 生命周期。
 - **Related**: ADR-048、`stage-146.md` §8、`crates/aigw-core/migrations/{sqlite,postgres,mysql}/033_mcp_server_headers.sql`
+
+### TD-032: 非法 cursor 的两种行为不一致（字符串解析失败 → 空页，非字符串类型 → 第一页）
+
+- **Date**: 2026-10-31
+- **Priority**: **P3**（需要客户端自己造 cursor 才碰得到；照抄 `nextCursor` 的客户端不受影响）
+- **Source**: Stage 149 §3.4 实测（生产：`{"cursor":100}` 返回第一页 + `nextCursor="100"`；`{"cursor":"100"}` 正确返回第 2 页）
+- **Description**: `tools_page_cursor`（`mcp_gateway.rs:844`）只接受 `Value::as_str`，非字符串一律当作「没有 cursor」→ 第一页。而字符串路径上 `catalog::page`（`catalog.rs:113`）对解析失败的字符串用 `unwrap_or(usize::MAX)`，被 `.min(entries.len())` 夹住后是**空页** + `nextCursor=None`。两种非法输入，两种相反的结果，且都不报错。
+- **Impact**: 「空页」比「第一页」更危险 —— 客户端会以为工具列表到此为止（`nextCursor` 缺失就是「没有更多」的协议信号），把「cursor 写错了」误读成「网关只有这么多工具」。
+- **Why not fix now**: Stage 149 只修「数字被当成没有 cursor」这一条（明确的类型退化）。统一语义要先决定「非法 cursor 该 400 还是该退回第一页」—— 那是协议层决策（MCP 规范对无效 cursor 没有规定），且要同步前端分页与 BDD 的期望值。
+- **Target Phase**: 首个出现「客户端自己造 cursor」的真实需求时；或 Phase 58 收尾复核。
+- **Related**: `stage-149.md` §3.4 / §8、`crates/aigw-core/src/mcp/catalog.rs`
+
+### TD-033: MCP body 只留热存储，无归档与生命周期分级
+
+- **Date**: 2026-10-31
+- **Priority**: **P2**（合理取值下（~64 KiB × 低频调用 × 90 天）不会成为问题；但无限增长没有刹车）
+- **Source**: Stage 152 §3.4 的显式取舍（ADR-054 决策 2）
+- **Description**: `mcp_call_body`（`036`，三方言）随 `mcp_call_log` 一起被同一保留期删除，**不做冷存储归档**。`body_archive` 的 `write_parquet_shards` 写死 LLM 的 `BodyRow` schema，复用它给 MCP 用需要先做 schema 抽取重构。
+- **Impact**: 保留期内的 body 全在热存储。若将来 record_bodies 默认开启 + 调用量上来（自动化 agent 高频调工具），`mcp_call_body` 会成为库里最大的表。
+- **Why not fix now**: KB 级数据量下「省存储」的收益为零，而抽取重构是本 Phase 最贵的一块。触发条件已写进 `stage-152.md` §8：表超过 1 GB 或日增超过 50 MB 时再做。
+- **Target Phase**: 触发条件满足时；届时需要给 `mcp_call_body` 加 `archived` / `parquet_path` 两列（一次迁移）并抽取 writer 的 schema 构造。
+- **Related**: ADR-054、`stage-152.md` §3.4 / §8
+
+### TD-034: 聚合端点的 `token_owner` 无法表达「哪几个上游是 anonymous」
+
+- **Date**: 2026-10-31
+- **Priority**: **P3**（`mixed` 已经消除了「撒谎」，剩下的只是「不够详细」）
+- **Source**: Stage 149 §3.1 / ADR-051
+- **Description**: 一次聚合 `tools/list` 只落一行日志，`token_owner` 只能是单一值。混合场景记 `mixed`，但**没有地方记录「5 个里哪 1 个是 anonymous」**——`warnings` 只在响应里出现（不落库），且它记录的是解析失败而不是「凭据缺失但仍被联系」。
+- **Impact**: 运维看到 `mixed` 后无法进一步定位是哪个 server 缺凭据，要去 `mcp_servers` 逐个看 scope 与 token 配置。
+- **Why not fix now**: 要有明细就得把一次请求拆成多行，或新增一张「每请求每上游」的子表 —— 前者破坏 `call_id` 是 PK 的结构前提（所有消费方都要改），后者是本 Phase 之外的建模工作。
+- **Target Phase**: 首个出现「聚合调用排查需要逐上游凭据状态」的真实需求时。
+- **Related**: ADR-051、`stage-149.md` §3.1
 
 ## Resolved Items
 ### TD-017g: Anthropic 服务端工具触发 HTTP 500（Resolved 2026-10-07, Stage 135）
