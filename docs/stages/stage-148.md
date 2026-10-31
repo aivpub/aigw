@@ -4,7 +4,7 @@
 **预估**: ~10h（后端 run registry + 轮询端点 + 并发探测 + 前端进度对话框 + BDD）
 **依赖**: Stage 141（probe / reload 端点与 `probe_and_store`）、Stage 142/145（`/dash/mcp` Server 管理 tab）、Stage 146（会改 `probe_server` 的签名，本 Stage 在其之后）
 **状态**: ✅ 完成（2026-10-31）
-**提交**: —
+**提交**: `9a7e125`（与 Stage 147 合并提交，见该 commit message 的归属说明），`--signoff`，未 push。
 
 ---
 

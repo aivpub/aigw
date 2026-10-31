@@ -5,7 +5,7 @@
 **依赖**: Stage 140（`mcp_servers` 表与 `McpServerRow`）、Stage 141（probe / reload）、Stage 143（`session::UpstreamTarget` / `request_builder`）、Stage 142（`ServerDialog`）
 **状态**: ✅ 完成（2026-10-31）
 
-**提交**: —
+**提交**: `a04e5cb`（自定义认证头名与额外上游请求头），`--signoff`，未 push。
 
 ---
 

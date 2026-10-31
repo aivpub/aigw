@@ -4,7 +4,7 @@
 **预估**: ~14h（后端 user 维度过滤 + 两套端点 + 索引迁移 ×3 + 前端新 tab + BDD）
 **依赖**: Stage 143（`mcp_call_log` 写入）、Stage 144（`/admin/mcp/calls` 与 `McpCallQueryStore`）、Stage 145（`CallLogDialog` 现状）、Stage 142/145（`/dash/mcp` tab 骨架）
 **状态**: ✅ 完成（2026-10-31）
-**提交**: —
+**提交**: `9a7e125`（与 Stage 148 合并提交，见该 commit message 的归属说明），`--signoff`，未 push。
 
 ---
 
