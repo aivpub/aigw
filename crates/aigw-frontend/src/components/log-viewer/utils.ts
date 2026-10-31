@@ -84,3 +84,72 @@ export function safeStringify(v: unknown): string {
     return String(v);
   }
 }
+
+function prettyJson(text: string): string | null {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return null;
+  try {
+    return JSON.stringify(expandEmbedded(JSON.parse(trimmed)), null, 2);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * MCP double-encodes its payload: a `tools/call` answer is a JSON-RPC envelope
+ * whose `result.content[].text` is *another* JSON document as a string. Printed
+ * verbatim that inner document is one escaped line, which is the line an
+ * operator actually wants to read. Strings that parse as an object or array are
+ * replaced by the parsed value, so `JSON.stringify` re-indents them too.
+ */
+function expandEmbedded(value: unknown, depth = 0): unknown {
+  if (depth > 4) return value;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return value;
+    try {
+      return expandEmbedded(JSON.parse(trimmed), depth + 1);
+    } catch {
+      return value;
+    }
+  }
+  if (Array.isArray(value)) return value.map((v) => expandEmbedded(v, depth + 1));
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([k, v]) => [
+        k,
+        expandEmbedded(v, depth + 1),
+      ]),
+    );
+  }
+  return value;
+}
+
+/**
+ * Pretty-print a recorded wire body: a JSON envelope is re-indented, and an SSE
+ * stream has each `data:` payload re-indented while `event:` / `id:` lines stay
+ * verbatim. Anything else is returned unchanged — a body that is not JSON (a
+ * plain text answer, a `[binary, N bytes]` placeholder) has nothing to indent,
+ * and guessing would corrupt it.
+ */
+export function prettifyBody(text: string): string {
+  const whole = prettyJson(text);
+  if (whole) return whole;
+
+  const frames = text.split(/\r?\n\r?\n/).filter((f) => f.trim() !== "");
+  if (!frames.some((f) => /^(data|event|id|retry):/.test(f.trim()))) return text;
+
+  return frames
+    .map((frame) =>
+      frame
+        .split(/\r?\n/)
+        .map((line) => {
+          const data = /^data:\s?(.*)$/.exec(line);
+          if (!data) return line;
+          const pretty = prettyJson(data[1]);
+          return pretty ? `data: ${pretty}` : line;
+        })
+        .join("\n"),
+    )
+    .join("\n\n");
+}

@@ -584,7 +584,11 @@ const MCP_CALL_BODIES: Record<string, { request: string; response: string; trunc
   {
     "0192f0c4-0000-7000-8000-000000000001": {
       request: '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"search"}}',
-      response: '{"result":{"content":[{"type":"text","text":"3 issues found"}]}}',
+      // The payload is a JSON document *inside* `content[].text`, the way a real
+      // MCP server answers — the viewer expands it instead of printing one
+      // escaped line.
+      response:
+        '{"result":{"content":[{"type":"text","text":"{\\"issues\\":3,\\"message\\":\\"3 issues found\\"}"}]}}',
       truncated: false,
     },
     "0192f0c4-0000-7000-8000-000000000002": {

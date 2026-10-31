@@ -33,6 +33,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { prettifyBody } from "@/components/log-viewer/utils";
 import { ScrollText } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -168,7 +169,9 @@ function BodyViewer({ callId }: { callId: string }) {
       className="max-h-64 overflow-auto rounded-md border bg-muted/40 p-2 font-mono text-xs whitespace-pre-wrap break-all"
       data-testid={testId}
     >
-      {text === null || text === undefined || text === "" ? t("mcp.calls.body.empty") : text}
+      {text === null || text === undefined || text === ""
+        ? t("mcp.calls.body.empty")
+        : prettifyBody(text)}
     </pre>
   );
 

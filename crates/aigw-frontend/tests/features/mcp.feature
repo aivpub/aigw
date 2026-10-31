@@ -123,6 +123,13 @@ Feature: MCP Servers
     And I open the MCP call row for tool "get_issue"
     Then the MCP call detail says the body was truncated
 
+  Scenario: A recorded body is pretty-printed instead of one raw line
+    When I open the MCP call log tab
+    And I open the first MCP call row
+    Then the request body is pretty-printed
+    When I switch the call body to the response
+    Then the response body is pretty-printed with its embedded JSON expanded
+
   Scenario: A call recorded before bodies were kept says so
     When I open the MCP call log tab
     And I open the MCP call row for tool "hr-portal__search"

@@ -257,6 +257,21 @@ Then("the MCP call detail says the body was truncated", async ({ page }) => {
   await expect(page.getByTestId("mcp-call-body-truncated")).toBeVisible({ timeout: 8000 });
 });
 
+/** Formatting is what makes a `tools/call` answer readable: the JSON-RPC
+ *  envelope is re-indented and the JSON document double-encoded inside
+ *  `result.content[].text` is expanded instead of staying one escaped line. */
+Then("the request body is pretty-printed", async ({ page }) => {
+  const text = await page.getByTestId("mcp-call-body-request").textContent();
+  expect(text).toContain('"jsonrpc": "2.0"');
+  expect(text).toMatch(/\n\s+"method": "tools\/call"/);
+});
+
+Then("the response body is pretty-printed with its embedded JSON expanded", async ({ page }) => {
+  const text = await page.getByTestId("mcp-call-body-response").textContent();
+  expect(text).toMatch(/\n\s+"text": \{/);
+  expect(text).toMatch(/\n\s+"issues": 3/);
+});
+
 Then("the MCP call detail says no body was recorded", async ({ page }) => {
   await expect(page.getByTestId("mcp-call-body-missing")).toBeVisible({ timeout: 8000 });
   await expect(page.getByTestId("mcp-call-body-request")).toHaveCount(0);
