@@ -14,6 +14,7 @@ use std::time::Duration;
 
 use aigw_core::db::Database;
 use aigw_core::mcp::body::cut;
+use aigw_core::mcp::session::METHOD_TOOLS_LIST;
 use aigw_core::models::{McpCallBodyRow, McpCallLogRow, MCP_CALL_STATUS_FAILED};
 use aigw_core::retention::McpLogRetentionConfig;
 use axum::body::Body;
@@ -44,6 +45,13 @@ pub(crate) async fn record(db: &Database, row: &McpCallLogRow) {
 /// `limit` is `None` when `record_bodies` is off — the one value that means
 /// "write nothing", carried instead of the whole config so the SSE task can
 /// own it.
+///
+/// A `tools/list` answer keeps no body: it is the server's whole catalogue —
+/// measured at 126 KB per aggregate call against 1 KB for a `tools/call` — and
+/// the same data already lives in `mcp_tool_catalog`, timestamped by
+/// `fetched_at`. Storing a second copy per listing spent 99% of this table on
+/// the one method whose payload the database already owns. The log row stays,
+/// so the call is still counted and timed; only the byte copy is dropped.
 pub(crate) async fn record_with_bodies(
     db: &Database,
     limit: Option<usize>,
@@ -52,6 +60,9 @@ pub(crate) async fn record_with_bodies(
     response: &[u8],
 ) {
     record(db, row).await;
+    if row.method == METHOD_TOOLS_LIST {
+        return;
+    }
     let Some(limit) = limit else {
         return;
     };

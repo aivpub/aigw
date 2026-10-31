@@ -3433,6 +3433,77 @@ mod tests {
         );
     }
 
+    /// A `tools/list` answer is the whole catalogue and is already stored in
+    /// `mcp_tool_catalog`, so no body row is written for it — but the audit row
+    /// itself must survive, or the listing would stop being counted.
+    #[tokio::test]
+    async fn a_tools_list_keeps_no_body() {
+        let state = test_state().await;
+        let (up, _) = spawn_tools_stub(stub_tools(&["search"])).await;
+        insert_server(
+            &state,
+            server_row(
+                "demo",
+                &up,
+                "shared",
+                Some(aigw_core::mcp::probe::MODERN_PROTOCOL_VERSION),
+            ),
+            None,
+        )
+        .await;
+        let app = build_router(state.clone());
+
+        let (listed, _, _) = send(
+            &app,
+            Method::POST,
+            "/mcp/demo",
+            Some(MK),
+            &[],
+            tools_list_body(None),
+        )
+        .await;
+        assert_eq!(listed, 200);
+        let (called, _, _) = send(
+            &app,
+            Method::POST,
+            "/mcp/demo",
+            Some(MK),
+            &[],
+            tools_call_body(),
+        )
+        .await;
+        assert_eq!(called, 200);
+
+        let rows = call_log(&state.db, "demo").await;
+        assert_eq!(rows.len(), 2, "both calls are still counted");
+        let listed_row = rows
+            .iter()
+            .find(|r| r.method == "tools/list")
+            .expect("the listing row");
+        let called_row = rows
+            .iter()
+            .find(|r| r.method == "tools/call")
+            .expect("the call row");
+        assert!(
+            state
+                .db
+                .get_mcp_call_body(&listed_row.call_id)
+                .await
+                .expect("body read")
+                .is_none(),
+            "a catalogue listing must not spend a body row"
+        );
+        assert!(
+            state
+                .db
+                .get_mcp_call_body(&called_row.call_id)
+                .await
+                .expect("body read")
+                .is_some(),
+            "every other method still records its bodies"
+        );
+    }
+
     /// A rejected request has no `mcp_call_log` row and must not gain a body row
     /// either. 拒绝审计 is a different table answering a different question.
     #[tokio::test]

@@ -96,6 +96,8 @@ CREATE INDEX IF NOT EXISTS idx_mcp_call_body_created ON mcp_call_body(created_at
 
 `limit: Option<usize>` 就是开关：`None` 表示 `record_bodies=false`，函数在写完日志行后直接返回，一行 body 都不写。把开关做成「`None` 而不是传整个配置」是为了让 SSE 那条后台任务也能持有它。
 
+**`tools/list` 不留 body**（2026-10-31 追补，生产实测驱动）：`record_with_bodies` 在写完日志行后对 `method == "tools/list"` 直接返回，不写 body 行。理由是同源数据已全量存在 `mcp_tool_catalog`（带 `fetched_at`），而生产 121 行的实测显示 `tools/list` 平均 **126 KB/次**（aggregate 更高），`tools/call` 平均 **1 KB/次**，前者独占全表 99% 的字节。日志行照写（次数与耗时仍可查），只是重复的字节副本不再落库。其余 method 不受影响。
+
 ### 3.3 截断
 
 ```rust

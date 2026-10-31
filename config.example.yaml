@@ -227,6 +227,9 @@ litellm_settings:
 #   batch_size: 5000         # rows per DELETE batch
 #   check_interval_secs: 3600  # between discovery scans
 #   record_bodies: true      # Stage 152: keep the request/response of each call
+#                            # EXCEPT tools/list — the catalogue is already in
+#                            # mcp_tool_catalog and averaged 126 KB per listing
+#                            # against 1 KB per tools/call, so the copy is skipped
 #   max_body_kib: 64         # per-body ceiling; longer bodies keep a prefix and
 #                            # set `truncated`. Bodies are deleted with their
 #                            # call row, so call_log_days applies to them too.
