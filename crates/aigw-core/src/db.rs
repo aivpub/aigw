@@ -7602,9 +7602,15 @@ pub trait McpToolAllowlistStore {
     async fn list_mcp_tool_allowlist(&self, server_id: i64) -> Result<Vec<ToolRule>>;
 }
 
-/// Filters for `GET /admin/mcp/calls`. Every field is an AND; `None` means "no
-/// filter on this column", which is why the SQL starts each clause with
-/// `(?N IS NULL OR ...)`.
+/// Filters for `GET /admin/mcp/calls` and `GET /v1/mcp/calls`. Every field is an
+/// AND; `None` means "no filter on this column", which is why the SQL starts each
+/// clause with `(?N IS NULL OR ...)`.
+///
+/// `user_id` is an equality filter and must stay one. Loosening it to a `LIKE`,
+/// the way `tool_name` is matched, would let `u_1` match `u_10` and turn the
+/// user-scoped endpoint into a cross-user read — that is privilege escalation,
+/// not leniency. `tool_name` is a substring because people misremember tool
+/// names; a user id has no such excuse.
 #[derive(Debug, Clone, Default)]
 pub struct McpCallFilter {
     pub server_alias: Option<String>,
@@ -7612,6 +7618,7 @@ pub struct McpCallFilter {
     pub status: Option<String>,
     pub from: Option<String>,
     pub to: Option<String>,
+    pub user_id: Option<String>,
 }
 
 /// Reads behind `GET /admin/mcp/calls`. Kept apart from [`McpCallLogStore`],
@@ -7636,7 +7643,8 @@ WHERE (?1 IS NULL OR server_alias = ?1)
   AND (?3 IS NULL OR status = ?3)
   AND (?4 IS NULL OR created_at >= ?4)
   AND (?5 IS NULL OR created_at <= ?5)
-ORDER BY created_at DESC, call_id DESC LIMIT ?6 OFFSET ?7
+  AND (?6 IS NULL OR user_id = ?6)
+ORDER BY created_at DESC, call_id DESC LIMIT ?7 OFFSET ?8
 "#;
 const COUNT_MCP_CALL_LOG_SQLITE: &str = r#"
 SELECT COUNT(*) FROM mcp_call_log
@@ -7645,6 +7653,7 @@ WHERE (?1 IS NULL OR server_alias = ?1)
   AND (?3 IS NULL OR status = ?3)
   AND (?4 IS NULL OR created_at >= ?4)
   AND (?5 IS NULL OR created_at <= ?5)
+  AND (?6 IS NULL OR user_id = ?6)
 "#;
 
 const LIST_MCP_CALL_LOG_FILTERED_PG: &str = r#"
@@ -7655,7 +7664,8 @@ WHERE ($1::text IS NULL OR server_alias = $1)
   AND ($3::text IS NULL OR status = $3)
   AND ($4::text IS NULL OR created_at >= $4)
   AND ($5::text IS NULL OR created_at <= $5)
-ORDER BY created_at DESC, call_id DESC LIMIT $6 OFFSET $7
+  AND ($6::text IS NULL OR user_id = $6)
+ORDER BY created_at DESC, call_id DESC LIMIT $7 OFFSET $8
 "#;
 const COUNT_MCP_CALL_LOG_PG: &str = r#"
 SELECT COUNT(*) FROM mcp_call_log
@@ -7664,6 +7674,7 @@ WHERE ($1::text IS NULL OR server_alias = $1)
   AND ($3::text IS NULL OR status = $3)
   AND ($4::text IS NULL OR created_at >= $4)
   AND ($5::text IS NULL OR created_at <= $5)
+  AND ($6::text IS NULL OR user_id = $6)
 "#;
 
 const LIST_MCP_CALL_LOG_FILTERED_MYSQL: &str = r#"
@@ -7674,6 +7685,7 @@ WHERE (? IS NULL OR server_alias = ?)
   AND (? IS NULL OR status = ?)
   AND (? IS NULL OR created_at >= ?)
   AND (? IS NULL OR created_at <= ?)
+  AND (? IS NULL OR user_id = ?)
 ORDER BY created_at DESC, call_id DESC LIMIT ? OFFSET ?
 "#;
 const COUNT_MCP_CALL_LOG_MYSQL: &str = r#"
@@ -7683,6 +7695,7 @@ WHERE (? IS NULL OR server_alias = ?)
   AND (? IS NULL OR status = ?)
   AND (? IS NULL OR created_at >= ?)
   AND (? IS NULL OR created_at <= ?)
+  AND (? IS NULL OR user_id = ?)
 "#;
 
 const DELETE_MCP_TOOL_ALLOWLIST_SQLITE: &str =
@@ -7825,6 +7838,7 @@ impl McpCallQueryStore for SqlitePool {
             .bind(filter.status.as_deref())
             .bind(filter.from.as_deref())
             .bind(filter.to.as_deref())
+            .bind(filter.user_id.as_deref())
             .bind(limit)
             .bind(offset)
             .fetch_all(self)
@@ -7840,6 +7854,7 @@ impl McpCallQueryStore for SqlitePool {
             .bind(filter.status.as_deref())
             .bind(filter.from.as_deref())
             .bind(filter.to.as_deref())
+            .bind(filter.user_id.as_deref())
             .fetch_one(self)
             .await?;
         Ok(row.0)
@@ -7866,6 +7881,8 @@ impl McpCallQueryStore for MySqlPool {
             .bind(filter.from.as_deref())
             .bind(filter.to.as_deref())
             .bind(filter.to.as_deref())
+            .bind(filter.user_id.as_deref())
+            .bind(filter.user_id.as_deref())
             .bind(limit)
             .bind(offset)
             .fetch_all(self)
@@ -7886,6 +7903,8 @@ impl McpCallQueryStore for MySqlPool {
             .bind(filter.from.as_deref())
             .bind(filter.to.as_deref())
             .bind(filter.to.as_deref())
+            .bind(filter.user_id.as_deref())
+            .bind(filter.user_id.as_deref())
             .fetch_one(self)
             .await?;
         Ok(row.0)
@@ -7907,6 +7926,7 @@ impl McpCallQueryStore for PgPool {
             .bind(filter.status.as_deref())
             .bind(filter.from.as_deref())
             .bind(filter.to.as_deref())
+            .bind(filter.user_id.as_deref())
             .bind(limit)
             .bind(offset)
             .fetch_all(self)
@@ -7922,6 +7942,7 @@ impl McpCallQueryStore for PgPool {
             .bind(filter.status.as_deref())
             .bind(filter.from.as_deref())
             .bind(filter.to.as_deref())
+            .bind(filter.user_id.as_deref())
             .fetch_one(self)
             .await?;
         Ok(row.0)
@@ -13739,5 +13760,158 @@ mod tests {
 
         let deleted = db.list_deleted_teams().await.expect("list deleted");
         assert!(deleted.is_empty());
+    }
+
+    fn make_test_call(
+        call_id: &str,
+        alias: &str,
+        tool: &str,
+        user: &str,
+        at: &str,
+    ) -> McpCallLogRow {
+        McpCallLogRow {
+            call_id: call_id.to_string(),
+            server_alias: alias.to_string(),
+            tool_name: Some(tool.to_string()),
+            method: "tools/call".to_string(),
+            key_id: Some(format!("key-{user}")),
+            user_id: Some(user.to_string()),
+            token_owner: "user".to_string(),
+            status: MCP_CALL_STATUS_SUCCESS.to_string(),
+            error_code: None,
+            latency_ms: 5,
+            request_bytes: 10,
+            response_bytes: 20,
+            created_at: at.to_string(),
+        }
+    }
+
+    /// Two users' calls, all on the same alias and timestamp, so only the
+    /// `user_id` predicate can separate them.
+    async fn seed_two_users(db: &Database) {
+        for (call_id, user) in [("c-1", "user-1"), ("c-2", "user-1"), ("c-3", "user-2")] {
+            db.insert_mcp_call_log(&make_test_call(
+                call_id,
+                "demo",
+                "search",
+                user,
+                "2026-10-31T00:00:00+00:00",
+            ))
+            .await
+            .expect("insert call");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_user_filter_returns_only_that_users_rows() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        seed_two_users(&db).await;
+
+        let filter = McpCallFilter {
+            user_id: Some("user-1".to_string()),
+            ..Default::default()
+        };
+        let rows = db
+            .list_mcp_call_log_filtered(&filter, 10, 0)
+            .await
+            .expect("list");
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|r| r.user_id.as_deref() == Some("user-1")));
+        assert_eq!(db.count_mcp_call_log(&filter).await.expect("count"), 2);
+
+        let nobody = McpCallFilter {
+            user_id: Some("user-9".to_string()),
+            ..Default::default()
+        };
+        assert!(db
+            .list_mcp_call_log_filtered(&nobody, 10, 0)
+            .await
+            .expect("list")
+            .is_empty());
+        assert_eq!(db.count_mcp_call_log(&nobody).await.expect("count"), 0);
+    }
+
+    #[tokio::test]
+    async fn without_a_user_filter_every_user_is_visible() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        seed_two_users(&db).await;
+
+        let filter = McpCallFilter::default();
+        assert_eq!(
+            db.list_mcp_call_log_filtered(&filter, 10, 0)
+                .await
+                .expect("list")
+                .len(),
+            3
+        );
+        assert_eq!(db.count_mcp_call_log(&filter).await.expect("count"), 3);
+    }
+
+    #[tokio::test]
+    async fn the_user_filter_combines_with_every_other_predicate() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        seed_two_users(&db).await;
+        db.insert_mcp_call_log(&make_test_call(
+            "c-4",
+            "other",
+            "search",
+            "user-1",
+            "2026-10-31T12:00:00+00:00",
+        ))
+        .await
+        .expect("insert call");
+
+        let filter = McpCallFilter {
+            server_alias: Some("demo".to_string()),
+            tool_name: Some("sear".to_string()),
+            status: Some(MCP_CALL_STATUS_SUCCESS.to_string()),
+            from: Some("2026-10-30T00:00:00+00:00".to_string()),
+            to: Some("2026-10-31T01:00:00+00:00".to_string()),
+            user_id: Some("user-1".to_string()),
+        };
+        let rows = db
+            .list_mcp_call_log_filtered(&filter, 10, 0)
+            .await
+            .expect("list");
+        assert_eq!(rows.len(), 2, "got {:?}", rows);
+        assert_eq!(db.count_mcp_call_log(&filter).await.expect("count"), 2);
+    }
+
+    /// The list and the count are two separate statements; if only one of them
+    /// learns about `user_id`, the pager reports every user's total while the
+    /// table shows one user's rows.
+    #[tokio::test]
+    async fn the_count_agrees_with_the_list_including_across_pages() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        seed_two_users(&db).await;
+
+        let filter = McpCallFilter {
+            user_id: Some("user-1".to_string()),
+            ..Default::default()
+        };
+        let first = db
+            .list_mcp_call_log_filtered(&filter, 1, 0)
+            .await
+            .expect("page 1");
+        assert_eq!(first.len(), 1);
+        assert_eq!(db.count_mcp_call_log(&filter).await.expect("count"), 2);
+
+        let second = db
+            .list_mcp_call_log_filtered(&filter, 1, 1)
+            .await
+            .expect("page 2");
+        assert_eq!(second.len(), 1);
+        assert_eq!(db.count_mcp_call_log(&filter).await.expect("count"), 2);
+
+        let past_end = db
+            .list_mcp_call_log_filtered(&filter, 1, 2)
+            .await
+            .expect("page 3");
+        assert!(past_end.is_empty());
+        assert_eq!(
+            db.count_mcp_call_log(&filter).await.expect("count"),
+            2,
+            "an out-of-range page must not change the total"
+        );
     }
 }

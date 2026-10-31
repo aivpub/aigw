@@ -11,6 +11,20 @@ export class UnauthorizedError extends Error {
   }
 }
 
+/** A non-2xx response whose body mattered to the caller (e.g. the `409` that
+ *  carries the `run_id` of a task already in flight). */
+export class ApiError extends Error {
+  status: number;
+  body: unknown;
+
+  constructor(message: string, status: number, body: unknown) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.body = body;
+  }
+}
+
 async function handleResponse(res: Response) {
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -19,7 +33,7 @@ async function handleResponse(res: Response) {
       window.dispatchEvent(new Event("auth:unauthenticated"));
       throw new UnauthorizedError(message);
     }
-    throw new Error(message);
+    throw new ApiError(message, res.status, err);
   }
   return res.json();
 }

@@ -71,6 +71,8 @@
 - **Impact**: 当前双语支持已覆盖 100% 前端 UI 文本，TD-008 a-d 均为增量优化，不阻塞使用。
 - **Resolution**: a/b 已在 Stage 114 解决（2026-08-09）；c/d 视需求触发。
 
+**2026-10-31 补充（TD-008a 的残余缺陷，Stage 148 修复）**：懒加载本身工作正常，但 `react-i18next` 的默认订阅只绑 `languageChanged`，而 `i18n.addResourceBundle` 是在**资源 store** 上 emit `added`、在实例上什么也不 emit。结果是：zh-CN chunk 在组件已挂载之后才落地时，已渲染的节点不会重渲染 —— 页面正文变中文、侧栏仍是英文。全量 `task fe-bdd` 里 `i18n-switcher.feature › First visit with Chinese browser…` 因此偶发失败（依 chunk 到达时刻而定，同一次 run 内 desktop 失败而 mobile/tablet 通过）。修复一行：`i18n.init({ react: { bindI18nStore: "added" } })`。**这是「首访首帧中文」这条 TD-008a 验收结论的真实边界**：它只在 chunk 先于首帧到达时成立。
+
 **2026-10-29 补记**：`scripts/check-i18n-keys.sh`（Stage 92 引入，校验 en / zh-CN key 集对齐）从落地起就**跑不起来** —— 参数写在 heredoc 结束标记之后（`PYEOF "$EN" "$ZH"`），python 读到该行抛 `SyntaxError`，脚本 exit 1。修复：参数移到 `<<` 那一行（`python3 - "$EN" "$ZH" << 'PYEOF'`），并把该脚本加进 `task fe-lint`（此前全仓无任何调用者，这正是它坏了 50 个 Stage 没人发现的原因）。Stage 142 的 1201 个 key 对齐由它首次真正校验通过。
 - **Target Phase**: c/d 无固定排期。
 

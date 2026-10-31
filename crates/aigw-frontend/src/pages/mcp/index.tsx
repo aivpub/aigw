@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiDelete, apiGet, apiPost } from "@/lib/api";
+import { ApiError, apiDelete, apiGet, apiPost } from "@/lib/api";
 import { useAuth } from "@/hooks/use-auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
 import { PaginationBar } from "@/components/ui/pagination";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -42,11 +43,19 @@ import {
 } from "lucide-react";
 import { ServerDialog } from "./ServerDialog";
 import { ProbeDialog } from "./ProbeDialog";
+import { ProbeProgressDialog } from "./ProbeProgressDialog";
 import { TokenDialog } from "./TokenDialog";
 import { ToolsDialog } from "./ToolsDialog";
 import { MyCredentialsTab } from "./MyCredentialsTab";
-import { CallLogDialog } from "./CallLogDialog";
-import { scopeI18nKey, type McpServer, type McpServerListResponse, type ProbeOutcome } from "./types";
+import { CallLogTab } from "./CallLogTab";
+import {
+  scopeI18nKey,
+  type McpServer,
+  type McpServerListResponse,
+  type ProbeOutcome,
+  type ProbeRun,
+  type ReloadStarted,
+} from "./types";
 
 const scopeBadgeClass: Record<string, string> = {
   shared: "bg-slate-100 text-slate-700",
@@ -67,10 +76,10 @@ function ScopeBadge({ scope }: { scope: string }) {
   );
 }
 
-interface ReloadResult {
-  status?: string;
-  probed?: number;
-  failed?: number;
+interface ReloadConflict {
+  type?: string;
+  run_id?: string;
+  message?: string;
 }
 
 function DeleteConfirmDialog({
@@ -131,8 +140,11 @@ export function McpPage() {
 
   const [tokenServer, setTokenServer] = useState<McpServer | null>(null);
   const [toolsServer, setToolsServer] = useState<McpServer | null>(null);
-  const [callsServer, setCallsServer] = useState<McpServer | null>(null);
+  const [callsAlias, setCallsAlias] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<McpServer | null>(null);
+  const [probingId, setProbingId] = useState<number | null>(null);
+  const [reloadRunId, setReloadRunId] = useState<string | null>(null);
+  const [progressOpen, setProgressOpen] = useState(false);
 
   const queryStr = useMemo(() => {
     const params = new URLSearchParams();
@@ -161,6 +173,7 @@ export function McpPage() {
 
   const handleProbe = useCallback(
     async (s: McpServer) => {
+      setProbingId(s.id);
       try {
         const res = await apiPost<ProbeOutcome>(
           `/admin/mcp/servers/${s.id}/probe`,
@@ -172,6 +185,8 @@ export function McpPage() {
       } catch (err) {
         setProbeTarget({ server: s, outcome: null, error: (err as Error).message });
         toast.error(t("mcp.toast.probeFailed"));
+      } finally {
+        setProbingId(null);
       }
     },
     [invalidate, queryClient, t],
@@ -205,25 +220,70 @@ export function McpPage() {
   );
 
   const handleReloadAll = useCallback(async () => {
+    // A click while a sweep is still running attaches to it instead of
+    // erroring: the task lives on the server and the dialog only observes it.
+    // `latest` is read here rather than mirrored into state, so a page refresh
+    // — which wipes local state — still finds the live run.
+    //
+    // `404 no_reload_run` is the normal "nothing has run yet" answer and means
+    // "go ahead and start one". Any other failure is not that: swallowing it
+    // would turn a 403 or a 500 into a click that silently does nothing.
+    const latest = await apiGet<ProbeRun>("/admin/mcp/reload/latest").catch(
+      (err: unknown) => {
+        if (err instanceof ApiError && err.status === 404) return null;
+        toast.error((err as Error).message);
+        return undefined;
+      },
+    );
+    if (latest === undefined) return;
+    if (latest?.status === "running") {
+      setReloadRunId(latest.run_id);
+      setProgressOpen(true);
+      toast.info(t("mcp.toast.reloadInProgress"));
+      return;
+    }
     try {
-      const res = await apiPost<ReloadResult>("/admin/mcp/reload");
-      if (res.status === "partial" && res.failed) {
-        toast.warning(t("mcp.toast.reloadPartial", { failed: res.failed }));
+      const res = await apiPost<ReloadStarted>("/admin/mcp/reload");
+      setReloadRunId(res.run_id);
+      setProgressOpen(true);
+    } catch (err) {
+      // The check above can lose a race with another operator's start; the
+      // `409` names the run to attach to, so that is not an error either.
+      if (err instanceof ApiError && err.status === 409) {
+        const conflict = (err.body as { error?: ReloadConflict })?.error;
+        if (conflict?.run_id) {
+          setReloadRunId(conflict.run_id);
+          setProgressOpen(true);
+          toast.info(t("mcp.toast.reloadInProgress"));
+          return;
+        }
+      }
+      toast.error((err as Error).message);
+    }
+  }, [t]);
+
+  const handleReloadFinished = useCallback(
+    (run: ProbeRun) => {
+      const failed = run.items.filter((i) => i.state === "failed").length;
+      if (failed > 0) {
+        toast.warning(t("mcp.toast.reloadPartial", { failed }));
       } else {
         toast.success(t("mcp.toast.reloaded"));
       }
       invalidate();
-    } catch (err) {
-      toast.error((err as Error).message);
-    }
-  }, [invalidate, t]);
+    },
+    [invalidate, t],
+  );
 
   const openCreate = useCallback(() => {
     setEditing(null);
     setServerDialogOpen(true);
   }, []);
 
-  const serverLogs = useCallback((s: McpServer) => setCallsServer(s), []);
+  const serverLogs = useCallback((s: McpServer) => {
+    setCallsAlias(s.alias);
+    setTab("calls");
+  }, []);
 
   if (!isAdmin) {
     return (
@@ -232,15 +292,22 @@ export function McpPage() {
           <h1 className="text-2xl font-bold tracking-tight">{t("mcp.title")}</h1>
           <p className="text-sm text-muted-foreground">{t("mcp.subtitle")}</p>
         </div>
-        <Tabs value="mine" defaultValue="mine">
-          <TabsList>
+        <Tabs value={tab} onValueChange={setTab} defaultValue="mine">
+          <TabsList className="h-auto min-h-9 max-w-full flex-wrap" data-testid="mcp-tabs">
             <TabsTrigger value="mine" className="gap-1.5" data-testid="mcp-tab-mine">
               <KeyRound className="h-3.5 w-3.5" />
               {t("mcp.tabs.mine")}
             </TabsTrigger>
+            <TabsTrigger value="calls" className="gap-1.5" data-testid="mcp-tab-calls">
+              <ScrollText className="h-3.5 w-3.5" />
+              {t("mcp.tabs.calls")}
+            </TabsTrigger>
           </TabsList>
           <TabsContent value="mine" className="space-y-4">
             <MyCredentialsTab />
+          </TabsContent>
+          <TabsContent value="calls" className="space-y-4">
+            <CallLogTab isAdmin={false} alias={callsAlias} onAliasChange={setCallsAlias} />
           </TabsContent>
         </Tabs>
       </div>
@@ -255,7 +322,7 @@ export function McpPage() {
       </div>
 
       <Tabs value={tab} onValueChange={setTab} defaultValue="servers">
-        <TabsList className="max-w-full overflow-x-auto">
+        <TabsList className="h-auto min-h-9 max-w-full flex-wrap" data-testid="mcp-tabs">
           <TabsTrigger value="servers" className="gap-1.5" data-testid="mcp-tab-servers">
             <Server className="h-3.5 w-3.5" />
             {t("mcp.tabs.servers")}
@@ -264,10 +331,18 @@ export function McpPage() {
             <KeyRound className="h-3.5 w-3.5" />
             {t("mcp.tabs.mine")}
           </TabsTrigger>
+          <TabsTrigger value="calls" className="gap-1.5" data-testid="mcp-tab-calls">
+            <ScrollText className="h-3.5 w-3.5" />
+            {t("mcp.tabs.calls")}
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="mine" className="space-y-4">
           <MyCredentialsTab />
+        </TabsContent>
+
+        <TabsContent value="calls" className="space-y-4">
+          <CallLogTab isAdmin alias={callsAlias} onAliasChange={setCallsAlias} />
         </TabsContent>
 
         <TabsContent value="servers" className="space-y-4">
@@ -415,9 +490,14 @@ export function McpPage() {
                                   className="h-7 w-7"
                                   title={t("mcp.actions.probe")}
                                   onClick={() => handleProbe(s)}
+                                  disabled={probingId === s.id}
                                   data-testid="mcp-server-probe"
                                 >
-                                  <Activity className="h-3.5 w-3.5" />
+                                  {probingId === s.id ? (
+                                    <Spinner className="h-3.5 w-3.5" />
+                                  ) : (
+                                    <Activity className="h-3.5 w-3.5" />
+                                  )}
                                 </Button>
                                 <Button
                                   variant="ghost"
@@ -531,9 +611,14 @@ export function McpPage() {
                           className="h-7 px-2"
                           title={t("mcp.actions.probe")}
                           onClick={() => handleProbe(s)}
+                          disabled={probingId === s.id}
                           data-testid="mcp-server-probe"
                         >
-                          <Activity className="h-3.5 w-3.5" />
+                          {probingId === s.id ? (
+                            <Spinner className="h-3.5 w-3.5" />
+                          ) : (
+                            <Activity className="h-3.5 w-3.5" />
+                          )}
                         </Button>
                         <Button
                           size="sm"
@@ -644,6 +729,13 @@ export function McpPage() {
         error={probeTarget?.error ?? null}
       />
 
+      <ProbeProgressDialog
+        open={progressOpen}
+        onOpenChange={setProgressOpen}
+        runId={reloadRunId}
+        onFinished={handleReloadFinished}
+      />
+
       <TokenDialog
         key={tokenServer?.id ?? "token-closed"}
         open={tokenServer !== null}
@@ -661,14 +753,6 @@ export function McpPage() {
         }}
         serverId={toolsServer?.id ?? null}
         alias={toolsServer?.alias ?? ""}
-      />
-
-      <CallLogDialog
-        open={callsServer !== null}
-        onOpenChange={(o) => {
-          if (!o) setCallsServer(null);
-        }}
-        serverAlias={callsServer?.alias ?? null}
       />
 
       {deleteTarget && (

@@ -126,6 +126,8 @@ hr-portal     | 必须用户   | ⚠ 未配置            | 设置     ← 整�
 | 6 | Playground MCP：选 server/tool 发送 | 响应区显示结果 |
 | 7 | 调用日志对话框 | 行渲染，失败行高亮 |
 
+> **Stage 147 后续注记（2026-10-31）**：`CallLogDialog` 已被 `/dash/mcp` 的第三个 tab（`CallLogTab`）取代，行内「调用日志」按钮改为切 tab 并预填 alias。上表 #7 的**断言意图不变**（行渲染 + 失败行高亮），承载场景迁到 `mcp.feature` 的「The call log renders every call and highlights failures」；`stage-147.md` §7 的「`rg CallLogDialog` 为空」是本表格失效的判据。
+
 ### 4.2 无新增后端单测
 
 ---

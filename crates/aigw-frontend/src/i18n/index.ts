@@ -34,6 +34,14 @@ i18n
       escapeValue: false,
     },
     returnObjects: true,
+    react: {
+      // `addResourceBundle` emits `added` on the resource *store*, not
+      // `languageChanged` on the instance. Without this binding a component
+      // mounted before the lazy zh-CN chunk lands keeps rendering the English
+      // fallback until some unrelated state change re-renders it — the sidebar
+      // did exactly that on a Chinese first visit (the i18n-switcher race).
+      bindI18nStore: "added",
+    },
   });
 
 // TD-008a: eagerly load the DETECTED language's bundle so first paint matches the

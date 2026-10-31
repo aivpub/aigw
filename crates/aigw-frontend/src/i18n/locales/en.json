@@ -1372,7 +1372,8 @@
     "subtitle": "Register MCP upstream servers, probe their tools, and manage egress credentials",
     "tabs": {
       "servers": "Server Management",
-      "mine": "My Credentials"
+      "mine": "My Credentials",
+      "calls": "Call Log"
     },
     "newServer": "New Server",
     "reloadAll": "Re-probe All",
@@ -1480,6 +1481,23 @@
       "conflictHint": "These tool names collide with another server. Change this server's alias to resolve the collision.",
       "inProgress": "Probing..."
     },
+    "progress": {
+      "title": "Re-probing all servers",
+      "summary": "{{done}} / {{total}} done",
+      "server": "Server",
+      "state": "State",
+      "toolCount": "Tools",
+      "protocolVersion": "Protocol",
+      "error": "Error",
+      "stateRunning": "Running",
+      "statePending": "Waiting",
+      "stateOk": "Done",
+      "stateFailed": "Failed",
+      "finishedOk": "All {{total}} servers re-probed successfully.",
+      "finishedPartial": "Finished: {{failed}} of {{total}} failed.",
+      "inProgressHint": "You can close this dialog — the sweep keeps running on the server.",
+      "expired": "That run is no longer available — it has been superseded."
+    },
     "tools": {
       "title": "Tool Catalog",
       "count": "{{n}} tools",
@@ -1515,6 +1533,7 @@
       "tokenCreated": "Token saved",
       "defaultSet": "Default token switched",
       "reloadPartial": "Re-probe finished with {{failed}} failure(s)",
+      "reloadInProgress": "A re-probe is already running — attaching to it",
       "aclSaved": "Restriction saved",
       "myTokenSaved": "Your token was saved",
       "myTokenDeleted": "Your token was deleted"
@@ -1560,11 +1579,11 @@
     },
     "calls": {
       "title": "MCP Call Log",
-      "description": "Every tool call through this gateway, successful or not.",
-      "descriptionFiltered": "Tool calls for {{alias}}",
+      "aliasPlaceholder": "Filter by alias...",
       "toolPlaceholder": "Filter by tool name...",
       "server": "Server",
       "tool": "Tool",
+      "method": "Method",
       "owner": {
         "server": "Server",
         "user": "User",
@@ -1574,9 +1593,23 @@
       "status": "Status",
       "latency": "Latency",
       "time": "Time",
+      "user": "User",
+      "anonymousUser": "Anonymous",
+      "keyId": "Key",
+      "errorCode": "Error code",
+      "requestBytes": "Request bytes",
+      "responseBytes": "Response bytes",
+      "detailTitle": "Call detail",
       "statusSuccess": "Success",
       "statusError": "Failed",
-      "empty": "No calls recorded for this filter."
+      "empty": "No calls recorded for this filter.",
+      "presets": {
+        "1h": "1 hour",
+        "24h": "24 hours",
+        "7d": "7 days",
+        "30d": "30 days",
+        "custom": "Custom"
+      }
     },
     "deleteDialog": {
       "title": "Delete MCP server",

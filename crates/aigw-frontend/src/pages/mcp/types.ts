@@ -146,7 +146,7 @@ export type McpTokenOwner = "server" | "user" | "anonymous";
 export interface McpCallRow {
   call_id: string;
   server_alias: string;
-  tool_name: string;
+  tool_name: string | null;
   method: string;
   key_id: string | null;
   user_id: string | null;
@@ -185,6 +185,33 @@ export interface McpAllowlistResponse {
   object?: string;
   data: McpAllowlistRule[];
   count?: number;
+}
+
+/** `POST /admin/mcp/reload` — the sweep was accepted and is running. */
+export interface ReloadStarted {
+  run_id: string;
+  total: number;
+}
+
+export type ProbeItemState = "pending" | "running" | "ok" | "failed";
+export type ProbeRunStatus = "running" | "ok" | "partial";
+
+export interface ProbeRunItem {
+  server_id: number;
+  alias: string;
+  state: ProbeItemState;
+  tool_count: number | null;
+  protocol_version: string | null;
+  error: string | null;
+}
+
+/** `GET /admin/mcp/reload/{run_id}` and `/reload/latest`. */
+export interface ProbeRun {
+  run_id: string;
+  total: number;
+  done: number;
+  status: ProbeRunStatus;
+  items: ProbeRunItem[];
 }
 
 export function isCallFailure(status: string): boolean {

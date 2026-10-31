@@ -1,19 +1,19 @@
 # aigw -- 下一步行动
 
 **上次更新**: 2026-10-31
-**当前阶段**: **Phase 56 进行中（Stage 146 ✅ 2026-10-31，147/148 待开工）—— MCP Gateway 生产反馈迭代**；Phase 55 代码全部交付（143 门禁 7/8，唯一未勾选项是 Codex 真机工具调用，ADR-046）
+**当前阶段**: **Phase 56 ✅ 完成（Stage 146-148，2026-10-31）—— MCP Gateway 生产反馈迭代**，总进度 148；Phase 55 代码全部交付（143 门禁 7/8，唯一未勾选项是 Codex 真机工具调用，ADR-046）
 
 ---
 
-## 下一步：Phase 56 —— MCP Gateway 生产反馈迭代（Stage 146 ✅，147/148 待开工）
+## 已完成：Phase 56 —— MCP Gateway 生产反馈迭代（Stage 146-148 ✅ 2026-10-31）
 
 **来源**：2026-10-30 把本地 Claude Code 的 Streamable-HTTP MCP 全部接入生产网关（`9.135.87.221:4001`）时暴露的三条实测反馈。Phase 55 解决了「能不能接进来」，本 Phase 解决「接进来之后好不好用」。
 
 | Stage | 内容 | 预估 |
 |---|---|---|
 | 146 ✅ | **自定义认证头名 + 额外上游请求头** —— `033_mcp_server_headers.sql` × 三方言；`UpstreamAuth` 枚举统一出站构造的四处；受保护头黑名单；**探测必须用同一套头**；`ServerDialog` 三组控件（值恒 `***`、留空即不改） | ~16h |
-| 147 | **MCP 调用日志独立页** —— `McpCallFilter` 加 `user_id` + 新增 `GET /v1/mcp/calls`（用户只看自己的）+ `034` 索引 × 三方言；`/dash/mcp` 第三个 tab，Alias/工具名/时间/状态四过滤 + 分页 + 抽屉；删除 `CallLogDialog` | ~14h |
-| 148 | **探测进度指示** —— `ProbeRun` 进程内注册表 + `POST /admin/mcp/reload` 改 `202 + run_id`（并发 409）+ `GET /reload/{run_id}`、`/reload/latest` + 并发探测 + 进度对话框（500ms 轮询） | ~10h |
+| 147 ✅ | **MCP 调用日志独立页** —— `McpCallFilter` 加 `user_id` + 新增 `GET /v1/mcp/calls`（用户只看自己的）+ `034` 索引 × 三方言；`/dash/mcp` 第三个 tab，Alias/工具名/时间/状态四过滤 + 分页 + 抽屉；删除 `CallLogDialog` | ~14h |
+| 148 ✅ | **探测进度指示** —— `ProbeRun` 进程内注册表 + `POST /admin/mcp/reload` 改 `202 + run_id`（并发 409）+ `GET /reload/{run_id}`、`/reload/latest` + 并发探测 + 进度对话框（500ms 轮询） | ~10h |
 
 **依赖**：146 → 148 串行；147 可并行。规划文档 `docs/stages/stage-146.md` / `stage-147.md` / `stage-148.md`。
 

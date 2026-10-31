@@ -1389,6 +1389,7 @@ declare module "i18next" {
     tabs: {
       servers: string;
       mine: string;
+      calls: string;
     },
     newServer: string;
     reloadAll: string;
@@ -1496,6 +1497,23 @@ declare module "i18next" {
       conflictHint: string;
       inProgress: string;
     },
+    progress: {
+      title: string;
+      summary: string;
+      server: string;
+      state: string;
+      toolCount: string;
+      protocolVersion: string;
+      error: string;
+      stateRunning: string;
+      statePending: string;
+      stateOk: string;
+      stateFailed: string;
+      finishedOk: string;
+      finishedPartial: string;
+      inProgressHint: string;
+      expired: string;
+    },
     tools: {
       title: string;
       count: string;
@@ -1531,6 +1549,7 @@ declare module "i18next" {
       tokenCreated: string;
       defaultSet: string;
       reloadPartial: string;
+      reloadInProgress: string;
       aclSaved: string;
       myTokenSaved: string;
       myTokenDeleted: string;
@@ -1576,11 +1595,11 @@ declare module "i18next" {
     },
     calls: {
       title: string;
-      description: string;
-      descriptionFiltered: string;
+      aliasPlaceholder: string;
       toolPlaceholder: string;
       server: string;
       tool: string;
+      method: string;
       owner: {
         server: string;
         user: string;
@@ -1590,9 +1609,23 @@ declare module "i18next" {
       status: string;
       latency: string;
       time: string;
+      user: string;
+      anonymousUser: string;
+      keyId: string;
+      errorCode: string;
+      requestBytes: string;
+      responseBytes: string;
+      detailTitle: string;
       statusSuccess: string;
       statusError: string;
       empty: string;
+      presets: {
+        "1h": string;
+        "24h": string;
+        "7d": string;
+        "30d": string;
+        custom: string;
+      },
     },
     deleteDialog: {
       title: string;

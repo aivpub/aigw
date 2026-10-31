@@ -3,7 +3,7 @@
 **所属**: Phase 56（MCP Gateway 生产反馈迭代）
 **预估**: ~10h（后端 run registry + 轮询端点 + 并发探测 + 前端进度对话框 + BDD）
 **依赖**: Stage 141（probe / reload 端点与 `probe_and_store`）、Stage 142/145（`/dash/mcp` Server 管理 tab）、Stage 146（会改 `probe_server` 的签名，本 Stage 在其之后）
-**状态**: 📋 规划中（待批准）
+**状态**: ✅ 完成（2026-10-31）
 **提交**: —
 
 ---
@@ -103,7 +103,7 @@ GET /admin/mcp/reload/{run_id}    → 200 ProbeRun | 404（run_id 不匹配最�
 
 `reload_mcp` 的返回类型要从 `Json<Value>` 改成 `(StatusCode, Json<Value>)`（`202` 与 `409` 都要非 200）。改造后它的流程：
 
-1. `require_admin` → `list_mcp_servers` → 取 `enabled` 子集（**启动时快照**：中途停用的 server 仍在 items 里跑完，不中途改变 total）
+1. `require_admin` → **先读一次 `registry::latest()`**，已有 `Running` 的 run 立刻 `409`（省掉后面 N+1 条查询；锁内 `start` 仍是权威判定）→ `list_mcp_servers` → 取 `enabled` 子集（**启动时快照**：中途停用的 server 仍在 items 里跑完，不中途改变 total）
 2. 先算每个 server 的 `others`（现有两趟写法原样保留），构造全 `Pending` 的 items，`registry::start` —— 失败即 `409`，**不 spawn**
 3. `tokio::spawn` 探测任务，`state` 克隆进任务（`SharedState` 是 `Arc`）
 4. 立即返回 `202`
@@ -189,6 +189,8 @@ handler 层（`crates/aigw-server/src/routes/mcp.rs` 的 `#[cfg(test)]`，用自
 | `crates/aigw-frontend/src/pages/mcp/ProbeProgressDialog.tsx` | 新增 |
 | `crates/aigw-frontend/src/pages/mcp/types.ts` | 加 `ProbeRun` / `ProbeRunItem` 类型，删掉 `index.tsx` 里的 `ReloadResult`（`index.tsx:70`） |
 | `crates/aigw-frontend/src/pages/mcp/index.tsx` | `handleReloadAll` 重写、`probingId` 状态、两处探测按钮（`:417` 表格 / `:533` 卡片）加 `disabled` + spinner |
+| `crates/aigw-frontend/src/components/ui/tabs.tsx` | `TabsList` 透传 `...rest`（否则 `data-testid` 被吞，320px 断言取不到元素）；基类 `h-9` 不动 |
+| `crates/aigw-frontend/src/i18n/index.ts` | `react: { bindI18nStore: "added" }` —— 懒加载的 zh-CN chunk 落地后已挂载组件要重渲染（见 §8 末条） |
 | `crates/aigw-frontend/src/i18n/locales/{en,zh-CN}.json` | 加 `mcp.progress.*` 与 `mcp.toast.reloadInProgress` |
 | `crates/aigw-frontend/src/i18n/resources.d.ts` | 重生成 |
 | `crates/aigw-frontend/tests/features/mcp.feature` + `tests/steps/mcp.steps.ts` | 追加 5 场景与步骤 |
@@ -208,14 +210,14 @@ handler 层（`crates/aigw-server/src/routes/mcp.rs` 的 `#[cfg(test)]`，用自
 
 ## 7. 门禁
 
-- [ ] reload 不再阻塞到全部完成 —— `POST` 首字节 < 1s（UT 断言 `202` 立即返回，且 registry 此时已处于 `Running`）
-- [ ] 进度条在 mock 延迟上游（≥300ms/响应）下可观测到中间态 —— BDD 断言至少一帧内 `done < total` 且 `state == running`
-- [ ] 失败 server 单独标红且其它行照常完成 —— BDD 场景 2 + UT handler #5
-- [ ] 并发 reload 被 `409` 拒绝且返回在跑那次的 `run_id` —— UT handler #2
-- [ ] `GET /reload/latest` 在页面刷新后能恢复进度 —— BDD 场景 5
-- [ ] `task test` / `task bdd` / `task fe-bdd` 全绿（全量，非过滤）
-- [ ] 320px 无横向滚动（进度对话框的明细表 `overflow-x-auto`）
-- [ ] `en.json` / `zh-CN.json` key 集合一致（`task fe-lint` 内的 `check-i18n-keys.sh`）
+- [x] reload 不再阻塞到全部完成 —— `POST` 首字节 < 1s（UT 断言 `202` 立即返回，且 registry 此时已处于 `Running`）
+- [x] 进度条在 mock 延迟上游（≥300ms/响应）下可观测到中间态 —— BDD 断言至少一帧内 `done < total` 且 `state == running`
+- [x] 失败 server 单独标红且其它行照常完成 —— BDD 场景 2 + UT handler #5
+- [x] 并发 reload 被 `409` 拒绝且返回在跑那次的 `run_id` —— UT handler #2
+- [x] `GET /reload/latest` 在页面刷新后能恢复进度 —— BDD 场景 5
+- [x] `task test` / `task bdd` / `task fe-bdd` 全绿（全量，非过滤）—— 最终树复跑：`task test` **1620 passed / 0 failed**（22 个 test result 块全部 `ok`，`FAILED` 行数 0，`/tmp/p56-evidence/s148-test-final.log`），其中内嵌 BDD 半程 **378 scenarios（365 passed / 13 skipped）· 2238 steps（2225 passed / 13 skipped）**；独立 `task bdd` 复跑同数字（`/tmp/p56-evidence/s148-bdd-r2.log`）；`task fe-bdd` **639 passed / 3 skipped / 0 failed**（25.8m，EXIT=0，`/tmp/p56-evidence/s148-febdd-final.log`，`✘` 计数 0）；`task fe-build` EXIT=0（`/tmp/p56-evidence/s148-fe-build.log`）。13 个后端 skip 全部来自 `body_archive_read.feature`（7 步）与 `body_archive_write.feature`（6 步）的既有缺陷（TD-028，非本 Stage 引入）；3 个前端 skip 是 142/145 起就在的既有 skip
+- [x] 320px 无横向滚动（进度对话框的明细表 `overflow-x-auto`）
+- [x] `en.json` / `zh-CN.json` key 集合一致（`task fe-lint` 内的 `check-i18n-keys.sh`）
 
 ---
 
@@ -227,6 +229,9 @@ handler 层（`crates/aigw-server/src/routes/mcp.rs` 的 `#[cfg(test)]`，用自
 - **并发探测抬高上游瞬时压力**：4 路上限是刻意的折中（§3.4）；若某个上游对并发敏感，只能靠它自己的限流，网关不做 per-server 节流。
 - **错误 body 可能很长**：item 的 `error` 截断到 500 字符（与 `PROBE_BODY_LIMIT` 对齐）。更长的上游响应在 UI 上不可见 —— 这是刻意的，避免一条错误把对话框撑爆。
 - **`latest()` 只留最近一次**：管理员在两个标签页各点一次时，先点的那个会在第二次 `start` 后收到 `404`。UI 的兜底是 `404` 即显示「该次探测已完成，结果已失效」，不重试。
+- **`describe_probe_failure` 读错了一层（本 Stage 自查发现并修复）**：`probe_and_store` 的错误 body 形状是 `{"error": {...}}`（与 `probe_failed`、`db_error`、`not_found` 一致），而最初的实现从顶层取 `message` / `body`，于是 `error` 恒为 `"502 probe failed"` —— 上游说的话被整段丢掉，正好抵消了 ADR-049「错误只留一个可读字符串」的理由。已改为先取 `body["error"]` 再回退到顶层，并在 `reload_reports_a_failed_probe_without_aborting_the_rest` 里加了一条断言（`error` 必须含 probe 原话 `transport error`，不能是兜底串）。**没有这条断言，这个 bug 是静默的**：`starts_with("502 ")` 对两种实现都成立。
+- **失败行的两个数字问题（Gate 4 评审发现并修复）**：① **行首状态码取的是网关的 `502`，不是上游的**。`probe_failed` 对所有 `ProbeError` 变体都答 `502`（「本网关没能完成这次探测」），真实上游码另存在 `error.upstream_status`，而 `describe_probe_failure` 从未读它 —— 上游 `404` 会渲染成 `502 …`，把运维引向错误的方向。改为优先取 `upstream_status`，没有才回退到 handler 的状态码。② **上游 body 被打印两遍**。`ProbeError::Http` 的 `Display` 是 `"upstream returned HTTP {status}: {body}"`，而 `describe_probe_failure` 又把 `error.body` 追加到行尾，于是每一条 HTTP 失败都是 `502 upstream returned HTTP 500: <body> · <body>` —— 一个 300 字符的 HTML 页面在一个 `max-w-14rem break-all` 的单元格里出现两次。改为仅当 `message` 尚未包含 body 时才追加。两条都用新 UT `a_failure_row_names_the_upstream_status_once`（`404` 开头 + `no such endpoint` 只出现一次）钉死；前端对应步骤的断言也从 `"502"` 改成上游原话，**不再替后端保护一个有误导性的数字**。
+- **`i18n` 首访中文偶发失败（Stage 147/148 全量 `fe-bdd` 暴露，已修复）**：`fe-bdd` 在 `i18n-switcher.feature › First visit with Chinese browser shows Chinese sidebar menu` 上失败两次（含 retry）。根因不在 Stage 147/148 的改动，而在 TD-008a 的懒加载：`i18n.addResourceBundle` 只在**资源 store** 上 emit `added`，不在 i18next 实例上 emit `languageChanged`，而 `react-i18next` 默认 `bindI18n: 'languageChanged'` / `bindI18nStore: ''`，因此 zh-CN chunk 落地后已挂载的 sidebar **不会重渲染**，页面正文已中文、侧栏仍是英文。竞态取决于 chunk 何时到（同一 run 里 desktop 失败、mobile/tablet 通过）。修复：`i18n.init({ react: { bindI18nStore: "added" } })`。这也解释了为什么它只在负载高的全量 run 里出现 —— 单跑 `i18n-switcher` 时 chunk 总是先于首次绘制到达。
 
 ---
 

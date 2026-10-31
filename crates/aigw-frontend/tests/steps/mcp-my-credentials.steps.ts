@@ -1,6 +1,8 @@
 import { createBdd } from "playwright-bdd";
 import { expect, type Page } from "@playwright/test";
 import {
+  getLastMcpCallsPath,
+  getLastMcpCallsQuery,
   getLastMcpMyTokenPutBody,
   getMcpCreateRequestCount,
   MCP_MY_TOKEN_PLAINTEXT_VALUE,
@@ -17,6 +19,11 @@ function myCredRow(page: Page, alias: string) {
 
 function toolRow(page: Page, tool: string) {
   return page.getByTestId("mcp-tool-row").filter({ hasText: tool }).first();
+}
+
+/** The call log swaps a table for cards below `md`; assertions must not care which. */
+function callRows(page: Page) {
+  return page.locator('[data-testid="mcp-call-row"]:visible, [data-testid="mcp-call-card"]:visible');
 }
 
 Then("the MCP tab {string} is visible", async ({ page }, tab: string) => {
@@ -149,8 +156,101 @@ When("I click the call log button on the {string} MCP server", async ({ page }, 
   await page.waitForTimeout(800);
 });
 
+When("I open the MCP call log tab", async ({ page }) => {
+  await page.getByTestId("mcp-tab-calls").first().click();
+  await page.waitForTimeout(800);
+});
+
+When("I choose the MCP call status {string}", async ({ page }, value: string) => {
+  await page.getByTestId("mcp-calls-status-filter").selectOption(value);
+  await page.waitForTimeout(600);
+});
+
+When("I search MCP calls for tool {string}", async ({ page }, value: string) => {
+  await page.getByTestId("mcp-calls-tool-filter").fill(value);
+  // The input is debounced by 300 ms; anything faster asserts the previous request.
+  await page.waitForTimeout(800);
+});
+
+When("I choose the MCP call time preset {string}", async ({ page }, value: string) => {
+  await page.getByTestId(`mcp-calls-preset-${value}`).click();
+  await page.waitForTimeout(600);
+});
+
 Then("the MCP call log shows {int} calls", async ({ page }, count: number) => {
-  await expect(page.getByTestId("mcp-call-row")).toHaveCount(count, { timeout: 8000 });
+  await expect(callRows(page)).toHaveCount(count, { timeout: 8000 });
+});
+
+Then("the MCP call log alias filter carries {string}", async ({ page }, alias: string) => {
+  await expect(page.getByTestId("mcp-calls-alias-filter")).toHaveValue(alias);
+  expect(getLastMcpCallsQuery()?.get("server_alias")).toBe(alias);
+});
+
+Then("the MCP call log request carries status {string}", async ({ page }, value: string) => {
+  void page;
+  await expect
+    .poll(() => getLastMcpCallsQuery()?.get("status"), { timeout: 8000 })
+    .toBe(value);
+});
+
+Then("the MCP call log request carries tool_name {string}", async ({ page }, value: string) => {
+  void page;
+  await expect
+    .poll(() => getLastMcpCallsQuery()?.get("tool_name"), { timeout: 8000 })
+    .toBe(value);
+});
+
+Then("the MCP call log request carries a time window", async ({ page }) => {
+  void page;
+  await expect
+    .poll(() => getLastMcpCallsQuery()?.get("from"), { timeout: 8000 })
+    .not.toBeNull();
+  expect(Date.parse(getLastMcpCallsQuery()?.get("to") ?? "")).toBeGreaterThan(0);
+});
+
+Then("the MCP call log shows an empty state", async ({ page }) => {
+  await expect(page.getByTestId("mcp-calls-empty")).toBeVisible({ timeout: 8000 });
+  await expect(callRows(page)).toHaveCount(0);
+});
+
+When("I open the first MCP call row", async ({ page }) => {
+  await callRows(page).first().click();
+  await expect(page.getByTestId("mcp-call-detail")).toBeVisible({ timeout: 5000 });
+});
+
+Then("the MCP call detail lists the call id and byte counts", async ({ page }) => {
+  const detail = page.getByTestId("mcp-call-detail");
+  // Call ids are unreadable 36-char UUIDs; byte counts are the only row values a
+  // human would scan. Both must be in the drawer, and neither is in the table.
+  await expect(detail).toContainText("0192f0c4-0000-7000-8000-000000000001");
+  await expect(detail).toContainText("1536");
+});
+
+/** The desktop table and the mobile card both render the user cell; at any one
+ *  viewport only one of them is visible, so assertions must not count the other. */
+function userCells(page: Page) {
+  return page.locator('[data-testid="mcp-call-user"]:visible');
+}
+
+Then("the MCP call log shows the user column", async ({ page }) => {
+  await expect(userCells(page).first()).toBeVisible({ timeout: 8000 });
+});
+
+Then("the anonymous call row shows {string} in the user column", async ({ page }, text: string) => {
+  const anonymous = callRows(page).filter({ hasText: "get_issue" }).first();
+  await expect(anonymous.locator('[data-testid="mcp-call-user"]')).toHaveText(text);
+});
+
+Then("the MCP call log has no user column", async ({ page }) => {
+  await expect(page.locator('[data-testid="mcp-call-user"]')).toHaveCount(0);
+});
+
+Then("the MCP call log only carries the signed-in user's rows", async ({ page }) => {
+  await expect(callRows(page)).toHaveCount(1, { timeout: 8000 });
+  // `user_id` is not part of this endpoint's vocabulary: the server scopes by
+  // key, so a client cannot widen the result by asking for another identity.
+  expect(getLastMcpCallsPath()).toBe("/v1/mcp/calls");
+  expect(getLastMcpCallsQuery()?.get("user_id")).toBeNull();
 });
 
 Then("the failed MCP call row is highlighted", async ({ page }) => {

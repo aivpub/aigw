@@ -32,6 +32,10 @@ use aigw_core::mcp::headers::{
     OutboundHeaders, REDACTED,
 };
 use aigw_core::mcp::probe::ProbeTarget;
+use aigw_core::mcp::probe::PROBE_BODY_LIMIT;
+use aigw_core::mcp::probe_runs::{
+    registry as probe_run_registry, ProbeRun, ProbeRunItem, RunStatus,
+};
 use aigw_core::mcp::{probe_server, validate_alias, ProbeError};
 use aigw_core::models::{
     CatalogSnapshot, CreateMcpServerRequest, CredentialScope, McpServerRow, McpServerTokenRow,
@@ -51,6 +55,11 @@ use super::spend::{require_admin, SpendAuth};
 use crate::routes::keys::SharedState;
 
 const DEFAULT_TRANSPORT: &str = "streamable_http";
+/// How many upstreams a reload probes at once. Four is a deliberate middle:
+/// ten servers behind one slow upstream finish in `ceil(10/4) × PROBE_TIMEOUT`
+/// instead of `10 × PROBE_TIMEOUT`, while an external service never sees more
+/// than four simultaneous requests from one reload.
+const RELOAD_CONCURRENCY: usize = 4;
 /// `display_name` and `token_name` are `VARCHAR(255)` and `transport` is
 /// `VARCHAR(32)` on MySQL. Over-length input fails the INSERT under strict mode
 /// (error 1406) and surfaces as a 500, while SQLite and PostgreSQL accept it —
@@ -900,29 +909,45 @@ pub async fn list_mcp_server_tools(
     ))
 }
 
-/// Re-probe every enabled server.
+/// Start a background re-probe of every enabled server.
+///
+/// Returns `202` with the run id instead of holding the connection until the
+/// last probe finishes: a sweep of ten servers behind one slow upstream used to
+/// block for up to `10 × PROBE_TIMEOUT` with nothing but a spinner to look at.
+/// The operator now polls [`reload_latest`] / [`reload_status`] and watches the
+/// per-server rows advance.
 ///
 /// Nothing is cleared first. Wiping the table would destroy the snapshot of a
 /// disabled server (never re-probed here) and of an enabled server whose
 /// upstream is briefly down — the same data a failed probe is supposed to
 /// protect. Each successful probe replaces only its own server's rows.
 ///
-/// Conflict sets are read once, before any probe writes, so two servers sharing
-/// a tool name both come out flagged. Reading `mcp_tool_names_elsewhere` inside
-/// the loop would let a server probed later see an already-replaced snapshot
-/// while the earlier one saw the old one — asymmetric by loop order.
+/// The enabled set and the conflict sets are read once, before the task starts,
+/// so two servers sharing a tool name both come out flagged regardless of the
+/// order they happen to finish in. Snapshotting the set also keeps `total`
+/// honest: disabling a server mid-run does not change the denominator.
 ///
-/// Disabled servers are skipped: they serve no traffic, so refreshing their
-/// catalogue buys nothing, and a reload must not stall on an upstream an
-/// operator deliberately switched off. Their snapshots survive untouched.
+/// A second reload while one is running is `409`, naming the run already in
+/// flight. Two concurrent sweeps would probe the same upstreams twice and race
+/// each other's read-modify-write on the catalog snapshot, and the two progress
+/// snapshots would contradict each other.
 pub async fn reload_mcp(
     State(state): State<SharedState>,
     SpendAuth(auth): SpendAuth,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+) -> Result<(StatusCode, Json<Value>), (StatusCode, Json<Value>)> {
     require_admin(&auth)?;
+    // Cheap pre-check before the snapshot work below: a refused click must not
+    // pay for `list_mcp_servers` plus one conflict query per enabled server.
+    // It is not the authority — `start` re-checks under the lock — only the
+    // fast path for the case that is already decided.
+    if let Some(running) = probe_run_registry::latest().filter(|r| r.status == RunStatus::Running) {
+        return Err(reload_in_progress(running.run_id));
+    }
     let servers = state.db.list_mcp_servers().await.map_err(db_error)?;
+    let enabled: Vec<McpServerRow> = servers.into_iter().filter(|s| s.enabled).collect();
+
     let mut conflict_sets = HashMap::new();
-    for server in servers.iter().filter(|s| s.enabled) {
+    for server in &enabled {
         let others = state
             .db
             .mcp_tool_names_elsewhere(server.id)
@@ -931,37 +956,140 @@ pub async fn reload_mcp(
         conflict_sets.insert(server.id, others);
     }
 
-    let mut results = Vec::new();
-    for server in servers.iter().filter(|s| s.enabled) {
-        let others = conflict_sets.get(&server.id).cloned().unwrap_or_default();
-        match probe_and_store(&state, server, &others).await {
-            Ok((outcome, rows)) => results.push(json!({
-                "id": server.id,
-                "alias": server.alias,
-                "ok": true,
-                "protocol_version": outcome.protocol_version,
-                "tool_count": rows.len(),
-                "conflicts": outcome.conflicts,
-            })),
-            Err((status, body)) => {
-                warn!(server_id = server.id, alias = %server.alias, "MCP reload probe failed");
-                results.push(json!({
-                    "id": server.id,
-                    "alias": server.alias,
-                    "ok": false,
-                    "upstream_status": status.as_u16(),
-                    "error": body.0,
-                }));
-            }
-        }
+    let run_id = uuid::Uuid::now_v7().to_string();
+    let items: Vec<ProbeRunItem> = enabled
+        .iter()
+        .map(|s| ProbeRunItem::pending(s.id, s.alias.clone()))
+        .collect();
+    let total = items.len();
+
+    if let Err(existing) = probe_run_registry::start(ProbeRun::new(run_id.clone(), items)) {
+        return Err(reload_in_progress(existing.run_id));
     }
-    let failed = results.iter().filter(|r| r["ok"] == json!(false)).count();
-    Ok(Json(json!({
-        "status": if failed == 0 { "ok" } else { "partial" },
-        "probed": results.len(),
-        "failed": failed,
-        "servers": results,
-    })))
+
+    let task_state = state.clone();
+    tokio::spawn(async move {
+        use futures::StreamExt;
+        futures::stream::iter(enabled)
+            .map(|server| {
+                let state = task_state.clone();
+                let others = conflict_sets.get(&server.id).cloned().unwrap_or_default();
+                async move {
+                    probe_run_registry::item_running(server.id);
+                    match probe_and_store(&state, &server, &others).await {
+                        Ok((outcome, rows)) => probe_run_registry::item_ok(
+                            server.id,
+                            rows.len(),
+                            outcome.protocol_version.clone(),
+                        ),
+                        Err((status, body)) => {
+                            warn!(server_id = server.id, alias = %server.alias, "MCP reload probe failed");
+                            probe_run_registry::item_failed(
+                                server.id,
+                                describe_probe_failure(status, &body.0),
+                            );
+                        }
+                    }
+                }
+            })
+            .buffer_unordered(RELOAD_CONCURRENCY)
+            .for_each(|_| async {})
+            .await;
+    });
+
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(json!({"run_id": run_id, "total": total})),
+    ))
+}
+
+/// The `409` for a reload that could not start, carrying the id of the run the
+/// operator should attach to instead of guessing.
+fn reload_in_progress(run_id: String) -> (StatusCode, Json<Value>) {
+    (
+        StatusCode::CONFLICT,
+        Json(json!({"error": {
+            "message": "another reload is already running",
+            "type": "reload_in_progress",
+            "run_id": run_id,
+        }})),
+    )
+}
+
+/// One line for the progress dialog: the upstream's own words, not a code.
+///
+/// The leading number is the *upstream's* status when the body carries one —
+/// `probe_failed` always answers `502` (this gateway could not complete the
+/// probe), so printing that would report a `404` as a gateway error and leave
+/// the operator looking in the wrong place.
+///
+/// The body is truncated to `PROBE_BODY_LIMIT` (the same cap the probe reader
+/// already applies) so a chatty HTML error page cannot blow up the dialog, and
+/// it is only appended when the message does not already quote it:
+/// `ProbeError::Http`'s `Display` embeds the body, so appending unconditionally
+/// would paste the same page twice into one row.
+fn describe_probe_failure(status: StatusCode, body: &Value) -> String {
+    let error = body.get("error").unwrap_or(body);
+    let code = error
+        .get("upstream_status")
+        .and_then(Value::as_u64)
+        .map_or(status.as_u16(), |s| s as u16);
+    let message = error
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or("probe failed");
+    let detail = error
+        .get("body")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .chars()
+        .take(PROBE_BODY_LIMIT)
+        .collect::<String>();
+    if detail.is_empty() || message.contains(&detail) {
+        format!("{code} {message}")
+    } else {
+        format!("{code} {message} · {detail}")
+    }
+}
+
+/// The most recent run, regardless of id — what the dialog asks for when it
+/// reopens, so a refresh or a closed dialog still recovers the live progress.
+pub async fn reload_latest(
+    State(_state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    require_admin(&auth)?;
+    match probe_run_registry::latest() {
+        Some(run) => Ok(Json(serde_json::to_value(run).unwrap_or(json!({})))),
+        None => Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": {
+                "message": "no reload has run since the process started",
+                "type": "no_reload_run",
+            }})),
+        )),
+    }
+}
+
+/// The run the caller started. Only the latest run answers: a superseded run's
+/// numbers describe a different sweep, and showing them would be worse than
+/// telling the caller the result expired.
+pub async fn reload_status(
+    State(_state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
+    Path(run_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    require_admin(&auth)?;
+    match probe_run_registry::get(&run_id) {
+        Some(run) => Ok(Json(serde_json::to_value(run).unwrap_or(json!({})))),
+        None => Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": {
+                "message": "this reload run is no longer available",
+                "type": "reload_run_not_found",
+            }})),
+        )),
+    }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1178,6 +1306,9 @@ pub struct McpCallQuery {
     pub status: Option<String>,
     pub from: Option<String>,
     pub to: Option<String>,
+    /// Admin-only: narrow to one identity. `/v1/mcp/calls` has no counterpart
+    /// field — it takes `user_id` from the key, never from the query string.
+    pub user_id: Option<String>,
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1301,7 +1432,7 @@ fn call_status_filter(status: Option<&str>) -> Option<String> {
 /// format (`to_rfc3339`, which is what every insert path uses). An unparseable
 /// bound is a 400 rather than a comparison that silently matches everything or
 /// nothing.
-fn call_time_bound(raw: &str, field: &str) -> Result<String, (StatusCode, Json<Value>)> {
+pub(crate) fn call_time_bound(raw: &str, field: &str) -> Result<String, (StatusCode, Json<Value>)> {
     chrono::DateTime::parse_from_rfc3339(raw)
         .map(|at| at.with_timezone(&chrono::Utc).to_rfc3339())
         .map_err(|_| {
@@ -1312,44 +1443,57 @@ fn call_time_bound(raw: &str, field: &str) -> Result<String, (StatusCode, Json<V
         })
 }
 
-pub async fn list_mcp_calls(
-    State(state): State<SharedState>,
-    SpendAuth(auth): SpendAuth,
-    Query(query): Query<McpCallQuery>,
-) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    require_admin(&auth)?;
-    let page = query.page.unwrap_or(1).max(1);
-    let page_size = query.page_size.unwrap_or(30).clamp(1, 100);
-    let offset = (page as i64 - 1) * page_size as i64;
-    let limit = page_size as i64;
-
-    let bound = |value: Option<String>, field: &str| -> Result<Option<String>, _> {
-        match value
+/// The one place a filter is assembled, for both `/admin/mcp/calls` and
+/// `/v1/mcp/calls`. The two differ only in where `user_id` comes from, and that
+/// difference stays at the call site rather than becoming a branch here: an
+/// admin filtering by someone else and a user scoped to themselves must not
+/// share code that decides which of those is happening.
+pub(crate) fn call_filter(
+    server_alias: Option<String>,
+    tool_name: Option<String>,
+    status: Option<&str>,
+    from: Option<String>,
+    to: Option<String>,
+    user_id: Option<String>,
+) -> Result<McpCallFilter, (StatusCode, Json<Value>)> {
+    let text = |value: Option<String>| {
+        value
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
-        {
+    };
+    let bound = |value: Option<String>, field: &str| -> Result<Option<String>, _> {
+        match text(value) {
             Some(raw) => call_time_bound(&raw, field).map(Some),
             None => Ok(None),
         }
     };
 
-    let filter = McpCallFilter {
-        server_alias: query
-            .server_alias
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty()),
-        tool_name: query
-            .tool_name
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty()),
-        status: call_status_filter(query.status.as_deref()),
-        from: bound(query.from, "from")?,
-        to: bound(query.to, "to")?,
-    };
+    Ok(McpCallFilter {
+        server_alias: text(server_alias),
+        tool_name: text(tool_name),
+        status: call_status_filter(status),
+        from: bound(from, "from")?,
+        to: bound(to, "to")?,
+        user_id: text(user_id),
+    })
+}
+
+/// Page/total arithmetic and the response envelope, shared by both endpoints so
+/// a filter can never mean one thing to the table and another to the pager.
+pub(crate) async fn call_log_response(
+    state: &SharedState,
+    filter: &McpCallFilter,
+    page: Option<i32>,
+    page_size: Option<i32>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let page = page.unwrap_or(1).max(1);
+    let page_size = page_size.unwrap_or(30).clamp(1, 100);
+    let offset = (page as i64 - 1) * page_size as i64;
+    let limit = page_size as i64;
 
     let (rows, total_count) = tokio::try_join!(
-        state.db.list_mcp_call_log_filtered(&filter, limit, offset),
-        state.db.count_mcp_call_log(&filter),
+        state.db.list_mcp_call_log_filtered(filter, limit, offset),
+        state.db.count_mcp_call_log(filter),
     )
     .map_err(db_error)?;
 
@@ -1368,6 +1512,23 @@ pub async fn list_mcp_calls(
         "page_size": page_size,
         "total_pages": total_pages,
     })))
+}
+
+pub async fn list_mcp_calls(
+    State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
+    Query(query): Query<McpCallQuery>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    require_admin(&auth)?;
+    let filter = call_filter(
+        query.server_alias,
+        query.tool_name,
+        query.status.as_deref(),
+        query.from,
+        query.to,
+        query.user_id,
+    )?;
+    call_log_response(&state, &filter, query.page, query.page_size).await
 }
 
 #[cfg(test)]
@@ -1448,6 +1609,8 @@ mod tests {
             )
             .route("/admin/mcp/calls", get(list_mcp_calls))
             .route("/admin/mcp/reload", post(reload_mcp))
+            .route("/admin/mcp/reload/latest", get(reload_latest))
+            .route("/admin/mcp/reload/{run_id}", get(reload_status))
             .with_state(state)
     }
 
@@ -1667,6 +1830,68 @@ mod tests {
             let _ = axum::serve(listener, app).await;
         });
         (format!("http://{addr}/mcp"), seen)
+    }
+
+    /// A stub that answers correctly but only after `delay` — the only way to
+    /// observe a reload while it is genuinely in flight.
+    async fn spawn_slow_probe_stub(delay: std::time::Duration) -> String {
+        use axum::routing::post;
+        let app = Router::new().route(
+            "/mcp",
+            post(move |Json(request): Json<Value>| async move {
+                tokio::time::sleep(delay).await;
+                let id = request.get("id").cloned().unwrap_or(Value::Null);
+                let method = request
+                    .get("method")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let result = match method {
+                    "server/discover" => json!({
+                        "supportedVersions": ["2026-07-28"],
+                        "ttlMs": 60_000,
+                        "serverInfo": {"name": "mcp-slow-stub"},
+                    }),
+                    "tools/list" => json!({"tools": [{"name": "slow", "description": "s"}]}),
+                    _ => json!({}),
+                };
+                Json(json!({"jsonrpc": "2.0", "id": id, "result": result}))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind slow stub");
+        let addr = listener.local_addr().expect("slow stub addr");
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        format!("http://{addr}/mcp")
+    }
+
+    /// A stub that answers `status` with `body` — an upstream that is reachable
+    /// but refuses, which is the only shape where the two plausible "status"
+    /// numbers (upstream's vs the gateway's `502`) disagree.
+    async fn spawn_probe_stub_answering(status: StatusCode, body: &'static str) -> String {
+        use axum::routing::post;
+        let app = Router::new().route(
+            "/mcp",
+            post(move || async move {
+                // Content type must be JSON: a non-JSON answer is classified
+                // as `UnsupportedContentType` before the status is ever read.
+                (
+                    status,
+                    [(axum::http::header::CONTENT_TYPE, "application/json")],
+                    body,
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind error stub");
+        let addr = listener.local_addr().expect("error stub addr");
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        format!("http://{addr}/mcp")
     }
 
     async fn seed_catalog(state: &SharedState, server_id: i64, names: &[&str]) {
@@ -2452,28 +2677,89 @@ mod tests {
         assert_eq!(body["error"]["type"], "not_found");
     }
 
+    fn serial_registry() -> std::sync::MutexGuard<'static, ()> {
+        static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        probe_run_registry::reset();
+        guard
+    }
+
+    /// The reload task runs off-thread, so every assertion after a `202` has to
+    /// wait for the terminal state rather than assume it. `tokio` may schedule
+    /// the spawned probes on the same worker the test uses, hence the yields.
+    async fn wait_for_terminal(app: &Router, run_id: &str) -> Value {
+        for _ in 0..600 {
+            let (s, body) = send(
+                app,
+                Method::GET,
+                &format!("/admin/mcp/reload/{run_id}"),
+                MK,
+                None,
+            )
+            .await;
+            assert_eq!(s, 200, "reload status failed: {body}");
+            if body["status"] != json!("running") {
+                return body;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        panic!("reload {run_id} never reached a terminal state");
+    }
+
+    async fn reload_started(app: &Router) -> (String, usize) {
+        let (s, body) = send(app, Method::POST, "/admin/mcp/reload", MK, None).await;
+        assert_eq!(s, 202, "a reload must answer 202, got {body}");
+        let run_id = body["run_id"].as_str().expect("run_id").to_string();
+        uuid::Uuid::parse_str(&run_id).expect("run_id must be a UUID");
+        (run_id, body["total"].as_u64().expect("total") as usize)
+    }
+
+    /// Start a sweep and return its finished snapshot.
+    async fn reload_and_wait(app: &Router) -> Value {
+        let (run_id, total) = reload_started(app).await;
+        let done = wait_for_terminal(app, &run_id).await;
+        assert_eq!(done["run_id"], json!(run_id));
+        assert_eq!(done["total"], json!(total));
+        done
+    }
+
+    fn items_of(run: &Value) -> &Vec<Value> {
+        run["items"].as_array().expect("items array")
+    }
+
+    fn item_for<'a>(run: &'a Value, id: i64) -> &'a Value {
+        items_of(run)
+            .iter()
+            .find(|i| i["server_id"].as_i64() == Some(id))
+            .unwrap_or_else(|| panic!("server {id} missing from run: {run}"))
+    }
+
     #[tokio::test]
     async fn reload_with_no_servers_is_a_no_op_success() {
+        let _guard = serial_registry();
         let app = build_router(test_state().await);
-        let (s, body) = send(&app, Method::POST, "/admin/mcp/reload", MK, None).await;
-        assert_eq!(s, 200);
-        assert_eq!(body["status"], json!("ok"));
-        assert_eq!(body["probed"], json!(0));
+        let run = reload_and_wait(&app).await;
+        assert_eq!(run["status"], json!("ok"));
+        assert_eq!(run["total"], json!(0));
+        assert_eq!(run["done"], json!(0));
+        assert!(items_of(&run).is_empty());
     }
 
     #[tokio::test]
     async fn reload_skips_disabled_servers() {
+        let _guard = serial_registry();
         let app = build_router(test_state().await);
         let mut body = base_body("switched-off");
         body["enabled"] = json!(false);
         create_server(&app, "switched-off", body).await;
-        let (s, resp) = send(&app, Method::POST, "/admin/mcp/reload", MK, None).await;
-        assert_eq!(s, 200);
-        assert_eq!(resp["probed"], json!(0));
+        let run = reload_and_wait(&app).await;
+        assert_eq!(run["total"], json!(0));
+        assert_eq!(run["status"], json!("ok"));
     }
 
     #[tokio::test]
     async fn reload_keeps_a_disabled_servers_snapshot() {
+        let _guard = serial_registry();
         let state = test_state().await;
         let app = build_router(state.clone());
         let mut body = base_body("sleeping");
@@ -2481,9 +2767,8 @@ mod tests {
         let id = create_server(&app, "sleeping", body).await;
         seed_catalog(&state, id, &["kept", "also-kept"]).await;
 
-        let (s, resp) = send(&app, Method::POST, "/admin/mcp/reload", MK, None).await;
-        assert_eq!(s, 200);
-        assert_eq!(resp["probed"], json!(0));
+        let run = reload_and_wait(&app).await;
+        assert_eq!(run["total"], json!(0));
 
         let (_, tools) = send(
             &app,
@@ -2508,6 +2793,7 @@ mod tests {
 
     #[tokio::test]
     async fn reload_flags_a_shared_tool_name_on_both_servers() {
+        let _guard = serial_registry();
         let stub = spawn_probe_stub(vec!["search"]).await;
         let state = test_state().await;
         let app = build_router(state.clone());
@@ -2521,46 +2807,244 @@ mod tests {
         seed_catalog(&state, alpha, &["search"]).await;
         seed_catalog(&state, beta, &["search"]).await;
 
-        let (s, body) = send(&app, Method::POST, "/admin/mcp/reload", MK, None).await;
-        assert_eq!(s, 200, "reload failed: {body}");
-        assert_eq!(body["failed"], json!(0), "reload body: {body}");
+        let run = reload_and_wait(&app).await;
+        assert_eq!(run["status"], json!("ok"), "reload body: {run}");
 
-        let conflicts_of = |id: i64| -> Vec<String> {
-            let entry = body["servers"]
-                .as_array()
-                .expect("servers array")
-                .iter()
-                .find(|s| s["id"].as_i64() == Some(id))
-                .unwrap_or_else(|| panic!("server {id} missing from reload: {body}"));
-            entry["conflicts"]
+        async fn conflicts_of(app: &Router, id: i64) -> Vec<String> {
+            let (_, tools) = send(
+                app,
+                Method::GET,
+                &format!("/admin/mcp/servers/{id}/tools"),
+                MK,
+                None,
+            )
+            .await;
+            tools["conflicts"]
                 .as_array()
                 .expect("conflicts array")
                 .iter()
                 .filter_map(|c| c.as_str().map(str::to_string))
-                .collect()
-        };
+                .collect::<Vec<_>>()
+        }
         assert_eq!(
-            conflicts_of(alpha),
+            conflicts_of(&app, alpha).await,
             vec!["search".to_string()],
-            "the first-probed server must see the conflict too: {body}"
+            "the first-probed server must see the conflict too"
         );
         assert_eq!(
-            conflicts_of(beta),
+            conflicts_of(&app, beta).await,
             vec!["search".to_string()],
-            "conflict flags must be symmetric: {body}"
+            "conflict flags must be symmetric"
         );
     }
 
     #[tokio::test]
     async fn reload_reports_a_failed_probe_without_aborting_the_rest() {
+        let _guard = serial_registry();
         let app = build_router(test_state().await);
-        create_server(&app, "unreachable", base_body("unreachable")).await;
-        let (s, body) = send(&app, Method::POST, "/admin/mcp/reload", MK, None).await;
+        let dead = create_server(&app, "unreachable", base_body("unreachable")).await;
+        let live = create_server(&app, "reachable", {
+            let mut body = base_body("reachable");
+            body["url"] = json!(spawn_probe_stub(vec!["search"]).await);
+            body
+        })
+        .await;
+
+        let run = reload_and_wait(&app).await;
+        assert_eq!(run["status"], json!("partial"));
+        assert_eq!(run["done"], json!(2));
+
+        let failed = item_for(&run, dead);
+        assert_eq!(failed["state"], json!("failed"));
+        let error = failed["error"]
+            .as_str()
+            .expect("a failed item must carry its error");
+        assert!(
+            error.starts_with("502 "),
+            "the error must name the upstream status, got: {error}"
+        );
+        assert!(
+            error.contains("transport error"),
+            "the prose must come from the probe, not the `probe failed` fallback: {error}"
+        );
+
+        let ok = item_for(&run, live);
+        assert_eq!(
+            ok["state"],
+            json!("ok"),
+            "one dead upstream must not stop the rest: {run}"
+        );
+        assert_eq!(ok["tool_count"], json!(1));
+        assert_eq!(ok["protocol_version"], json!("2026-07-28"));
+    }
+
+    #[tokio::test]
+    async fn a_failure_row_names_the_upstream_status_once() {
+        let _guard = serial_registry();
+        let app = build_router(test_state().await);
+        let refusing = create_server(&app, "refusing", {
+            let mut body = base_body("refusing");
+            body["url"] =
+                json!(spawn_probe_stub_answering(StatusCode::NOT_FOUND, "no such endpoint").await);
+            body
+        })
+        .await;
+
+        let run = reload_and_wait(&app).await;
+        let failed = item_for(&run, refusing);
+        let error = failed["error"]
+            .as_str()
+            .expect("a failed item carries its error");
+        assert!(
+            error.starts_with("404 "),
+            "the row must carry the upstream's status, not the gateway's 502: {error}"
+        );
+        assert_eq!(
+            error.matches("no such endpoint").count(),
+            1,
+            "the upstream body must appear once, not be echoed twice: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_second_reload_while_one_runs_is_a_conflict() {
+        let _guard = serial_registry();
+        let state = test_state().await;
+        let app = build_router(state.clone());
+        let mut body = base_body("slow");
+        body["url"] = json!(spawn_slow_probe_stub(std::time::Duration::from_millis(500)).await);
+        create_server(&app, "slow", body).await;
+
+        let (run_id, _) = reload_started(&app).await;
+        let (s, conflict) = send(&app, Method::POST, "/admin/mcp/reload", MK, None).await;
+        assert_eq!(s, 409, "a concurrent reload must be refused: {conflict}");
+        assert_eq!(conflict["error"]["type"], json!("reload_in_progress"));
+        assert_eq!(
+            conflict["error"]["run_id"],
+            json!(run_id),
+            "the 409 must name the run already in flight"
+        );
+
+        // The refused call must not have replaced the registry: the first run's
+        // id still answers, and it finishes on its own.
+        let done = wait_for_terminal(&app, &run_id).await;
+        assert_eq!(done["status"], json!("ok"));
+    }
+
+    #[tokio::test]
+    async fn the_status_endpoint_serves_every_item_of_the_run() {
+        let _guard = serial_registry();
+        let app = build_router(test_state().await);
+        let stub = spawn_probe_stub(vec!["search", "fetch"]).await;
+        let mut body = base_body("one");
+        body["url"] = json!(stub);
+        create_server(&app, "one", body).await;
+        let mut second = base_body("two");
+        second["url"] = json!(spawn_probe_stub(vec!["search"]).await);
+        create_server(&app, "two", second).await;
+
+        let (run_id, total) = reload_started(&app).await;
+        assert_eq!(total, 2);
+        let done = wait_for_terminal(&app, &run_id).await;
+
+        assert_eq!(done["total"], json!(2));
+        assert_eq!(done["done"], json!(2));
+        let items = items_of(&done);
+        assert_eq!(items.len(), 2);
+        for item in items {
+            assert!(item["alias"].is_string(), "item without an alias: {item}");
+            assert!(item["state"].is_string(), "item without a state: {item}");
+            assert!(
+                item["tool_count"].is_number(),
+                "item without a tool count: {item}"
+            );
+        }
+        assert_eq!(item_for(&done, 1)["tool_count"], json!(2));
+    }
+
+    #[tokio::test]
+    async fn latest_and_the_run_id_serve_the_same_snapshot() {
+        let _guard = serial_registry();
+        let app = build_router(test_state().await);
+        let mut body = base_body("one");
+        body["url"] = json!(spawn_probe_stub(vec!["search"]).await);
+        create_server(&app, "one", body).await;
+
+        let (run_id, _) = reload_started(&app).await;
+        let done = wait_for_terminal(&app, &run_id).await;
+        let (s, latest) = send(&app, Method::GET, "/admin/mcp/reload/latest", MK, None).await;
+        assert_eq!(s, 200, "latest failed: {latest}");
+        assert_eq!(
+            latest, done,
+            "latest must be the same snapshot as /{{run_id}}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_superseded_or_unknown_run_id_is_a_404() {
+        let _guard = serial_registry();
+        let app = build_router(test_state().await);
+        create_server(&app, "one", base_body("one")).await;
+
+        let (first, _) = reload_started(&app).await;
+        wait_for_terminal(&app, &first).await;
+        let (second, _) = reload_started(&app).await;
+        wait_for_terminal(&app, &second).await;
+
+        for stale in [first.as_str(), "not-a-run"] {
+            let (s, body) = send(
+                &app,
+                Method::GET,
+                &format!("/admin/mcp/reload/{stale}"),
+                MK,
+                None,
+            )
+            .await;
+            assert_eq!(s, 404, "stale run {stale} must 404: {body}");
+            assert_eq!(body["error"]["type"], json!("reload_run_not_found"));
+        }
+    }
+
+    #[tokio::test]
+    async fn latest_before_any_reload_is_a_404() {
+        let _guard = serial_registry();
+        let app = build_router(test_state().await);
+        let (s, body) = send(&app, Method::GET, "/admin/mcp/reload/latest", MK, None).await;
+        assert_eq!(s, 404);
+        assert_eq!(body["error"]["type"], json!("no_reload_run"));
+    }
+
+    #[tokio::test]
+    async fn a_reload_answers_before_the_probes_finish() {
+        let _guard = serial_registry();
+        let app = build_router(test_state().await);
+        let mut body = base_body("slow");
+        body["url"] = json!(spawn_slow_probe_stub(std::time::Duration::from_millis(400)).await);
+        create_server(&app, "slow", body).await;
+
+        let (run_id, total) = reload_started(&app).await;
+        assert_eq!(total, 1);
+
+        // Read the registry immediately after the 202: the slow upstream cannot
+        // have answered yet, so the run must still be in flight.
+        let (s, snapshot) = send(
+            &app,
+            Method::GET,
+            &format!("/admin/mcp/reload/{run_id}"),
+            MK,
+            None,
+        )
+        .await;
         assert_eq!(s, 200);
-        assert_eq!(body["status"], json!("partial"));
-        assert_eq!(body["failed"], json!(1));
-        assert_eq!(body["servers"][0]["ok"], json!(false));
-        assert_eq!(body["servers"][0]["upstream_status"], json!(502));
+        assert_eq!(
+            snapshot["status"],
+            json!("running"),
+            "POST must return before the probe completes: {snapshot}"
+        );
+        assert_eq!(snapshot["done"], json!(0));
+
+        let done = wait_for_terminal(&app, &run_id).await;
+        assert_eq!(done["status"], json!("ok"));
     }
 
     #[tokio::test]
@@ -3105,6 +3589,80 @@ mod tests {
         let (s, body) = send(&app, Method::GET, "/admin/mcp/calls", &raw, None).await;
         assert_eq!(s, 403);
         assert_eq!(body["error"]["type"], "forbidden");
+    }
+
+    async fn record_user_call(state: &SharedState, user: Option<&str>, tool: &str) {
+        state
+            .db
+            .insert_mcp_call_log(&aigw_core::models::McpCallLogRow {
+                call_id: uuid::Uuid::new_v4().to_string(),
+                server_alias: "alpha".to_string(),
+                tool_name: Some(tool.to_string()),
+                method: "tools/call".to_string(),
+                key_id: Some("*master*".to_string()),
+                user_id: user.map(str::to_string),
+                token_owner: "user".to_string(),
+                status: "success".to_string(),
+                error_code: None,
+                latency_ms: 5,
+                request_bytes: 10,
+                response_bytes: 20,
+                created_at: chrono::Utc::now().to_rfc3339(),
+            })
+            .await
+            .expect("insert call log");
+    }
+
+    #[tokio::test]
+    async fn the_admin_call_log_filters_by_user() {
+        let state = test_state().await;
+        let app = build_router(state.clone());
+        record_user_call(&state, Some("user-1"), "search").await;
+        record_user_call(&state, Some("user-2"), "read").await;
+        record_user_call(&state, None, "search").await;
+
+        let (s, body) = send(
+            &app,
+            Method::GET,
+            "/admin/mcp/calls?user_id=user-1",
+            MK,
+            None,
+        )
+        .await;
+        assert_eq!(s, 200, "{body}");
+        assert_eq!(body["total_count"], 1, "{body}");
+        assert_eq!(body["data"][0]["user_id"], "user-1");
+
+        let (_, all) = send(&app, Method::GET, "/admin/mcp/calls", MK, None).await;
+        assert_eq!(
+            all["total_count"], 3,
+            "no user_id must mean no user filter: {all}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_admin_call_log_counts_agree_with_the_user_filter() {
+        let state = test_state().await;
+        let app = build_router(state.clone());
+        for tool in ["t1", "t2", "t3"] {
+            record_user_call(&state, Some("user-1"), tool).await;
+        }
+        record_user_call(&state, Some("user-2"), "t4").await;
+
+        let (_, body) = send(
+            &app,
+            Method::GET,
+            "/admin/mcp/calls?user_id=user-1&page=1&page_size=2",
+            MK,
+            None,
+        )
+        .await;
+        assert_eq!(body["count"], 2, "{body}");
+        assert_eq!(
+            body["total_count"], 3,
+            "the count must carry the same user predicate as the list: {body}"
+        );
+        assert_eq!(body["total_pages"], 2);
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

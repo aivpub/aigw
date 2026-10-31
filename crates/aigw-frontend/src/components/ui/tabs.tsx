@@ -44,12 +44,11 @@ export function Tabs({
 export function TabsList({
   children,
   className = "",
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
+  ...rest
+}: React.HTMLAttributes<HTMLDivElement> & { children: React.ReactNode }) {
   return (
     <div
+      {...rest}
       className={`inline-flex h-9 items-center justify-center rounded-lg bg-muted p-1 text-muted-foreground ${className}`}
     >
       {children}

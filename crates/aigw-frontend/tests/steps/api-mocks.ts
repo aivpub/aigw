@@ -269,6 +269,100 @@ let mcpAllowlist: Record<number, Record<string, unknown>[]> = {};
 let mcpCreateRequests = 0;
 let lastMcpMyTokenPutBody: Record<string, unknown> = {};
 let lastMcpServerBody: Record<string, unknown> = {};
+let lastMcpCallsQuery: URLSearchParams | null = null;
+let lastMcpCallsPath: string | null = null;
+
+/** The reload sweep this scenario started, or `null` before the first click. */
+let mcpReloadRun: { run_id: string; startedAt: number } | null = null;
+let mcpReloadRunSeq = 0;
+/** Makes `/reload/latest` pretend no run exists, so the click's own `POST`
+ *  answers `409` — how a second operator's start looks to this tab. */
+let mcpReloadHiddenFromLatest = false;
+
+/** How long each server spends probing, and how long every poll takes to answer.
+ *  Both are long enough that a sweep is genuinely mid-flight for several frames:
+ *  a mock that finishes within one render proves nothing about the progress UI. */
+const MCP_RELOAD_STEP_MS = 350;
+const MCP_RELOAD_LATENCY_MS = 350;
+
+/** `hr-portal` fails: the dialog must show one red row next to two green ones,
+ *  and a partial summary instead of a success toast. */
+const MCP_RELOAD_FAILING_ID = 3;
+
+/**
+ * How far the sweep has got, derived from elapsed time rather than from a call
+ * counter — a poll that arrives twice as often must not make the run finish
+ * twice as fast, and a closed-then-reopened dialog must see the same position.
+ */
+function mcpReloadSnapshot(run: { run_id: string; startedAt: number }) {
+  const elapsed = Date.now() - run.startedAt;
+  const doneCount = Math.min(mcpServers.length, Math.floor(elapsed / MCP_RELOAD_STEP_MS));
+  const items = mcpServers.map((server, index) => {
+    const state =
+      index < doneCount ? "ok" : index === doneCount ? "running" : "pending";
+    if (server.id === MCP_RELOAD_FAILING_ID) {
+      return {
+        server_id: server.id,
+        alias: server.alias,
+        state: index < doneCount ? "failed" : state,
+        tool_count: null,
+        protocol_version: null,
+        error:
+          index < doneCount
+            ? "502 upstream refused the connection"
+            : null,
+      };
+    }
+    return {
+      server_id: server.id,
+      alias: server.alias,
+      state,
+      tool_count: index < doneCount ? (server.tool_count ?? 0) : null,
+      protocol_version: index < doneCount ? server.protocol_version : null,
+      error: null,
+    };
+  });
+  const done = items.filter((i) => i.state === "ok" || i.state === "failed").length;
+  return {
+    run_id: run.run_id,
+    total: items.length,
+    done,
+    status:
+      done < items.length
+        ? "running"
+        : items.some((i) => i.state === "failed")
+          ? "partial"
+          : "ok",
+    items,
+  };
+}
+
+/**
+ * Filters the call log the way the server does, plus the one thing only the
+ * mock can model: `/v1/mcp/calls` is scoped to the signed-in identity and has no
+ * `user_id` parameter, so asking for someone else's id must change nothing.
+ */
+function mcpCallsResponse(params: URLSearchParams, isAdmin: boolean) {
+  const alias = params.get("server_alias");
+  const status = params.get("status");
+  const tool = params.get("tool_name");
+  let rows = MCP_CALL_ROWS;
+  if (!isAdmin) rows = rows.filter((r) => r.user_id === activeMock.userId);
+  if (alias) rows = rows.filter((r) => r.server_alias === alias);
+  if (status) rows = rows.filter((r) => r.status === status);
+  if (tool) rows = rows.filter((r) => (r.tool_name ?? "").includes(tool));
+  const page = Number(params.get("page") ?? 1);
+  const pageSize = Number(params.get("page_size") ?? 30);
+  return {
+    object: "list",
+    data: rows,
+    count: rows.length,
+    total_count: rows.length,
+    page,
+    page_size: pageSize,
+    total_pages: rows.length === 0 ? 0 : 1,
+  };
+}
 
 export function resetMcpMockStore() {
   mcpServers = seedMcpServers();
@@ -278,6 +372,25 @@ export function resetMcpMockStore() {
   mcpCreateRequests = 0;
   lastMcpMyTokenPutBody = {};
   lastMcpServerBody = {};
+  lastMcpCallsQuery = null;
+  lastMcpCallsPath = null;
+  mcpReloadRun = null;
+  mcpReloadHiddenFromLatest = false;
+}
+
+/** Exports for the reload scenarios (Stage 148). */
+export function hideMcpReloadFromLatest(): void {
+  mcpReloadHiddenFromLatest = true;
+}
+
+/** Starts the same fake sweep without going through the UI — the "another
+ *  operator already started one" starting position. */
+export function startMcpReloadRunInBackground(): string {
+  mcpReloadRun = {
+    run_id: `run-${++mcpReloadRunSeq}`,
+    startedAt: Date.now(),
+  };
+  return mcpReloadRun.run_id;
 }
 
 export function getMcpCreateRequestCount(): number {
@@ -291,6 +404,16 @@ export function getLastMcpServerBody(): Record<string, unknown> {
 
 export function getLastMcpMyTokenPutBody(): Record<string, unknown> {
   return lastMcpMyTokenPutBody;
+}
+
+/** Query string of the last `/admin|/v1/mcp/calls` request, for filter assertions. */
+export function getLastMcpCallsQuery(): URLSearchParams | null {
+  return lastMcpCallsQuery;
+}
+
+/** Path of the last call-log request — proves which identity-scoped endpoint ran. */
+export function getLastMcpCallsPath(): string | null {
+  return lastMcpCallsPath;
 }
 
 /** Plaintext the seeded tokens "contain" — the BDD scenario greps the page for it. */
@@ -369,7 +492,7 @@ const MCP_CALL_ROWS = [
     key_id: "hash-abc",
     user_id: null,
     token_owner: "anonymous",
-    status: "error",
+    status: "failed",
     error_code: "-32603",
     latency_ms: 5021,
     request_bytes: 64,
@@ -390,6 +513,23 @@ const MCP_CALL_ROWS = [
     request_bytes: 48,
     response_bytes: 512,
     created_at: "2026-10-28T09:58:11Z",
+  },
+  {
+    // Owned by the identity `API endpoints are mocked for a non-admin user`
+    // signs in as, so the user-scoped endpoint has exactly one row to show.
+    call_id: "0192f0c4-0000-7000-8000-000000000004",
+    server_alias: "internal-wiki",
+    tool_name: "internal-wiki__read",
+    method: "tools/call",
+    key_id: "hash-ghi",
+    user_id: "fresh_user",
+    token_owner: "user",
+    status: "success",
+    error_code: null,
+    latency_ms: 41,
+    request_bytes: 33,
+    response_bytes: 256,
+    created_at: "2026-10-28T09:57:02Z",
   },
 ];
 
@@ -1248,12 +1388,53 @@ export async function defineMockRoutes(route: Route, request: Request) {
     });
   }
   if (url.pathname === "/admin/mcp/reload" && route.request().method() === "POST") {
+    // A run started by this scenario outlives a refresh and a closed dialog —
+    // exactly the property scenarios 5 and 3 exercise. The advance is time
+    // based, not per-request, so the frontend's 500ms polling sees the middle
+    // of the sweep instead of its terminal frame.
+    if (mcpReloadRun && mcpReloadSnapshot(mcpReloadRun).status === "running") {
+      return route.fulfill({
+        status: 409,
+        json: {
+          error: {
+            message: "another reload is already running",
+            type: "reload_in_progress",
+            run_id: mcpReloadRun.run_id,
+          },
+        },
+      });
+    }
+    mcpReloadRun = {
+      run_id: `run-${++mcpReloadRunSeq}`,
+      startedAt: Date.now(),
+    };
     return route.fulfill({
-      status: 200,
-      json: { status: "ok", reloaded: mcpServers.map((s) => s.alias) },
+      status: 202,
+      json: { run_id: mcpReloadRun.run_id, total: mcpServers.length },
     });
   }
+  if (
+    url.pathname === "/admin/mcp/reload/latest" ||
+    url.pathname.startsWith("/admin/mcp/reload/run-")
+  ) {
+    const asked = url.pathname.split("/").pop();
+    const run = mcpReloadRun;
+    const hidden = asked === "latest" && mcpReloadHiddenFromLatest;
+    if (!run || hidden || (asked !== "latest" && asked !== run.run_id)) {
+      return route.fulfill({
+        status: 404,
+        json: {
+          error: { message: "no such run", type: "reload_run_not_found" },
+        },
+      });
+    }
+    await new Promise((resolve) => setTimeout(resolve, MCP_RELOAD_LATENCY_MS));
+    return route.fulfill({ status: 200, json: mcpReloadSnapshot(run) });
+  }
   if (url.pathname.match(/^\/admin\/mcp\/servers\/\d+\/probe$/)) {
+    // Deliberately slow: the row-level spinner and the disabled button only
+    // exist inside this window, so an instant mock would make them untestable.
+    await new Promise((resolve) => setTimeout(resolve, MCP_RELOAD_STEP_MS));
     const id = Number(url.pathname.split("/")[4]);
     const outcome = MCP_PROBE_OUTCOMES[id as keyof typeof MCP_PROBE_OUTCOMES];
     if (!outcome) {
@@ -1435,27 +1616,16 @@ export async function defineMockRoutes(route: Route, request: Request) {
     });
   }
 
-  // ── MCP call log (Stage 145) ──
+  // ── MCP call log (Stage 145, page-wide tab in Stage 147) ──
   if (url.pathname === "/admin/mcp/calls" && route.request().method() === "GET") {
-    const alias = url.searchParams.get("server_alias");
-    const status = url.searchParams.get("status");
-    const tool = url.searchParams.get("tool_name");
-    let rows = MCP_CALL_ROWS;
-    if (alias) rows = rows.filter((r) => r.server_alias === alias);
-    if (status) rows = rows.filter((r) => r.status === status);
-    if (tool) rows = rows.filter((r) => r.tool_name.includes(tool));
-    return route.fulfill({
-      status: 200,
-      json: {
-        object: "list",
-        data: rows,
-        count: rows.length,
-        total_count: rows.length,
-        page: 1,
-        page_size: 30,
-        total_pages: 1,
-      },
-    });
+    lastMcpCallsQuery = url.searchParams;
+    lastMcpCallsPath = url.pathname;
+    return route.fulfill({ status: 200, json: mcpCallsResponse(url.searchParams, true) });
+  }
+  if (url.pathname === "/v1/mcp/calls" && route.request().method() === "GET") {
+    lastMcpCallsQuery = url.searchParams;
+    lastMcpCallsPath = url.pathname;
+    return route.fulfill({ status: 200, json: mcpCallsResponse(url.searchParams, false) });
   }
 
   // ── MCP debug endpoints (Stage 143 §3.4: both are POST) ──

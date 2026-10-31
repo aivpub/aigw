@@ -792,6 +792,10 @@ async fn main() -> anyhow::Result<()> {
             axum::routing::post(mcp::set_default_mcp_token),
         )
         .route("/admin/mcp/reload", axum::routing::post(mcp::reload_mcp))
+        // `latest` is a static segment and must be registered before `{run_id}`
+        // so a run literally named "latest" cannot shadow the snapshot alias.
+        .route("/admin/mcp/reload/latest", get(mcp::reload_latest))
+        .route("/admin/mcp/reload/{run_id}", get(mcp::reload_status))
         .route("/admin/mcp/calls", get(mcp::list_mcp_calls))
         // MCP passthrough (Phase 55, Stage 143). POST carries the JSON-RPC call;
         // GET and DELETE are the legacy stack's notification stream and session
@@ -813,6 +817,7 @@ async fn main() -> anyhow::Result<()> {
                 .put(mcp_user::put_my_token)
                 .delete(mcp_user::delete_my_token),
         )
+        .route("/v1/mcp/calls", get(mcp_user::list_my_calls))
         // Stateless debug endpoints — handler-level 404 when
         // `general_settings.mcp_disable_rest` is on.
         .route(

@@ -86,6 +86,27 @@ Feature: MCP Servers
     When I click the call log button on the "github" MCP server
     Then the MCP call log shows 2 calls
     And the failed MCP call row is highlighted
+    And the MCP call log alias filter carries "github"
+
+  Scenario: The call log filters by status, tool name and time
+    When I open the MCP call log tab
+    And I choose the MCP call status "failed"
+    Then the MCP call log request carries status "failed"
+    When I choose the MCP call status "success"
+    And I search MCP calls for tool "get_issue"
+    Then the MCP call log request carries tool_name "get_issue"
+    When I choose the MCP call time preset "7d"
+    Then the MCP call log request carries a time window
+
+  Scenario: An empty call log says so instead of showing a blank table
+    When I open the MCP call log tab
+    And I search MCP calls for tool "nothing-matches"
+    Then the MCP call log shows an empty state
+
+  Scenario: A call row opens its full detail
+    When I open the MCP call log tab
+    And I open the first MCP call row
+    Then the MCP call detail lists the call id and byte counts
 
   Scenario: A tool without a rule is unrestricted and can be restricted
     When I click the tools button on the "github" MCP server
@@ -141,3 +162,73 @@ Feature: MCP Servers
     And the MCP auth value input is empty
     When I click the save button in the MCP server dialog
     Then the last MCP server request does not carry a masked auth value
+
+  # ── Stage 147: the call log is a page, not a dialog ──
+
+  Scenario: The admin call log shows the user column
+    When I open the MCP call log tab
+    Then the MCP call log shows 4 calls
+    And the MCP call log shows the user column
+    And the anonymous call row shows "Anonymous" in the user column
+    And the MCP page has no horizontal page scroll
+
+  Scenario: The call log's three tabs fit a phone
+    When I open the MCP call log tab
+    And I choose the MCP call time preset "custom"
+    Then the MCP page has no horizontal page scroll
+
+  Scenario: The call log tabs and filters fit a 320px screen
+    When the MCP page is viewed on a 320px wide screen
+    And I open the MCP call log tab
+    Then the MCP tabs and call log filters fit inside the screen
+
+  # ── Stage 148: re-probe all shows progress instead of a frozen button ──
+
+  Scenario: Re-probing every server shows the sweep advancing
+    When I click re-probe all on the MCP page
+    Then the MCP progress dialog appears
+    And the MCP progress bar reports it is not yet complete
+    And the MCP progress dialog shows 3 servers
+    And the MCP progress dialog fits inside the screen
+
+  Scenario: The progress dialog fits a 320px screen
+    When the MCP page is viewed on a 320px wide screen
+    And I click re-probe all on the MCP page
+    Then the MCP progress dialog fits inside the screen
+
+  Scenario: One failing server is red while the others finish
+    When I click re-probe all on the MCP page
+    Then the MCP progress dialog shows 3 servers
+    And the MCP progress row for "hr-portal" is marked "failed"
+    And the MCP progress row for "hr-portal" carries an error summary
+    And the MCP progress row for "github" is marked "ok"
+    And the MCP progress dialog finishes with a partial summary
+
+  Scenario: Clicking again while a sweep runs attaches to it
+    When I click re-probe all on the MCP page
+    And the MCP progress dialog appears
+    And I close the MCP progress dialog
+    And I click re-probe all again
+    Then the MCP page shows the attach-to-running toast
+    And no MCP error toast is shown
+
+  Scenario: A 409 from another operator's start attaches instead of erroring
+    When I click re-probe all on the MCP page
+    And the MCP progress dialog appears
+    And I close the MCP progress dialog
+    And the latest reload run is hidden from this tab
+    And I click re-probe all again
+    Then the MCP page shows the attach-to-running toast
+    And no MCP error toast is shown
+
+  Scenario: Closing and reopening the dialog resumes the same run
+    When I click re-probe all on the MCP page
+    And the MCP progress bar reports it is not yet complete
+    And I close the MCP progress dialog
+    And I click re-probe all again
+    Then the MCP progress bar reports it is not yet complete
+    And the MCP progress dialog shows 3 servers
+
+  Scenario: A single probe disables its own button while it runs
+    When I start a probe on the "github" MCP server
+    Then the probe button on the "github" MCP server is disabled

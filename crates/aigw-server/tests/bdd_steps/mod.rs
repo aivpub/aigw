@@ -32,6 +32,7 @@ pub mod rate_limit_steps;
 pub mod real_api_steps;
 pub mod real_db_seed;
 pub mod real_mcp_aggregate_steps;
+pub mod real_mcp_calls_steps;
 pub mod real_mcp_headers_steps;
 pub mod real_mcp_passthrough_steps;
 pub mod real_mcp_steps;

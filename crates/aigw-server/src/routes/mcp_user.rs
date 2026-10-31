@@ -16,7 +16,7 @@ use aigw_core::mcp::credential::{is_token_usable, seal_token};
 use aigw_core::middleware::KeyIdentity;
 use aigw_core::models::{CredentialScope, McpServerRow, McpServerTokenRow, MCP_OWNER_USER};
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     Json,
 };
@@ -25,6 +25,7 @@ use serde_json::{json, Value};
 use tracing::warn;
 
 use super::keys::SharedState;
+use super::mcp::{call_filter, call_log_response};
 use super::spend::SpendAuth;
 
 fn db_error(e: impl std::fmt::Display) -> (StatusCode, Json<Value>) {
@@ -293,12 +294,50 @@ pub async fn delete_my_token(
     Ok(Json(json!({"status": "deleted", "server_id": id})))
 }
 
+/// Query string for `GET /v1/mcp/calls`. There is deliberately no `user_id`
+/// field: the identity comes from the key and nowhere else, so an attempt to
+/// pass someone else's id is not "rejected", it is simply not part of the
+/// request's vocabulary and has no effect.
+#[derive(Debug, Deserialize)]
+pub struct MyCallQuery {
+    pub page: Option<i32>,
+    pub page_size: Option<i32>,
+    pub server_alias: Option<String>,
+    pub tool_name: Option<String>,
+    pub status: Option<String>,
+    pub from: Option<String>,
+    pub to: Option<String>,
+}
+
+/// The caller's own call history — the answer to "I configured a token and it
+/// still fails, what happened", which until now only an admin could give.
+///
+/// A key with no bound user gets a 400 instead of an empty list: "we do not
+/// know who you are" and "you have made no calls" need different fixes, and an
+/// empty table reads as the second.
+pub async fn list_my_calls(
+    State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
+    Query(query): Query<MyCallQuery>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let user_id = user_id_of(&auth)?;
+    let filter = call_filter(
+        query.server_alias,
+        query.tool_name,
+        query.status.as_deref(),
+        query.from,
+        query.to,
+        Some(user_id),
+    )?;
+    call_log_response(&state, &filter, query.page, query.page_size).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::routes::keys::{AppState, DEFAULT_KEY_TOKEN_LEN};
     use aigw_core::mcp::credential::unseal_token;
-    use aigw_core::models::{VirtualKey, MCP_OWNER_SERVER};
+    use aigw_core::models::{McpCallLogRow, VirtualKey, MCP_OWNER_SERVER};
     use axum::http::Method;
     use axum::routing::get;
     use axum::Router;
@@ -342,6 +381,7 @@ mod tests {
                 "/v1/mcp/servers/{id}/my-token",
                 get(get_my_token).put(put_my_token).delete(delete_my_token),
             )
+            .route("/v1/mcp/calls", get(list_my_calls))
             .with_state(state)
     }
 
@@ -691,5 +731,194 @@ mod tests {
             .await
             .expect("tokens")
             .is_empty());
+    }
+
+    fn record_call(
+        user: Option<&str>,
+        alias: &str,
+        tool: &str,
+        status: &str,
+        at: &str,
+    ) -> McpCallLogRow {
+        McpCallLogRow {
+            call_id: uuid::Uuid::new_v4().to_string(),
+            server_alias: alias.to_string(),
+            tool_name: Some(tool.to_string()),
+            method: "tools/call".to_string(),
+            key_id: Some("*master*".to_string()),
+            user_id: user.map(str::to_string),
+            token_owner: "user".to_string(),
+            status: status.to_string(),
+            error_code: None,
+            latency_ms: 3,
+            request_bytes: 7,
+            response_bytes: 9,
+            created_at: at.to_string(),
+        }
+    }
+
+    /// Two users, same alias, same timestamp — only the identity can separate
+    /// them.
+    async fn seed_calls(state: &SharedState) {
+        for (user, tool) in [(Some("user-1"), "search"), (Some(OTHER_USER), "read")] {
+            state
+                .db
+                .insert_mcp_call_log(&record_call(
+                    user,
+                    "demo",
+                    tool,
+                    "success",
+                    "2026-10-31T00:00:00+00:00",
+                ))
+                .await
+                .expect("insert call");
+        }
+        state
+            .db
+            .insert_mcp_call_log(&record_call(
+                None,
+                "demo",
+                "search",
+                "failed",
+                "2026-10-31T00:00:00+00:00",
+            ))
+            .await
+            .expect("insert anonymous call");
+    }
+
+    fn user_ids(resp: &Value) -> Vec<Option<String>> {
+        resp["data"]
+            .as_array()
+            .expect("data array")
+            .iter()
+            .map(|row| row["user_id"].as_str().map(str::to_string))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_user_sees_only_their_own_calls() {
+        let state = test_state().await;
+        let app = build_router(state.clone());
+        seed_calls(&state).await;
+        let raw = insert_key(&state, Some("user-1")).await;
+
+        let (s, resp) = send(&app, Method::GET, "/v1/mcp/calls", &raw, None).await;
+        assert_eq!(s, 200, "{resp}");
+        assert_eq!(user_ids(&resp), vec![Some("user-1".to_string())]);
+        assert_eq!(resp["total_count"], 1);
+    }
+
+    #[tokio::test]
+    async fn passing_someone_elses_user_id_changes_nothing() {
+        let state = test_state().await;
+        let app = build_router(state.clone());
+        seed_calls(&state).await;
+        let raw = insert_key(&state, Some("user-1")).await;
+
+        let (s, resp) = send(
+            &app,
+            Method::GET,
+            &format!("/v1/mcp/calls?user_id={OTHER_USER}"),
+            &raw,
+            None,
+        )
+        .await;
+        assert_eq!(s, 200, "{resp}");
+        assert_eq!(
+            user_ids(&resp),
+            vec![Some("user-1".to_string())],
+            "user_id is not part of this endpoint's vocabulary: {resp}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_key_without_a_user_gets_a_400_not_an_empty_list() {
+        let state = test_state().await;
+        let app = build_router(state.clone());
+        seed_calls(&state).await;
+
+        let (s, resp) = send(&app, Method::GET, "/v1/mcp/calls", MK, None).await;
+        assert_eq!(s, 400, "{resp}");
+        assert_eq!(resp["error"]["type"], "key_without_user");
+    }
+
+    #[tokio::test]
+    async fn the_alias_and_status_filters_apply_to_my_calls() {
+        let state = test_state().await;
+        let app = build_router(state.clone());
+        seed_calls(&state).await;
+        state
+            .db
+            .insert_mcp_call_log(&record_call(
+                Some("user-1"),
+                "other",
+                "search",
+                "success",
+                "2026-10-31T01:00:00+00:00",
+            ))
+            .await
+            .expect("insert call");
+        let raw = insert_key(&state, Some("user-1")).await;
+
+        let (_, resp) = send(
+            &app,
+            Method::GET,
+            "/v1/mcp/calls?server_alias=other",
+            &raw,
+            None,
+        )
+        .await;
+        assert_eq!(resp["total_count"], 1, "{resp}");
+        assert_eq!(resp["data"][0]["server_alias"], "other");
+
+        let (_, resp) = send(&app, Method::GET, "/v1/mcp/calls?status=failed", &raw, None).await;
+        assert_eq!(resp["total_count"], 0, "{resp}");
+
+        let (_, resp) = send(&app, Method::GET, "/v1/mcp/calls?tool_name=SEA", &raw, None).await;
+        assert_eq!(
+            resp["total_count"], 2,
+            "tool_name is a case-insensitive substring: {resp}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unparseable_from_is_a_bad_request() {
+        let state = test_state().await;
+        let app = build_router(state.clone());
+        let raw = insert_key(&state, Some("user-1")).await;
+
+        let (s, resp) = send(
+            &app,
+            Method::GET,
+            "/v1/mcp/calls?from=yesterday",
+            &raw,
+            None,
+        )
+        .await;
+        assert_eq!(s, 400, "{resp}");
+        assert_eq!(resp["error"]["type"], "invalid_time_range");
+    }
+
+    #[tokio::test]
+    async fn the_envelope_matches_the_admin_endpoint() {
+        let state = test_state().await;
+        let app = build_router(state.clone());
+        seed_calls(&state).await;
+        let raw = insert_key(&state, Some("user-1")).await;
+
+        let (_, resp) = send(
+            &app,
+            Method::GET,
+            "/v1/mcp/calls?page=1&page_size=50",
+            &raw,
+            None,
+        )
+        .await;
+        assert_eq!(resp["object"], "list");
+        assert_eq!(resp["count"], 1);
+        assert_eq!(resp["page"], 1);
+        assert_eq!(resp["page_size"], 50);
+        assert_eq!(resp["total_pages"], 1);
+        assert!(resp["data"].is_array());
     }
 }

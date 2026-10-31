@@ -4,6 +4,7 @@ import {
   mockAllApis,
   MCP_TOKEN_PLAINTEXT,
   getLastMcpServerBody,
+  hideMcpReloadFromLatest,
 } from "./api-mocks";
 
 const { Given, When, Then } = createBdd();
@@ -75,12 +76,38 @@ Then("the new MCP server {string} appears in the list", async ({ page }, alias: 
 });
 
 Then("the MCP page has no horizontal page scroll", async ({ page }) => {
+  await expectNoHorizontalScroll(page);
+});
+
+/** 320px is narrower than any configured project, so the gate resizes. */
+When("the MCP page is viewed on a 320px wide screen", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 640 });
+  await page.waitForTimeout(300);
+});
+
+Then("the MCP tabs and call log filters fit inside the screen", async ({ page }) => {
+  for (const testId of ["mcp-tabs", "mcp-calls-filters"]) {
+    const overflow = await page
+      .getByTestId(testId)
+      .first()
+      .evaluate((el) => el.scrollWidth - el.clientWidth);
+    expect(overflow, `${testId} overflowed by ${overflow}px`).toBeLessThanOrEqual(0);
+  }
+  await expectNoHorizontalScroll(page);
+});
+
+Then("the MCP progress dialog fits inside the screen", async ({ page }) => {
+  await expect(progressDialog(page)).toBeVisible({ timeout: 5000 });
+  await expectNoHorizontalScroll(page);
+});
+
+async function expectNoHorizontalScroll(page: Page) {
   const overflow = await page.evaluate(() => {
     const doc = document.documentElement;
     return doc.scrollWidth - doc.clientWidth;
   });
   expect(overflow).toBeLessThanOrEqual(0);
-});
+}
 
 Then("I see an MCP success toast", async ({ page }) => {
   await expect(page.locator("[data-sonner-toast]").first()).toBeVisible({ timeout: 5000 });
@@ -268,4 +295,122 @@ Then(
 
 Then("the typed MCP auth value never appears in the page", async ({ page }) => {
   expect(await page.content()).not.toContain("tapd-secret");
+});
+
+// ── Stage 148: the "re-probe all" progress dialog ──
+
+function progressDialog(page: Page) {
+  return page
+    .locator('[role="dialog"]')
+    .filter({ has: page.getByTestId("mcp-progress-bar") });
+}
+
+function progressRows(page: Page) {
+  return progressDialog(page).getByTestId("mcp-progress-row");
+}
+
+When("I click re-probe all on the MCP page", async ({ page }) => {
+  await page.getByTestId("mcp-reload-all").first().click();
+});
+
+Then("the MCP progress dialog appears", async ({ page }) => {
+  await expect(
+    page.getByTestId("mcp-progress-bar").first(),
+  ).toBeVisible({ timeout: 5000 });
+});
+
+Then("the MCP progress bar reports it is not yet complete", async ({ page }) => {
+  // Asserting mid-flight is the whole point: with a mock that answered within a
+  // frame, "the bar moved" would be indistinguishable from "it is done".
+  const bar = page.getByTestId("mcp-progress-bar").first();
+  await expect(bar).toBeVisible({ timeout: 5000 });
+  const now = Number(await bar.getAttribute("aria-valuenow"));
+  const max = Number(await bar.getAttribute("aria-valuemax"));
+  expect(max).toBeGreaterThan(0);
+  expect(now, "the sweep must still be running on first sight").toBeLessThan(max);
+});
+
+Then("the MCP progress dialog shows {int} servers", async ({ page }, count: number) => {
+  await expect(progressRows(page)).toHaveCount(count, { timeout: 8000 });
+});
+
+Then("the MCP progress dialog finishes with a partial summary", async ({ page }) => {
+  await expect(page.getByTestId("mcp-progress-result")).toBeVisible({
+    timeout: 15000,
+  });
+  await expect(page.getByTestId("mcp-progress-result")).toContainText("1");
+});
+
+Then(
+  "the MCP progress row for {string} is marked {string}",
+  async ({ page }, alias: string, state: string) => {
+    const row = progressRows(page).filter({ hasText: alias }).first();
+    await expect(row).toHaveAttribute("data-state", state, { timeout: 15000 });
+  },
+);
+
+Then(
+  "the MCP progress row for {string} carries an error summary",
+  async ({ page }, alias: string) => {
+    const row = progressRows(page).filter({ hasText: alias }).first();
+    // Asserted on the prose, not the leading status number: the number's
+    // origin (upstream vs gateway) is the backend's business and is pinned in
+    // `a_failure_row_names_the_upstream_status_once`. Matching "502" here
+    // would look like coverage while saying nothing about it.
+    await expect(row).toContainText("upstream refused", { timeout: 15000 });
+  },
+);
+
+Then("the MCP page shows the attach-to-running toast", async ({ page }) => {
+  await expect(page.locator("[data-sonner-toast]")).toContainText(
+    /already running|in progress/i,
+    { timeout: 5000 },
+  );
+});
+
+Then("no MCP error toast is shown", async ({ page }) => {
+  await page.waitForTimeout(600);
+  const toasts = page.locator("[data-sonner-toast]");
+  const count = await toasts.count();
+  for (let i = 0; i < count; i += 1) {
+    await expect(toasts.nth(i)).not.toHaveAttribute("data-type", "error");
+  }
+});
+
+Then(
+  "the probe button on the {string} MCP server is disabled",
+  async ({ page }, alias: string) => {
+    await expect(serverRow(page, alias).getByTestId("mcp-server-probe")).toBeDisabled();
+  },
+);
+
+Then("I close the MCP progress dialog", async ({ page }) => {
+  // Two "Close" affordances: the footer button and the corner ✕. Both dismiss
+  // the dialog; `.first()` keeps the locator from tripping strict mode.
+  await progressDialog(page)
+    .getByRole("button", { name: /close/i })
+    .first()
+    .click();
+  await expect(page.getByTestId("mcp-progress-bar")).toHaveCount(0);
+});
+
+When("I click re-probe all again", async ({ page }) => {
+  await page.getByTestId("mcp-reload-all").first().click();
+});
+
+Then("the MCP page is on the servers tab", async ({ page }) => {
+  await page.getByTestId("mcp-tab-servers").first().click();
+  await expect(page.getByTestId("mcp-reload-all").first()).toBeVisible({
+    timeout: 5000,
+  });
+});
+
+Then("the latest reload run is hidden from this tab", async ({}) => {
+  hideMcpReloadFromLatest();
+});
+
+When("I start a probe on the {string} MCP server", async ({ page }, alias: string) => {
+  // No settle wait: the point of this scenario is what is true *during* the
+  // probe, and the mock holds the response open for that window.
+  await serverRow(page, alias).getByTestId("mcp-server-probe").click();
 });

@@ -65,6 +65,15 @@ fn build_mcp_router(state: aigw_server::routes::keys::SharedState) -> Router {
             axum::routing::post(mcp::set_default_mcp_token),
         )
         .route("/admin/mcp/reload", axum::routing::post(mcp::reload_mcp))
+        // `latest` before `{run_id}`: the static segment must win.
+        .route(
+            "/admin/mcp/reload/latest",
+            axum::routing::get(mcp::reload_latest),
+        )
+        .route(
+            "/admin/mcp/reload/{run_id}",
+            axum::routing::get(mcp::reload_status),
+        )
         .with_state(state)
 }
 

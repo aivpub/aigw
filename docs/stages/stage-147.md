@@ -3,7 +3,7 @@
 **所属**: Phase 56（MCP Gateway 生产反馈迭代）
 **预估**: ~14h（后端 user 维度过滤 + 两套端点 + 索引迁移 ×3 + 前端新 tab + BDD）
 **依赖**: Stage 143（`mcp_call_log` 写入）、Stage 144（`/admin/mcp/calls` 与 `McpCallQueryStore`）、Stage 145（`CallLogDialog` 现状）、Stage 142/145（`/dash/mcp` tab 骨架）
-**状态**: 📋 规划中（待批准）
+**状态**: ✅ 完成（2026-10-31）
 **提交**: —
 
 ---
@@ -212,16 +212,16 @@ ALTER TABLE mcp_call_log ADD INDEX idx_mcp_call_log_user_created (user_id, creat
 
 ## 7. 门禁
 
-- [ ] 普通用户看不到别人任何一行 —— handler UT 造两个 user 的行，断言响应中不存在他人 `user_id`；且查询串带 `user_id=<他人>` 时结果不变
-- [ ] key 未绑定 user 时 `/v1/mcp/calls` 返回 400 `key_without_user`（不是 200 空列表）
-- [ ] `/admin/mcp/calls?user_id=x` 生效，且不带 `user_id` 时与 Stage 144 行为逐字段一致（`:779`/`795` 路由未改）
-- [ ] 时间 / alias / 工具名三个过滤各有一条 BDD 断言到**请求参数**（不是只断言表格变化）
-- [ ] 计数与列表同条件：UT 断言 `user_id + 时间范围` 下 `total_count` 与 `data.len()` 关系正确（TD-025 防回归）
-- [ ] `CallLogDialog` 已无引用 —— `rg CallLogDialog crates/` 为空，文件已删
-- [ ] `en.json` / `zh-CN.json` key 集合一致（`task fe-lint` 内 `check-i18n-keys.sh` 输出 `✅`）
-- [ ] 320px 视口无横向滚动 —— 三个 tab 的 `TabsList` 与筛选行实测 `scrollWidth <= clientWidth`
-- [ ] 三方言 real BDD 全绿，含 `034` 索引存在且 `user_id` 查询命中断言
-- [ ] `task test` / `task bdd` / `task fmt` / `task lint` / `task doctor` 全绿，证据落盘到 `/tmp`
+- [x] 普通用户看不到别人任何一行 —— handler UT 造两个 user 的行，断言响应中不存在他人 `user_id`；且查询串带 `user_id=<他人>` 时结果不变
+- [x] key 未绑定 user 时 `/v1/mcp/calls` 返回 400 `key_without_user`（不是 200 空列表）
+- [x] `/admin/mcp/calls?user_id=x` 生效，且不带 `user_id` 时与 Stage 144 行为逐字段一致（`:779`/`795` 路由未改）
+- [x] 时间 / alias / 工具名三个过滤各有一条 BDD 断言到**请求参数**（不是只断言表格变化）
+- [x] 计数与列表同条件：UT 断言 `user_id + 时间范围` 下 `total_count` 与 `data.len()` 关系正确（TD-025 防回归）
+- [x] `CallLogDialog` 已无引用 —— `rg CallLogDialog crates/` 为空，文件已删
+- [x] `en.json` / `zh-CN.json` key 集合一致（`task fe-lint` 内 `check-i18n-keys.sh` 输出 `✅`）
+- [x] 320px 视口无横向滚动 —— 三个 tab 的 `TabsList` 与筛选行实测 `scrollWidth <= clientWidth`
+- [x] 三方言 real BDD 全绿，含 `034` 索引存在且 `user_id` 查询命中断言 —— `bdd-real-{sqlite,postgres,mysql}` 各 **87 scenarios (87 passed) / 490 steps (490 passed)**（`/tmp/p56-evidence/s147-real-{sqlite,postgres,mysql}-r2.log`，EXIT=0）。`mcp_calls_real.feature` 的索引场景读的是 `pg_indexes` / `information_schema.statistics` / `pragma_index_info` 的**列序**（`user_id` 必须前于 `created_at`），MySQL 另加 `FORCE INDEX` 的 `EXPLAIN` 断言
+- [x] `task test` / `task bdd` / `task fmt` / `task lint` / `task doctor` 全绿，证据落盘到 `/tmp` —— 最终树（Stage 148 Gate 4 修正之后）复跑：`task test` **1620 passed / 0 failed**（22 个 test result 块全部 `ok`，`/tmp/p56-evidence/s148-test-final.log`，`FAILED` 行数 0）；其中内嵌的 BDD 半程 **378 scenarios（365 passed / 13 skipped）· 2238 steps（2225 passed / 13 skipped）**；独立 `task bdd` 复跑同数字（`/tmp/p56-evidence/s148-bdd-r2.log`）—— 13 个 skip 全部来自 `body_archive_read.feature`（7 步）与 `body_archive_write.feature`（6 步）的既有缺陷（TD-028，step expr 与 feature 文本不匹配导致 cucumber-rs 静默跳过，非本 Stage 引入）；`task fmt` / `task lint` EXIT=0（`/tmp/p56-evidence/s148-{fmt,lint}-final.log`）、`task doctor` EXIT=0（`/tmp/p56-evidence/s148-doctor-r4.log`）
 
 ---
 

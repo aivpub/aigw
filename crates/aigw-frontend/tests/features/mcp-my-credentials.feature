@@ -30,3 +30,15 @@ Feature: MCP My Credentials
     And the my credentials row "hr-portal" shows the token is configured
     And the personal token plaintext never appears on the page
     And the personal token plaintext was sent to the API
+
+  # ── Stage 147: a user can see their own calls ──
+
+  Scenario: A non-admin sees the call log tab and only their own calls
+    Then the MCP tab "calls" is visible
+    When I open the MCP call log tab
+    Then the MCP call log shows 1 calls
+    And the MCP call log has no user column
+
+  Scenario: The call log is scoped by key and cannot ask for another identity
+    When I open the MCP call log tab
+    Then the MCP call log only carries the signed-in user's rows

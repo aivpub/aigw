@@ -1036,3 +1036,49 @@
   - `token_owner` 多了 `server` 的第二种来源（静态值），前端 `McpTokenOwner` 的取值集不变。
   - 非 ASCII 的头值（如中文 API key）被拒。当前没有任何真实上游需要它；若出现，放宽点在这里，不是在校验里开个后门。
   - 新增 6 条 UT/HT（严格解密、可打印 ASCII、`***` 拒绝、孤儿值拒绝、大小写改名、严格解密挡住编辑）+ 1 条 `user_required` 探测断言 + 1 条静态值 `token_owner` 断言。
+
+## ADR-049: 长操作进度用「进程内 run 注册表 + 轮询」，并且只对「管理员唯一并发的那一个操作」建 registry
+
+- **Date**: 2026-10-31
+- **Status**: Accepted
+- **Related Stage**: Stage 148 §3.1 / §3.4 / §3.6 / §9；`crates/aigw-core/src/mcp/probe_runs.rs`、`crates/aigw-server/src/routes/mcp.rs`、`crates/aigw-frontend/src/pages/mcp/ProbeProgressDialog.tsx`
+- **Background**: `POST /admin/mcp/reload` 原来同步跑完全部 `enabled` server 再返回，单次探测上限 `PROBE_TIMEOUT = 10s`，N 个 server 最坏 `N × 10s`，期间只有一个按钮 spinner。Stage 148 要把这件事变成「启动即返回 + 可观测」。
+- **Decision**:
+  1. **轮询而非流式**。`POST` 返回 `202 {run_id,total}`，前端 `GET /admin/mcp/reload/{run_id}` 每 500 ms 拉一次快照。**不复用** `mcp_relay` 已有的 SSE 基建（`relay_event_stream` / `sse_response`）—— 状态粒度是「几十条记录、每个几秒变一次」，人眼分辨不出 500 ms 内的差异；而轮询天然可测（BDD 只需控制 mock 的延迟），刷新后免费恢复（`GET /reload/latest`），且不需要断线重连与事件流读取的一整套测试设施。
+  2. **进程内注册表，不挂 `AppState`**。`OnceLock<Mutex<Option<ProbeRun>>>`，与 `catalog_cache`（ADR-041）同一放置前提：没有 per-instance 配置、每个副本各自持有、挂 `AppState` 只为改 39 处字面量。**代价明示**：多实例部署时每个实例各允许一次 reload（`409` 判定是进程级），进度查询打到别的实例会 404。
+  3. **`status` 由 items 派生，`done` 只在进入终态的转换上计数**。不设独立的「是否完成」字段，于是「footer 说 7/7、列表还有 running」这种自相矛盾的状态没有地方可存。空 run 立刻是 `Ok`（而不是永远 `Running`）。
+  4. **`start` 在同一个锁内完成「查是否在跑」与「写入」**，并发 reload 不可能双双看到空闲；输的那一方拿到赢家的 `run_id` 回 `409 reload_in_progress`，UI 直接挂到那次 run 上而不是报错。
+  5. **探测并发上限 4**（`buffer_unordered(4)`，`futures` 已在依赖里）。上游是外部服务，几十路同时打过去在对方看来就是压测；`ceil(N/4) × 10s` 把 N=10 的最坏 100 s 压到约 30 s。
+  6. **单 server 探测不进 run 机制**：它的耗时上限（≤10 s）本来可接受，引入状态机要多一次轮询 + 一个对话框生命周期。前端只用行级 `probingId` 做 disable + spinner。
+- **Why not the alternatives**:
+  - **SSE / WebSocket 推送** —— 见决策 1；粗粒度状态不需要流式，且会让「关闭对话框不取消任务」这一条失去免费恢复的能力。
+  - **持久化 run 历史（新表 + 保留策略）** —— 唯一用途是事后翻旧账，收益不明；而服务端重启时探测任务本身也终止了，不存在「以为在跑实际已死」。
+  - **抽成通用「任务进度引擎」** —— 目前只有一个消费者（`reload`）。抽象会立刻被第二个消费者（body archive 批量）的差异需求顶住。形状（`run_id` + items + `start`/`latest`）可以照抄，但**不共享代码**。
+  - **允许取消正在跑的探测** —— 探测到一半取消会让「已替换快照 / 未替换快照」混在一起，收益低、状态复杂度高。
+- **Consequences**:
+  - `POST /admin/mcp/reload` 的返回码从 `200` 变 `202`（UI 内唯一消费者已同步）；`409` 是新状态码，带 `error.run_id`。
+  - 进程重启后进度丢失，前端在 `latest()` 缺失 / `404` 时显示「该次探测已完成，结果已失效」，不重试。
+  - 并发探测抬高上游瞬时压力（4 路）；网关不做 per-server 节流，敏感上游只能靠它自己限流。
+  - item 的 `error` 截断到 500 字符（与 `PROBE_BODY_LIMIT` 对齐），更长的上游响应在 UI 上不可见。
+
+## ADR-050: 「我的」类查询独立端点，身份只从 `KeyIdentity` 取，绝不接受身份入参
+
+- **Date**: 2026-10-31
+- **Status**: Accepted
+- **Related Stage**: Stage 147 §3.1 / §3.2 / §3.3；`crates/aigw-server/src/routes/mcp_user.rs`、`crates/aigw-server/src/routes/mcp.rs`、`crates/aigw-core/src/db.rs`（`McpCallFilter`）
+- **Background**: MCP 调用日志原本只有 `GET /admin/mcp/calls`，首行 `require_admin`。普通用户对自己的调用零可见性。要让用户看自己的历史，最省事的写法是在同一个 handler 里分支：admin 用查询参数里的 `user_id`，非 admin 用身份里的。
+- **Decision**:
+  1. **新增 `GET /v1/mcp/calls`，不改造 `/admin/mcp/calls`**。`user_id` 强制等于 `auth.user_id`，**不接受 `user_id` 查询参数**（传了也一律忽略）。`/admin/mcp/calls` 保留 `require_admin` 首句，并新增**可选** `user_id` 筛选（缺失即不筛，与 Stage 144 逐字节一致）。
+  2. **两个 handler 共用 `McpCallFilter` 与 `McpCallQueryStore` 与同一个响应信封**，只差「`user_id` 从哪来」。不复制 SQL、不复制信封——前端一个类型吃两条路径。
+  3. **key 未绑定 user 时返回 `400 key_without_user`，不是空列表**。「我们不知道你是谁」与「你没调用过」的处置方式完全不同（换 key / 查配置），空列表会把前者谎报成后者。
+  4. **`user_id` 是等值过滤，不允许放宽成 `LIKE`**。放宽会让 `u_1` 匹配到 `u_10`、`u_1x` —— 那不是宽容，是越权。工具名仍然是 `LIKE '%x%'` 子串（给人找记不清全名的工具），这处不对称写进了 SQL 注释。
+  5. **列表与计数的谓词集合必须同步**（六条 SQL 一次改完）。只改一半时，筛选后的分页条会显示全量条数而表格只显示子集 —— TD-025 的翻版。UT 断言 `total_count` 与 `data.len()` 的关系、且跨页 `total_count` 不变。
+- **Why not the alternatives**:
+  - **单端点 + 角色分支** —— `user_id` 的取值就变成「admin 用参数 / 非 admin 用身份」的 if 分支，一处写错就是越权；鉴权逻辑分散在同一个函数的两条路径里，review 时只能靠记忆。
+  - **非 admin 访问 `/admin/mcp/calls` 时自动降级为「只能看自己的」** —— 端点名字与权限语义脱钩，下一个人读代码会先假定它有 admin 语义。
+  - **按 `key_id` 而非 `user_id` 归属** —— 一人多把 key（CLI / IDE / CI）会把「我今天的调用」散成几份，用户得先知道自己在用哪把 key。
+- **Consequences**:
+  - `user_id` 为 NULL 的行（master key 直连、未绑定用户的 key）在用户侧永远看不到，只有 admin 能看到。这是正确的（无主的调用不该归属给某个用户），但「用户说没记录、admin 说有一条」的对话会重复出现，因此决策 3 的 400 语义必须明确。
+  - `034` 新增 `(user_id, created_at)` 索引 × 三方言：前导列是等值条件，`created_at` 才能走范围扫描并省掉一次排序。
+  - 这个范式（身份来自 extractor、不接受身份入参、共用 filter/store 只换来源）可被将来的「我的开销 / 我的用量」直接复用。
+  - 前端 `CallLogDialog` 被 `CallLogTab` 取代，行内按钮改为切 tab 并预填 alias —— 单一渲染路径，不再维护两套筛选能力。

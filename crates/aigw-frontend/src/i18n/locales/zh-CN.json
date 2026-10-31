@@ -1372,7 +1372,8 @@
     "subtitle": "注册 MCP 上游 server、探测其工具、管理出站凭据",
     "tabs": {
       "servers": "Server 管理",
-      "mine": "我的凭据"
+      "mine": "我的凭据",
+      "calls": "调用日志"
     },
     "newServer": "新建 Server",
     "reloadAll": "全部重新探测",
@@ -1480,6 +1481,23 @@
       "conflictHint": "这些工具名与其它 server 冲突，建议修改本 server 的 alias 以消除冲突。",
       "inProgress": "探测中..."
     },
+    "progress": {
+      "title": "正在重新探测全部 Server",
+      "summary": "已完成 {{done}} / {{total}}",
+      "server": "Server",
+      "state": "状态",
+      "toolCount": "工具数",
+      "protocolVersion": "协议版本",
+      "error": "错误",
+      "stateRunning": "探测中",
+      "statePending": "等待中",
+      "stateOk": "完成",
+      "stateFailed": "失败",
+      "finishedOk": "{{total}} 个 server 全部探测成功。",
+      "finishedPartial": "已完成：{{total}} 个中 {{failed}} 个失败。",
+      "inProgressHint": "可以关闭此对话框 —— 探测任务仍在服务端继续。",
+      "expired": "该次探测已失效 —— 已被新的探测取代。"
+    },
     "tools": {
       "title": "工具目录",
       "count": "共 {{n}} 个工具",
@@ -1515,6 +1533,7 @@
       "tokenCreated": "Token 已保存",
       "defaultSet": "默认 token 已切换",
       "reloadPartial": "重新探测完成，{{failed}} 个失败",
+      "reloadInProgress": "已有一次探测在进行中 —— 正在接上该任务",
       "aclSaved": "限制已保存",
       "myTokenSaved": "你的 token 已保存",
       "myTokenDeleted": "你的 token 已删除"
@@ -1560,11 +1579,11 @@
     },
     "calls": {
       "title": "MCP 调用日志",
-      "description": "经过本网关的每一次工具调用，成败都记录。",
-      "descriptionFiltered": "{{alias}} 的工具调用记录",
+      "aliasPlaceholder": "按 Alias 过滤...",
       "toolPlaceholder": "按工具名过滤...",
       "server": "Server",
       "tool": "工具",
+      "method": "方法",
       "owner": {
         "server": "Server",
         "user": "用户",
@@ -1574,9 +1593,23 @@
       "status": "状态",
       "latency": "耗时",
       "time": "时间",
+      "user": "用户",
+      "anonymousUser": "匿名",
+      "keyId": "Key",
+      "errorCode": "错误码",
+      "requestBytes": "请求字节",
+      "responseBytes": "响应字节",
+      "detailTitle": "调用详情",
       "statusSuccess": "成功",
       "statusError": "失败",
-      "empty": "当前筛选下没有调用记录。"
+      "empty": "当前筛选下没有调用记录。",
+      "presets": {
+        "1h": "1 小时",
+        "24h": "24 小时",
+        "7d": "7 天",
+        "30d": "30 天",
+        "custom": "自定义"
+      }
     },
     "deleteDialog": {
       "title": "删除 MCP Server",

@@ -57,6 +57,12 @@ import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 import { toast } from "sonner";
 import { InputCard } from "@/components/log-viewer/InputCard";
 import { OutputCard } from "@/components/log-viewer/OutputCard";
+import {
+  fromDatetimeLocalValue,
+  presetRange,
+  toDatetimeLocalValue,
+  type TimePreset,
+} from "@/lib/datetime";
 import { parseMessages } from "@/components/log-viewer/MessageViewer";
 import { SearchResultsPanel } from "./SearchResultsPanel";
 import type { SearchView } from "./SearchResultsPanel";
@@ -151,55 +157,7 @@ interface SpendLogsResponse {
   total_pages: number;
 }
 
-type TimePreset = "15m" | "4h" | "24h" | "7d" | "custom";
-
 /* ─────────────────────────────────────────── Helpers ── */
-
-function presetRange(p: TimePreset) {
-  const now = Date.now();
-  switch (p) {
-    case "15m":
-      return {
-        start: new Date(now - 15 * 60 * 1000).toISOString(),
-        end: new Date(now).toISOString(),
-      };
-    case "4h":
-      return {
-        start: new Date(now - 4 * 3600 * 1000).toISOString(),
-        end: new Date(now).toISOString(),
-      };
-    case "24h":
-      return {
-        start: new Date(now - 24 * 3600 * 1000).toISOString(),
-        end: new Date(now).toISOString(),
-      };
-    case "7d":
-      return {
-        start: new Date(now - 7 * 24 * 3600 * 1000).toISOString(),
-        end: new Date(now).toISOString(),
-      };
-    case "custom":
-      return {
-        start: new Date(now - 4 * 3600 * 1000).toISOString(),
-        end: new Date(now).toISOString(),
-      };
-  }
-}
-
-// Convert ISO string → datetime-local input format (YYYY-MM-DDTHH:MM in local time)
-function toDatetimeLocalValue(iso: string): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return "";
-  const pad = (n: number) => String(n).padStart(2, "0");
-  // datetime-local 输入框期望本地时间（YYYY-MM-DDTHH:mm）
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-function fromDatetimeLocalValue(local: string): string {
-  if (!local) return "";
-  return new Date(local).toISOString();
-}
 
 function safeStringify(v: unknown): string {
   if (v === null || v === undefined) return "";
@@ -657,9 +615,9 @@ function RawJsonBlock({ data }: { data: unknown }) {
 
 /* ─────────────────────────────────────────── Tabs ── */
 
-const PRESET_KEYS: TimePreset[] = ["15m", "4h", "24h", "7d", "custom"];
+const PRESET_KEYS = ["15m", "4h", "24h", "7d", "custom"] as const;
 
-const PRESET_LABEL_MAP: Record<TimePreset, string> = {
+const PRESET_LABEL_MAP: Record<(typeof PRESET_KEYS)[number], string> = {
   "15m": "spendLogs.timePresets.15m",
   "4h": "spendLogs.timePresets.6h",
   "24h": "spendLogs.timePresets.24h",
