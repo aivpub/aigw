@@ -4,6 +4,7 @@ import {
   mockAllApis,
   MCP_TOKEN_PLAINTEXT,
   getLastMcpServerBody,
+  getLastMcpRejectionsQuery,
   hideMcpReloadFromLatest,
 } from "./api-mocks";
 
@@ -413,4 +414,137 @@ When("I start a probe on the {string} MCP server", async ({ page }, alias: strin
   // No settle wait: the point of this scenario is what is true *during* the
   // probe, and the mock holds the response open for that window.
   await serverRow(page, alias).getByTestId("mcp-server-probe").click();
+});
+
+// ── Stage 150: auth rejections ──
+
+function rejectionRows(page: Page) {
+  return page.locator(
+    '[data-testid="mcp-rejection-row"]:visible, [data-testid="mcp-rejection-card"]:visible',
+  );
+}
+
+When("I open the MCP rejections tab", async ({ page }) => {
+  await page.getByTestId("mcp-tab-rejections").first().click();
+  await page.waitForTimeout(800);
+});
+
+When("I choose the MCP rejection reason {string}", async ({ page }, value: string) => {
+  await page.getByTestId("mcp-rejections-reason-filter").selectOption(value);
+  await page.waitForTimeout(600);
+});
+
+/** Singular and plural are separate step texts in Cucumber expressions, so
+ *  the single-row scenarios need their own registration. */
+Then("the MCP rejections list shows {int} rows", async ({ page }, count: number) => {
+  await expect(rejectionRows(page)).toHaveCount(count, { timeout: 8000 });
+});
+
+Then("the MCP rejections list shows {int} row", async ({ page }, count: number) => {
+  await expect(rejectionRows(page)).toHaveCount(count, { timeout: 8000 });
+});
+
+/** The badge carries the translated label, so the step maps the wire value the
+ *  same way the component does rather than asserting the raw code. */
+const REJECTION_LABEL: Record<string, string> = {
+  missing_header: "Missing header",
+  invalid_format: "Invalid format",
+  invalid_key: "Invalid key",
+};
+
+/** The desktop table and the mobile card each render a badge; at phone width
+ *  the table one is in the DOM but hidden, so `.first()` would pick a hidden
+ *  element and time out. Only the visible one is the answer. */
+Then("the MCP rejections list shows the reason {string}", async ({ page }, reason: string) => {
+  const label = REJECTION_LABEL[reason] ?? reason;
+  await expect(
+    page
+      .locator('[data-testid="mcp-rejection-reason"]:visible')
+      .filter({ hasText: label })
+      .first(),
+  ).toBeVisible({ timeout: 8000 });
+});
+
+Then(
+  "the MCP rejection row for {string} names the client IP {string}",
+  async ({ page }, reason: string, ip: string) => {
+    const label = REJECTION_LABEL[reason] ?? reason;
+    await expect(
+      rejectionRows(page).filter({ hasText: label }).filter({ hasText: ip }),
+    ).toHaveCount(1, { timeout: 8000 });
+  },
+);
+
+Then("the MCP rejections request carries reason {string}", async ({ page }, reason: string) => {
+  void page;
+  await expect
+    .poll(() => getLastMcpRejectionsQuery()?.get("reason"), { timeout: 8000 })
+    .toBe(reason);
+});
+
+Then(
+  "the MCP rejection row for {string} shows a shortened token hash",
+  async ({ page }, reason: string) => {
+    const row = rejectionRows(page).filter({ hasText: REJECTION_LABEL[reason] ?? reason }).first();
+    const text = (await row.textContent()) ?? "";
+    expect(text).toMatch(/[0-9a-f]{12}…/);
+    expect(text).not.toContain("9f2c1d8e4b7a5036c9d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3");
+  },
+);
+
+Then("the MCP rejection row for {string} shows no token hash", async ({ page }, reason: string) => {
+  const row = rejectionRows(page).filter({ hasText: REJECTION_LABEL[reason] ?? reason }).first();
+  expect((await row.textContent()) ?? "").not.toMatch(/[0-9a-f]{12}…/);
+});
+
+Then("the MCP tabs and rejection filters fit inside the screen", async ({ page }) => {
+  for (const testId of ["mcp-tabs", "mcp-rejections-filters"]) {
+    const overflow = await page
+      .getByTestId(testId)
+      .first()
+      .evaluate((el) => el.scrollWidth - el.clientWidth);
+    expect(overflow, `${testId} overflowed by ${overflow}px`).toBeLessThanOrEqual(0);
+  }
+  await expectNoHorizontalScroll(page);
+});
+
+// ── Stage 151: each tab is a page route ──
+
+/** A path with a query is compared whole — that is the shareable part. */
+function expectLocation(page: Page, expected: string) {
+  return expect
+    .poll(
+      () => {
+        const url = new URL(page.url());
+        return expected.includes("?")
+          ? `${url.pathname}${url.search}`
+          : url.pathname;
+      },
+      { timeout: 8000 },
+    )
+    .toBe(expected);
+}
+
+Then("the browser is at {string}", async ({ page }, path: string) => {
+  await expectLocation(page, path);
+});
+
+Then("the browser is still at {string}", async ({ page }, path: string) => {
+  await expectLocation(page, path);
+});
+
+When("I open the URL {string}", async ({ page }, path: string) => {
+  await page.goto(path);
+  await page.waitForLoadState("domcontentloaded");
+  await page.waitForTimeout(1000);
+});
+
+When("I click the MCP tab {string}", async ({ page }, tab: string) => {
+  await page.getByTestId(`mcp-tab-${tab}`).first().click();
+  await page.waitForTimeout(800);
+});
+
+When("I go back in the browser", async ({ page }) => {
+  await page.goBack();
+  await page.waitForTimeout(800);
 });

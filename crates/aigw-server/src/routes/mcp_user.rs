@@ -25,7 +25,7 @@ use serde_json::{json, Value};
 use tracing::warn;
 
 use super::keys::SharedState;
-use super::mcp::{call_filter, call_log_response};
+use super::mcp::{body_response, call_filter, call_log_response};
 use super::spend::SpendAuth;
 
 fn db_error(e: impl std::fmt::Display) -> (StatusCode, Json<Value>) {
@@ -332,6 +332,38 @@ pub async fn list_my_calls(
     call_log_response(&state, &filter, query.page, query.page_size).await
 }
 
+/// `GET /v1/mcp/calls/{call_id}/body` — the caller's own call, in full.
+///
+/// Another user's `call_id` is a 404, not a 403: a 403 would confirm the call
+/// exists and belongs to someone else, which is the one thing this endpoint must
+/// not say. A row with no `user_id` belongs to nobody and is therefore not
+/// visible here either — an anonymous call's body is for an admin to read.
+pub async fn get_my_call_body(
+    State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
+    Path(call_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let user_id = user_id_of(&auth)?;
+    let Some(row) = state
+        .db
+        .get_mcp_call_body(&call_id)
+        .await
+        .map_err(db_error)?
+    else {
+        return Err(not_found("no body was recorded for this call"));
+    };
+    let mine = state
+        .db
+        .get_mcp_call_log(&call_id)
+        .await
+        .map_err(db_error)?
+        .is_some_and(|call| call.user_id.as_deref() == Some(user_id.as_str()));
+    if !mine {
+        return Err(not_found("no body was recorded for this call"));
+    }
+    Ok(Json(body_response(&row)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -370,6 +402,7 @@ mod tests {
             token_provider: Arc::new(aigw_core::claude_token::TokenProvider::new()),
             web_search: aigw_core::websearch::WebSearchHandle::disabled(),
             mcp_disable_rest: false,
+            mcp_log_retention: Default::default(),
             metrics: None,
         })
     }
@@ -382,6 +415,7 @@ mod tests {
                 get(get_my_token).put(put_my_token).delete(delete_my_token),
             )
             .route("/v1/mcp/calls", get(list_my_calls))
+            .route("/v1/mcp/calls/{call_id}/body", get(get_my_call_body))
             .with_state(state)
     }
 
@@ -920,5 +954,114 @@ mod tests {
         assert_eq!(resp["page_size"], 50);
         assert_eq!(resp["total_pages"], 1);
         assert!(resp["data"].is_array());
+    }
+
+    // ── call bodies (Stage 152) ────────────────────────────────────────
+
+    async fn insert_body_for(state: &SharedState, user: Option<&str>) -> String {
+        let row = record_call(
+            user,
+            "demo",
+            "search",
+            "success",
+            "2026-10-31T00:00:00+00:00",
+        );
+        let call_id = row.call_id.clone();
+        state
+            .db
+            .insert_mcp_call_log(&row)
+            .await
+            .expect("insert call");
+        state
+            .db
+            .insert_mcp_call_body(&aigw_core::models::McpCallBodyRow {
+                call_id: call_id.clone(),
+                request_body: Some(r#"{"jsonrpc":"2.0","id":1}"#.to_string()),
+                response_body: Some(r#"{"result":{}}"#.to_string()),
+                truncated: false,
+                created_at: "2026-10-31T00:00:00+00:00".to_string(),
+            })
+            .await
+            .expect("insert body");
+        call_id
+    }
+
+    #[tokio::test]
+    async fn my_own_call_body_is_served() {
+        let state = test_state().await;
+        let app = build_router(state.clone());
+        let call_id = insert_body_for(&state, Some("user-1")).await;
+        let raw = insert_key(&state, Some("user-1")).await;
+
+        let (s, resp) = send(
+            &app,
+            Method::GET,
+            &format!("/v1/mcp/calls/{call_id}/body"),
+            &raw,
+            None,
+        )
+        .await;
+        assert_eq!(s, 200, "{resp}");
+        assert_eq!(resp["call_id"], json!(call_id));
+        assert_eq!(resp["request"], r#"{"jsonrpc":"2.0","id":1}"#);
+    }
+
+    #[tokio::test]
+    async fn someone_elses_call_body_is_a_404_not_a_403() {
+        let state = test_state().await;
+        let app = build_router(state.clone());
+        let call_id = insert_body_for(&state, Some(OTHER_USER)).await;
+        let raw = insert_key(&state, Some("user-1")).await;
+
+        let (s, resp) = send(
+            &app,
+            Method::GET,
+            &format!("/v1/mcp/calls/{call_id}/body"),
+            &raw,
+            None,
+        )
+        .await;
+        assert_eq!(
+            s, 404,
+            "a 403 would confirm the id exists — the id must not leak: {resp}"
+        );
+        assert_eq!(resp["error"]["type"], "not_found");
+    }
+
+    #[tokio::test]
+    async fn an_anonymous_call_belongs_to_nobody() {
+        let state = test_state().await;
+        let app = build_router(state.clone());
+        let call_id = insert_body_for(&state, None).await;
+        let raw = insert_key(&state, Some("user-1")).await;
+
+        let (s, resp) = send(
+            &app,
+            Method::GET,
+            &format!("/v1/mcp/calls/{call_id}/body"),
+            &raw,
+            None,
+        )
+        .await;
+        assert_eq!(s, 404, "{resp}");
+    }
+
+    #[tokio::test]
+    async fn a_key_without_a_user_cannot_read_a_body() {
+        let state = test_state().await;
+        let app = build_router(state.clone());
+        let call_id = insert_body_for(&state, Some("user-1")).await;
+        let raw = insert_key(&state, None).await;
+
+        let (s, resp) = send(
+            &app,
+            Method::GET,
+            &format!("/v1/mcp/calls/{call_id}/body"),
+            &raw,
+            None,
+        )
+        .await;
+        assert_eq!(s, 400, "{resp}");
+        assert_eq!(resp["error"]["type"], "key_without_user");
     }
 }

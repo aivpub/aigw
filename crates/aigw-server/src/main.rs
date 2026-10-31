@@ -47,6 +47,7 @@ use aigw_core::engine::{Engine, EngineConfig};
 use aigw_core::provider::ProviderRegistry;
 use aigw_core::rate_limiter::RateLimiter;
 use aigw_core::resolver::ModelResolver;
+use aigw_core::retention::McpLogRetention;
 use aigw_core::router::{Router as AigwRouter, RouterState};
 use axum::extract::DefaultBodyLimit;
 use axum::http::HeaderName;
@@ -319,6 +320,14 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|c| c.budget_reset.clone())
         .unwrap_or_default();
 
+    // MCP log retention (Stage 150). Absent from config.yaml → enabled with the
+    // conservative defaults; deletion is irreversible, so the default is a long
+    // window rather than "off".
+    let mcp_log_retention_config = config
+        .as_ref()
+        .and_then(|c| c.mcp_log_retention.clone())
+        .unwrap_or_default();
+
     // Resolve router config + key-generation settings from config.yaml
     // general_settings / router_settings (Stage 116 static config support).
     let router_settings = config.as_ref().and_then(|c| c.router_settings.clone());
@@ -419,6 +428,7 @@ async fn main() -> anyhow::Result<()> {
         token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
         web_search,
         mcp_disable_rest,
+        mcp_log_retention: mcp_log_retention_config.clone(),
     });
 
     // Seed `config.model_list` into proxy_models (idempotent; DB-first — rows
@@ -462,6 +472,17 @@ async fn main() -> anyhow::Result<()> {
     {
         let mut engine = Engine::new(Arc::clone(&db_arc), EngineConfig::default());
         engine.register(body_archiver);
+        if mcp_log_retention_config.call_log_days > 0 || mcp_log_retention_config.rejection_days > 0
+        {
+            tracing::info!(
+                call_log_days = mcp_log_retention_config.call_log_days,
+                rejection_days = mcp_log_retention_config.rejection_days,
+                "McpLogRetention registered"
+            );
+            engine.register(Arc::new(McpLogRetention::new(
+                mcp_log_retention_config.clone(),
+            )));
+        }
         if budget_reset_config.enabled {
             let budget_resetter = Arc::new(BudgetResetter::new());
             engine.register(budget_resetter.clone());
@@ -797,6 +818,11 @@ async fn main() -> anyhow::Result<()> {
         .route("/admin/mcp/reload/latest", get(mcp::reload_latest))
         .route("/admin/mcp/reload/{run_id}", get(mcp::reload_status))
         .route("/admin/mcp/calls", get(mcp::list_mcp_calls))
+        .route(
+            "/admin/mcp/calls/{call_id}/body",
+            get(mcp::get_mcp_call_body),
+        )
+        .route("/admin/mcp/rejections", get(mcp::list_mcp_rejections))
         // MCP passthrough (Phase 55, Stage 143). POST carries the JSON-RPC call;
         // GET and DELETE are the legacy stack's notification stream and session
         // teardown, and answer 405 to a modern client.
@@ -818,6 +844,10 @@ async fn main() -> anyhow::Result<()> {
                 .delete(mcp_user::delete_my_token),
         )
         .route("/v1/mcp/calls", get(mcp_user::list_my_calls))
+        .route(
+            "/v1/mcp/calls/{call_id}/body",
+            get(mcp_user::get_my_call_body),
+        )
         // Stateless debug endpoints — handler-level 404 when
         // `general_settings.mcp_disable_rest` is on.
         .route(

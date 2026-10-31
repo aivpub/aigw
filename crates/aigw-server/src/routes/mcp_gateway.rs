@@ -22,7 +22,6 @@
 //! `mcp_call_log` row. A failed call is the main input to troubleshooting, so
 //! logging only successes would be no audit at all.
 
-use aigw_core::db::Database;
 use aigw_core::mcp::acl::{self, Actor};
 use aigw_core::mcp::catalog;
 use aigw_core::mcp::catalog_cache::{self, DEFAULT_TTL_MS};
@@ -32,13 +31,14 @@ use aigw_core::mcp::credential::{
 use aigw_core::mcp::headers::OutboundHeaders;
 use aigw_core::mcp::probe::{self, probe_server};
 use aigw_core::mcp::session::{self, UpstreamStack, UpstreamTarget};
-use aigw_core::middleware::KeyIdentity;
+use aigw_core::middleware::{AuthError, KeyIdentity};
 use aigw_core::models::{
-    CredentialScope, McpCallLogRow, McpServerRow, McpToolRow, UpstreamTool, MCP_CALL_STATUS_FAILED,
-    MCP_CALL_STATUS_SUCCESS, MCP_OWNER_SERVER, MCP_OWNER_USER,
+    CredentialScope, McpAuthRejectionRow, McpCallLogRow, McpServerRow, McpToolRow, UpstreamTool,
+    MCP_CALL_STATUS_FAILED, MCP_CALL_STATUS_SUCCESS, MCP_OWNER_SERVER, MCP_OWNER_USER,
+    MCP_REJECTION_INVALID_FORMAT, MCP_REJECTION_INVALID_KEY, MCP_REJECTION_MISSING_HEADER,
 };
 use axum::body::Bytes;
-use axum::extract::{Path, State};
+use axum::extract::{ConnectInfo, Path, State};
 use axum::http;
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -53,6 +53,101 @@ use super::spend::SpendAuth;
 
 pub(crate) fn session_header() -> header::HeaderName {
     header::HeaderName::from_static("mcp-session-id")
+}
+
+/// `SpendAuth` plus an audit row when it rejects.
+///
+/// A 401/403 is raised by the extractor, so `post_mcp` never runs and
+/// `mcp_call_log` stays empty — production measurement: 14 deliberately
+/// unauthorised calls moved `total_count` by 0. Those are exactly the requests
+/// an operator needs to see ("is anyone scanning this public endpoint?"), and
+/// they have no identity to put in the call log, so they go to their own table.
+///
+/// The write is best-effort: an audit failure must not turn a 401 into a 500,
+/// the same rule `mcp_relay::record` follows. `FromRequestParts` never touches
+/// the body, so ordering this before `Bytes` is safe.
+pub struct McpAuditAuth(pub KeyIdentity);
+
+impl std::ops::Deref for McpAuditAuth {
+    type Target = KeyIdentity;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+fn rejection_reason(error: &AuthError) -> &'static str {
+    match error {
+        AuthError::MissingHeader => MCP_REJECTION_MISSING_HEADER,
+        AuthError::InvalidFormat => MCP_REJECTION_INVALID_FORMAT,
+        AuthError::TokenNotFound => MCP_REJECTION_INVALID_KEY,
+        // Unreachable from `SpendAuth` today; naming it here keeps the match
+        // total if that ever changes rather than silently logging something else.
+        AuthError::TokenExpired | AuthError::TokenBlocked => MCP_REJECTION_INVALID_KEY,
+    }
+}
+
+impl<S> axum::extract::FromRequestParts<S> for McpAuditAuth
+where
+    S: Send + Sync,
+    SharedState: axum::extract::FromRef<S>,
+{
+    type Rejection = AuthError;
+
+    async fn from_request_parts(
+        parts: &mut http::request::Parts,
+        state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        let state: SharedState = axum::extract::FromRef::from_ref(state);
+        let spend =
+            <SpendAuth as axum::extract::FromRequestParts<SharedState>>::from_request_parts(
+                parts, &state,
+            )
+            .await;
+        match spend {
+            Ok(SpendAuth(identity)) => Ok(McpAuditAuth(identity)),
+            Err(error) => {
+                record_rejection(&state, parts, &error).await;
+                Err(error)
+            }
+        }
+    }
+}
+
+/// Hash of the credential as it was presented — never the credential.
+///
+/// Recorded so an operator can answer "which key was sent to the wrong
+/// endpoint"; a hash is irreversible and the token material is high-entropy, so
+/// the log cannot be used to recover it.
+fn presented_token_hash(headers: &HeaderMap) -> Option<String> {
+    let raw = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
+    let token = raw.strip_prefix("Bearer ")?;
+    (!token.is_empty()).then(|| aigw_core::crypto::hash_token(token))
+}
+
+async fn record_rejection(state: &SharedState, parts: &http::request::Parts, error: &AuthError) {
+    let row = McpAuthRejectionRow {
+        id: uuid::Uuid::now_v7().to_string(),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        path: parts.uri.path().to_string(),
+        http_method: parts.method.as_str().to_string(),
+        reason: rejection_reason(error).to_string(),
+        token_hash: presented_token_hash(&parts.headers),
+        client_ip: super::ip_extractor::parse_client_ip(
+            &parts.headers,
+            parts
+                .extensions
+                .get::<ConnectInfo<std::net::SocketAddr>>()
+                .map(|ConnectInfo(addr)| *addr),
+        ),
+        user_agent: parts
+            .headers
+            .get(header::USER_AGENT)
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.chars().take(512).collect()),
+    };
+    if let Err(e) = state.db.insert_mcp_rejection(&row).await {
+        warn!(path = %row.path, error = %e, "could not write mcp_auth_rejection");
+    }
 }
 
 fn tool_name_header(headers: &HeaderMap) -> Option<&str> {
@@ -376,7 +471,17 @@ pub(crate) fn mark(
     row
 }
 
-pub(crate) async fn finish(db: &Database, row: McpCallLogRow, outcome: Outcome) -> Response {
+/// Answer a call the gateway produced itself, and write its audit row plus —
+/// when recording is on — the request and this answer as the call's bodies.
+///
+/// `request` is the client's raw envelope. A path that has none (the notification
+/// stream, a `DELETE`) passes `&[]`, which is honest: there was no body.
+pub(crate) async fn finish(
+    state: &SharedState,
+    row: McpCallLogRow,
+    outcome: Outcome,
+    request: &[u8],
+) -> Response {
     let mut row = row;
     if outcome.is_failure() {
         row.status = MCP_CALL_STATUS_FAILED.to_string();
@@ -386,7 +491,8 @@ pub(crate) async fn finish(db: &Database, row: McpCallLogRow, outcome: Outcome) 
     let body = serde_json::to_vec(&outcome.body).unwrap_or_default();
     row.response_bytes = body.len() as i64;
     let call_id = row.call_id.clone();
-    mcp_relay::record(db, &row).await;
+    let limit = mcp_relay::body_limit(&state.mcp_log_retention);
+    mcp_relay::record_with_bodies(&state.db, limit, &row, request, &body).await;
 
     let mut response = (status, body).into_response();
     response.headers_mut().insert(
@@ -403,7 +509,7 @@ pub(crate) async fn finish(db: &Database, row: McpCallLogRow, outcome: Outcome) 
 
 pub async fn post_mcp(
     State(state): State<SharedState>,
-    SpendAuth(auth): SpendAuth,
+    McpAuditAuth(auth): McpAuditAuth,
     Path(alias): Path<String>,
     http::request::Parts { extensions, .. }: http::request::Parts,
     headers: HeaderMap,
@@ -422,7 +528,7 @@ pub async fn post_mcp(
                 session::PARSE_ERROR,
                 "request body is not a JSON-RPC object",
             );
-            return finish(&state.db, row, outcome).await;
+            return finish(&state, row, outcome, &body).await;
         }
     };
 
@@ -438,7 +544,7 @@ pub async fn post_mcp(
         Ok(server) => server,
         Err(outcome) => {
             let row = mark(row, method.as_deref(), tool, body.len(), started);
-            return finish(&state.db, row, outcome).await;
+            return finish(&state, row, outcome, &body).await;
         }
     };
 
@@ -452,7 +558,7 @@ pub async fn post_mcp(
             session::HEADER_BODY_MISMATCH,
             &message,
         );
-        return finish(&state.db, row, outcome).await;
+        return finish(&state, row, outcome, &body).await;
     }
 
     if let Err(message) = session::check_tool_spellings_consistency(&parsed) {
@@ -463,7 +569,7 @@ pub async fn post_mcp(
             session::HEADER_BODY_MISMATCH,
             &message,
         );
-        return finish(&state.db, row, outcome).await;
+        return finish(&state, row, outcome, &body).await;
     }
 
     // Registry → ACL → credential, the same order as the aggregate endpoint: a
@@ -473,7 +579,7 @@ pub async fn post_mcp(
     if let Some(name) = tool.as_deref() {
         if let Err(outcome) = check_tool_allowed(&state, &auth, &server, name, id.as_ref()).await {
             let row = mark(row, method.as_deref(), tool, body.len(), started);
-            return finish(&state.db, row, outcome).await;
+            return finish(&state, row, outcome, &body).await;
         }
     }
 
@@ -481,7 +587,7 @@ pub async fn post_mcp(
         Ok(ctx) => ctx,
         Err(outcome) => {
             let row = mark(row, method.as_deref(), tool, body.len(), started);
-            return finish(&state.db, row, outcome).await;
+            return finish(&state, row, outcome, &body).await;
         }
     };
     let mut row = row;
@@ -498,6 +604,7 @@ pub async fn post_mcp(
                 &state,
                 ctx,
                 parsed,
+                body.to_vec(),
                 row,
                 CallTail {
                     method: method.as_deref(),
@@ -517,7 +624,7 @@ pub async fn post_mcp(
     };
 
     let row = mark(row, method.as_deref(), tool, body.len(), started);
-    finish(&state.db, row, outcome).await
+    finish(&state, row, outcome, &body).await
 }
 
 /// What a call already knows about itself by the time it is relayed. These four
@@ -551,6 +658,7 @@ async fn relay_forwarded(
     state: &SharedState,
     ctx: CallContext,
     body: Value,
+    request: Vec<u8>,
     row: McpCallLogRow,
     tail: CallTail<'_>,
 ) -> Response {
@@ -558,11 +666,12 @@ async fn relay_forwarded(
         Ok(upstream) => upstream,
         Err(e) => {
             let row = tail.stamp(row);
-            return finish(&state.db, row, Outcome::upstream_failure(&e, None)).await;
+            return finish(state, row, Outcome::upstream_failure(&e, None), &request).await;
         }
     };
     let row = tail.stamp(row);
-    mcp_relay::relay(upstream, state.db.clone(), row).await
+    let limit = mcp_relay::body_limit(&state.mcp_log_retention);
+    mcp_relay::relay(upstream, state.db.clone(), row, request, limit).await
 }
 
 async fn open_stream(
@@ -581,9 +690,10 @@ async fn open_stream(
         Ok(ctx) => ctx,
         Err(outcome) => {
             return finish(
-                &state.db,
+                state,
                 mark(row, Some(http_method), None, 0, started),
                 outcome,
+                &[],
             )
             .await
         }
@@ -593,7 +703,7 @@ async fn open_stream(
     match session::upstream_stack(ctx.server.protocol_version.as_deref()) {
         UpstreamStack::Modern => {
             let row = mark(row, Some(http_method), None, 0, started);
-            finish(&state.db, row, modern).await
+            finish(state, row, modern, &[]).await
         }
         UpstreamStack::Legacy => {
             let row = mark(row, Some(http_method), None, 0, started);
@@ -615,7 +725,7 @@ async fn open_stream(
 
 pub async fn get_mcp(
     State(state): State<SharedState>,
-    SpendAuth(auth): SpendAuth,
+    McpAuditAuth(auth): McpAuditAuth,
     Path(alias): Path<String>,
     http::request::Parts { extensions, .. }: http::request::Parts,
 ) -> Response {
@@ -628,7 +738,7 @@ pub async fn get_mcp(
 
 pub async fn delete_mcp(
     State(state): State<SharedState>,
-    SpendAuth(auth): SpendAuth,
+    McpAuditAuth(auth): McpAuditAuth,
     Path(alias): Path<String>,
     http::request::Parts { extensions, .. }: http::request::Parts,
 ) -> Response {
@@ -646,7 +756,7 @@ pub(crate) const AGGREGATE_ALIAS: &str = "*aggregate*";
 /// `POST /mcp` — every enabled server behind one endpoint (Stage 144 §3.1/§3.2).
 pub async fn post_mcp_aggregate(
     State(state): State<SharedState>,
-    SpendAuth(auth): SpendAuth,
+    McpAuditAuth(auth): McpAuditAuth,
     http::request::Parts { extensions, .. }: http::request::Parts,
     headers: HeaderMap,
     body: Bytes,
@@ -664,7 +774,7 @@ pub async fn post_mcp_aggregate(
                 session::PARSE_ERROR,
                 "request body is not a JSON-RPC object",
             );
-            return finish(&state.db, row, outcome).await;
+            return finish(&state, row, outcome, &body).await;
         }
     };
 
@@ -678,6 +788,9 @@ pub async fn post_mcp_aggregate(
             .unwrap_or(false);
     if is_notification {
         let row = mark(row, method.as_deref(), None, body.len(), started);
+        // A notification has no answer, so only the log row is written: an
+        // empty `response_body` would read as "the upstream said nothing" when
+        // the truth is that nothing was ever going to come back.
         mcp_relay::record(&state.db, &row).await;
         return StatusCode::ACCEPTED.into_response();
     }
@@ -692,7 +805,7 @@ pub async fn post_mcp_aggregate(
             session::HEADER_BODY_MISMATCH,
             &message,
         );
-        return finish(&state.db, row, outcome).await;
+        return finish(&state, row, outcome, &body).await;
     }
 
     // Same reason as the header/body check above: a body whose two tool
@@ -706,14 +819,14 @@ pub async fn post_mcp_aggregate(
             session::HEADER_BODY_MISMATCH,
             &message,
         );
-        return finish(&state.db, row, outcome).await;
+        return finish(&state, row, outcome, &body).await;
     }
 
     match method.as_deref() {
         Some(session::METHOD_DISCOVER) => {
             let outcome = Outcome::ok(session::discover_response(id.as_ref()));
             let row = mark(row, method.as_deref(), None, body.len(), started);
-            finish(&state.db, row, outcome).await
+            finish(&state, row, outcome, &body).await
         }
         Some(session::METHOD_INITIALIZE) => {
             let outcome = Outcome {
@@ -721,31 +834,13 @@ pub async fn post_mcp_aggregate(
                 ..Outcome::ok(session::initialize_response(id.as_ref()))
             };
             let row = mark(row, method.as_deref(), None, body.len(), started);
-            finish(&state.db, row, outcome).await
+            finish(&state, row, outcome, &body).await
         }
         Some(session::METHOD_TOOLS_LIST) => {
-            list_aggregate_tools(
-                &state,
-                &auth,
-                &parsed,
-                row,
-                id.as_ref(),
-                body.len(),
-                started,
-            )
-            .await
+            list_aggregate_tools(&state, &auth, &parsed, &body, row, id.as_ref(), started).await
         }
         Some(session::METHOD_TOOLS_CALL) => {
-            call_aggregate_tool(
-                &state,
-                &auth,
-                &parsed,
-                row,
-                id.as_ref(),
-                body.len(),
-                started,
-            )
-            .await
+            call_aggregate_tool(&state, &auth, &parsed, &body, row, id.as_ref(), started).await
         }
         Some(other) => {
             let outcome = Outcome::method_not_allowed(
@@ -755,7 +850,7 @@ pub async fn post_mcp_aggregate(
                 ),
             );
             let row = mark(row, method.as_deref(), None, body.len(), started);
-            finish(&state.db, row, outcome).await
+            finish(&state, row, outcome, &body).await
         }
         None => {
             let outcome = Outcome::rpc(
@@ -765,7 +860,7 @@ pub async fn post_mcp_aggregate(
                 "JSON-RPC request has no method",
             );
             let row = mark(row, method.as_deref(), None, body.len(), started);
-            finish(&state.db, row, outcome).await
+            finish(&state, row, outcome, &body).await
         }
     }
 }
@@ -777,7 +872,7 @@ pub async fn post_mcp_aggregate(
 async fn catalog_tools(
     state: &SharedState,
     server: &McpServerRow,
-    credential: Option<&str>,
+    headers: &OutboundHeaders,
 ) -> (Vec<UpstreamTool>, Option<String>) {
     if let Some(entry) = catalog_cache::get(server.id) {
         return (entry.upstream_tools(), None);
@@ -789,10 +884,6 @@ async fn catalog_tools(
         .await
         .unwrap_or_default();
 
-    // One header set for both the cold-cache probe here and every forwarded
-    // call: a refresh that authenticates differently from the call path would
-    // list tools the caller can then never invoke.
-    let headers = outbound_headers(state, server, credential);
     let target = probe::ProbeTarget {
         url: &server.url,
         auth: headers.auth(),
@@ -841,11 +932,16 @@ async fn catalog_tools(
     }
 }
 
-fn tools_page_cursor(parsed: &Value) -> Option<&str> {
-    parsed
-        .get("params")
-        .and_then(|p| p.get("cursor"))
-        .and_then(Value::as_str)
+/// A cursor the gateway emitted is a string, but a client that parses it with a
+/// JSON number reader (`jq`-style, or a typed `nextCursor: number`) sends it back
+/// as a number. Dropping that as "no cursor" silently restarts the listing at
+/// page 1, so both spellings are accepted; anything else is not a cursor.
+fn tools_page_cursor(parsed: &Value) -> Option<String> {
+    match parsed.get("params")?.get("cursor")? {
+        Value::String(text) => Some(text.clone()),
+        Value::Number(number) => Some(number.to_string()),
+        _ => None,
+    }
 }
 
 fn tools_response(id: Option<&Value>, page: &catalog::Page, warnings: &[Value]) -> Value {
@@ -876,9 +972,9 @@ async fn list_aggregate_tools(
     state: &SharedState,
     auth: &KeyIdentity,
     parsed: &Value,
+    request: &[u8],
     mut row: McpCallLogRow,
     id: Option<&Value>,
-    request_bytes: usize,
     started: std::time::Instant,
 ) -> Response {
     let method = Some(session::METHOD_TOOLS_LIST);
@@ -886,21 +982,31 @@ async fn list_aggregate_tools(
         Ok(servers) => servers,
         Err(e) => {
             warn!(error = %e, "MCP registry read failed");
-            let row = mark(row, method, None, request_bytes, started);
+            let row = mark(row, method, None, request.len(), started);
             return finish(
-                &state.db,
+                state,
                 row,
                 internal(id, "could not read the MCP registry"),
+                request,
             )
             .await;
         }
     };
 
-    let mut visible: Vec<(McpServerRow, Option<String>)> = Vec::new();
+    let mut visible: Vec<(McpServerRow, OutboundHeaders)> = Vec::new();
+    let mut owners: Vec<&'static str> = Vec::new();
     let mut warnings: Vec<Value> = Vec::new();
     for server in servers.into_iter().filter(|s| s.enabled) {
         match resolve_bearer(state, auth, &server).await {
-            Ok((credential, _)) => visible.push((server, credential)),
+            Ok((credential, owner)) => {
+                // The caller cannot retry a `tools/list`, so the header set has
+                // to be computed here — and computed once: a second
+                // `outbound_headers` call would unseal the credential twice and,
+                // worse, could disagree with the one actually used upstream.
+                let headers = outbound_headers(state, &server, credential.as_deref());
+                owners.push(effective_owner(&headers, owner));
+                visible.push((server, headers));
+            }
             Err(reason) if reason == "user_required" => continue,
             Err(reason) => {
                 warn!(alias = %server.alias, reason, "MCP credential resolution failed");
@@ -908,6 +1014,7 @@ async fn list_aggregate_tools(
             }
         }
     }
+    row.token_owner = catalog::merge_owners(&owners).to_string();
 
     // Cold caches cost one upstream round trip each, so they run together: a
     // serial loop in front of three unreachable servers would block the client
@@ -916,7 +1023,7 @@ async fn list_aggregate_tools(
     let collected = futures::future::join_all(
         visible
             .iter()
-            .map(|(server, credential)| catalog_tools(state, server, credential.as_deref())),
+            .map(|(server, headers)| catalog_tools(state, server, headers)),
     )
     .await;
 
@@ -937,12 +1044,12 @@ async fn list_aggregate_tools(
     let entries = catalog::merge(sources);
     let page = catalog::page(
         &entries,
-        tools_page_cursor(parsed),
+        tools_page_cursor(parsed).as_deref(),
         catalog::DEFAULT_PAGE_SIZE,
     );
     let outcome = Outcome::ok(tools_response(id, &page, &warnings));
-    let row = mark(row, method, None, request_bytes, started);
-    finish(&state.db, row, outcome).await
+    let row = mark(row, method, None, request.len(), started);
+    finish(state, row, outcome, request).await
 }
 
 /// Route one `tools/call` by its prefix.
@@ -954,33 +1061,33 @@ async fn call_aggregate_tool(
     state: &SharedState,
     auth: &KeyIdentity,
     parsed: &Value,
+    request: &[u8],
     mut row: McpCallLogRow,
     id: Option<&Value>,
-    request_bytes: usize,
     started: std::time::Instant,
 ) -> Response {
     let method = Some(session::METHOD_TOOLS_CALL);
 
     let Some(name) = session::tool_name_of(parsed) else {
-        let row = mark(row, method, None, request_bytes, started);
+        let row = mark(row, method, None, request.len(), started);
         let outcome = Outcome::rpc(
             StatusCode::BAD_REQUEST,
             id,
             session::PARSE_ERROR,
             "tools/call has no params.name",
         );
-        return finish(&state.db, row, outcome).await;
+        return finish(state, row, outcome, request).await;
     };
 
     let Some((alias, tool)) = catalog::split_prefixed(&name) else {
-        let row = mark(row, method, Some(name.clone()), request_bytes, started);
+        let row = mark(row, method, Some(name.clone()), request.len(), started);
         let outcome = Outcome::rpc(
             StatusCode::NOT_FOUND,
             id,
             session::METHOD_NOT_FOUND,
             &format!("\"{name}\" is not a prefixed tool name (expected \"{{alias}}__{{tool}}\")"),
         );
-        return finish(&state.db, row, outcome).await;
+        return finish(state, row, outcome, request).await;
     };
     let alias = alias.to_string();
     let tool = tool.to_string();
@@ -989,21 +1096,21 @@ async fn call_aggregate_tool(
     let server = match lookup_enabled_server(state, &alias, id).await {
         Ok(server) => server,
         Err(outcome) => {
-            let row = mark(row, method, Some(tool), request_bytes, started);
-            return finish(&state.db, row, outcome).await;
+            let row = mark(row, method, Some(tool), request.len(), started);
+            return finish(state, row, outcome, request).await;
         }
     };
 
     if let Err(outcome) = check_tool_allowed(state, auth, &server, &tool, id).await {
-        let row = mark(row, method, Some(tool), request_bytes, started);
-        return finish(&state.db, row, outcome).await;
+        let row = mark(row, method, Some(tool), request.len(), started);
+        return finish(state, row, outcome, request).await;
     }
 
     let ctx = match prepare_for(state, auth, server, &alias, id).await {
         Ok(ctx) => ctx,
         Err(outcome) => {
-            let row = mark(row, method, Some(tool), request_bytes, started);
-            return finish(&state.db, row, outcome).await;
+            let row = mark(row, method, Some(tool), request.len(), started);
+            return finish(state, row, outcome, request).await;
         }
     };
     row.server_alias = alias;
@@ -1021,11 +1128,12 @@ async fn call_aggregate_tool(
         state,
         ctx,
         forwarded,
+        request.to_vec(),
         row,
         CallTail {
             method,
             tool: Some(tool),
-            request_bytes,
+            request_bytes: request.len(),
             started,
         },
     )
@@ -1069,6 +1177,7 @@ mod tests {
             token_provider: Arc::new(aigw_core::claude_token::TokenProvider::new()),
             web_search: aigw_core::websearch::WebSearchHandle::disabled(),
             mcp_disable_rest: false,
+            mcp_log_retention: Default::default(),
             metrics: None,
         })
     }
@@ -1254,6 +1363,214 @@ mod tests {
         let app = build_router(state);
         let (status, _, _) = send(&app, Method::POST, "/mcp/demo", None, &[], discover()).await;
         assert_eq!(status, 401);
+    }
+
+    async fn rejections(state: &SharedState) -> Vec<McpAuthRejectionRow> {
+        state
+            .db
+            .list_mcp_rejections(&aigw_core::db::McpRejectionFilter::default(), 50, 0)
+            .await
+            .expect("rejections")
+    }
+
+    /// Before this the row did not exist at all: 401 came from the extractor, so
+    /// `post_mcp` never ran and `mcp_call_log` stayed empty. The count moving by
+    /// zero is what made "is anyone scanning this public endpoint?" unanswerable.
+    #[tokio::test]
+    async fn a_missing_authorization_leaves_a_rejection_row() {
+        let state = test_state().await;
+        insert_server(
+            &state,
+            server_row("demo", "http://127.0.0.1:1/mcp", "shared", None),
+            None,
+        )
+        .await;
+        let app = build_router(state.clone());
+
+        let (status, _, _) = send(
+            &app,
+            Method::POST,
+            "/mcp/demo",
+            None,
+            &[("x-forwarded-for", "203.0.113.9")],
+            discover(),
+        )
+        .await;
+        assert_eq!(status, 401);
+
+        let rows = rejections(&state).await;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].reason, MCP_REJECTION_MISSING_HEADER);
+        assert_eq!(rows[0].path, "/mcp/demo");
+        assert_eq!(rows[0].http_method, "POST");
+        assert_eq!(rows[0].token_hash, None, "nothing was presented");
+        assert_eq!(rows[0].client_ip.as_deref(), Some("203.0.113.9"));
+    }
+
+    /// The hash is what lets an operator answer "which key was sent to the wrong
+    /// endpoint". Storing the token itself would make the audit table a
+    /// credential store.
+    #[tokio::test]
+    async fn a_bogus_token_is_recorded_as_a_hash_never_the_token() {
+        let state = test_state().await;
+        insert_server(
+            &state,
+            server_row("demo", "http://127.0.0.1:1/mcp", "shared", None),
+            None,
+        )
+        .await;
+        let app = build_router(state.clone());
+        let bogus = "sk-not-a-real-key";
+
+        let (status, _, _) = send(
+            &app,
+            Method::POST,
+            "/mcp/demo",
+            Some(bogus),
+            &[],
+            discover(),
+        )
+        .await;
+        assert_eq!(status, 401);
+
+        let rows = rejections(&state).await;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].reason, MCP_REJECTION_INVALID_KEY);
+        assert_eq!(
+            rows[0].token_hash.as_deref(),
+            Some(aigw_core::crypto::hash_token(bogus).as_str())
+        );
+        assert!(
+            !serde_json::to_string(&rows[0])
+                .expect("serialize")
+                .contains(bogus),
+            "the plaintext must never reach the table"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_non_bearer_authorization_is_recorded_as_invalid_format() {
+        let state = test_state().await;
+        insert_server(
+            &state,
+            server_row("demo", "http://127.0.0.1:1/mcp", "shared", None),
+            None,
+        )
+        .await;
+        let app = build_router(state.clone());
+
+        let (status, _, _) = send(
+            &app,
+            Method::POST,
+            "/mcp/demo",
+            None,
+            &[("authorization", "Basic dXNlcjpwYXNz")],
+            discover(),
+        )
+        .await;
+        assert_eq!(status, 401);
+
+        let rows = rejections(&state).await;
+        assert_eq!(rows[0].reason, MCP_REJECTION_INVALID_FORMAT);
+        assert_eq!(rows[0].token_hash, None, "no Bearer token to hash");
+    }
+
+    #[tokio::test]
+    async fn an_authorised_call_leaves_no_rejection_row() {
+        let state = test_state().await;
+        insert_server(
+            &state,
+            server_row("demo", "http://127.0.0.1:1/mcp", "shared", None),
+            None,
+        )
+        .await;
+        let app = build_router(state.clone());
+
+        let (status, _, _) = send(&app, Method::POST, "/mcp/demo", Some(MK), &[], discover()).await;
+        assert_eq!(status, 200);
+        assert!(
+            rejections(&state).await.is_empty(),
+            "a rejection table that fills on success is not an audit trail"
+        );
+    }
+
+    /// Three entry points reach the same upstream, so all three have to audit —
+    /// a rejection visible on one and invisible on another is a blind spot, not
+    /// a partial feature.
+    #[tokio::test]
+    async fn every_mcp_entry_point_records_its_own_rejection() {
+        let state = test_state().await;
+        insert_server(
+            &state,
+            server_row("demo", "http://127.0.0.1:1/mcp", "shared", None),
+            None,
+        )
+        .await;
+        let app = build_router(state.clone());
+
+        let (aggregate, _, _) = send(&app, Method::POST, "/mcp", None, &[], discover()).await;
+        let (rest, _, _) = send(
+            &app,
+            Method::POST,
+            "/mcp-rest/tools/list",
+            None,
+            &[],
+            json!({"alias": "demo"}),
+        )
+        .await;
+        let (health, _, _) = send(
+            &app,
+            Method::GET,
+            "/mcp-rest/health",
+            None,
+            &[],
+            Value::Null,
+        )
+        .await;
+
+        assert_eq!((aggregate, rest, health), (401, 401, 401));
+        let mut paths: Vec<String> = rejections(&state)
+            .await
+            .into_iter()
+            .map(|r| r.path)
+            .collect();
+        paths.sort();
+        assert_eq!(
+            paths,
+            vec![
+                "/mcp".to_string(),
+                "/mcp-rest/health".to_string(),
+                "/mcp-rest/tools/list".to_string(),
+            ]
+        );
+    }
+
+    /// An audit write that fails must not be visible to the caller: the answer
+    /// stays 401, because "we could not record it" is not "you may in".
+    /// Dropping the table is the one way to fail the write on a live pool.
+    #[tokio::test]
+    async fn a_broken_audit_table_still_answers_401() {
+        let state = test_state().await;
+        insert_server(
+            &state,
+            server_row("demo", "http://127.0.0.1:1/mcp", "shared", None),
+            None,
+        )
+        .await;
+        match &state.db {
+            aigw_core::db::Database::Sqlite(pool) => {
+                sqlx::query("DROP TABLE mcp_auth_rejection")
+                    .execute(pool)
+                    .await
+                    .expect("drop the audit table");
+            }
+            _ => panic!("test_state is SQLite"),
+        }
+        let app = build_router(state.clone());
+
+        let (status, body, _) = send(&app, Method::POST, "/mcp/demo", None, &[], discover()).await;
+        assert_eq!(status, 401);
+        assert_eq!(body["error"]["type"], json!("auth_error"));
     }
 
     #[tokio::test]
@@ -2194,6 +2511,10 @@ mod tests {
         json!({"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": params})
     }
 
+    fn tools_list_body_with_cursor(cursor: Value) -> Value {
+        json!({"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {"cursor": cursor}})
+    }
+
     fn prefixed_call(name: &str) -> Value {
         json!({"jsonrpc": "2.0", "id": 9, "method": "tools/call", "params": {"name": name, "arguments": {}}})
     }
@@ -2684,5 +3005,476 @@ mod tests {
             Vec::<String>::new(),
             "the malformed request must never reach the upstream"
         );
+    }
+
+    /// Without this the row says `anonymous` for a fan-out that unsealed a
+    /// server token for every upstream — the log would contradict the listing.
+    #[tokio::test]
+    async fn an_aggregate_list_records_the_credential_that_actually_left() {
+        let _guard = aggregate_guard().await;
+        let state = test_state().await;
+        let (alpha, _) = spawn_tools_stub(stub_tools(&["search"])).await;
+        let (beta, _) = spawn_tools_stub(stub_tools(&["read"])).await;
+        insert_server(
+            &state,
+            server_row("alpha", &alpha, "shared", None),
+            Some("sk-a"),
+        )
+        .await;
+        insert_server(
+            &state,
+            server_row("beta", &beta, "shared", None),
+            Some("sk-b"),
+        )
+        .await;
+        let app = build_router(state.clone());
+
+        let (status, _, _) = send(
+            &app,
+            Method::POST,
+            "/mcp",
+            Some(MK),
+            &[],
+            tools_list_body(None),
+        )
+        .await;
+        assert_eq!(status, 200);
+        let rows = call_log(&state.db, AGGREGATE_ALIAS).await;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].token_owner, "server");
+    }
+
+    /// The fourth owner value: a fan-out that only ever used the caller's own
+    /// tokens must say `user`, not the shared one.
+    #[tokio::test]
+    async fn an_aggregate_list_that_only_used_user_tokens_records_user() {
+        let _guard = aggregate_guard().await;
+        let state = test_state().await;
+        let (alpha, _) = spawn_tools_stub(stub_tools(&["search"])).await;
+        let id = insert_server(
+            &state,
+            server_row("alpha", &alpha, "shared_or_user", None),
+            None,
+        )
+        .await;
+        let sealed = seal_token("sk-user", MK).expect("seal");
+        let token_id = state
+            .db
+            .create_mcp_token(&McpServerTokenRow {
+                id: 0,
+                server_id: id,
+                owner_type: MCP_OWNER_USER.to_string(),
+                owner_id: "user-1".to_string(),
+                token_name: "mine".to_string(),
+                token_value: sealed,
+                is_default: true,
+                enabled: true,
+                expires_at: None,
+                created_by: "test".to_string(),
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                updated_at: "2026-01-01T00:00:00Z".to_string(),
+            })
+            .await
+            .expect("token");
+        state
+            .db
+            .set_default_mcp_token(id, MCP_OWNER_USER, "user-1", token_id)
+            .await
+            .expect("default token");
+        let raw = insert_plain_key(&state).await;
+        let app = build_router(state.clone());
+
+        let (status, _, _) = send(
+            &app,
+            Method::POST,
+            "/mcp",
+            Some(&raw),
+            &[],
+            tools_list_body(None),
+        )
+        .await;
+        assert_eq!(status, 200);
+        // One reachable server means the row carries that alias, not the
+        // sentinel (Stage 144) — the owner merge is the same either way.
+        let rows = call_log(&state.db, "alpha").await;
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].token_owner, "user");
+    }
+
+    #[tokio::test]
+    async fn a_server_skipped_for_a_missing_user_token_does_not_colour_the_merge() {
+        let _guard = aggregate_guard().await;
+        let state = test_state().await;
+        insert_server(
+            &state,
+            server_row("locked", "http://127.0.0.1:1/mcp", "user_required", None),
+            Some("sk-unused"),
+        )
+        .await;
+        let (open, _) = spawn_tools_stub(stub_tools(&["read"])).await;
+        insert_server(
+            &state,
+            server_row("open", &open, "shared", None),
+            Some("sk-open"),
+        )
+        .await;
+        let raw = insert_plain_key(&state).await;
+        let app = build_router(state.clone());
+
+        let (status, _, _) = send(
+            &app,
+            Method::POST,
+            "/mcp",
+            Some(&raw),
+            &[],
+            tools_list_body(None),
+        )
+        .await;
+        assert_eq!(status, 200);
+        // One reachable server means the row carries that alias, not the sentinel.
+        let rows = call_log(&state.db, "open").await;
+        assert_eq!(
+            rows[0].token_owner, "server",
+            "a server that was never contacted cannot make the fan-out mixed"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_fan_out_that_mixes_credential_sources_is_recorded_as_mixed() {
+        let _guard = aggregate_guard().await;
+        let state = test_state().await;
+        let (alpha, _) = spawn_tools_stub(stub_tools(&["search"])).await;
+        let (beta, _) = spawn_tools_stub(stub_tools(&["read"])).await;
+        insert_server(
+            &state,
+            server_row("alpha", &alpha, "shared", None),
+            Some("sk-a"),
+        )
+        .await;
+        insert_server(&state, server_row("beta", &beta, "shared", None), None).await;
+        let app = build_router(state.clone());
+
+        let (status, _, _) = send(
+            &app,
+            Method::POST,
+            "/mcp",
+            Some(MK),
+            &[],
+            tools_list_body(None),
+        )
+        .await;
+        assert_eq!(status, 200);
+        let rows = call_log(&state.db, AGGREGATE_ALIAS).await;
+        assert_eq!(
+            rows[0].token_owner, "mixed",
+            "one upstream got a credential and one did not; neither value describes both"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_aggregate_list_with_no_reachable_server_records_anonymous() {
+        let _guard = aggregate_guard().await;
+        let state = test_state().await;
+        let app = build_router(state.clone());
+
+        let (status, _, _) = send(
+            &app,
+            Method::POST,
+            "/mcp",
+            Some(MK),
+            &[],
+            tools_list_body(None),
+        )
+        .await;
+        assert_eq!(status, 200);
+        let rows = call_log(&state.db, AGGREGATE_ALIAS).await;
+        assert_eq!(rows[0].token_owner, "anonymous");
+    }
+
+    #[tokio::test]
+    async fn a_configured_static_header_still_counts_as_a_server_credential() {
+        let _guard = aggregate_guard().await;
+        let state = test_state().await;
+        let (alpha, _) = spawn_tools_stub(stub_tools(&["search"])).await;
+        let mut row = server_row("alpha", &alpha, "shared", None);
+        row.auth_header_value = Some(seal_token("sk-static", MK).expect("seal"));
+        insert_server(&state, row, None).await;
+        let app = build_router(state.clone());
+
+        let (status, _, _) = send(
+            &app,
+            Method::POST,
+            "/mcp",
+            Some(MK),
+            &[],
+            tools_list_body(None),
+        )
+        .await;
+        assert_eq!(status, 200);
+        let rows = call_log(&state.db, "alpha").await;
+        assert_eq!(rows[0].token_owner, "server");
+    }
+
+    /// A client that reads `nextCursor` as a number sends it back as a number.
+    /// Treating that as "no cursor" replays page 1 forever — every response is
+    /// well formed, which is what makes it hard to notice.
+    #[tokio::test]
+    async fn a_numeric_cursor_pages_exactly_like_the_string_it_came_from() {
+        let _guard = aggregate_guard().await;
+        let state = test_state().await;
+        let (up, _) = spawn_tools_stub(numbered_tools(catalog::DEFAULT_PAGE_SIZE + 5)).await;
+        insert_server(&state, server_row("big", &up, "shared", None), None).await;
+        let app = build_router(state.clone());
+
+        let (_, first, _) = send(
+            &app,
+            Method::POST,
+            "/mcp",
+            Some(MK),
+            &[],
+            tools_list_body(None),
+        )
+        .await;
+        let cursor = first["result"]["nextCursor"]
+            .as_str()
+            .expect("more than one page")
+            .to_string();
+        let numeric: u64 = cursor.parse().expect("the gateway emits a number");
+
+        let (string_status, as_string, _) = send(
+            &app,
+            Method::POST,
+            "/mcp",
+            Some(MK),
+            &[],
+            tools_list_body(Some(&cursor)),
+        )
+        .await;
+        let (number_status, as_number, _) = send(
+            &app,
+            Method::POST,
+            "/mcp",
+            Some(MK),
+            &[],
+            tools_list_body_with_cursor(json!(numeric)),
+        )
+        .await;
+        assert_eq!(string_status, 200);
+        assert_eq!(number_status, 200);
+        assert_eq!(as_number, as_string);
+        assert_eq!(
+            tool_names(&as_number).len(),
+            5,
+            "the second page, not a replay"
+        );
+    }
+
+    async fn body_of(state: &SharedState, call_id: &str) -> aigw_core::models::McpCallBodyRow {
+        state
+            .db
+            .get_mcp_call_body(call_id)
+            .await
+            .expect("body read")
+            .expect("a body row")
+    }
+
+    /// A locally answered call still has two halves worth reading: the client's
+    /// `initialize` and the gateway's answer. Neither ever reached an upstream,
+    /// so this is the only copy.
+    #[tokio::test]
+    async fn a_local_answer_records_both_halves() {
+        let state = test_state().await;
+        insert_server(
+            &state,
+            server_row("demo", "http://127.0.0.1:1/mcp", "shared", None),
+            None,
+        )
+        .await;
+        let app = build_router(state.clone());
+        let request = json!({"jsonrpc": "2.0", "id": 2, "method": "initialize", "params": {}});
+
+        let (status, _, _) = send(&app, Method::POST, "/mcp/demo", Some(MK), &[], request).await;
+        assert_eq!(status, 200);
+
+        let rows = call_log(&state.db, "demo").await;
+        assert_eq!(rows.len(), 1);
+        let body = body_of(&state, &rows[0].call_id).await;
+        let sent = body.request_body.expect("request body");
+        assert!(
+            sent.contains("initialize"),
+            "the request must be the client's own envelope, got {sent}"
+        );
+        let answer = body.response_body.expect("response body");
+        assert!(
+            answer.contains("result"),
+            "the response must be what the gateway sent, got {answer}"
+        );
+        assert!(!body.truncated);
+    }
+
+    /// The audited response is the upstream's bytes, not a re-encoded version of
+    /// them: a discrepancy here would make the drawer lie about what the tool
+    /// returned.
+    #[tokio::test]
+    async fn a_buffered_answer_is_recorded_byte_for_byte() {
+        let state = test_state().await;
+        let answer =
+            r#"{"jsonrpc":"2.0","id":9,"result":{"content":[{"type":"text","text":"pong"}]}}"#;
+        let app_router = Router::new().route(
+            "/mcp",
+            axum::routing::post(move || async move { (StatusCode::OK, answer) }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app_router).await;
+        });
+        insert_server(
+            &state,
+            server_row(
+                "echo",
+                &format!("http://{addr}/mcp"),
+                "shared",
+                Some(aigw_core::mcp::probe::MODERN_PROTOCOL_VERSION),
+            ),
+            None,
+        )
+        .await;
+        let app = build_router(state.clone());
+
+        let (status, _, _) = send(
+            &app,
+            Method::POST,
+            "/mcp/echo",
+            Some(MK),
+            &[],
+            tools_call_body(),
+        )
+        .await;
+        assert_eq!(status, 200);
+
+        let rows = call_log(&state.db, "echo").await;
+        let body = body_of(&state, &rows[0].call_id).await;
+        assert_eq!(body.response_body.as_deref(), Some(answer));
+        assert!(!body.truncated);
+    }
+
+    /// A body larger than the ceiling is stored as a prefix and flagged. Silence
+    /// would be the one outcome the drawer cannot explain.
+    #[tokio::test]
+    async fn an_oversized_answer_is_truncated_and_flagged() {
+        let mut state = test_state().await;
+        {
+            let inner = Arc::get_mut(&mut state).expect("sole owner");
+            inner.mcp_log_retention.max_body_kib = 1;
+        }
+        insert_server(
+            &state,
+            server_row("demo", "http://127.0.0.1:1/mcp", "shared", None),
+            None,
+        )
+        .await;
+        let app = build_router(state.clone());
+        let big = "x".repeat(4096);
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "noisy", "arguments": {"payload": big}},
+        });
+
+        // The upstream is unreachable, so the answer is local — but the request
+        // alone is over 1 KiB, which is enough to prove the cap.
+        let (status, _, _) = send(&app, Method::POST, "/mcp/demo", Some(MK), &[], request).await;
+        assert_eq!(status, 502);
+
+        let rows = call_log(&state.db, "demo").await;
+        let body = body_of(&state, &rows[0].call_id).await;
+        assert!(body.truncated, "the cap must be visible in the row");
+        let sent = body.request_body.expect("request body");
+        assert!(sent.len() <= 1024, "stored {} bytes", sent.len());
+        assert!(
+            sent.starts_with('{'),
+            "a prefix of the envelope, got {sent}"
+        );
+    }
+
+    /// `record_bodies: false` has to mean no row at all, not an empty one: an
+    /// operator running with recording off must not be able to read what was
+    /// never written.
+    #[tokio::test]
+    async fn recording_off_writes_no_body_row() {
+        let mut state = test_state().await;
+        {
+            let inner = Arc::get_mut(&mut state).expect("sole owner");
+            inner.mcp_log_retention.record_bodies = false;
+        }
+        insert_server(
+            &state,
+            server_row("demo", "http://127.0.0.1:1/mcp", "shared", None),
+            None,
+        )
+        .await;
+        let app = build_router(state.clone());
+
+        let (status, _, _) = send(&app, Method::POST, "/mcp/demo", Some(MK), &[], discover()).await;
+        assert_eq!(status, 200);
+
+        let rows = call_log(&state.db, "demo").await;
+        assert_eq!(rows.len(), 1, "the log row is still there");
+        assert!(
+            state
+                .db
+                .get_mcp_call_body(&rows[0].call_id)
+                .await
+                .expect("body read")
+                .is_none(),
+            "recording off must not leave a body row behind"
+        );
+    }
+
+    /// A rejected request has no `mcp_call_log` row and must not gain a body row
+    /// either. 拒绝审计 is a different table answering a different question.
+    #[tokio::test]
+    async fn a_rejected_request_records_no_body() {
+        let state = test_state().await;
+        insert_server(
+            &state,
+            server_row("demo", "http://127.0.0.1:1/mcp", "shared", None),
+            None,
+        )
+        .await;
+        let app = build_router(state.clone());
+
+        let (status, _, _) = send(&app, Method::POST, "/mcp/demo", None, &[], discover()).await;
+        assert_eq!(status, 401);
+        assert!(call_log(&state.db, "demo").await.is_empty());
+        let all = state
+            .db
+            .list_mcp_call_log_filtered(&aigw_core::db::McpCallFilter::default(), 50, 0)
+            .await
+            .expect("calls");
+        assert!(all.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_cursor_of_another_type_is_still_treated_as_no_cursor() {
+        let _guard = aggregate_guard().await;
+        let state = test_state().await;
+        let (up, _) = spawn_tools_stub(stub_tools(&["read"])).await;
+        insert_server(&state, server_row("demo", &up, "shared", None), None).await;
+        let app = build_router(state.clone());
+
+        let (status, body, _) = send(
+            &app,
+            Method::POST,
+            "/mcp",
+            Some(MK),
+            &[],
+            tools_list_body_with_cursor(json!({"not": "a cursor"})),
+        )
+        .await;
+        assert_eq!(status, 200);
+        assert_eq!(tool_names(&body), vec!["demo__read".to_string()]);
     }
 }

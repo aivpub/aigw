@@ -1373,7 +1373,8 @@
     "tabs": {
       "servers": "Server Management",
       "mine": "My Credentials",
-      "calls": "Call Log"
+      "calls": "Call Log",
+      "rejections": "Auth Rejections"
     },
     "newServer": "New Server",
     "reloadAll": "Re-probe All",
@@ -1587,7 +1588,8 @@
       "owner": {
         "server": "Server",
         "user": "User",
-        "anonymous": "Anonymous"
+        "anonymous": "Anonymous",
+        "mixed": "Mixed"
       },
       "ownerLabel": "Identity",
       "status": "Status",
@@ -1595,7 +1597,7 @@
       "time": "Time",
       "user": "User",
       "unboundUser": "Not bound",
-      "keyId": "Key",
+      "key": "Key",
       "errorCode": "Error code",
       "requestBytes": "Request bytes",
       "responseBytes": "Response bytes",
@@ -1609,6 +1611,30 @@
         "7d": "7 days",
         "30d": "30 days",
         "custom": "Custom"
+      },
+      "body": {
+        "request": "Request",
+        "response": "Response",
+        "notRecorded": "No body was recorded for this call.",
+        "failed": "Could not load the body.",
+        "truncated": "Truncated: the body was over the size limit, so only a prefix was kept.",
+        "empty": "(empty)"
+      }
+    },
+    "rejections": {
+      "title": "Auth Rejections",
+      "subtitle": "Requests refused before reaching any upstream. The token is stored only as a hash.",
+      "time": "Time",
+      "request": "Request",
+      "reasonLabel": "Reason",
+      "clientIp": "Client IP",
+      "tokenHash": "Token hash",
+      "userAgent": "User agent",
+      "empty": "No rejected requests for this filter.",
+      "reason": {
+        "missingHeader": "Missing header",
+        "invalidFormat": "Invalid format",
+        "invalidKey": "Invalid key"
       }
     },
     "deleteDialog": {

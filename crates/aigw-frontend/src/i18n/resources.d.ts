@@ -1390,6 +1390,7 @@ declare module "i18next" {
       servers: string;
       mine: string;
       calls: string;
+      rejections: string;
     },
     newServer: string;
     reloadAll: string;
@@ -1604,6 +1605,7 @@ declare module "i18next" {
         server: string;
         user: string;
         anonymous: string;
+        mixed: string;
       },
       ownerLabel: string;
       status: string;
@@ -1611,7 +1613,7 @@ declare module "i18next" {
       time: string;
       user: string;
       unboundUser: string;
-      keyId: string;
+      key: string;
       errorCode: string;
       requestBytes: string;
       responseBytes: string;
@@ -1625,6 +1627,30 @@ declare module "i18next" {
         "7d": string;
         "30d": string;
         custom: string;
+      },
+      body: {
+        request: string;
+        response: string;
+        notRecorded: string;
+        failed: string;
+        truncated: string;
+        empty: string;
+      },
+    },
+    rejections: {
+      title: string;
+      subtitle: string;
+      time: string;
+      request: string;
+      reasonLabel: string;
+      clientIp: string;
+      tokenHash: string;
+      userAgent: string;
+      empty: string;
+      reason: {
+        missingHeader: string;
+        invalidFormat: string;
+        invalidKey: string;
       },
     },
     deleteDialog: {

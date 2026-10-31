@@ -140,7 +140,8 @@ export interface McpMyToken {
   updated_at: string;
 }
 
-export type McpTokenOwner = "server" | "user" | "anonymous";
+/** `mixed` means an aggregate listing reached upstreams with different credentials. */
+export type McpTokenOwner = "server" | "user" | "anonymous" | "mixed";
 
 /** `GET /admin/mcp/calls` row — one-to-one with `mcp_call_log` (stage-144 §3.5). */
 export interface McpCallRow {
@@ -150,6 +151,9 @@ export interface McpCallRow {
   method: string;
   key_id: string | null;
   user_id: string | null;
+  /** Resolved at read time for display; the id above remains the audit fact. */
+  key_name?: string | null;
+  user_name?: string | null;
   token_owner: McpTokenOwner;
   status: string;
   error_code: string | null;
@@ -162,6 +166,41 @@ export interface McpCallRow {
 export interface McpCallListResponse {
   object?: string;
   data: McpCallRow[];
+  count?: number;
+  total_count?: number;
+  page?: number;
+  page_size?: number;
+  total_pages?: number;
+}
+
+/** `GET /admin/mcp/calls/{id}/body` — null halves mean the field was absent
+ *  upstream, which is different from a body that was never recorded. */
+export interface McpCallBody {
+  call_id: string;
+  request: string | null;
+  response: string | null;
+  truncated: boolean;
+}
+
+/** Why a request was refused before it could reach any upstream (stage-150). */
+export type McpRejectionReason = "missing_header" | "invalid_format" | "invalid_key";
+
+/** `GET /admin/mcp/rejections` row — one-to-one with `mcp_auth_rejection`. */
+export interface McpRejectionRow {
+  id: string;
+  created_at: string;
+  path: string;
+  http_method: string;
+  reason: string;
+  /** SHA-256 of what the client presented, never the token itself. */
+  token_hash: string | null;
+  client_ip: string | null;
+  user_agent: string | null;
+}
+
+export interface McpRejectionListResponse {
+  object?: string;
+  data: McpRejectionRow[];
   count?: number;
   total_count?: number;
   page?: number;

@@ -1583,6 +1583,46 @@ pub struct McpCallLogRow {
 pub const MCP_CALL_STATUS_SUCCESS: &str = "success";
 pub const MCP_CALL_STATUS_FAILED: &str = "failed";
 
+/// One row of `mcp_call_body` — the request and response behind a call-log row
+/// (Stage 152).
+///
+/// Both bodies are already bounded by `mcp_log_retention.max_body_kib` when they
+/// reach here; `truncated` says whether the stored text is only a prefix. The
+/// row is absent (not empty) when body recording is switched off, so a 404 from
+/// the detail endpoint is the honest answer rather than two `null`s.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, FromRow)]
+pub struct McpCallBodyRow {
+    pub call_id: String,
+    pub request_body: Option<String>,
+    pub response_body: Option<String>,
+    pub truncated: bool,
+    pub created_at: String,
+}
+
+/// One row of `mcp_auth_rejection`: a request turned away by the auth
+/// extractor, before any handler ran.
+///
+/// `token_hash` is the SHA-256 of whatever token was presented (NULL when none
+/// was), which is what lets an operator find "which key was sent here by
+/// mistake" without the log ever holding a credential.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, FromRow)]
+pub struct McpAuthRejectionRow {
+    pub id: String,
+    pub created_at: String,
+    pub path: String,
+    pub http_method: String,
+    pub reason: String,
+    pub token_hash: Option<String>,
+    pub client_ip: Option<String>,
+    pub user_agent: Option<String>,
+}
+
+/// Values `McpAuthRejectionRow::reason` can take. `TokenExpired` /
+/// `TokenBlocked` are absent because `SpendAuth` never produces them.
+pub const MCP_REJECTION_MISSING_HEADER: &str = "missing_header";
+pub const MCP_REJECTION_INVALID_FORMAT: &str = "invalid_format";
+pub const MCP_REJECTION_INVALID_KEY: &str = "invalid_key";
+
 fn conflict_names(rows: &[McpToolRow]) -> Vec<String> {
     let mut names: Vec<String> = rows
         .iter()

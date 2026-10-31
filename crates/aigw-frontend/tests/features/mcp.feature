@@ -108,6 +108,26 @@ Feature: MCP Servers
     And I open the first MCP call row
     Then the MCP call detail lists the call id and byte counts
 
+  # ── Stage 152: request/response bodies in the detail drawer ──
+
+  Scenario: A recorded call body is readable in two halves
+    When I open the MCP call log tab
+    And I open the first MCP call row
+    Then the MCP call detail shows the recorded request body
+    When I switch the call body to the response
+    Then the MCP call detail shows the recorded response body
+    And the call body was requested from the admin endpoint
+
+  Scenario: A truncated body is flagged instead of being silently cut
+    When I open the MCP call log tab
+    And I open the MCP call row for tool "get_issue"
+    Then the MCP call detail says the body was truncated
+
+  Scenario: A call recorded before bodies were kept says so
+    When I open the MCP call log tab
+    And I open the MCP call row for tool "hr-portal__search"
+    Then the MCP call detail says no body was recorded
+
   Scenario: A tool without a rule is unrestricted and can be restricted
     When I click the tools button on the "github" MCP server
     Then the MCP tool "search" shows no restriction
@@ -167,10 +187,30 @@ Feature: MCP Servers
 
   Scenario: The admin call log shows the user column
     When I open the MCP call log tab
-    Then the MCP call log shows 4 calls
+    Then the MCP call log shows 5 calls
     And the MCP call log shows the user column
     And the unbound-user call row shows "Not bound" in the user column
     And the MCP page has no horizontal page scroll
+
+  # ── Stage 149: names instead of raw ids, and the mixed owner ──
+
+  Scenario: The user column shows the name and keeps the id one hover away
+    When I open the MCP call log tab
+    Then the MCP call row for tool "github__search" shows the user name "Demo User"
+    And hovering the MCP call user name reveals "default_user_id"
+
+  Scenario: A user with no name falls back to the id
+    When I open the MCP call log tab
+    Then the MCP call row for tool "internal-wiki__read" shows the user name "fresh_user"
+
+  Scenario: A key with no name falls back to the id in the drawer
+    When I open the MCP call log tab
+    And I open the MCP call row for tool "hr-portal__search"
+    Then the MCP call detail lists the key id "hash-def"
+
+  Scenario: An aggregate listing that mixed credentials is badged as mixed
+    When I open the MCP call log tab
+    Then the MCP call row for server "*aggregate*" carries the owner badge "Mixed"
 
   Scenario: The call log's three tabs fit a phone
     When I open the MCP call log tab
@@ -232,3 +272,53 @@ Feature: MCP Servers
   Scenario: A single probe disables its own button while it runs
     When I start a probe on the "github" MCP server
     Then the probe button on the "github" MCP server is disabled
+
+  # ── Stage 150: requests refused before reaching any upstream ──
+
+  Scenario: The rejection tab lists what was refused and why
+    When I open the MCP rejections tab
+    Then the MCP rejections list shows 3 rows
+    And the MCP rejections list shows the reason "invalid_key"
+    And the MCP rejection row for "invalid_key" names the client IP "198.51.100.23"
+
+  Scenario: Filtering by reason asks the server for that reason only
+    When I open the MCP rejections tab
+    And I choose the MCP rejection reason "missing_header"
+    Then the MCP rejections list shows 1 row
+    And the MCP rejections request carries reason "missing_header"
+
+  Scenario: A token is shown only as a hash prefix
+    When I open the MCP rejections tab
+    Then the MCP rejection row for "invalid_key" shows a shortened token hash
+    And the MCP rejection row for "missing_header" shows no token hash
+
+  Scenario: The rejection tab and its filters fit a 320px screen
+    When the MCP page is viewed on a 320px wide screen
+    And I open the MCP rejections tab
+    Then the MCP tabs and rejection filters fit inside the screen
+
+  # ── Stage 151: tabs are page routes, not component state ──
+
+  Scenario: The bare MCP path redirects an admin to the server tab
+    Then the browser is at "/dash/mcp/servers"
+
+  Scenario: Each tab has its own address
+    When I click the MCP tab "calls"
+    Then the browser is at "/dash/mcp/calls"
+    When I reload the page
+    Then the browser is still at "/dash/mcp/calls"
+    And the MCP call log shows 5 calls
+
+  Scenario: A deep link applies its filter without any clicking
+    When I open the URL "/dash/mcp/calls?alias=github"
+    Then the MCP call log alias filter carries "github"
+    And the MCP call log shows 2 calls
+
+  Scenario: The row's log button produces a shareable URL
+    When I click the call log button on the "github" MCP server
+    Then the browser is at "/dash/mcp/calls?alias=github"
+
+  Scenario: Going back returns to the previous tab
+    When I click the MCP tab "calls"
+    And I go back in the browser
+    Then the browser is at "/dash/mcp/servers"

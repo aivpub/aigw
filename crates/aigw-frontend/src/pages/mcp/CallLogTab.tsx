@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import { apiGet } from "@/lib/api";
+import { useAuth } from "@/hooks/use-auth";
 import {
   fromDatetimeLocalValue,
   presetRange,
@@ -30,9 +32,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ScrollText } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   isCallFailure,
+  type McpCallBody,
   type McpCallListResponse,
   type McpCallRow,
   type McpServerListResponse,
@@ -52,12 +57,51 @@ const PRESET_LABEL: Record<(typeof PRESETS)[number], string> = {
 
 const ownerKey: Record<
   McpTokenOwner,
-  "mcp.calls.owner.server" | "mcp.calls.owner.user" | "mcp.calls.owner.anonymous"
+  | "mcp.calls.owner.server"
+  | "mcp.calls.owner.user"
+  | "mcp.calls.owner.anonymous"
+  | "mcp.calls.owner.mixed"
 > = {
   server: "mcp.calls.owner.server",
   user: "mcp.calls.owner.user",
   anonymous: "mcp.calls.owner.anonymous",
+  mixed: "mcp.calls.owner.mixed",
 };
+
+/** Amber for `anonymous` and violet for `mixed`: both say "not every upstream
+ * got a proper credential", but they are different facts and an operator
+ * scanning the column must be able to tell them apart at a glance. */
+function ownerClass(owner: McpTokenOwner) {
+  if (owner === "anonymous") return "bg-amber-100 text-amber-800";
+  if (owner === "mixed") return "bg-violet-100 text-violet-800";
+  return undefined;
+}
+
+/** Show the readable name, keep the raw id one hover away. */
+function DisplayName({
+  name,
+  raw,
+  fallback,
+}: {
+  name: string | null | undefined;
+  raw: string | null | undefined;
+  fallback: string;
+}) {
+  const label = name ?? raw ?? fallback;
+  if (!name) return <>{label}</>;
+  return (
+    <TooltipProvider delayDuration={0}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="cursor-help border-b border-dotted border-muted-foreground/40">
+            {label}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent className="font-mono">{raw}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
 
 function statusClass(failed: boolean) {
   return failed ? "bg-red-100 text-red-800" : "bg-emerald-100 text-emerald-800";
@@ -67,24 +111,113 @@ function statusClass(failed: boolean) {
  * table would read as "the feature is broken". */
 const DEFAULT_PRESET: TimePreset = "24h";
 
-interface CallLogTabProps {
-  isAdmin: boolean;
-  /** Set by the row's log button; a server-scoped entry point. */
-  alias: string;
-  onAliasChange: (alias: string) => void;
+const PRESET_VALUES = new Set<string>(PRESETS);
+
+/** A hand-edited URL can carry anything, and a bad `from` reaching the API is a
+ * 400 the user cannot read. Anything unparseable falls back to the default
+ * window rather than being passed through. */
+function parseIso(raw: string | null): string | null {
+  if (!raw) return null;
+  const d = new Date(raw);
+  return isNaN(d.getTime()) ? null : d.toISOString();
 }
 
-export function CallLogTab({ isAdmin, alias, onAliasChange }: CallLogTabProps) {
+function readFilters(params: URLSearchParams) {
+  const presetParam = params.get("preset");
+  const preset: TimePreset =
+    presetParam && PRESET_VALUES.has(presetParam) ? (presetParam as TimePreset) : DEFAULT_PRESET;
+  const page = Number(params.get("page") ?? 1);
+  return {
+    alias: params.get("alias") ?? "",
+    tool: params.get("tool") ?? "",
+    status: params.get("status") ?? "",
+    preset,
+    from: parseIso(params.get("from")),
+    to: parseIso(params.get("to")),
+    page: Number.isFinite(page) && page >= 1 ? Math.floor(page) : 1,
+  };
+}
+
+/** A body the detail endpoint refused to return is not the same as one that was
+ *  never recorded, and neither is an error worth hiding — the viewer says which
+ *  of the three it is instead of rendering an empty pane. */
+function BodyViewer({ callId }: { callId: string }) {
   const { t } = useTranslation();
-  const [tool, setTool] = useState("");
-  const [toolFilter, setToolFilter] = useState("");
-  const [status, setStatus] = useState("");
-  const [preset, setPreset] = useState<TimePreset>(DEFAULT_PRESET);
-  const [range, setRange] = useState(() => presetRange(DEFAULT_PRESET));
-  const [page, setPage] = useState(1);
+  const endpoint = useAuth().userRole === "proxy_admin" ? "/admin" : "/v1";
+  const { data, isLoading, error } = useQuery<McpCallBody>({
+    queryKey: ["mcp-call-body", callId],
+    queryFn: () => apiGet(`${endpoint}/mcp/calls/${encodeURIComponent(callId)}/body`),
+    retry: false,
+  });
+
+  if (isLoading) return <Skeleton className="h-24 w-full" />;
+  if (error) {
+    const notRecorded = (error as { status?: number }).status === 404;
+    return (
+      <p
+        className="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground"
+        data-testid="mcp-call-body-missing"
+      >
+        {notRecorded ? t("mcp.calls.body.notRecorded") : t("mcp.calls.body.failed")}
+      </p>
+    );
+  }
+
+  const pane = (text: string | null | undefined, testId: string) => (
+    <pre
+      className="max-h-64 overflow-auto rounded-md border bg-muted/40 p-2 font-mono text-xs whitespace-pre-wrap break-all"
+      data-testid={testId}
+    >
+      {text === null || text === undefined || text === "" ? t("mcp.calls.body.empty") : text}
+    </pre>
+  );
+
+  return (
+    <div className="space-y-2">
+      {data?.truncated && (
+        <p
+          className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800"
+          data-testid="mcp-call-body-truncated"
+        >
+          {t("mcp.calls.body.truncated")}
+        </p>
+      )}
+      <Tabs defaultValue="request">
+        <TabsList>
+          <TabsTrigger value="request">{t("mcp.calls.body.request")}</TabsTrigger>
+          <TabsTrigger value="response">{t("mcp.calls.body.response")}</TabsTrigger>
+        </TabsList>
+        <TabsContent value="request">{pane(data?.request, "mcp-call-body-request")}</TabsContent>
+        <TabsContent value="response">{pane(data?.response, "mcp-call-body-response")}</TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+export function CallLogTab() {
+  const { t } = useTranslation();
+  const { userRole } = useAuth();
+  const isAdmin = userRole === "proxy_admin";
+  const [params, setParams] = useSearchParams();
+  const filters = readFilters(params);
+
+  /** `presetRange` reads the clock, so it must not run on every render: a
+   *  shifting `from`/`to` would make the query string differ each time and
+   *  refetch in a loop. It is recomputed only when the preset changes. */
+  const presetWindow = useMemo(() => presetRange(filters.preset), [filters.preset]);
+  const range = {
+    start: filters.from ?? presetWindow.start,
+    end: filters.to ?? presetWindow.end,
+  };
+
+  const [tool, setTool] = useState(filters.tool);
   const [pageSize, setPageSize] = useState(30);
   const [selected, setSelected] = useState<McpCallRow | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    setTool(filters.tool);
+  }, [filters.tool]);
 
   useEffect(() => {
     return () => {
@@ -92,34 +225,74 @@ export function CallLogTab({ isAdmin, alias, onAliasChange }: CallLogTabProps) {
     };
   }, []);
 
-  const onToolInput = useCallback((value: string) => {
-    setTool(value);
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
-      setToolFilter(value.trim());
-      setPage(1);
-    }, 300);
-  }, []);
+  /** Filter changes are `replace`: every keystroke in the tool box would
+   * otherwise be a back-button stop. Tab switches use `push` (the layout). */
+  const patch = useCallback(
+    (next: Record<string, string | null>) => {
+      setParams(
+        (prev) => {
+          const merged = new URLSearchParams(prev);
+          for (const [key, value] of Object.entries(next)) {
+            if (value === null || value === "") merged.delete(key);
+            else merged.set(key, value);
+          }
+          return merged;
+        },
+        { replace: true },
+      );
+    },
+    [setParams],
+  );
 
-  const onPreset = useCallback((next: TimePreset) => {
-    setPreset(next);
-    setRange(presetRange(next));
-    setPage(1);
-  }, []);
+  const setPage = useCallback(
+    (page: number) => patch({ page: page === 1 ? null : String(page) }),
+    [patch],
+  );
+
+  const onToolInput = useCallback(
+    (value: string) => {
+      setTool(value);
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        patch({ tool: value.trim(), page: null });
+      }, 300);
+    },
+    [patch],
+  );
+
+  const onPreset = useCallback(
+    (next: TimePreset) => {
+      const range = presetRange(next);
+      patch({
+        preset: next === DEFAULT_PRESET ? null : next,
+        ...range,
+        page: null,
+      });
+    },
+    [patch],
+  );
+
+  const onCustomBound = useCallback(
+    (bound: "from" | "to", local: string) => {
+      const iso = fromDatetimeLocalValue(local);
+      if (iso) patch({ [bound]: iso, page: null });
+    },
+    [patch],
+  );
 
   const endpoint = isAdmin ? "/admin/mcp/calls" : "/v1/mcp/calls";
 
   const queryStr = useMemo(() => {
-    const params = new URLSearchParams();
-    params.set("page", String(page));
-    params.set("page_size", String(pageSize));
-    params.set("from", range.start);
-    params.set("to", range.end);
-    if (alias) params.set("server_alias", alias);
-    if (toolFilter) params.set("tool_name", toolFilter);
-    if (status) params.set("status", status);
-    return params.toString();
-  }, [page, pageSize, range, alias, toolFilter, status]);
+    const q = new URLSearchParams();
+    q.set("page", String(filters.page));
+    q.set("page_size", String(pageSize));
+    q.set("from", range.start);
+    q.set("to", range.end);
+    if (filters.alias) q.set("server_alias", filters.alias);
+    if (filters.tool) q.set("tool_name", filters.tool);
+    if (filters.status) q.set("status", filters.status);
+    return q.toString();
+  }, [filters.alias, filters.tool, filters.status, filters.page, range.start, range.end, pageSize]);
 
   const { data, isLoading, error } = useQuery<McpCallListResponse>({
     queryKey: ["mcp-calls", endpoint, queryStr],
@@ -160,11 +333,8 @@ export function CallLogTab({ isAdmin, alias, onAliasChange }: CallLogTabProps) {
             </datalist>
             <Input
               list="mcp-call-alias-options"
-              value={alias}
-              onChange={(e) => {
-                onAliasChange(e.target.value);
-                setPage(1);
-              }}
+              value={filters.alias}
+              onChange={(e) => patch({ alias: e.target.value, page: null })}
               placeholder={t("mcp.calls.aliasPlaceholder")}
               className="h-8 lg:max-w-[14rem]"
               data-testid="mcp-calls-alias-filter"
@@ -177,11 +347,8 @@ export function CallLogTab({ isAdmin, alias, onAliasChange }: CallLogTabProps) {
               data-testid="mcp-calls-tool-filter"
             />
             <select
-              value={status}
-              onChange={(e) => {
-                setStatus(e.target.value);
-                setPage(1);
-              }}
+              value={filters.status}
+              onChange={(e) => patch({ status: e.target.value, page: null })}
               className="h-8 rounded-md border px-2 text-sm"
               data-testid="mcp-calls-status-filter"
             >
@@ -193,7 +360,7 @@ export function CallLogTab({ isAdmin, alias, onAliasChange }: CallLogTabProps) {
               {PRESETS.map((p) => (
                 <Button
                   key={p}
-                  variant={preset === p ? "default" : "outline"}
+                  variant={filters.preset === p ? "default" : "outline"}
                   size="sm"
                   className="h-7 text-xs"
                   onClick={() => onPreset(p)}
@@ -205,15 +372,12 @@ export function CallLogTab({ isAdmin, alias, onAliasChange }: CallLogTabProps) {
             </div>
           </div>
 
-          {preset === "custom" && (
+          {filters.preset === "custom" && (
             <div className="flex flex-wrap items-center gap-2">
               <Input
                 type="datetime-local"
                 value={toDatetimeLocalValue(range.start)}
-                onChange={(e) => {
-                  setRange((r) => ({ ...r, start: fromDatetimeLocalValue(e.target.value) }));
-                  setPage(1);
-                }}
+                onChange={(e) => onCustomBound("from", e.target.value)}
                 className="h-8 w-48 text-xs"
                 data-testid="mcp-calls-from"
               />
@@ -221,10 +385,7 @@ export function CallLogTab({ isAdmin, alias, onAliasChange }: CallLogTabProps) {
               <Input
                 type="datetime-local"
                 value={toDatetimeLocalValue(range.end)}
-                onChange={(e) => {
-                  setRange((r) => ({ ...r, end: fromDatetimeLocalValue(e.target.value) }));
-                  setPage(1);
-                }}
+                onChange={(e) => onCustomBound("to", e.target.value)}
                 className="h-8 w-48 text-xs"
                 data-testid="mcp-calls-to"
               />
@@ -232,14 +393,14 @@ export function CallLogTab({ isAdmin, alias, onAliasChange }: CallLogTabProps) {
           )}
 
           <PaginationBar
-            page={page}
+            page={filters.page}
             pageSize={pageSize}
             totalCount={totalCount}
             totalPages={totalPages}
             onPage={setPage}
             onPageSize={(s) => {
               setPageSize(s);
-              setPage(1);
+              patch({ page: null });
             }}
           />
 
@@ -300,11 +461,7 @@ export function CallLogTab({ isAdmin, alias, onAliasChange }: CallLogTabProps) {
                           <TableCell>
                             <Badge
                               variant="outline"
-                              className={
-                                row.token_owner === "anonymous"
-                                  ? "bg-amber-100 text-amber-800"
-                                  : undefined
-                              }
+                              className={ownerClass(row.token_owner)}
                               data-testid="mcp-call-owner"
                             >
                               {t(ownerKey[row.token_owner])}
@@ -312,10 +469,14 @@ export function CallLogTab({ isAdmin, alias, onAliasChange }: CallLogTabProps) {
                           </TableCell>
                           {isAdmin && (
                             <TableCell
-                              className="font-mono text-xs text-muted-foreground"
+                              className="text-xs text-muted-foreground"
                               data-testid="mcp-call-user"
                             >
-                              {row.user_id ?? t("mcp.calls.unboundUser")}
+                              <DisplayName
+                                name={row.user_name}
+                                raw={row.user_id}
+                                fallback={t("mcp.calls.unboundUser")}
+                              />
                             </TableCell>
                           )}
                           <TableCell className="text-xs">{row.latency_ms} ms</TableCell>
@@ -348,10 +509,20 @@ export function CallLogTab({ isAdmin, alias, onAliasChange }: CallLogTabProps) {
                       {row.tool_name ?? row.method}
                     </div>
                     <div className="flex flex-wrap gap-2 text-muted-foreground">
-                      <Badge variant="outline">{t(ownerKey[row.token_owner])}</Badge>
+                      <Badge
+                        variant="outline"
+                        className={ownerClass(row.token_owner)}
+                        data-testid="mcp-call-owner"
+                      >
+                        {t(ownerKey[row.token_owner])}
+                      </Badge>
                       {isAdmin && (
-                        <span className="font-mono" data-testid="mcp-call-user">
-                          {row.user_id ?? t("mcp.calls.unboundUser")}
+                        <span data-testid="mcp-call-user">
+                          <DisplayName
+                            name={row.user_name}
+                            raw={row.user_id}
+                            fallback={t("mcp.calls.unboundUser")}
+                          />
                         </span>
                       )}
                       <span>{row.latency_ms} ms</span>
@@ -384,44 +555,57 @@ export function CallLogTab({ isAdmin, alias, onAliasChange }: CallLogTabProps) {
       </Card>
 
       <Sheet open={selected !== null} onOpenChange={(o) => !o && setSelected(null)}>
-        <SheetContent className="w-full sm:max-w-md" data-testid="mcp-call-detail">
+        <SheetContent className="w-full overflow-y-auto sm:max-w-2xl" data-testid="mcp-call-detail">
           <SheetHeader>
             <SheetTitle className="text-sm">{t("mcp.calls.detailTitle")}</SheetTitle>
-            <SheetDescription className="font-mono text-xs">
-              {selected?.call_id}
-            </SheetDescription>
+            <SheetDescription className="font-mono text-xs">{selected?.call_id}</SheetDescription>
           </SheetHeader>
           {selected && (
-            <dl className="mt-4 space-y-3 text-xs">
-              {(
-                [
-                  ["mcp.calls.time", new Date(selected.created_at).toLocaleString()],
-                  ["mcp.calls.server", selected.server_alias],
-                  ["mcp.calls.tool", selected.tool_name ?? "—"],
-                  ["mcp.calls.method", selected.method],
+            <>
+              <dl className="mt-4 space-y-3 text-xs">
+                {(
                   [
-                    "mcp.calls.status",
-                    isCallFailure(selected.status)
-                      ? t("mcp.calls.statusError")
-                      : t("mcp.calls.statusSuccess"),
-                  ],
-                  ["mcp.calls.errorCode", selected.error_code ?? "—"],
-                  ["mcp.calls.ownerLabel", t(ownerKey[selected.token_owner])],
-                  ["mcp.calls.keyId", selected.key_id ?? "—"],
-                  ["mcp.calls.user", selected.user_id ?? t("mcp.calls.unboundUser")],
-                  ["mcp.calls.latency", `${selected.latency_ms} ms`],
-                  ["mcp.calls.requestBytes", String(selected.request_bytes ?? "—")],
-                  ["mcp.calls.responseBytes", String(selected.response_bytes ?? "—")],
-                ] as const
-              ).map(([label, value]) => (
-                <div key={label} className="flex items-start justify-between gap-3">
-                  <dt className="shrink-0 text-muted-foreground">
-                    <Label className="text-xs font-normal">{t(label as never)}</Label>
-                  </dt>
-                  <dd className="break-all text-right font-mono">{value}</dd>
-                </div>
-              ))}
-            </dl>
+                    ["mcp.calls.time", new Date(selected.created_at).toLocaleString()],
+                    ["mcp.calls.server", selected.server_alias],
+                    ["mcp.calls.tool", selected.tool_name ?? "—"],
+                    ["mcp.calls.method", selected.method],
+                    [
+                      "mcp.calls.status",
+                      isCallFailure(selected.status)
+                        ? t("mcp.calls.statusError")
+                        : t("mcp.calls.statusSuccess"),
+                    ],
+                    ["mcp.calls.errorCode", selected.error_code ?? "—"],
+                    ["mcp.calls.ownerLabel", t(ownerKey[selected.token_owner])],
+                    [
+                      "mcp.calls.key",
+                      <DisplayName name={selected.key_name} raw={selected.key_id} fallback="—" />,
+                    ],
+                    [
+                      "mcp.calls.user",
+                      <DisplayName
+                        name={selected.user_name}
+                        raw={selected.user_id}
+                        fallback={t("mcp.calls.unboundUser")}
+                      />,
+                    ],
+                    ["mcp.calls.latency", `${selected.latency_ms} ms`],
+                    ["mcp.calls.requestBytes", String(selected.request_bytes ?? "—")],
+                    ["mcp.calls.responseBytes", String(selected.response_bytes ?? "—")],
+                  ] as const
+                ).map(([label, value]) => (
+                  <div key={label} className="flex items-start justify-between gap-3">
+                    <dt className="shrink-0 text-muted-foreground">
+                      <Label className="text-xs font-normal">{t(label as never)}</Label>
+                    </dt>
+                    <dd className="break-all text-right font-mono">{value}</dd>
+                  </div>
+                ))}
+              </dl>
+              <div className="mt-6">
+                <BodyViewer callId={selected.call_id} />
+              </div>
+            </>
           )}
         </SheetContent>
       </Sheet>

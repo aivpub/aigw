@@ -121,7 +121,14 @@ where
         }
 
         // 2. Fall back to HttpOnly cookie JWT
-        Self::try_cookie_jwt(&state, parts).await
+        match Self::try_cookie_jwt(&state, parts).await {
+            Ok(auth) => Ok(auth),
+            // Both paths failed. A presented-but-rejected token is the more
+            // specific fact, and the one an audit trail needs: reporting
+            // `MissingHeader` for a request that carried a bad key hides the
+            // difference between "nobody tried" and "someone guessed wrong".
+            Err(_) => header_result,
+        }
     }
 }
 
@@ -1474,6 +1481,7 @@ mod tests {
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
             web_search: aigw_core::websearch::WebSearchHandle::disabled(),
             mcp_disable_rest: false,
+            mcp_log_retention: Default::default(),
             metrics: None,
         });
         Router::new()
@@ -1661,6 +1669,7 @@ mod tests {
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
             web_search: aigw_core::websearch::WebSearchHandle::disabled(),
             mcp_disable_rest: false,
+            mcp_log_retention: Default::default(),
             metrics: None,
         });
 
@@ -1721,6 +1730,7 @@ mod tests {
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
             web_search: aigw_core::websearch::WebSearchHandle::disabled(),
             mcp_disable_rest: false,
+            mcp_log_retention: Default::default(),
             metrics: None,
         });
         let app = Router::new()
@@ -1947,6 +1957,7 @@ mod tests {
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
             web_search: aigw_core::websearch::WebSearchHandle::disabled(),
             mcp_disable_rest: false,
+            mcp_log_retention: Default::default(),
             metrics: None,
         })
     }
@@ -2201,6 +2212,7 @@ mod tests {
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
             web_search: aigw_core::websearch::WebSearchHandle::disabled(),
             mcp_disable_rest: false,
+            mcp_log_retention: Default::default(),
             metrics: None,
         });
 
@@ -2303,6 +2315,7 @@ mod tests {
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
             web_search: aigw_core::websearch::WebSearchHandle::disabled(),
             mcp_disable_rest: false,
+            mcp_log_retention: Default::default(),
             metrics: None,
         });
         let app = Router::new()
@@ -2472,6 +2485,7 @@ mod tests {
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
             web_search: aigw_core::websearch::WebSearchHandle::disabled(),
             mcp_disable_rest: false,
+            mcp_log_retention: Default::default(),
             metrics: None,
         });
         let app = Router::new()
@@ -2596,6 +2610,7 @@ mod tests {
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
             web_search: aigw_core::websearch::WebSearchHandle::disabled(),
             mcp_disable_rest: false,
+            mcp_log_retention: Default::default(),
             metrics: None,
         });
         let app = Router::new()
@@ -2696,6 +2711,7 @@ mod tests {
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
             web_search: aigw_core::websearch::WebSearchHandle::disabled(),
             mcp_disable_rest: false,
+            mcp_log_retention: Default::default(),
             metrics: None,
         });
         let app = Router::new()
@@ -2798,6 +2814,7 @@ mod tests {
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
             web_search: aigw_core::websearch::WebSearchHandle::disabled(),
             mcp_disable_rest: false,
+            mcp_log_retention: Default::default(),
             metrics: None,
         })
     }

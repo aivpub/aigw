@@ -27,6 +27,7 @@ use sqlx::mysql::MySqlPoolOptions;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{MySqlPool, PgPool, SqlitePool};
+use std::collections::HashMap;
 use std::str::FromStr;
 use thiserror::Error;
 
@@ -7633,6 +7634,50 @@ pub trait McpCallQueryStore {
         offset: i64,
     ) -> Result<Vec<McpCallLogRow>>;
     async fn count_mcp_call_log(&self, filter: &McpCallFilter) -> Result<i64>;
+    /// One row by its `call_id`, or nothing. `None` covers both "no such call"
+    /// and "already swept by the retention worker" — the caller must not be
+    /// able to tell those apart, or the answer would leak what a delete did.
+    async fn get_mcp_call_log(&self, call_id: &str) -> Result<Option<McpCallLogRow>>;
+    /// Display names for the `key_id` values on one page of call logs.
+    /// Ids that no longer exist are simply absent from the map — a renamed or
+    /// deleted key must not make its history disappear.
+    async fn mcp_call_key_names(&self, key_ids: &[String]) -> Result<HashMap<String, String>>;
+    /// Display names for the `user_id` values on one page of call logs.
+    async fn mcp_call_user_names(&self, user_ids: &[String]) -> Result<HashMap<String, String>>;
+}
+
+/// `$1,$2,…` for PostgreSQL, `?,?,…` for SQLite/MySQL. Callers keep the bind
+/// order aligned with the slice they pass, so nothing else has to know which
+/// dialect produced the string.
+fn in_placeholders(count: usize, dollar: bool) -> String {
+    (1..=count)
+        .map(|i| {
+            if dollar {
+                format!("${i}")
+            } else {
+                "?".to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// Primary name wins, the fallback covers an empty primary, and a row with
+/// neither is dropped rather than mapped to an empty string: the caller then
+/// falls back to showing the id instead of a blank cell.
+fn display_names<'a>(
+    rows: impl IntoIterator<Item = (&'a String, &'a Option<String>, &'a Option<String>)>,
+) -> HashMap<String, String> {
+    rows.into_iter()
+        .filter_map(|(id, primary, fallback)| {
+            [primary, fallback]
+                .into_iter()
+                .filter_map(|name| name.as_deref())
+                .map(str::trim)
+                .find(|name| !name.is_empty())
+                .map(|name| (id.clone(), name.to_string()))
+        })
+        .collect()
 }
 
 const LIST_MCP_CALL_LOG_FILTERED_SQLITE: &str = r#"
@@ -7675,6 +7720,19 @@ WHERE ($1::text IS NULL OR server_alias = $1)
   AND ($4::text IS NULL OR created_at >= $4)
   AND ($5::text IS NULL OR created_at <= $5)
   AND ($6::text IS NULL OR user_id = $6)
+"#;
+
+const GET_MCP_CALL_LOG_SQLITE: &str = r#"
+SELECT call_id, server_alias, tool_name, method, key_id, user_id, token_owner, status, error_code, latency_ms, request_bytes, response_bytes, created_at
+FROM mcp_call_log WHERE call_id = ?
+"#;
+const GET_MCP_CALL_LOG_MYSQL: &str = r#"
+SELECT call_id, server_alias, tool_name, method, key_id, user_id, token_owner, status, error_code, latency_ms, request_bytes, response_bytes, created_at
+FROM mcp_call_log WHERE call_id = ?
+"#;
+const GET_MCP_CALL_LOG_PG: &str = r#"
+SELECT call_id, server_alias, tool_name, method, key_id, user_id, token_owner, status, error_code, latency_ms, request_bytes, response_bytes, created_at
+FROM mcp_call_log WHERE call_id = $1
 "#;
 
 const LIST_MCP_CALL_LOG_FILTERED_MYSQL: &str = r#"
@@ -7846,6 +7904,14 @@ impl McpCallQueryStore for SqlitePool {
             .map_err(DbError::from)
     }
 
+    async fn get_mcp_call_log(&self, call_id: &str) -> Result<Option<McpCallLogRow>> {
+        sqlx::query_as::<_, McpCallLogRow>(GET_MCP_CALL_LOG_SQLITE)
+            .bind(call_id)
+            .fetch_optional(self)
+            .await
+            .map_err(DbError::from)
+    }
+
     async fn count_mcp_call_log(&self, filter: &McpCallFilter) -> Result<i64> {
         let tool = mcp_search_pattern(filter.tool_name.as_deref());
         let row: (i64,) = sqlx::query_as(COUNT_MCP_CALL_LOG_SQLITE)
@@ -7858,6 +7924,42 @@ impl McpCallQueryStore for SqlitePool {
             .fetch_one(self)
             .await?;
         Ok(row.0)
+    }
+
+    async fn mcp_call_key_names(&self, key_ids: &[String]) -> Result<HashMap<String, String>> {
+        if key_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let sql = format!(
+            "SELECT token, key_name, key_alias FROM virtual_keys WHERE token IN ({})",
+            in_placeholders(key_ids.len(), false)
+        );
+        let mut query = sqlx::query_as::<_, (String, Option<String>, Option<String>)>(&sql);
+        for id in key_ids {
+            query = query.bind(id);
+        }
+        let rows = query.fetch_all(self).await?;
+        Ok(display_names(
+            rows.iter().map(|(token, name, alias)| (token, name, alias)),
+        ))
+    }
+
+    async fn mcp_call_user_names(&self, user_ids: &[String]) -> Result<HashMap<String, String>> {
+        if user_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let sql = format!(
+            "SELECT user_id, user_alias, user_email FROM users WHERE user_id IN ({})",
+            in_placeholders(user_ids.len(), false)
+        );
+        let mut query = sqlx::query_as::<_, (String, Option<String>, Option<String>)>(&sql);
+        for id in user_ids {
+            query = query.bind(id);
+        }
+        let rows = query.fetch_all(self).await?;
+        Ok(display_names(
+            rows.iter().map(|(id, alias, email)| (id, alias, email)),
+        ))
     }
 }
 
@@ -7890,6 +7992,14 @@ impl McpCallQueryStore for MySqlPool {
             .map_err(DbError::from)
     }
 
+    async fn get_mcp_call_log(&self, call_id: &str) -> Result<Option<McpCallLogRow>> {
+        sqlx::query_as::<_, McpCallLogRow>(GET_MCP_CALL_LOG_MYSQL)
+            .bind(call_id)
+            .fetch_optional(self)
+            .await
+            .map_err(DbError::from)
+    }
+
     async fn count_mcp_call_log(&self, filter: &McpCallFilter) -> Result<i64> {
         let tool = mcp_search_pattern(filter.tool_name.as_deref());
         let row: (i64,) = sqlx::query_as(COUNT_MCP_CALL_LOG_MYSQL)
@@ -7908,6 +8018,42 @@ impl McpCallQueryStore for MySqlPool {
             .fetch_one(self)
             .await?;
         Ok(row.0)
+    }
+
+    async fn mcp_call_key_names(&self, key_ids: &[String]) -> Result<HashMap<String, String>> {
+        if key_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let sql = format!(
+            "SELECT token, key_name, key_alias FROM virtual_keys WHERE token IN ({})",
+            in_placeholders(key_ids.len(), false)
+        );
+        let mut query = sqlx::query_as::<_, (String, Option<String>, Option<String>)>(&sql);
+        for id in key_ids {
+            query = query.bind(id);
+        }
+        let rows = query.fetch_all(self).await?;
+        Ok(display_names(
+            rows.iter().map(|(token, name, alias)| (token, name, alias)),
+        ))
+    }
+
+    async fn mcp_call_user_names(&self, user_ids: &[String]) -> Result<HashMap<String, String>> {
+        if user_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let sql = format!(
+            "SELECT user_id, user_alias, user_email FROM users WHERE user_id IN ({})",
+            in_placeholders(user_ids.len(), false)
+        );
+        let mut query = sqlx::query_as::<_, (String, Option<String>, Option<String>)>(&sql);
+        for id in user_ids {
+            query = query.bind(id);
+        }
+        let rows = query.fetch_all(self).await?;
+        Ok(display_names(
+            rows.iter().map(|(id, alias, email)| (id, alias, email)),
+        ))
     }
 }
 
@@ -7934,6 +8080,14 @@ impl McpCallQueryStore for PgPool {
             .map_err(DbError::from)
     }
 
+    async fn get_mcp_call_log(&self, call_id: &str) -> Result<Option<McpCallLogRow>> {
+        sqlx::query_as::<_, McpCallLogRow>(GET_MCP_CALL_LOG_PG)
+            .bind(call_id)
+            .fetch_optional(self)
+            .await
+            .map_err(DbError::from)
+    }
+
     async fn count_mcp_call_log(&self, filter: &McpCallFilter) -> Result<i64> {
         let tool = mcp_search_pattern(filter.tool_name.as_deref());
         let row: (i64,) = sqlx::query_as(COUNT_MCP_CALL_LOG_PG)
@@ -7947,12 +8101,580 @@ impl McpCallQueryStore for PgPool {
             .await?;
         Ok(row.0)
     }
+
+    async fn mcp_call_key_names(&self, key_ids: &[String]) -> Result<HashMap<String, String>> {
+        if key_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let sql = format!(
+            "SELECT token, key_name, key_alias FROM virtual_keys WHERE token IN ({})",
+            in_placeholders(key_ids.len(), true)
+        );
+        let mut query = sqlx::query_as::<_, (String, Option<String>, Option<String>)>(&sql);
+        for id in key_ids {
+            query = query.bind(id);
+        }
+        let rows = query.fetch_all(self).await?;
+        Ok(display_names(
+            rows.iter().map(|(token, name, alias)| (token, name, alias)),
+        ))
+    }
+
+    async fn mcp_call_user_names(&self, user_ids: &[String]) -> Result<HashMap<String, String>> {
+        if user_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let sql = format!(
+            "SELECT user_id, user_alias, user_email FROM users WHERE user_id IN ({})",
+            in_placeholders(user_ids.len(), true)
+        );
+        let mut query = sqlx::query_as::<_, (String, Option<String>, Option<String>)>(&sql);
+        for id in user_ids {
+            query = query.bind(id);
+        }
+        let rows = query.fetch_all(self).await?;
+        Ok(display_names(
+            rows.iter().map(|(id, alias, email)| (id, alias, email)),
+        ))
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// MCP auth rejection log + retention (Phase 58, Stage 150)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Filter behind `GET /admin/mcp/rejections`. `reason` is an equality
+/// (its three possible values are a closed set the writer owns), unlike the
+/// call log's substring `tool_name`, because there is nothing to misremember.
+#[derive(Debug, Clone, Default)]
+pub struct McpRejectionFilter {
+    pub reason: Option<String>,
+    pub from: Option<String>,
+    pub to: Option<String>,
+}
+
+#[async_trait]
+pub trait McpRejectionStore {
+    async fn insert_mcp_rejection(&self, row: &McpAuthRejectionRow) -> Result<()>;
+    async fn list_mcp_rejections(
+        &self,
+        filter: &McpRejectionFilter,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<McpAuthRejectionRow>>;
+    async fn count_mcp_rejections(&self, filter: &McpRejectionFilter) -> Result<i64>;
+    /// Ids of up to `limit` rows created before `cutoff`, oldest first.
+    async fn stale_mcp_call_ids(&self, cutoff: &str, limit: i64) -> Result<Vec<String>>;
+    async fn stale_mcp_rejection_ids(&self, cutoff: &str, limit: i64) -> Result<Vec<String>>;
+    /// Delete by id. Returns how many rows went away.
+    async fn delete_mcp_call_ids(&self, ids: &[String]) -> Result<u64>;
+    async fn delete_mcp_rejection_ids(&self, ids: &[String]) -> Result<u64>;
+}
+
+const INSERT_MCP_REJECTION_SQLITE: &str = r#"
+INSERT INTO mcp_auth_rejection (id, created_at, path, http_method, reason, token_hash, client_ip, user_agent)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+"#;
+const LIST_MCP_REJECTION_SQLITE: &str = r#"
+SELECT id, created_at, path, http_method, reason, token_hash, client_ip, user_agent
+FROM mcp_auth_rejection
+WHERE (?1 IS NULL OR reason = ?1)
+  AND (?2 IS NULL OR created_at >= ?2)
+  AND (?3 IS NULL OR created_at <= ?3)
+ORDER BY created_at DESC, id DESC LIMIT ?4 OFFSET ?5
+"#;
+const COUNT_MCP_REJECTION_SQLITE: &str = r#"
+SELECT COUNT(*) FROM mcp_auth_rejection
+WHERE (?1 IS NULL OR reason = ?1)
+  AND (?2 IS NULL OR created_at >= ?2)
+  AND (?3 IS NULL OR created_at <= ?3)
+"#;
+
+const INSERT_MCP_REJECTION_MYSQL: &str = r#"
+INSERT INTO mcp_auth_rejection (id, created_at, path, http_method, reason, token_hash, client_ip, user_agent)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+"#;
+const LIST_MCP_REJECTION_MYSQL: &str = r#"
+SELECT id, created_at, path, http_method, reason, token_hash, client_ip, user_agent
+FROM mcp_auth_rejection
+WHERE (? IS NULL OR reason = ?)
+  AND (? IS NULL OR created_at >= ?)
+  AND (? IS NULL OR created_at <= ?)
+ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?
+"#;
+const COUNT_MCP_REJECTION_MYSQL: &str = r#"
+SELECT COUNT(*) FROM mcp_auth_rejection
+WHERE (? IS NULL OR reason = ?)
+  AND (? IS NULL OR created_at >= ?)
+  AND (? IS NULL OR created_at <= ?)
+"#;
+
+const INSERT_MCP_REJECTION_PG: &str = r#"
+INSERT INTO mcp_auth_rejection (id, created_at, path, http_method, reason, token_hash, client_ip, user_agent)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+"#;
+const LIST_MCP_REJECTION_PG: &str = r#"
+SELECT id, created_at, path, http_method, reason, token_hash, client_ip, user_agent
+FROM mcp_auth_rejection
+WHERE ($1::text IS NULL OR reason = $1)
+  AND ($2::text IS NULL OR created_at >= $2)
+  AND ($3::text IS NULL OR created_at <= $3)
+ORDER BY created_at DESC, id DESC LIMIT $4 OFFSET $5
+"#;
+const COUNT_MCP_REJECTION_PG: &str = r#"
+SELECT COUNT(*) FROM mcp_auth_rejection
+WHERE ($1::text IS NULL OR reason = $1)
+  AND ($2::text IS NULL OR created_at >= $2)
+  AND ($3::text IS NULL OR created_at <= $3)
+"#;
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// MCP call bodies (Phase 58, Stage 152)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// The bodies behind one call-log row. Written once, right after the log row,
+/// read only when someone opens the call's detail.
+///
+/// A row that does not exist and a row with two NULLs would mean different
+/// things ("recording was off" vs "there was nothing") — but there is no case
+/// where a call has bodies to show and the row is absent, so `Option<row>` is
+/// enough and the two NULLs are never stored.
+#[async_trait]
+pub trait McpCallBodyStore {
+    async fn insert_mcp_call_body(&self, row: &McpCallBodyRow) -> Result<()>;
+    async fn get_mcp_call_body(&self, call_id: &str) -> Result<Option<McpCallBodyRow>>;
+    /// Call ids whose body row predates `cutoff`, oldest first — the same
+    /// select-then-delete shape the retention worker uses for the other two
+    /// tables, for the same PostgreSQL reason.
+    async fn stale_mcp_call_body_ids(&self, cutoff: &str, limit: i64) -> Result<Vec<String>>;
+    async fn delete_mcp_call_body_ids(&self, ids: &[String]) -> Result<u64>;
+}
+
+const INSERT_MCP_CALL_BODY_SQLITE: &str = r#"
+INSERT INTO mcp_call_body (call_id, request_body, response_body, truncated, created_at)
+VALUES (?, ?, ?, ?, ?)
+"#;
+const GET_MCP_CALL_BODY_SQLITE: &str =
+    "SELECT call_id, request_body, response_body, truncated, created_at FROM mcp_call_body WHERE call_id = ?";
+
+const INSERT_MCP_CALL_BODY_MYSQL: &str = r#"
+INSERT INTO mcp_call_body (call_id, request_body, response_body, truncated, created_at)
+VALUES (?, ?, ?, ?, ?)
+"#;
+const GET_MCP_CALL_BODY_MYSQL: &str =
+    "SELECT call_id, request_body, response_body, truncated, created_at FROM mcp_call_body WHERE call_id = ?";
+
+const INSERT_MCP_CALL_BODY_PG: &str = r#"
+INSERT INTO mcp_call_body (call_id, request_body, response_body, truncated, created_at)
+VALUES ($1, $2, $3, $4, $5)
+"#;
+const GET_MCP_CALL_BODY_PG: &str =
+    "SELECT call_id, request_body, response_body, truncated, created_at FROM mcp_call_body WHERE call_id = $1";
+
+/// `SELECT … LIMIT n` then `DELETE … WHERE key IN (…)` rather than
+/// `DELETE … LIMIT`: PostgreSQL has no `LIMIT` on `DELETE`, so this is the one
+/// spelling that means the same thing on all three backends. Selection is
+/// `ORDER BY created_at` so a truncated batch still removes the oldest rows.
+///
+/// `key` is a parameter because the two tables disagree: `mcp_call_log` is keyed
+/// by `call_id`, `mcp_auth_rejection` by `id`.
+fn stale_ids_sqlite(table: &str, key: &str) -> String {
+    format!("SELECT {key} FROM {table} WHERE created_at < ?1 ORDER BY created_at LIMIT ?2")
+}
+fn stale_ids_mysql(table: &str, key: &str) -> String {
+    format!("SELECT {key} FROM {table} WHERE created_at < ? ORDER BY created_at LIMIT ?")
+}
+fn stale_ids_pg(table: &str, key: &str) -> String {
+    format!("SELECT {key} FROM {table} WHERE created_at < $1 ORDER BY created_at LIMIT $2")
+}
+
+async fn delete_ids_sqlite(
+    pool: &SqlitePool,
+    table: &str,
+    key: &str,
+    ids: &[String],
+) -> Result<u64> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let sql = format!(
+        "DELETE FROM {table} WHERE {key} IN ({})",
+        in_placeholders(ids.len(), false)
+    );
+    let mut query = sqlx::query(&sql);
+    for id in ids {
+        query = query.bind(id);
+    }
+    Ok(query.execute(pool).await?.rows_affected())
+}
+
+async fn delete_ids_mysql(pool: &MySqlPool, table: &str, key: &str, ids: &[String]) -> Result<u64> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let sql = format!(
+        "DELETE FROM {table} WHERE {key} IN ({})",
+        in_placeholders(ids.len(), false)
+    );
+    let mut query = sqlx::query(&sql);
+    for id in ids {
+        query = query.bind(id);
+    }
+    Ok(query.execute(pool).await?.rows_affected())
+}
+
+async fn delete_ids_pg(pool: &PgPool, table: &str, key: &str, ids: &[String]) -> Result<u64> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let sql = format!(
+        "DELETE FROM {table} WHERE {key} IN ({})",
+        in_placeholders(ids.len(), true)
+    );
+    let mut query = sqlx::query(&sql);
+    for id in ids {
+        query = query.bind(id);
+    }
+    Ok(query.execute(pool).await?.rows_affected())
+}
+
+#[async_trait]
+impl McpRejectionStore for SqlitePool {
+    async fn insert_mcp_rejection(&self, row: &McpAuthRejectionRow) -> Result<()> {
+        sqlx::query(INSERT_MCP_REJECTION_SQLITE)
+            .bind(&row.id)
+            .bind(&row.created_at)
+            .bind(&row.path)
+            .bind(&row.http_method)
+            .bind(&row.reason)
+            .bind(&row.token_hash)
+            .bind(&row.client_ip)
+            .bind(&row.user_agent)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn list_mcp_rejections(
+        &self,
+        filter: &McpRejectionFilter,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<McpAuthRejectionRow>> {
+        sqlx::query_as::<_, McpAuthRejectionRow>(LIST_MCP_REJECTION_SQLITE)
+            .bind(filter.reason.as_deref())
+            .bind(filter.from.as_deref())
+            .bind(filter.to.as_deref())
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn count_mcp_rejections(&self, filter: &McpRejectionFilter) -> Result<i64> {
+        let row: (i64,) = sqlx::query_as(COUNT_MCP_REJECTION_SQLITE)
+            .bind(filter.reason.as_deref())
+            .bind(filter.from.as_deref())
+            .bind(filter.to.as_deref())
+            .fetch_one(self)
+            .await?;
+        Ok(row.0)
+    }
+
+    async fn stale_mcp_call_ids(&self, cutoff: &str, limit: i64) -> Result<Vec<String>> {
+        Ok(
+            sqlx::query_scalar(&stale_ids_sqlite("mcp_call_log", "call_id"))
+                .bind(cutoff)
+                .bind(limit)
+                .fetch_all(self)
+                .await?,
+        )
+    }
+
+    async fn stale_mcp_rejection_ids(&self, cutoff: &str, limit: i64) -> Result<Vec<String>> {
+        Ok(
+            sqlx::query_scalar(&stale_ids_sqlite("mcp_auth_rejection", "id"))
+                .bind(cutoff)
+                .bind(limit)
+                .fetch_all(self)
+                .await?,
+        )
+    }
+
+    async fn delete_mcp_call_ids(&self, ids: &[String]) -> Result<u64> {
+        delete_ids_sqlite(self, "mcp_call_log", "call_id", ids).await
+    }
+
+    async fn delete_mcp_rejection_ids(&self, ids: &[String]) -> Result<u64> {
+        delete_ids_sqlite(self, "mcp_auth_rejection", "id", ids).await
+    }
+}
+
+#[async_trait]
+impl McpRejectionStore for MySqlPool {
+    async fn insert_mcp_rejection(&self, row: &McpAuthRejectionRow) -> Result<()> {
+        sqlx::query(INSERT_MCP_REJECTION_MYSQL)
+            .bind(&row.id)
+            .bind(&row.created_at)
+            .bind(&row.path)
+            .bind(&row.http_method)
+            .bind(&row.reason)
+            .bind(&row.token_hash)
+            .bind(&row.client_ip)
+            .bind(&row.user_agent)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn list_mcp_rejections(
+        &self,
+        filter: &McpRejectionFilter,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<McpAuthRejectionRow>> {
+        sqlx::query_as::<_, McpAuthRejectionRow>(LIST_MCP_REJECTION_MYSQL)
+            .bind(filter.reason.as_deref())
+            .bind(filter.reason.as_deref())
+            .bind(filter.from.as_deref())
+            .bind(filter.from.as_deref())
+            .bind(filter.to.as_deref())
+            .bind(filter.to.as_deref())
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn count_mcp_rejections(&self, filter: &McpRejectionFilter) -> Result<i64> {
+        let row: (i64,) = sqlx::query_as(COUNT_MCP_REJECTION_MYSQL)
+            .bind(filter.reason.as_deref())
+            .bind(filter.reason.as_deref())
+            .bind(filter.from.as_deref())
+            .bind(filter.from.as_deref())
+            .bind(filter.to.as_deref())
+            .bind(filter.to.as_deref())
+            .fetch_one(self)
+            .await?;
+        Ok(row.0)
+    }
+
+    async fn stale_mcp_call_ids(&self, cutoff: &str, limit: i64) -> Result<Vec<String>> {
+        Ok(
+            sqlx::query_scalar(&stale_ids_mysql("mcp_call_log", "call_id"))
+                .bind(cutoff)
+                .bind(limit)
+                .fetch_all(self)
+                .await?,
+        )
+    }
+
+    async fn stale_mcp_rejection_ids(&self, cutoff: &str, limit: i64) -> Result<Vec<String>> {
+        Ok(
+            sqlx::query_scalar(&stale_ids_mysql("mcp_auth_rejection", "id"))
+                .bind(cutoff)
+                .bind(limit)
+                .fetch_all(self)
+                .await?,
+        )
+    }
+
+    async fn delete_mcp_call_ids(&self, ids: &[String]) -> Result<u64> {
+        delete_ids_mysql(self, "mcp_call_log", "call_id", ids).await
+    }
+
+    async fn delete_mcp_rejection_ids(&self, ids: &[String]) -> Result<u64> {
+        delete_ids_mysql(self, "mcp_auth_rejection", "id", ids).await
+    }
+}
+
+#[async_trait]
+impl McpRejectionStore for PgPool {
+    async fn insert_mcp_rejection(&self, row: &McpAuthRejectionRow) -> Result<()> {
+        sqlx::query(INSERT_MCP_REJECTION_PG)
+            .bind(&row.id)
+            .bind(&row.created_at)
+            .bind(&row.path)
+            .bind(&row.http_method)
+            .bind(&row.reason)
+            .bind(&row.token_hash)
+            .bind(&row.client_ip)
+            .bind(&row.user_agent)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn list_mcp_rejections(
+        &self,
+        filter: &McpRejectionFilter,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<McpAuthRejectionRow>> {
+        sqlx::query_as::<_, McpAuthRejectionRow>(LIST_MCP_REJECTION_PG)
+            .bind(filter.reason.as_deref())
+            .bind(filter.from.as_deref())
+            .bind(filter.to.as_deref())
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn count_mcp_rejections(&self, filter: &McpRejectionFilter) -> Result<i64> {
+        let row: (i64,) = sqlx::query_as(COUNT_MCP_REJECTION_PG)
+            .bind(filter.reason.as_deref())
+            .bind(filter.from.as_deref())
+            .bind(filter.to.as_deref())
+            .fetch_one(self)
+            .await?;
+        Ok(row.0)
+    }
+
+    async fn stale_mcp_call_ids(&self, cutoff: &str, limit: i64) -> Result<Vec<String>> {
+        Ok(sqlx::query_scalar(&stale_ids_pg("mcp_call_log", "call_id"))
+            .bind(cutoff)
+            .bind(limit)
+            .fetch_all(self)
+            .await?)
+    }
+
+    async fn stale_mcp_rejection_ids(&self, cutoff: &str, limit: i64) -> Result<Vec<String>> {
+        Ok(
+            sqlx::query_scalar(&stale_ids_pg("mcp_auth_rejection", "id"))
+                .bind(cutoff)
+                .bind(limit)
+                .fetch_all(self)
+                .await?,
+        )
+    }
+
+    async fn delete_mcp_call_ids(&self, ids: &[String]) -> Result<u64> {
+        delete_ids_pg(self, "mcp_call_log", "call_id", ids).await
+    }
+
+    async fn delete_mcp_rejection_ids(&self, ids: &[String]) -> Result<u64> {
+        delete_ids_pg(self, "mcp_auth_rejection", "id", ids).await
+    }
+}
+
+#[async_trait]
+impl McpCallBodyStore for SqlitePool {
+    async fn insert_mcp_call_body(&self, row: &McpCallBodyRow) -> Result<()> {
+        sqlx::query(INSERT_MCP_CALL_BODY_SQLITE)
+            .bind(&row.call_id)
+            .bind(&row.request_body)
+            .bind(&row.response_body)
+            .bind(row.truncated)
+            .bind(&row.created_at)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn get_mcp_call_body(&self, call_id: &str) -> Result<Option<McpCallBodyRow>> {
+        sqlx::query_as::<_, McpCallBodyRow>(GET_MCP_CALL_BODY_SQLITE)
+            .bind(call_id)
+            .fetch_optional(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn stale_mcp_call_body_ids(&self, cutoff: &str, limit: i64) -> Result<Vec<String>> {
+        Ok(
+            sqlx::query_scalar(&stale_ids_sqlite("mcp_call_body", "call_id"))
+                .bind(cutoff)
+                .bind(limit)
+                .fetch_all(self)
+                .await?,
+        )
+    }
+
+    async fn delete_mcp_call_body_ids(&self, ids: &[String]) -> Result<u64> {
+        delete_ids_sqlite(self, "mcp_call_body", "call_id", ids).await
+    }
+}
+
+#[async_trait]
+impl McpCallBodyStore for MySqlPool {
+    async fn insert_mcp_call_body(&self, row: &McpCallBodyRow) -> Result<()> {
+        sqlx::query(INSERT_MCP_CALL_BODY_MYSQL)
+            .bind(&row.call_id)
+            .bind(&row.request_body)
+            .bind(&row.response_body)
+            .bind(row.truncated)
+            .bind(&row.created_at)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn get_mcp_call_body(&self, call_id: &str) -> Result<Option<McpCallBodyRow>> {
+        sqlx::query_as::<_, McpCallBodyRow>(GET_MCP_CALL_BODY_MYSQL)
+            .bind(call_id)
+            .fetch_optional(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn stale_mcp_call_body_ids(&self, cutoff: &str, limit: i64) -> Result<Vec<String>> {
+        Ok(
+            sqlx::query_scalar(&stale_ids_mysql("mcp_call_body", "call_id"))
+                .bind(cutoff)
+                .bind(limit)
+                .fetch_all(self)
+                .await?,
+        )
+    }
+
+    async fn delete_mcp_call_body_ids(&self, ids: &[String]) -> Result<u64> {
+        delete_ids_mysql(self, "mcp_call_body", "call_id", ids).await
+    }
+}
+
+#[async_trait]
+impl McpCallBodyStore for PgPool {
+    async fn insert_mcp_call_body(&self, row: &McpCallBodyRow) -> Result<()> {
+        sqlx::query(INSERT_MCP_CALL_BODY_PG)
+            .bind(&row.call_id)
+            .bind(&row.request_body)
+            .bind(&row.response_body)
+            .bind(row.truncated)
+            .bind(&row.created_at)
+            .execute(self)
+            .await?;
+        Ok(())
+    }
+
+    async fn get_mcp_call_body(&self, call_id: &str) -> Result<Option<McpCallBodyRow>> {
+        sqlx::query_as::<_, McpCallBodyRow>(GET_MCP_CALL_BODY_PG)
+            .bind(call_id)
+            .fetch_optional(self)
+            .await
+            .map_err(DbError::from)
+    }
+
+    async fn stale_mcp_call_body_ids(&self, cutoff: &str, limit: i64) -> Result<Vec<String>> {
+        Ok(
+            sqlx::query_scalar(&stale_ids_pg("mcp_call_body", "call_id"))
+                .bind(cutoff)
+                .bind(limit)
+                .fetch_all(self)
+                .await?,
+        )
+    }
+
+    async fn delete_mcp_call_body_ids(&self, ids: &[String]) -> Result<u64> {
+        delete_ids_pg(self, "mcp_call_body", "call_id", ids).await
+    }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Database enum dispatch — MCP store
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 impl Database {
     pub async fn create_mcp_server(&self, s: &McpServerRow) -> Result<i64> {
         match self {
@@ -8218,6 +8940,126 @@ impl Database {
             Database::Sqlite(pool) => pool.count_mcp_call_log(filter).await,
             Database::Mysql(pool) => pool.count_mcp_call_log(filter).await,
             Database::Postgres(pool) => pool.count_mcp_call_log(filter).await,
+        }
+    }
+
+    pub async fn get_mcp_call_log(&self, call_id: &str) -> Result<Option<McpCallLogRow>> {
+        match self {
+            Database::Sqlite(pool) => pool.get_mcp_call_log(call_id).await,
+            Database::Mysql(pool) => pool.get_mcp_call_log(call_id).await,
+            Database::Postgres(pool) => pool.get_mcp_call_log(call_id).await,
+        }
+    }
+
+    pub async fn mcp_call_key_names(&self, key_ids: &[String]) -> Result<HashMap<String, String>> {
+        match self {
+            Database::Sqlite(pool) => pool.mcp_call_key_names(key_ids).await,
+            Database::Mysql(pool) => pool.mcp_call_key_names(key_ids).await,
+            Database::Postgres(pool) => pool.mcp_call_key_names(key_ids).await,
+        }
+    }
+
+    pub async fn mcp_call_user_names(
+        &self,
+        user_ids: &[String],
+    ) -> Result<HashMap<String, String>> {
+        match self {
+            Database::Sqlite(pool) => pool.mcp_call_user_names(user_ids).await,
+            Database::Mysql(pool) => pool.mcp_call_user_names(user_ids).await,
+            Database::Postgres(pool) => pool.mcp_call_user_names(user_ids).await,
+        }
+    }
+
+    pub async fn insert_mcp_rejection(&self, row: &McpAuthRejectionRow) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.insert_mcp_rejection(row).await,
+            Database::Mysql(pool) => pool.insert_mcp_rejection(row).await,
+            Database::Postgres(pool) => pool.insert_mcp_rejection(row).await,
+        }
+    }
+
+    pub async fn list_mcp_rejections(
+        &self,
+        filter: &McpRejectionFilter,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<McpAuthRejectionRow>> {
+        match self {
+            Database::Sqlite(pool) => pool.list_mcp_rejections(filter, limit, offset).await,
+            Database::Mysql(pool) => pool.list_mcp_rejections(filter, limit, offset).await,
+            Database::Postgres(pool) => pool.list_mcp_rejections(filter, limit, offset).await,
+        }
+    }
+
+    pub async fn count_mcp_rejections(&self, filter: &McpRejectionFilter) -> Result<i64> {
+        match self {
+            Database::Sqlite(pool) => pool.count_mcp_rejections(filter).await,
+            Database::Mysql(pool) => pool.count_mcp_rejections(filter).await,
+            Database::Postgres(pool) => pool.count_mcp_rejections(filter).await,
+        }
+    }
+
+    pub async fn stale_mcp_call_ids(&self, cutoff: &str, limit: i64) -> Result<Vec<String>> {
+        match self {
+            Database::Sqlite(pool) => pool.stale_mcp_call_ids(cutoff, limit).await,
+            Database::Mysql(pool) => pool.stale_mcp_call_ids(cutoff, limit).await,
+            Database::Postgres(pool) => pool.stale_mcp_call_ids(cutoff, limit).await,
+        }
+    }
+
+    pub async fn stale_mcp_rejection_ids(&self, cutoff: &str, limit: i64) -> Result<Vec<String>> {
+        match self {
+            Database::Sqlite(pool) => pool.stale_mcp_rejection_ids(cutoff, limit).await,
+            Database::Mysql(pool) => pool.stale_mcp_rejection_ids(cutoff, limit).await,
+            Database::Postgres(pool) => pool.stale_mcp_rejection_ids(cutoff, limit).await,
+        }
+    }
+
+    pub async fn delete_mcp_call_ids(&self, ids: &[String]) -> Result<u64> {
+        match self {
+            Database::Sqlite(pool) => pool.delete_mcp_call_ids(ids).await,
+            Database::Mysql(pool) => pool.delete_mcp_call_ids(ids).await,
+            Database::Postgres(pool) => pool.delete_mcp_call_ids(ids).await,
+        }
+    }
+
+    pub async fn delete_mcp_rejection_ids(&self, ids: &[String]) -> Result<u64> {
+        match self {
+            Database::Sqlite(pool) => pool.delete_mcp_rejection_ids(ids).await,
+            Database::Mysql(pool) => pool.delete_mcp_rejection_ids(ids).await,
+            Database::Postgres(pool) => pool.delete_mcp_rejection_ids(ids).await,
+        }
+    }
+
+    pub async fn insert_mcp_call_body(&self, row: &McpCallBodyRow) -> Result<()> {
+        match self {
+            Database::Sqlite(pool) => pool.insert_mcp_call_body(row).await,
+            Database::Mysql(pool) => pool.insert_mcp_call_body(row).await,
+            Database::Postgres(pool) => pool.insert_mcp_call_body(row).await,
+        }
+    }
+
+    pub async fn get_mcp_call_body(&self, call_id: &str) -> Result<Option<McpCallBodyRow>> {
+        match self {
+            Database::Sqlite(pool) => pool.get_mcp_call_body(call_id).await,
+            Database::Mysql(pool) => pool.get_mcp_call_body(call_id).await,
+            Database::Postgres(pool) => pool.get_mcp_call_body(call_id).await,
+        }
+    }
+
+    pub async fn stale_mcp_call_body_ids(&self, cutoff: &str, limit: i64) -> Result<Vec<String>> {
+        match self {
+            Database::Sqlite(pool) => pool.stale_mcp_call_body_ids(cutoff, limit).await,
+            Database::Mysql(pool) => pool.stale_mcp_call_body_ids(cutoff, limit).await,
+            Database::Postgres(pool) => pool.stale_mcp_call_body_ids(cutoff, limit).await,
+        }
+    }
+
+    pub async fn delete_mcp_call_body_ids(&self, ids: &[String]) -> Result<u64> {
+        match self {
+            Database::Sqlite(pool) => pool.delete_mcp_call_body_ids(ids).await,
+            Database::Mysql(pool) => pool.delete_mcp_call_body_ids(ids).await,
+            Database::Postgres(pool) => pool.delete_mcp_call_body_ids(ids).await,
         }
     }
 }
@@ -13912,6 +14754,293 @@ mod tests {
             db.count_mcp_call_log(&filter).await.expect("count"),
             2,
             "an out-of-range page must not change the total"
+        );
+    }
+
+    #[tokio::test]
+    async fn key_names_cover_the_page_and_silently_skip_unknown_ids() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        db.insert_key(&make_test_key("hash-a", "Key A"))
+            .await
+            .expect("key a");
+        db.insert_key(&make_test_key("hash-b", "Key B"))
+            .await
+            .expect("key b");
+
+        let names = db
+            .mcp_call_key_names(&[
+                "hash-a".to_string(),
+                "hash-b".to_string(),
+                "hash-gone".to_string(),
+            ])
+            .await
+            .expect("names");
+
+        assert_eq!(names.get("hash-a").map(String::as_str), Some("Key A"));
+        assert_eq!(names.get("hash-b").map(String::as_str), Some("Key B"));
+        assert!(
+            !names.contains_key("hash-gone"),
+            "a deleted key must leave its history addressable by id"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_empty_key_name_falls_back_to_the_alias() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let mut key = make_test_key("hash-blank", "Key Alias");
+        key.key_name = None;
+        db.insert_key(&key).await.expect("key");
+
+        let names = db
+            .mcp_call_key_names(&["hash-blank".to_string()])
+            .await
+            .expect("names");
+        assert_eq!(
+            names.get("hash-blank").map(String::as_str),
+            Some("Key Alias")
+        );
+    }
+
+    #[tokio::test]
+    async fn an_empty_user_alias_falls_back_to_the_email() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        db.insert_user(&make_test_user("user-1", "one@example.com"))
+            .await
+            .expect("user without alias");
+        let mut named = make_test_user("user-2", "two@example.com");
+        named.user_alias = Some("Two".to_string());
+        db.insert_user(&named).await.expect("user with alias");
+
+        let names = db
+            .mcp_call_user_names(&["user-1".to_string(), "user-2".to_string()])
+            .await
+            .expect("names");
+        assert_eq!(
+            names.get("user-1").map(String::as_str),
+            Some("one@example.com")
+        );
+        assert_eq!(names.get("user-2").map(String::as_str), Some("Two"));
+    }
+
+    #[tokio::test]
+    async fn an_empty_id_list_returns_nothing_without_touching_the_database() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+
+        assert!(db.mcp_call_key_names(&[]).await.expect("keys").is_empty());
+        assert!(db.mcp_call_user_names(&[]).await.expect("users").is_empty());
+    }
+
+    fn make_test_rejection(id: &str, reason: &str, at: &str) -> McpAuthRejectionRow {
+        McpAuthRejectionRow {
+            id: id.to_string(),
+            created_at: at.to_string(),
+            path: "/mcp/demo".to_string(),
+            http_method: "POST".to_string(),
+            reason: reason.to_string(),
+            token_hash: None,
+            client_ip: Some("203.0.113.9".to_string()),
+            user_agent: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn rejections_come_back_newest_first_with_every_column_intact() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        db.insert_mcp_rejection(&make_test_rejection(
+            "r-old",
+            MCP_REJECTION_MISSING_HEADER,
+            "2026-10-30T00:00:00+00:00",
+        ))
+        .await
+        .expect("old");
+        db.insert_mcp_rejection(&make_test_rejection(
+            "r-new",
+            MCP_REJECTION_INVALID_KEY,
+            "2026-10-31T00:00:00+00:00",
+        ))
+        .await
+        .expect("new");
+
+        let rows = db
+            .list_mcp_rejections(&McpRejectionFilter::default(), 10, 0)
+            .await
+            .expect("list");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].id, "r-new", "the operator wants the latest first");
+        let row = &rows[0];
+        assert_eq!(row.path, "/mcp/demo");
+        assert_eq!(row.http_method, "POST");
+        assert_eq!(row.reason, MCP_REJECTION_INVALID_KEY);
+        assert_eq!(row.client_ip.as_deref(), Some("203.0.113.9"));
+        assert_eq!(
+            db.count_mcp_rejections(&McpRejectionFilter::default())
+                .await
+                .expect("count"),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn the_rejection_filter_narrows_by_reason_and_closed_time_bounds() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        for (id, reason, at) in [
+            (
+                "a",
+                MCP_REJECTION_MISSING_HEADER,
+                "2026-10-29T00:00:00+00:00",
+            ),
+            ("b", MCP_REJECTION_INVALID_KEY, "2026-10-30T00:00:00+00:00"),
+            ("c", MCP_REJECTION_INVALID_KEY, "2026-10-31T00:00:00+00:00"),
+        ] {
+            db.insert_mcp_rejection(&make_test_rejection(id, reason, at))
+                .await
+                .expect("insert");
+        }
+
+        let by_reason = McpRejectionFilter {
+            reason: Some(MCP_REJECTION_INVALID_KEY.to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            db.list_mcp_rejections(&by_reason, 10, 0)
+                .await
+                .expect("list")
+                .len(),
+            2
+        );
+        assert_eq!(db.count_mcp_rejections(&by_reason).await.expect("count"), 2);
+
+        let windowed = McpRejectionFilter {
+            reason: Some(MCP_REJECTION_INVALID_KEY.to_string()),
+            from: Some("2026-10-30T00:00:00+00:00".to_string()),
+            to: Some("2026-10-31T00:00:00+00:00".to_string()),
+        };
+        let ids: Vec<String> = db
+            .list_mcp_rejections(&windowed, 10, 0)
+            .await
+            .expect("list")
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+        assert_eq!(
+            ids,
+            vec!["c".to_string(), "b".to_string()],
+            "both bounds are inclusive"
+        );
+        assert_eq!(
+            db.count_mcp_rejections(&windowed).await.expect("count"),
+            2,
+            "a count that ignores the window would misreport the pager"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_rejection_count_holds_across_pages() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        for i in 0..3 {
+            db.insert_mcp_rejection(&make_test_rejection(
+                &format!("r-{i}"),
+                MCP_REJECTION_MISSING_HEADER,
+                &format!("2026-10-3{i}T00:00:00+00:00"),
+            ))
+            .await
+            .expect("insert");
+        }
+        let filter = McpRejectionFilter::default();
+
+        assert_eq!(
+            db.list_mcp_rejections(&filter, 1, 0)
+                .await
+                .expect("p1")
+                .len(),
+            1
+        );
+        assert_eq!(
+            db.list_mcp_rejections(&filter, 1, 2)
+                .await
+                .expect("p3")
+                .len(),
+            1
+        );
+        assert!(db
+            .list_mcp_rejections(&filter, 1, 3)
+            .await
+            .expect("past")
+            .is_empty());
+        assert_eq!(db.count_mcp_rejections(&filter).await.expect("count"), 3);
+    }
+
+    fn make_test_body(call_id: &str, truncated: bool) -> McpCallBodyRow {
+        McpCallBodyRow {
+            call_id: call_id.to_string(),
+            request_body: Some(r#"{"method":"tools/call"}"#.to_string()),
+            response_body: Some(r#"{"result":{}}"#.to_string()),
+            truncated,
+            created_at: "2026-10-31T00:00:00+00:00".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_call_body_round_trips_with_every_column_intact() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        db.insert_mcp_call_body(&make_test_body("c-1", true))
+            .await
+            .expect("insert");
+
+        let row = db
+            .get_mcp_call_body("c-1")
+            .await
+            .expect("get")
+            .expect("row");
+        assert_eq!(
+            row.request_body.as_deref(),
+            Some(r#"{"method":"tools/call"}"#)
+        );
+        assert_eq!(row.response_body.as_deref(), Some(r#"{"result":{}}"#));
+        assert!(row.truncated, "the flag must survive the round trip");
+        assert_eq!(row.created_at, "2026-10-31T00:00:00+00:00");
+    }
+
+    /// `None` covers "no such call" and "already swept" alike — the endpoint
+    /// answers 404 for both, so the two must not be distinguishable here either.
+    #[tokio::test]
+    async fn a_call_with_no_body_row_is_indistinguishable_from_a_missing_one() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        assert!(db
+            .get_mcp_call_body("never-recorded")
+            .await
+            .expect("get")
+            .is_none());
+        assert!(db
+            .get_mcp_call_log("never-recorded")
+            .await
+            .expect("get")
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn the_body_store_finds_and_deletes_only_rows_past_the_cutoff() {
+        let db = Database::init("sqlite::memory:").await.expect("init");
+        let mut old = make_test_body("old", false);
+        old.created_at = "2026-09-01T00:00:00+00:00".to_string();
+        db.insert_mcp_call_body(&old).await.expect("old");
+        db.insert_mcp_call_body(&make_test_body("new", false))
+            .await
+            .expect("new");
+
+        let stale = db
+            .stale_mcp_call_body_ids("2026-10-01T00:00:00+00:00", 10)
+            .await
+            .expect("stale");
+        assert_eq!(stale, vec!["old".to_string()]);
+        assert_eq!(
+            db.delete_mcp_call_body_ids(&stale).await.expect("delete"),
+            1
+        );
+        assert!(db.get_mcp_call_body("old").await.expect("get").is_none());
+        assert!(
+            db.get_mcp_call_body("new").await.expect("get").is_some(),
+            "a row inside the window must stay"
         );
     }
 }

@@ -12,8 +12,35 @@
 
 use axum::extract::{ConnectInfo, FromRequestParts};
 use axum::http::request::Parts;
+use axum::http::HeaderMap;
 use axum_client_ip::RightmostXForwardedFor;
 use std::net::{IpAddr, SocketAddr};
+
+/// The three-layer rule, as a plain function so non-extractor callers (the MCP
+/// rejection audit) read the same headers the same way. Two parsers for one
+/// header set eventually disagree, and the log would then name a different
+/// client than the one the request was served for.
+///
+/// `X-Forwarded-For` is read rightmost-first because only the hop nearest this
+/// gateway is trustworthy: everything left of it is client-supplied.
+pub(crate) fn parse_client_ip(headers: &HeaderMap, peer: Option<SocketAddr>) -> Option<String> {
+    if let Some(ip) = headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.rsplit(',').next())
+        .and_then(|v| v.trim().parse::<IpAddr>().ok())
+    {
+        return Some(ip.to_string());
+    }
+    if let Some(ip) = headers
+        .get("x-real-ip")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<IpAddr>().ok())
+    {
+        return Some(ip.to_string());
+    }
+    peer.map(|addr| addr.ip().to_string())
+}
 
 /// Wraps `RightmostXForwardedFor` as an optional extractor with three-layer fallback.
 pub struct OptionalClientIp(pub Option<RightmostXForwardedFor>);
@@ -32,7 +59,7 @@ where
 
         // Layer 2: X-Real-IP header (nginx convention)
         if let Some(real_ip) = parts.headers.get("x-real-ip").and_then(|v| v.to_str().ok()) {
-            if let Ok(addr) = real_ip.parse::<IpAddr>() {
+            if let Ok(addr) = real_ip.trim().parse::<IpAddr>() {
                 return Ok(OptionalClientIp(Some(RightmostXForwardedFor(addr))));
             }
         }
@@ -54,7 +81,6 @@ mod tests {
     use axum::body::Body;
     use axum::http::Request;
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-
     fn build_request_with_header(
         addr: Option<SocketAddr>,
         header_name: &str,
@@ -182,5 +208,43 @@ mod tests {
         let result = OptionalClientIp::from_request_parts(&mut parts, &()).await;
         assert!(result.is_ok());
         assert!(result.unwrap().0.is_none());
+    }
+
+    #[test]
+    fn parse_client_ip_takes_the_rightmost_forwarded_hop() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            "203.0.113.1, 198.51.100.2, 10.0.0.99".parse().unwrap(),
+        );
+        assert_eq!(
+            parse_client_ip(&headers, None).as_deref(),
+            Some("10.0.0.99"),
+            "left-hand entries are client-supplied and must not win"
+        );
+    }
+
+    #[test]
+    fn parse_client_ip_prefers_forwarded_over_the_peer_address() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "198.51.100.7".parse().unwrap());
+        let peer = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 1234);
+        assert_eq!(
+            parse_client_ip(&headers, Some(peer)).as_deref(),
+            Some("198.51.100.7")
+        );
+    }
+
+    #[test]
+    fn parse_client_ip_falls_back_to_the_peer_when_no_headers_are_usable() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "garbage".parse().unwrap());
+        headers.insert("x-real-ip", "also-garbage".parse().unwrap());
+        let peer = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 5)), 1234);
+        assert_eq!(
+            parse_client_ip(&headers, Some(peer)).as_deref(),
+            Some("192.168.1.5")
+        );
+        assert_eq!(parse_client_ip(&headers, None), None);
     }
 }

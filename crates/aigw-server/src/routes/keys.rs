@@ -81,6 +81,10 @@ pub struct AppState {
     /// answers 404 (Stage 143). The endpoints stay registered so the route
     /// table does not change shape with configuration.
     pub mcp_disable_rest: bool,
+    /// `mcp_log_retention` — the retention window plus, since Stage 152,
+    /// `record_bodies` / `max_body_kib`. The request path reads it to decide
+    /// whether a call has a body row at all.
+    pub mcp_log_retention: aigw_core::retention::McpLogRetentionConfig,
 }
 
 impl AppState {
@@ -113,6 +117,7 @@ impl AppState {
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
             web_search: aigw_core::websearch::WebSearchHandle::disabled(),
             mcp_disable_rest: false,
+            mcp_log_retention: Default::default(),
         }
     }
 }
@@ -1115,6 +1120,7 @@ mod tests {
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
             web_search: aigw_core::websearch::WebSearchHandle::disabled(),
             mcp_disable_rest: false,
+            mcp_log_retention: Default::default(),
         });
         Router::new()
             .route("/key/generate", axum::routing::post(generate_key))
@@ -1167,6 +1173,7 @@ mod tests {
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
             web_search: aigw_core::websearch::WebSearchHandle::disabled(),
             mcp_disable_rest: false,
+            mcp_log_retention: Default::default(),
         });
         let app = Router::new()
             .route("/key/generate", axum::routing::post(generate_key))
@@ -1228,6 +1235,7 @@ mod tests {
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
             web_search: aigw_core::websearch::WebSearchHandle::disabled(),
             mcp_disable_rest: false,
+            mcp_log_retention: Default::default(),
         });
         let app = Router::new()
             .route("/key/generate", axum::routing::post(generate_key))
@@ -1368,6 +1376,7 @@ mod tests {
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
             web_search: aigw_core::websearch::WebSearchHandle::disabled(),
             mcp_disable_rest: false,
+            mcp_log_retention: Default::default(),
         });
         let app = Router::new()
             .route("/key/generate", axum::routing::post(generate_key))

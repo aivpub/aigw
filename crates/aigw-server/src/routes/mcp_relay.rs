@@ -13,7 +13,9 @@
 use std::time::Duration;
 
 use aigw_core::db::Database;
-use aigw_core::models::{McpCallLogRow, MCP_CALL_STATUS_FAILED};
+use aigw_core::mcp::body::cut;
+use aigw_core::models::{McpCallBodyRow, McpCallLogRow, MCP_CALL_STATUS_FAILED};
+use aigw_core::retention::McpLogRetentionConfig;
 use axum::body::Body;
 use axum::http::{header, HeaderName, HeaderValue, StatusCode};
 use axum::response::Response;
@@ -34,6 +36,45 @@ pub(crate) async fn record(db: &Database, row: &McpCallLogRow) {
     }
 }
 
+/// The audit row and the bodies behind it (Stage 152). Both inserts are
+/// awaited rather than spawned: the row is useless to whoever opens the detail
+/// drawer a second later if the body is still in flight, and one INSERT costs
+/// nothing next to the upstream round trip it follows.
+///
+/// `limit` is `None` when `record_bodies` is off — the one value that means
+/// "write nothing", carried instead of the whole config so the SSE task can
+/// own it.
+pub(crate) async fn record_with_bodies(
+    db: &Database,
+    limit: Option<usize>,
+    row: &McpCallLogRow,
+    request: &[u8],
+    response: &[u8],
+) {
+    record(db, row).await;
+    let Some(limit) = limit else {
+        return;
+    };
+    let (request_body, request_cut) = cut(request, limit);
+    let (response_body, response_cut) = cut(response, limit);
+    let body_row = McpCallBodyRow {
+        call_id: row.call_id.clone(),
+        request_body: Some(request_body),
+        response_body: Some(response_body),
+        truncated: request_cut || response_cut,
+        created_at: row.created_at.clone(),
+    };
+    if let Err(e) = db.insert_mcp_call_body(&body_row).await {
+        warn!(call_id = %row.call_id, error = %e, "could not write mcp_call_body");
+    }
+}
+
+/// The per-body ceiling in bytes, or `None` when body recording is switched off.
+pub(crate) fn body_limit(cfg: &McpLogRetentionConfig) -> Option<usize> {
+    cfg.record_bodies
+        .then(|| (cfg.max_body_kib as usize).saturating_mul(1024))
+}
+
 /// Name the audit row on the response so a client can reconcile the call it
 /// just made with the `mcp_call_log` row it wrote. `main.rs` only propagates a
 /// request-side `x-call-id`, which no client sends.
@@ -48,16 +89,22 @@ pub(crate) fn stamp_call_id(mut response: Response, call_id: &str) -> Response {
 
 /// Turn an upstream response into the client-facing one, completing `row` with
 /// what actually went out and writing it once the body is on its way.
+///
+/// `request` is the JSON-RPC envelope the client sent and `limit` the body
+/// ceiling (`None` when recording is off). Both are carried rather than looked
+/// up so this module never has to know where the config lives.
 pub(crate) async fn relay(
     upstream: reqwest::Response,
     db: Database,
     row: McpCallLogRow,
+    request: Vec<u8>,
+    limit: Option<usize>,
 ) -> Response {
     let call_id = row.call_id.clone();
     let response = if is_event_stream(&upstream) {
-        relay_event_stream(upstream, db, row)
+        relay_event_stream(upstream, db, row, request, limit)
     } else {
-        relay_buffered(upstream, db, row).await
+        relay_buffered(upstream, db, row, &request, limit).await
     };
     stamp_call_id(response, &call_id)
 }
@@ -85,6 +132,8 @@ async fn relay_buffered(
     upstream: reqwest::Response,
     db: Database,
     mut row: McpCallLogRow,
+    request: &[u8],
+    limit: Option<usize>,
 ) -> Response {
     let status = upstream_status(&upstream);
     let content_type = upstream_content_type(&upstream);
@@ -111,7 +160,7 @@ async fn relay_buffered(
                 .unwrap_or_else(|| "upstream_error".to_string())
         });
     }
-    record(&db, &row).await;
+    record_with_bodies(&db, limit, &row, request, &body).await;
     let mut response = Response::new(Body::from(body));
     *response.status_mut() = status;
     if let Some(ct) = content_type {
@@ -132,10 +181,16 @@ fn jsonrpc_error(body: &[u8]) -> Option<Value> {
         .cloned()
 }
 
+/// The recorded answer of a stream is what was forwarded, joined — capped, so a
+/// long-lived notification stream cannot turn one audit row into a megabyte.
+/// `truncated` then says the tail is missing; `error_code` and the status still
+/// describe the whole call because neither is read from the body.
 fn relay_event_stream(
     upstream: reqwest::Response,
     db: Database,
     mut row: McpCallLogRow,
+    request: Vec<u8>,
+    limit: Option<usize>,
 ) -> Response {
     let status = upstream_status(&upstream);
     let (tx, rx) = mpsc::unbounded_channel::<Result<Vec<u8>, std::io::Error>>();
@@ -145,11 +200,13 @@ fn relay_event_stream(
         heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         heartbeat.tick().await;
         let mut forwarded: i64 = 0;
+        let mut answer = Vec::new();
         loop {
             tokio::select! {
                 chunk = chunks.next() => match chunk {
                     Some(Ok(bytes)) => {
                         forwarded += bytes.len() as i64;
+                        keep_prefix(&mut answer, &bytes, limit);
                         if tx.send(Ok(bytes.to_vec())).is_err() {
                             break;
                         }
@@ -170,9 +227,23 @@ fn relay_event_stream(
             }
         }
         row.response_bytes = forwarded;
-        record(&db, &row).await;
+        record_with_bodies(&db, limit, &row, &request, &answer).await;
     });
     sse_response(rx, status)
+}
+
+/// Accumulate at most `limit` bytes; past that the answer is already a prefix and
+/// the rest is dropped as it arrives. Recording off means recording nothing, not
+/// recording an unbounded stream.
+fn keep_prefix(acc: &mut Vec<u8>, chunk: &[u8], limit: Option<usize>) {
+    let Some(limit) = limit else {
+        return;
+    };
+    if acc.len() >= limit {
+        return;
+    }
+    let take = (limit - acc.len()).min(chunk.len());
+    acc.extend_from_slice(&chunk[..take]);
 }
 
 /// An open notification stream with no upstream behind it — the legacy answer to

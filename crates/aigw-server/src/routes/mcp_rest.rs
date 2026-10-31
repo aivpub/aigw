@@ -19,29 +19,35 @@ use axum::http;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tracing::warn;
 
 use super::keys::SharedState;
 use super::mcp_gateway::{
     call_row, check_tool_allowed, effective_owner, finish, mark, outbound_headers, request_id_of,
-    resolve_bearer, target, CallContext, Outcome,
+    resolve_bearer, target, CallContext, McpAuditAuth, Outcome,
 };
 use super::mcp_relay;
-use super::spend::SpendAuth;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ToolsListBody {
     pub alias: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ToolsCallBody {
     pub alias: String,
     pub tool: String,
     #[serde(default)]
     pub arguments: Value,
+}
+
+/// The request as the audit trail stores it: what the client sent, re-serialised
+/// from the parsed body. These endpoints have no raw envelope — the extractor
+/// consumed it — and a parsed body written back out is the same JSON.
+fn request_bytes<T: Serialize>(body: &T) -> Vec<u8> {
+    serde_json::to_vec(body).unwrap_or_default()
 }
 
 fn disabled() -> Response {
@@ -86,7 +92,7 @@ fn snapshot(server: &McpServerRow, rows: Vec<McpToolRow>) -> Vec<McpToolRow> {
 /// client made, and logging it would drown the audit trail in operator probes.
 pub async fn tools_list(
     State(state): State<SharedState>,
-    SpendAuth(auth): SpendAuth,
+    McpAuditAuth(auth): McpAuditAuth,
     http::request::Parts { extensions, .. }: http::request::Parts,
     Json(body): Json<ToolsListBody>,
 ) -> Response {
@@ -95,6 +101,7 @@ pub async fn tools_list(
     }
 
     let started = std::time::Instant::now();
+    let request = request_bytes(&body);
     let row = call_row(
         body.alias.as_deref().unwrap_or("*"),
         &auth,
@@ -107,7 +114,7 @@ pub async fn tools_list(
             Ok(Some(server)) if server.enabled => vec![server],
             Ok(_) => {
                 return finish(
-                    &state.db,
+                    &state,
                     row,
                     Outcome::rpc(
                         StatusCode::NOT_FOUND,
@@ -115,13 +122,14 @@ pub async fn tools_list(
                         session::METHOD_NOT_FOUND,
                         &format!("no enabled MCP server registered under \"{alias}\""),
                     ),
+                    &request,
                 )
                 .await
             }
             Err(e) => {
                 warn!(alias, error = %e, "MCP server lookup failed");
                 return finish(
-                    &state.db,
+                    &state,
                     row,
                     Outcome::rpc(
                         StatusCode::INTERNAL_SERVER_ERROR,
@@ -129,6 +137,7 @@ pub async fn tools_list(
                         session::INTERNAL_ERROR,
                         "could not read the MCP registry",
                     ),
+                    &request,
                 )
                 .await;
             }
@@ -169,20 +178,17 @@ pub async fn tools_list(
     }
     row.latency_ms = started.elapsed().as_millis() as i64;
     let call_id = row.call_id.clone();
-    mcp_relay::record(&state.db, &row).await;
-    mcp_relay::stamp_call_id(
-        (
-            StatusCode::OK,
-            Json(json!({"tools": tools, "servers": server_views})),
-        )
-            .into_response(),
-        &call_id,
-    )
+    let answer = json!({"tools": tools, "servers": server_views});
+    let response = serde_json::to_vec(&answer).unwrap_or_default();
+    row.response_bytes = response.len() as i64;
+    let limit = mcp_relay::body_limit(&state.mcp_log_retention);
+    mcp_relay::record_with_bodies(&state.db, limit, &row, &request, &response).await;
+    mcp_relay::stamp_call_id((StatusCode::OK, Json(answer)).into_response(), &call_id)
 }
 
 pub async fn tools_call(
     State(state): State<SharedState>,
-    SpendAuth(auth): SpendAuth,
+    McpAuditAuth(auth): McpAuditAuth,
     http::request::Parts { extensions, .. }: http::request::Parts,
     Json(body): Json<ToolsCallBody>,
 ) -> Response {
@@ -191,11 +197,12 @@ pub async fn tools_call(
     }
 
     let started = std::time::Instant::now();
-    let request_bytes = body.arguments.to_string().len();
+    let request = request_bytes(&body);
+    let arguments_bytes = body.arguments.to_string().len();
     let mut row = call_row(&body.alias, &auth, request_id_of(&extensions));
     row.method = METHOD_TOOLS_CALL.to_string();
     row.tool_name = Some(body.tool.clone());
-    row.request_bytes = request_bytes as i64;
+    row.request_bytes = arguments_bytes as i64;
 
     let server = match state.db.get_mcp_server_by_alias(&body.alias).await {
         Ok(Some(server)) if server.enabled => server,
@@ -204,11 +211,11 @@ pub async fn tools_call(
                 row,
                 Some(METHOD_TOOLS_CALL),
                 Some(body.tool),
-                request_bytes,
+                arguments_bytes,
                 started,
             );
             return finish(
-                &state.db,
+                &state,
                 row,
                 Outcome::rpc(
                     StatusCode::NOT_FOUND,
@@ -216,6 +223,7 @@ pub async fn tools_call(
                     session::METHOD_NOT_FOUND,
                     &format!("no enabled MCP server registered under \"{}\"", body.alias),
                 ),
+                &request,
             )
             .await;
         }
@@ -225,11 +233,11 @@ pub async fn tools_call(
                 row,
                 Some(METHOD_TOOLS_CALL),
                 Some(body.tool),
-                request_bytes,
+                arguments_bytes,
                 started,
             );
             return finish(
-                &state.db,
+                &state,
                 row,
                 Outcome::rpc(
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -237,6 +245,7 @@ pub async fn tools_call(
                     session::INTERNAL_ERROR,
                     "could not read the MCP registry",
                 ),
+                &request,
             )
             .await;
         }
@@ -247,10 +256,10 @@ pub async fn tools_call(
             row,
             Some(METHOD_TOOLS_CALL),
             Some(body.tool),
-            request_bytes,
+            arguments_bytes,
             started,
         );
-        return finish(&state.db, row, outcome).await;
+        return finish(&state, row, outcome, &request).await;
     }
 
     let (bearer, token_owner) = match resolve_bearer(&state, &auth, &server).await {
@@ -260,11 +269,11 @@ pub async fn tools_call(
                 row,
                 Some(METHOD_TOOLS_CALL),
                 Some(body.tool),
-                request_bytes,
+                arguments_bytes,
                 started,
             );
             return finish(
-                &state.db,
+                &state,
                 row,
                 Outcome::rpc(
                     StatusCode::FORBIDDEN,
@@ -272,6 +281,7 @@ pub async fn tools_call(
                     session::INSUFFICIENT_SCOPE,
                     "this server requires a per-user credential and none is configured",
                 ),
+                &request,
             )
             .await;
         }
@@ -281,11 +291,11 @@ pub async fn tools_call(
                 row,
                 Some(METHOD_TOOLS_CALL),
                 Some(body.tool),
-                request_bytes,
+                arguments_bytes,
                 started,
             );
             return finish(
-                &state.db,
+                &state,
                 row,
                 Outcome::rpc(
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -293,6 +303,7 @@ pub async fn tools_call(
                     session::INTERNAL_ERROR,
                     "could not decrypt the upstream credential",
                 ),
+                &request,
             )
             .await;
         }
@@ -313,37 +324,49 @@ pub async fn tools_call(
         "params": {"name": body.tool, "arguments": body.arguments},
     });
 
-    let response = match session::forward(&target(&ctx), &envelope).await {
+    // The answer is kept as a value until the audit row is written: the body
+    // recorded must be the one the client receives, not a second rendering of it.
+    let (response, answer): (Response, Value) = match session::forward(&target(&ctx), &envelope)
+        .await
+    {
         Ok(upstream) => match read_jsonrpc_response(upstream).await {
             Ok(answer) => {
-                row.response_bytes = answer.to_string().len() as i64;
-                (StatusCode::OK, Json(answer)).into_response()
+                let response = (StatusCode::OK, Json(answer.clone())).into_response();
+                (response, answer)
             }
             Err(e) => {
                 warn!(alias = %row.server_alias, error = %e, "upstream answer was unreadable");
                 row.status = MCP_CALL_STATUS_FAILED.to_string();
                 row.error_code = Some("upstream_response_invalid".to_string());
-                upstream_error(
+                let response = upstream_error(
                     StatusCode::BAD_GATEWAY,
                     &e.to_string(),
                     "upstream_response_invalid",
-                )
+                );
+                (response, json!({"error": {"message": e.to_string()}}))
             }
         },
         Err(e) => {
             row.status = MCP_CALL_STATUS_FAILED.to_string();
             row.error_code = Some(e.code().to_string());
             let status = StatusCode::from_u16(e.http_status()).unwrap_or(StatusCode::BAD_GATEWAY);
-            upstream_error(status, &e.to_string(), e.code())
+            let response = upstream_error(status, &e.to_string(), e.code());
+            (response, json!({"error": {"message": e.to_string()}}))
         }
     };
+    let answer_bytes = serde_json::to_vec(&answer).unwrap_or_default();
+    row.response_bytes = answer_bytes.len() as i64;
     row.latency_ms = started.elapsed().as_millis() as i64;
     let call_id = row.call_id.clone();
-    mcp_relay::record(&state.db, &row).await;
+    let limit = mcp_relay::body_limit(&state.mcp_log_retention);
+    mcp_relay::record_with_bodies(&state.db, limit, &row, &request, &answer_bytes).await;
     mcp_relay::stamp_call_id(response, &call_id)
 }
 
-pub async fn health(State(state): State<SharedState>, SpendAuth(auth): SpendAuth) -> Response {
+pub async fn health(
+    State(state): State<SharedState>,
+    McpAuditAuth(auth): McpAuditAuth,
+) -> Response {
     if state.mcp_disable_rest {
         return disabled();
     }

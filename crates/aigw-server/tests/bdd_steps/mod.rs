@@ -35,6 +35,7 @@ pub mod real_mcp_aggregate_steps;
 pub mod real_mcp_calls_steps;
 pub mod real_mcp_headers_steps;
 pub mod real_mcp_passthrough_steps;
+pub mod real_mcp_retention_steps;
 pub mod real_mcp_steps;
 pub mod real_oauth_steps;
 pub mod real_proxy_steps;

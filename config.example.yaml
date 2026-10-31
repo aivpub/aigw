@@ -214,3 +214,19 @@ litellm_settings:
 # The instance must have JSON output enabled (`search.formats` includes `json` in
 # its settings.yml) — otherwise it answers HTTP 200 with an HTML page, or 403.
 # Most public instances disable JSON, so self-hosting is effectively required.
+
+# ── MCP log retention (Stage 150) ─────────────────────────────────────────────
+# How long the two MCP audit tables are kept. The worker runs even when this
+# block is absent, with the defaults below: a table nobody owns grows without
+# bound, and "nobody configured it" is the normal state of a fresh deployment.
+# A window of 0 means never delete that table.
+#
+# mcp_log_retention:
+#   call_log_days: 90        # mcp_call_log (every tool call / upstream probe)
+#   rejection_days: 30       # mcp_auth_rejection (401/403 audit trail)
+#   batch_size: 5000         # rows per DELETE batch
+#   check_interval_secs: 3600  # between discovery scans
+#   record_bodies: true      # Stage 152: keep the request/response of each call
+#   max_body_kib: 64         # per-body ceiling; longer bodies keep a prefix and
+#                            # set `truncated`. Bodies are deleted with their
+#                            # call row, so call_log_days applies to them too.

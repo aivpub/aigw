@@ -22,7 +22,7 @@
 //! prefix on the next `tools/list`. A probe failure likewise leaves the previous
 //! snapshot in place, so an upstream hiccup cannot empty the tool catalogue.
 
-use aigw_core::db::McpCallFilter;
+use aigw_core::db::{McpCallFilter, McpRejectionFilter};
 use aigw_core::mcp::acl::{is_known_scope, ToolRule};
 use aigw_core::mcp::catalog_cache::{self, DEFAULT_TTL_MS};
 use aigw_core::mcp::credential::{is_token_usable, seal_token, unseal_token};
@@ -38,8 +38,9 @@ use aigw_core::mcp::probe_runs::{
 };
 use aigw_core::mcp::{probe_server, validate_alias, ProbeError};
 use aigw_core::models::{
-    CatalogSnapshot, CreateMcpServerRequest, CredentialScope, McpServerRow, McpServerTokenRow,
-    McpTokenResponse, McpToolRow, UpdateMcpServerRequest, MCP_OWNER_SERVER, MCP_OWNER_USER,
+    CatalogSnapshot, CreateMcpServerRequest, CredentialScope, McpCallLogRow, McpServerRow,
+    McpServerTokenRow, McpTokenResponse, McpToolRow, UpdateMcpServerRequest, MCP_OWNER_SERVER,
+    MCP_OWNER_USER,
 };
 use axum::{
     extract::{Path, Query, State},
@@ -1311,6 +1312,15 @@ pub struct McpCallQuery {
     pub user_id: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct McpRejectionQuery {
+    pub page: Option<i32>,
+    pub page_size: Option<i32>,
+    pub reason: Option<String>,
+    pub from: Option<String>,
+    pub to: Option<String>,
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Tool allowlist
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1503,15 +1513,116 @@ pub(crate) async fn call_log_response(
         0
     };
 
+    let data = with_display_names(state, rows).await?;
+
     Ok(Json(json!({
         "object": "list",
-        "data": rows,
-        "count": rows.len(),
+        "data": data,
+        "count": data.len(),
         "total_count": total_count,
         "page": page,
         "page_size": page_size,
         "total_pages": total_pages,
     })))
+}
+
+/// Attach `key_name` / `user_name` to each row for display.
+///
+/// Names are resolved when the page is read rather than stored on the call:
+/// the call row is the audit fact (`key_id` + `user_id`) and adding name columns
+/// would require a migration and a backfill, while naming is a presentation
+/// concern the spend log already resolves the same way. Two lookups cover the
+/// whole page — the page size is clamped to 100 so the `IN` list stays well
+/// inside SQLite's 999-parameter limit.
+///
+/// A lookup failure and a missing id both degrade the same way: the row is still
+/// returned and the field is `null`, because dropping a call log line to fix a
+/// label would be the worse bug.
+async fn with_display_names(
+    state: &SharedState,
+    rows: Vec<McpCallLogRow>,
+) -> Result<Vec<Value>, (StatusCode, Json<Value>)> {
+    let mut key_ids: Vec<String> = Vec::new();
+    let mut user_ids: Vec<String> = Vec::new();
+    for row in &rows {
+        if let Some(id) = row.key_id.as_deref().filter(|id| *id != "*master*") {
+            if !key_ids.iter().any(|seen| seen == id) {
+                key_ids.push(id.to_string());
+            }
+        }
+        if let Some(id) = row.user_id.as_deref() {
+            if !user_ids.iter().any(|seen| seen == id) {
+                user_ids.push(id.to_string());
+            }
+        }
+    }
+
+    let (key_names, user_names) = tokio::join!(
+        state.db.mcp_call_key_names(&key_ids),
+        state.db.mcp_call_user_names(&user_ids),
+    );
+    if let Err(e) = &key_names {
+        warn!(error = %e, "MCP call log key name lookup failed");
+    }
+    if let Err(e) = &user_names {
+        warn!(error = %e, "MCP call log user name lookup failed");
+    }
+    let key_names = key_names.unwrap_or_default();
+    let user_names = user_names.unwrap_or_default();
+
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let mut value = serde_json::to_value(&row).unwrap_or_else(|_| json!({}));
+            let key_name = match row.key_id.as_deref() {
+                Some("*master*") => Some("master".to_string()),
+                key_id => key_id.and_then(|id| key_names.get(id).cloned()),
+            };
+            value["key_name"] = json!(key_name);
+            value["user_name"] = json!(row.user_id.as_ref().and_then(|id| user_names.get(id)));
+            value
+        })
+        .collect())
+}
+
+/// `GET /admin/mcp/calls/{call_id}/body` — the request and response behind one
+/// call (Stage 152).
+///
+/// A 404 means "there is no body to show", which covers three cases the operator
+/// cannot and need not distinguish from here: the call row is gone, `record_bodies`
+/// was off when it ran, or the retention sweep took it. All three are the same
+/// answer to the same question.
+pub async fn get_mcp_call_body(
+    State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
+    Path(call_id): Path<String>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    require_admin(&auth)?;
+    let row = state
+        .db
+        .get_mcp_call_body(&call_id)
+        .await
+        .map_err(db_error)?
+        .ok_or_else(body_not_recorded)?;
+    Ok(Json(body_response(&row)))
+}
+
+fn body_not_recorded() -> (StatusCode, Json<Value>) {
+    (
+        StatusCode::NOT_FOUND,
+        Json(
+            json!({"error": {"message": "no body was recorded for this call", "type": "body_not_recorded"}}),
+        ),
+    )
+}
+
+pub(crate) fn body_response(row: &aigw_core::models::McpCallBodyRow) -> Value {
+    json!({
+        "call_id": row.call_id,
+        "request": row.request_body,
+        "response": row.response_body,
+        "truncated": row.truncated,
+    })
 }
 
 pub async fn list_mcp_calls(
@@ -1529,6 +1640,73 @@ pub async fn list_mcp_calls(
         query.user_id,
     )?;
     call_log_response(&state, &filter, query.page, query.page_size).await
+}
+
+/// `GET /admin/mcp/rejections` — who was turned away, and from where.
+///
+/// Admin only for the same reason the table is admin only: a rejection has no
+/// identity attached, so there is nothing to scope a user's view by, and the
+/// rows name client IPs.
+pub async fn list_mcp_rejections(
+    State(state): State<SharedState>,
+    SpendAuth(auth): SpendAuth,
+    Query(query): Query<McpRejectionQuery>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    require_admin(&auth)?;
+    let page = query.page.unwrap_or(1).max(1);
+    let page_size = query.page_size.unwrap_or(30).clamp(1, 100);
+    let filter = rejection_filter(query.reason, query.from, query.to)?;
+    let offset = (page as i64 - 1) * page_size as i64;
+
+    let (rows, total_count) = tokio::try_join!(
+        state
+            .db
+            .list_mcp_rejections(&filter, page_size as i64, offset),
+        state.db.count_mcp_rejections(&filter),
+    )
+    .map_err(db_error)?;
+
+    let total_pages = if total_count > 0 {
+        ((total_count as f64) / (page_size as f64)).ceil() as i64
+    } else {
+        0
+    };
+
+    Ok(Json(json!({
+        "object": "list",
+        "data": rows,
+        "count": rows.len(),
+        "total_count": total_count,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": total_pages,
+    })))
+}
+
+/// Unknown `reason` values are passed through rather than rejected: a typo then
+/// returns an empty page, which is visible, instead of a 400 that hides whether
+/// the table has data at all.
+fn rejection_filter(
+    reason: Option<String>,
+    from: Option<String>,
+    to: Option<String>,
+) -> Result<McpRejectionFilter, (StatusCode, Json<Value>)> {
+    let text = |value: Option<String>| {
+        value
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    };
+    let bound = |value: Option<String>, field: &str| -> Result<Option<String>, _> {
+        match text(value) {
+            Some(raw) => call_time_bound(&raw, field).map(Some),
+            None => Ok(None),
+        }
+    };
+    Ok(McpRejectionFilter {
+        reason: text(reason),
+        from: bound(from, "from")?,
+        to: bound(to, "to")?,
+    })
 }
 
 #[cfg(test)]
@@ -1566,6 +1744,7 @@ mod tests {
             token_provider: Arc::new(aigw_core::claude_token::TokenProvider::new()),
             web_search: aigw_core::websearch::WebSearchHandle::disabled(),
             mcp_disable_rest: false,
+            mcp_log_retention: Default::default(),
             metrics: None,
         })
     }
@@ -1608,6 +1787,8 @@ mod tests {
                 get(get_mcp_allowlist).put(put_mcp_allowlist),
             )
             .route("/admin/mcp/calls", get(list_mcp_calls))
+            .route("/admin/mcp/calls/{call_id}/body", get(get_mcp_call_body))
+            .route("/admin/mcp/rejections", get(list_mcp_rejections))
             .route("/admin/mcp/reload", post(reload_mcp))
             .route("/admin/mcp/reload/latest", get(reload_latest))
             .route("/admin/mcp/reload/{run_id}", get(reload_status))
@@ -1708,11 +1889,15 @@ mod tests {
     }
 
     async fn insert_user(state: &SharedState, user_id: &str) {
+        insert_user_named(state, user_id, None).await;
+    }
+
+    async fn insert_user_named(state: &SharedState, user_id: &str, alias: Option<&str>) {
         state
             .db
             .insert_user(&aigw_core::models::User {
                 user_id: user_id.to_string(),
-                user_alias: None,
+                user_alias: alias.map(str::to_string),
                 team_id: None,
                 sso_user_id: None,
                 organization_id: None,
@@ -3317,6 +3502,114 @@ mod tests {
     // ── call log ───────────────────────────────────────────────────────
 
     async fn record_call(state: &SharedState, alias: &str, tool: &str, status: &str) {
+        insert_call(state, alias, tool, status, Some("*master*"), None).await;
+    }
+
+    async fn record_call_for(
+        state: &SharedState,
+        alias: &str,
+        key_id: Option<&str>,
+        user_id: Option<&str>,
+    ) {
+        insert_call(state, alias, "search", "success", key_id, user_id).await;
+    }
+
+    async fn insert_rejection(
+        state: &SharedState,
+        reason: &str,
+        created_at: &str,
+        ip: Option<&str>,
+    ) {
+        state
+            .db
+            .insert_mcp_rejection(&aigw_core::models::McpAuthRejectionRow {
+                id: uuid::Uuid::new_v4().to_string(),
+                created_at: created_at.to_string(),
+                path: "/mcp/demo".to_string(),
+                http_method: "POST".to_string(),
+                reason: reason.to_string(),
+                token_hash: None,
+                client_ip: ip.map(str::to_string),
+                user_agent: Some("probe/1.0".to_string()),
+            })
+            .await
+            .expect("insert rejection");
+    }
+
+    #[tokio::test]
+    async fn the_rejection_envelope_matches_the_call_log_contract() {
+        let state = test_state().await;
+        let app = build_router(state.clone());
+        let now = chrono::Utc::now().to_rfc3339();
+        insert_rejection(&state, "missing_header", &now, Some("203.0.113.9")).await;
+
+        let (s, body) = send(&app, Method::GET, "/admin/mcp/rejections", MK, None).await;
+        assert_eq!(s, 200, "{body}");
+        assert_eq!(body["object"], json!("list"));
+        assert_eq!(body["total_count"], json!(1));
+        assert_eq!(body["page"], json!(1));
+        assert_eq!(body["page_size"], json!(30));
+        assert_eq!(body["data"][0]["reason"], json!("missing_header"));
+        assert_eq!(body["data"][0]["client_ip"], json!("203.0.113.9"));
+    }
+
+    #[tokio::test]
+    async fn the_rejection_list_filters_by_reason() {
+        let state = test_state().await;
+        let app = build_router(state.clone());
+        let now = chrono::Utc::now().to_rfc3339();
+        insert_rejection(&state, "missing_header", &now, None).await;
+        insert_rejection(&state, "invalid_key", &now, None).await;
+
+        let (s, body) = send(
+            &app,
+            Method::GET,
+            "/admin/mcp/rejections?reason=invalid_key",
+            MK,
+            None,
+        )
+        .await;
+        assert_eq!(s, 200, "{body}");
+        assert_eq!(body["total_count"], json!(1));
+        assert_eq!(body["data"][0]["reason"], json!("invalid_key"));
+    }
+
+    /// A rejection has no identity, so there is nothing to scope a non-admin
+    /// view by — and the rows name client IPs.
+    #[tokio::test]
+    async fn the_rejection_list_is_admin_only() {
+        let state = test_state().await;
+        let app = build_router(state.clone());
+        let raw = insert_key_without_admin(&state).await;
+
+        let (s, body) = send(&app, Method::GET, "/admin/mcp/rejections", &raw, None).await;
+        assert_eq!(s, 403, "{body}");
+    }
+
+    #[tokio::test]
+    async fn an_unparseable_rejection_bound_is_a_400() {
+        let state = test_state().await;
+        let app = build_router(state.clone());
+
+        let (s, body) = send(
+            &app,
+            Method::GET,
+            "/admin/mcp/rejections?from=yesterday",
+            MK,
+            None,
+        )
+        .await;
+        assert_eq!(s, 400, "{body}");
+    }
+
+    async fn insert_call(
+        state: &SharedState,
+        alias: &str,
+        tool: &str,
+        status: &str,
+        key_id: Option<&str>,
+        user_id: Option<&str>,
+    ) {
         state
             .db
             .insert_mcp_call_log(&aigw_core::models::McpCallLogRow {
@@ -3324,8 +3617,8 @@ mod tests {
                 server_alias: alias.to_string(),
                 tool_name: Some(tool.to_string()),
                 method: "tools/call".to_string(),
-                key_id: Some("*master*".to_string()),
-                user_id: None,
+                key_id: key_id.map(str::to_string),
+                user_id: user_id.map(str::to_string),
                 token_owner: "anonymous".to_string(),
                 status: status.to_string(),
                 error_code: None,
@@ -3436,6 +3729,55 @@ mod tests {
             "the dialog's `error` means the stored `failed`: {body}"
         );
         assert_eq!(body["data"][0]["tool_name"], json!("bad-tool"));
+    }
+
+    #[tokio::test]
+    async fn the_call_log_carries_display_names_alongside_the_ids() {
+        let state = test_state().await;
+        let app = build_router(state.clone());
+        let raw = insert_key_without_admin(&state).await;
+        let key_id = aigw_core::crypto::hash_token(&raw);
+        insert_user_named(&state, "user-1", Some("Alice")).await;
+        record_call_for(&state, "alpha", Some(&key_id), Some("user-1")).await;
+
+        let (s, body) = send(&app, Method::GET, "/admin/mcp/calls", MK, None).await;
+        assert_eq!(s, 200, "{body}");
+        let row = &body["data"][0];
+        assert_eq!(row["key_name"], json!("plain-user"));
+        assert_eq!(row["user_name"], json!("Alice"));
+        assert_eq!(
+            row["key_id"],
+            json!(key_id),
+            "the id stays: it is the audit fact, the name is only a label"
+        );
+        assert_eq!(row["user_id"], json!("user-1"));
+    }
+
+    #[tokio::test]
+    async fn an_unknown_key_still_returns_its_row_with_a_null_name() {
+        let state = test_state().await;
+        let app = build_router(state.clone());
+        record_call_for(&state, "alpha", Some("hash-that-no-longer-exists"), None).await;
+
+        let (s, body) = send(&app, Method::GET, "/admin/mcp/calls", MK, None).await;
+        assert_eq!(s, 200, "{body}");
+        assert_eq!(
+            body["count"],
+            json!(1),
+            "a label failure must not drop a row"
+        );
+        assert_eq!(body["data"][0]["key_name"], Value::Null);
+        assert_eq!(body["data"][0]["user_name"], Value::Null);
+    }
+
+    #[tokio::test]
+    async fn the_master_key_is_named_never_looked_up() {
+        let state = test_state().await;
+        let app = build_router(state.clone());
+        record_call(&state, "alpha", "search", "success").await;
+
+        let (_, body) = send(&app, Method::GET, "/admin/mcp/calls", MK, None).await;
+        assert_eq!(body["data"][0]["key_name"], json!("master"));
     }
 
     #[tokio::test]
@@ -3663,6 +4005,74 @@ mod tests {
             "the count must carry the same user predicate as the list: {body}"
         );
         assert_eq!(body["total_pages"], 2);
+    }
+
+    // ── call bodies (Stage 152) ────────────────────────────────────────
+
+    async fn insert_body(state: &SharedState, call_id: &str, truncated: bool) {
+        state
+            .db
+            .insert_mcp_call_body(&aigw_core::models::McpCallBodyRow {
+                call_id: call_id.to_string(),
+                request_body: Some(r#"{"jsonrpc":"2.0","id":1}"#.to_string()),
+                response_body: Some(r#"{"result":{}}"#.to_string()),
+                truncated,
+                created_at: chrono::Utc::now().to_rfc3339(),
+            })
+            .await
+            .expect("insert call body");
+    }
+
+    #[tokio::test]
+    async fn a_recorded_body_is_served_under_its_call_id() {
+        let state = test_state().await;
+        let app = build_router(state.clone());
+        insert_body(&state, "call-1", false).await;
+
+        let (s, body) = send(&app, Method::GET, "/admin/mcp/calls/call-1/body", MK, None).await;
+        assert_eq!(s, 200, "{body}");
+        assert_eq!(body["call_id"], "call-1");
+        assert_eq!(body["request"], r#"{"jsonrpc":"2.0","id":1}"#);
+        assert_eq!(body["response"], r#"{"result":{}}"#);
+        assert_eq!(body["truncated"], false);
+    }
+
+    #[tokio::test]
+    async fn a_call_without_a_body_is_a_404_that_says_so() {
+        let state = test_state().await;
+        let app = build_router(state.clone());
+
+        let (s, body) = send(
+            &app,
+            Method::GET,
+            "/admin/mcp/calls/never-recorded/body",
+            MK,
+            None,
+        )
+        .await;
+        assert_eq!(s, 404, "{body}");
+        assert_eq!(
+            body["error"]["type"], "body_not_recorded",
+            "the caller must be able to tell policy from a bad id: {body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_non_admin_cannot_read_a_call_body() {
+        let state = test_state().await;
+        let app = build_router(state.clone());
+        insert_body(&state, "call-2", true).await;
+        let raw = insert_key_without_admin(&state).await;
+
+        let (s, body) = send(
+            &app,
+            Method::GET,
+            "/admin/mcp/calls/call-2/body",
+            &raw,
+            None,
+        )
+        .await;
+        assert_eq!(s, 403, "{body}");
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

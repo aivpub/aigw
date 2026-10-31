@@ -83,6 +83,7 @@ impl TestWorld {
                     ),
                     web_search: aigw_core::websearch::WebSearchHandle::disabled(),
                     mcp_disable_rest: false,
+                    mcp_log_retention: Default::default(),
                     metrics: None,
                 });
             self.master_key = mk;

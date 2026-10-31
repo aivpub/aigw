@@ -64,6 +64,27 @@ pub fn split_prefixed(name: &str) -> Option<(&str, &str)> {
     (!alias.is_empty() && !tool.is_empty()).then_some((alias, tool))
 }
 
+/// The one `token_owner` an aggregate request can report.
+///
+/// `anonymous` when no upstream was contacted at all (no credential left the
+/// gateway — that statement is true). Otherwise the shared value, or `mixed`
+/// when they disagree: picking the weakest would call a mostly-credentialed
+/// fan-out anonymous, and picking the strongest would claim credentials that
+/// never left, so neither can be derived from the others.
+pub fn merge_owners(owners: &[&str]) -> &'static str {
+    let Some((first, rest)) = owners.split_first() else {
+        return "anonymous";
+    };
+    if rest.iter().all(|o| o == first) {
+        return match *first {
+            "server" => "server",
+            "user" => "user",
+            _ => "anonymous",
+        };
+    }
+    "mixed"
+}
+
 /// Merge every server's tools into one deterministically ordered list.
 ///
 /// A name that still collides after prefixing is flagged on every colliding
@@ -298,5 +319,34 @@ mod tests {
         annotated.annotations = Some(json!({"readOnlyHint": true}));
         let merged = merge([("a".to_string(), vec![annotated])]);
         assert_eq!(merged[0].to_wire()["annotations"]["readOnlyHint"], true);
+    }
+
+    #[test]
+    fn no_upstream_contacted_reports_anonymous() {
+        assert_eq!(merge_owners(&[]), "anonymous");
+    }
+
+    #[test]
+    fn a_uniform_fan_out_reports_the_shared_value() {
+        assert_eq!(merge_owners(&["server", "server", "server"]), "server");
+        assert_eq!(merge_owners(&["user"]), "user");
+        assert_eq!(merge_owners(&["anonymous", "anonymous"]), "anonymous");
+    }
+
+    #[test]
+    fn disagreeing_owners_report_mixed_rather_than_a_direction() {
+        assert_eq!(merge_owners(&["server", "anonymous"]), "mixed");
+        assert_eq!(merge_owners(&["user", "server", "user"]), "mixed");
+    }
+
+    #[test]
+    fn page_restarts_from_zero_when_no_cursor_is_given() {
+        let entries = merge([source("a", &["1", "2", "3"])]);
+        let first = page(&entries, None, 2);
+        assert_eq!(first.entries.len(), 2);
+        assert_eq!(first.next_cursor.as_deref(), Some("2"));
+        let second = page(&entries, first.next_cursor.as_deref(), 2);
+        assert_eq!(second.entries.len(), 1);
+        assert_eq!(second.next_cursor, None);
     }
 }

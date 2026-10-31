@@ -150,6 +150,7 @@ async fn given_db_ready_with_master_key(world: &mut TestWorld) {
             token_provider: std::sync::Arc::new(aigw_core::claude_token::TokenProvider::new()),
             web_search: aigw_core::websearch::WebSearchHandle::disabled(),
             mcp_disable_rest: false,
+            mcp_log_retention: Default::default(),
             metrics: None,
         });
     world.master_key = "sk-master-test".to_string();

@@ -271,6 +271,8 @@ let lastMcpMyTokenPutBody: Record<string, unknown> = {};
 let lastMcpServerBody: Record<string, unknown> = {};
 let lastMcpCallsQuery: URLSearchParams | null = null;
 let lastMcpCallsPath: string | null = null;
+let lastMcpRejectionsQuery: URLSearchParams | null = null;
+let lastMcpBodyPath: string | null = null;
 
 /** The reload sweep this scenario started, or `null` before the first click. */
 let mcpReloadRun: { run_id: string; startedAt: number } | null = null;
@@ -374,6 +376,8 @@ export function resetMcpMockStore() {
   lastMcpServerBody = {};
   lastMcpCallsQuery = null;
   lastMcpCallsPath = null;
+  lastMcpRejectionsQuery = null;
+  lastMcpBodyPath = null;
   mcpReloadRun = null;
   mcpReloadHiddenFromLatest = false;
 }
@@ -414,6 +418,11 @@ export function getLastMcpCallsQuery(): URLSearchParams | null {
 /** Path of the last call-log request — proves which identity-scoped endpoint ran. */
 export function getLastMcpCallsPath(): string | null {
   return lastMcpCallsPath;
+}
+
+/** Query string of the last `/admin/mcp/rejections` request (Stage 150). */
+export function getLastMcpRejectionsQuery(): URLSearchParams | null {
+  return lastMcpRejectionsQuery;
 }
 
 /** Plaintext the seeded tokens "contain" — the BDD scenario greps the page for it. */
@@ -475,7 +484,9 @@ const MCP_CALL_ROWS = [
     tool_name: "github__search",
     method: "tools/call",
     key_id: "hash-abc",
+    key_name: "agent-ops",
     user_id: "default_user_id",
+    user_name: "Demo User",
     token_owner: "user",
     status: "success",
     error_code: null,
@@ -490,7 +501,9 @@ const MCP_CALL_ROWS = [
     tool_name: "github__get_issue",
     method: "tools/call",
     key_id: "hash-abc",
+    key_name: "agent-ops",
     user_id: null,
+    user_name: null,
     token_owner: "anonymous",
     status: "failed",
     error_code: "-32603",
@@ -505,7 +518,9 @@ const MCP_CALL_ROWS = [
     tool_name: "hr-portal__search",
     method: "tools/call",
     key_id: "hash-def",
+    key_name: null,
     user_id: "user-2",
+    user_name: "Bob",
     token_owner: "server",
     status: "success",
     error_code: null,
@@ -515,6 +530,25 @@ const MCP_CALL_ROWS = [
     created_at: "2026-10-28T09:58:11Z",
   },
   {
+    // An aggregate listing that reached some upstreams with a credential and
+    // some without: neither `server` nor `anonymous` describes it.
+    call_id: "0192f0c4-0000-7000-8000-000000000005",
+    server_alias: "*aggregate*",
+    tool_name: null,
+    method: "tools/list",
+    key_id: "hash-abc",
+    key_name: "agent-ops",
+    user_id: "default_user_id",
+    user_name: "Demo User",
+    token_owner: "mixed",
+    status: "success",
+    error_code: null,
+    latency_ms: 812,
+    request_bytes: 41,
+    response_bytes: 20480,
+    created_at: "2026-10-28T09:56:00Z",
+  },
+  {
     // Owned by the identity `API endpoints are mocked for a non-admin user`
     // signs in as, so the user-scoped endpoint has exactly one row to show.
     call_id: "0192f0c4-0000-7000-8000-000000000004",
@@ -522,7 +556,9 @@ const MCP_CALL_ROWS = [
     tool_name: "internal-wiki__read",
     method: "tools/call",
     key_id: "hash-ghi",
+    key_name: "fresh-key",
     user_id: "fresh_user",
+    user_name: null,
     token_owner: "user",
     status: "success",
     error_code: null,
@@ -533,6 +569,28 @@ const MCP_CALL_ROWS = [
   },
 ];
 
+/** Call bodies (Stage 152). One call has a full body, one is over the limit, and
+ *  the rest have none — which is what makes the three viewer states testable. */
+const MCP_CALL_BODIES: Record<string, { request: string; response: string; truncated: boolean }> =
+  {
+    "0192f0c4-0000-7000-8000-000000000001": {
+      request: '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"search"}}',
+      response: '{"result":{"content":[{"type":"text","text":"3 issues found"}]}}',
+      truncated: false,
+    },
+    "0192f0c4-0000-7000-8000-000000000002": {
+      request: '{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"get_issue"}}',
+      response: '{"error":{"code":-32603,"message":"MCP error -32603: upstream timed out"}}',
+      truncated: true,
+    },
+  };
+
+/** Path of the last body request — proves the viewer used `/admin` for an admin
+ *  and `/v1` for everyone else, rather than one endpoint for both. */
+export function getLastMcpBodyPath(): string | null {
+  return lastMcpBodyPath;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function myTokenWire(token: any) {
   return {
@@ -540,6 +598,63 @@ function myTokenWire(token: any) {
     is_default: Boolean(token.is_default),
     expires_at: token.expires_at ?? null,
     updated_at: token.updated_at ?? new Date().toISOString(),
+  };
+}
+
+/** Rejected-before-upstream rows (Stage 150). The hashes are truncated on
+ *  purpose — the page shows a prefix and the full value in a tooltip, so a
+ *  seed that is short enough to fit would prove neither. */
+const MCP_REJECTION_ROWS = [
+  {
+    id: "0192f0c4-0000-7000-8000-0000000000a1",
+    created_at: "2026-10-28T10:00:05Z",
+    path: "/mcp",
+    http_method: "POST",
+    reason: "missing_header",
+    token_hash: null,
+    client_ip: "203.0.113.9",
+    user_agent: "curl/8.4.0",
+  },
+  {
+    id: "0192f0c4-0000-7000-8000-0000000000a2",
+    created_at: "2026-10-28T10:00:06Z",
+    path: "/mcp-rest/tools/call",
+    http_method: "POST",
+    reason: "invalid_key",
+    token_hash: "9f2c1d8e4b7a5036c9d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3",
+    client_ip: "198.51.100.23",
+    user_agent: "python-httpx/0.27.0",
+  },
+  {
+    id: "0192f0c4-0000-7000-8000-0000000000a3",
+    created_at: "2026-10-28T10:00:07Z",
+    path: "/mcp",
+    http_method: "GET",
+    reason: "invalid_format",
+    token_hash: "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f809",
+    client_ip: null,
+    user_agent: null,
+  },
+];
+
+/**
+ * Filters the rejection list the way the server does. An unknown `reason` is
+ * passed through by the backend, so it must yield an empty page here too —
+ * a mock that ignored the filter would let a broken filter pass.
+ */
+function mcpRejectionsResponse(params: URLSearchParams) {
+  const reason = params.get("reason");
+  const rows = reason ? MCP_REJECTION_ROWS.filter((r) => r.reason === reason) : MCP_REJECTION_ROWS;
+  const page = Number(params.get("page") ?? 1);
+  const pageSize = Number(params.get("page_size") ?? 30);
+  return {
+    object: "list",
+    data: rows,
+    count: rows.length,
+    total_count: rows.length,
+    page,
+    page_size: pageSize,
+    total_pages: rows.length === 0 ? 0 : 1,
   };
 }
 
@@ -1626,6 +1741,26 @@ export async function defineMockRoutes(route: Route, request: Request) {
     lastMcpCallsQuery = url.searchParams;
     lastMcpCallsPath = url.pathname;
     return route.fulfill({ status: 200, json: mcpCallsResponse(url.searchParams, false) });
+  }
+
+  // ── MCP call body (Stage 152) ──
+  const bodyMatch = url.pathname.match(/^\/(admin|v1)\/mcp\/calls\/([^/]+)\/body$/);
+  if (bodyMatch && route.request().method() === "GET") {
+    lastMcpBodyPath = url.pathname;
+    const body = MCP_CALL_BODIES[bodyMatch[2]];
+    if (!body) {
+      return route.fulfill({
+        status: 404,
+        json: { error: { message: "no body was recorded for this call", type: "body_not_recorded" } },
+      });
+    }
+    return route.fulfill({ status: 200, json: { call_id: bodyMatch[2], ...body } });
+  }
+
+  // ── MCP auth rejections (Stage 150, admin only) ──
+  if (url.pathname === "/admin/mcp/rejections" && route.request().method() === "GET") {
+    lastMcpRejectionsQuery = url.searchParams;
+    return route.fulfill({ status: 200, json: mcpRejectionsResponse(url.searchParams) });
   }
 
   // ── MCP debug endpoints (Stage 143 §3.4: both are POST) ──

@@ -1,6 +1,7 @@
 import { createBdd } from "playwright-bdd";
 import { expect, type Page } from "@playwright/test";
 import {
+  getLastMcpBodyPath,
   getLastMcpCallsPath,
   getLastMcpCallsQuery,
   getLastMcpMyTokenPutBody,
@@ -24,6 +25,14 @@ function toolRow(page: Page, tool: string) {
 /** The call log swaps a table for cards below `md`; assertions must not care which. */
 function callRows(page: Page) {
   return page.locator('[data-testid="mcp-call-row"]:visible, [data-testid="mcp-call-card"]:visible');
+}
+
+/** `field` names which column the string lives in, for readability only: the
+ *  row text carries both the alias and the tool, and the values used are unique
+ *  across the fixture. */
+function callRowFor(page: Page, field: string, value: string) {
+  void field;
+  return callRows(page).filter({ hasText: value }).first();
 }
 
 Then("the MCP tab {string} is visible", async ({ page }, tab: string) => {
@@ -226,6 +235,40 @@ Then("the MCP call detail lists the call id and byte counts", async ({ page }) =
   await expect(detail).toContainText("1536");
 });
 
+/** Opening a row is what fetches its body: the viewer is per-selection, so the
+ *  assertion has to come after `I open the first MCP call row`. */
+Then("the MCP call detail shows the recorded request body", async ({ page }) => {
+  await expect(page.getByTestId("mcp-call-body-request")).toContainText("tools/call", {
+    timeout: 8000,
+  });
+});
+
+When("I switch the call body to the response", async ({ page }) => {
+  await page.getByRole("tab", { name: "Response" }).click();
+});
+
+Then("the MCP call detail shows the recorded response body", async ({ page }) => {
+  await expect(page.getByTestId("mcp-call-body-response")).toContainText("issues found", {
+    timeout: 8000,
+  });
+});
+
+Then("the MCP call detail says the body was truncated", async ({ page }) => {
+  await expect(page.getByTestId("mcp-call-body-truncated")).toBeVisible({ timeout: 8000 });
+});
+
+Then("the MCP call detail says no body was recorded", async ({ page }) => {
+  await expect(page.getByTestId("mcp-call-body-missing")).toBeVisible({ timeout: 8000 });
+  await expect(page.getByTestId("mcp-call-body-request")).toHaveCount(0);
+});
+
+Then("the call body was requested from the admin endpoint", async ({ page }) => {
+  void page;
+  await expect
+    .poll(() => getLastMcpBodyPath(), { timeout: 8000 })
+    .toMatch(/^\/admin\/mcp\/calls\/.*\/body$/);
+});
+
 /** The desktop table and the mobile card both render the user cell; at any one
  *  viewport only one of them is visible, so assertions must not count the other. */
 function userCells(page: Page) {
@@ -248,6 +291,45 @@ Then("the unbound-user call row shows {string} in the user column", async ({ pag
 Then("the MCP call log has no user column", async ({ page }) => {
   await expect(page.locator('[data-testid="mcp-call-user"]')).toHaveCount(0);
 });
+
+Then(
+  "the MCP call row for {word} {string} shows the user name {string}",
+  async ({ page }, field: string, value: string, name: string) => {
+    await expect(callRowFor(page, field, value).getByTestId("mcp-call-user")).toContainText(name);
+  },
+);
+
+/** The table row at desktop width, the card below `md`; only one renders, so the
+ *  cell is located through whichever contains it rather than through the row. */
+function userCell(page: Page) {
+  return page.locator('[data-testid="mcp-call-user"]:visible').first();
+}
+
+Then(
+  "hovering the MCP call user name reveals {string}",
+  async ({ page }, raw: string) => {
+    await userCell(page).locator("span").first().hover();
+    await expect(page.getByRole("tooltip").filter({ hasText: raw })).toBeVisible({
+      timeout: 5000,
+    });
+  },
+);
+
+When("I open the MCP call row for {word} {string}", async ({ page }, field: string, value: string) => {
+  await callRowFor(page, field, value).click();
+  await expect(page.getByTestId("mcp-call-detail")).toBeVisible({ timeout: 5000 });
+});
+
+Then("the MCP call detail lists the key id {string}", async ({ page }, keyId: string) => {
+  await expect(page.getByTestId("mcp-call-detail")).toContainText(keyId);
+});
+
+Then(
+  "the MCP call row for {word} {string} carries the owner badge {string}",
+  async ({ page }, field: string, value: string, label: string) => {
+    await expect(callRowFor(page, field, value).getByTestId("mcp-call-owner")).toHaveText(label);
+  },
+);
 
 Then("the MCP call log only carries the signed-in user's rows", async ({ page }) => {
   await expect(callRows(page)).toHaveCount(1, { timeout: 8000 });

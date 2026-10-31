@@ -2,6 +2,7 @@
 
 use crate::body_archive::config::BodyArchiveConfig;
 use crate::otel_tracing::OtelConfig;
+use crate::retention::McpLogRetentionConfig;
 use crate::websearch::config::WebSearchConfig;
 use serde::{Deserialize, Serialize};
 
@@ -63,6 +64,13 @@ pub struct AigwConfig {
     /// Built-in web search (Phase 53). Absent → disabled, zero behaviour change.
     #[serde(rename = "web_search", skip_serializing_if = "Option::is_none")]
     pub web_search: Option<WebSearchConfig>,
+
+    /// How long `mcp_call_log` and `mcp_auth_rejection` are kept (Stage 150).
+    /// Unset → the worker still runs with 90 / 30 days: a table with no owner
+    /// grows without bound, and "nobody configured it" is the normal state of a
+    /// fresh deployment. A window of `0` means never delete that table.
+    #[serde(rename = "mcp_log_retention", skip_serializing_if = "Option::is_none")]
+    pub mcp_log_retention: Option<McpLogRetentionConfig>,
 }
 
 /// Response cache configuration (Stage 119 §3.5).

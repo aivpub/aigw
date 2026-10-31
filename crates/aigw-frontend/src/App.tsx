@@ -15,7 +15,8 @@ import { UsersPage } from "@/pages/users";
 import { OrgsPage } from "@/pages/orgs";
 import { TeamsPage } from "@/pages/teams";
 import { SpendLogsPage } from "@/pages/spend-logs";
-import { PlaygroundPage } from "@/pages/playground";
+import { PlaygroundPage, PlaygroundIndexRedirect, PlaygroundMcpPanel } from "@/pages/playground";
+import { ChatPanel } from "@/pages/playground/ChatPanel";
 import { RouterSettingsPage } from "@/pages/router-settings";
 import { JobsPage } from "@/pages/jobs";
 import { JobDetailPage } from "@/pages/jobs/job-detail";
@@ -24,6 +25,10 @@ import { BudgetsPage } from "@/pages/budgets";
 import { ProxiesPage } from "@/pages/proxies";
 import { WebSearchPage } from "@/pages/websearch";
 import { McpPage } from "@/pages/mcp";
+import { ServersTab } from "@/pages/mcp/ServersTab";
+import { MyCredentialsTab } from "@/pages/mcp/MyCredentialsTab";
+import { CallLogTab } from "@/pages/mcp/CallLogTab";
+import { RejectionsTab } from "@/pages/mcp/RejectionsTab";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth();
@@ -75,7 +80,11 @@ export default function App() {
             <Route path="orgs" element={<OrgsPage />} />
             <Route path="teams" element={<TeamsPage />} />
             <Route path="spend-logs" element={<SpendLogsPage />} />
-            <Route path="playground" element={<PlaygroundPage />} />
+            <Route path="playground" element={<PlaygroundPage />}>
+              <Route index element={<PlaygroundIndexRedirect />} />
+              <Route path="chat" element={<ChatPanel />} />
+              <Route path="mcp" element={<PlaygroundMcpPanel />} />
+            </Route>
             <Route path="router-settings" element={<RouterSettingsPage />} />
             <Route path="jobs" element={<JobsPage />} />
             <Route
@@ -89,7 +98,12 @@ export default function App() {
             <Route path="budgets" element={<BudgetsPage />} />
             <Route path="proxies" element={<ProxiesPage />} />
             <Route path="websearch" element={<WebSearchPage />} />
-            <Route path="mcp" element={<McpPage />} />
+            <Route path="mcp" element={<McpPage />}>
+              <Route path="servers" element={<ServersTab />} />
+              <Route path="mine" element={<MyCredentialsTab />} />
+              <Route path="calls" element={<CallLogTab />} />
+              <Route path="rejections" element={<RejectionsTab />} />
+            </Route>
           </Route>
 
           {/* Catch-all: authenticated pages redirect to /dash; unauthenticated to login */}

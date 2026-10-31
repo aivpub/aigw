@@ -143,3 +143,25 @@ Feature: Playground Chat
   Scenario: The MCP tab has no horizontal page scroll on every viewport
     When I open the playground MCP tab
     Then the MCP tab has no horizontal overflow
+
+  # ── Stage 151: the chat/mcp tabs are page routes ──
+
+  Scenario: The bare playground path lands on the chat tab
+    Then the browser is at "/dash/playground/chat"
+
+  Scenario: The MCP tab has its own address and survives a reload
+    When I open the playground MCP tab
+    Then the browser is at "/dash/playground/mcp"
+    When I reload the playground page
+    Then the browser is still at "/dash/playground/mcp"
+    And the MCP server selector is visible
+
+  Scenario: Switching back to chat keeps the conversation
+    When I select model "gpt-4" from the settings panel
+    And I type "Hello" into the chat input
+    And I click the Send button
+    Then I should see a chat response message
+    When I open the playground MCP tab
+    And I click the playground chat tab
+    Then I should see a chat response message
+    And the browser is at "/dash/playground/chat"

@@ -10,6 +10,16 @@ Feature: MCP My Credentials
     And the MCP tab "servers" is not visible
     And the my credentials table lists every visible server
 
+  # ── Stage 150: refusals have no identity to scope by, so only an admin sees them ──
+
+  Scenario: A non-admin never sees the rejection tab
+    Then the MCP tab "rejections" is not visible
+
+  Scenario: A non-admin deep link to an admin-only tab lands somewhere they can read
+    When I open the URL "/dash/mcp/rejections"
+    Then the browser is at "/dash/mcp/mine"
+    And the MCP tab "rejections" is not visible
+
   Scenario: A user_required server without a token is flagged as blocking
     Then the my credentials row "hr-portal" is flagged as blocking
     And the my credentials row "hr-portal" explains the tools are unavailable

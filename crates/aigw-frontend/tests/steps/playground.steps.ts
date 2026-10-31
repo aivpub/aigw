@@ -486,3 +486,14 @@ Then("the MCP tab has no horizontal overflow", async ({ page }) => {
   });
   expect(overflow).toBeLessThanOrEqual(0);
 });
+
+// ── Stage 151: the tabs are page routes ──
+
+Then("the MCP server selector is visible", async ({ page }) => {
+  await expect(page.getByTestId("playground-mcp-server")).toBeVisible({ timeout: 8000 });
+});
+
+When("I click the playground chat tab", async ({ page }) => {
+  await page.getByTestId("playground-tab-chat").click();
+  await page.waitForTimeout(500);
+});

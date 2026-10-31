@@ -45,6 +45,7 @@ pub mod provider;
 pub mod rate_limiter;
 pub mod request_id;
 pub mod resolver;
+pub mod retention;
 pub mod router;
 pub mod tenant;
 pub mod websearch;

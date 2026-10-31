@@ -11,6 +11,7 @@
 
 pub mod acl;
 pub mod alias;
+pub mod body;
 pub mod catalog;
 pub mod catalog_cache;
 pub mod credential;

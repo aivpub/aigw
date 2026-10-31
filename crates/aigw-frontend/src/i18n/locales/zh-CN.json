@@ -1373,7 +1373,8 @@
     "tabs": {
       "servers": "Server 管理",
       "mine": "我的凭据",
-      "calls": "调用日志"
+      "calls": "调用日志",
+      "rejections": "认证拒绝"
     },
     "newServer": "新建 Server",
     "reloadAll": "全部重新探测",
@@ -1587,7 +1588,8 @@
       "owner": {
         "server": "Server",
         "user": "用户",
-        "anonymous": "匿名"
+        "anonymous": "匿名",
+        "mixed": "混合"
       },
       "ownerLabel": "身份",
       "status": "状态",
@@ -1595,7 +1597,7 @@
       "time": "时间",
       "user": "用户",
       "unboundUser": "未绑定",
-      "keyId": "Key",
+      "key": "Key",
       "errorCode": "错误码",
       "requestBytes": "请求字节",
       "responseBytes": "响应字节",
@@ -1609,6 +1611,30 @@
         "7d": "7 天",
         "30d": "30 天",
         "custom": "自定义"
+      },
+      "body": {
+        "request": "请求",
+        "response": "响应",
+        "notRecorded": "这次调用没有保存 body。",
+        "failed": "加载 body 失败。",
+        "truncated": "已截断：body 超过大小上限，只保留了前缀。",
+        "empty": "（空）"
+      }
+    },
+    "rejections": {
+      "title": "认证拒绝日志",
+      "subtitle": "未到达任何上游就被拒绝的请求；token 只以哈希形式留存。",
+      "time": "时间",
+      "request": "请求",
+      "reasonLabel": "原因",
+      "clientIp": "客户端 IP",
+      "tokenHash": "Token 哈希",
+      "userAgent": "User agent",
+      "empty": "当前筛选下没有被拒绝的请求。",
+      "reason": {
+        "missingHeader": "缺少认证头",
+        "invalidFormat": "格式无效",
+        "invalidKey": "Key 无效"
       }
     },
     "deleteDialog": {
