@@ -1594,7 +1594,7 @@
       "latency": "Latency",
       "time": "Time",
       "user": "User",
-      "anonymousUser": "Anonymous",
+      "unboundUser": "Not bound",
       "keyId": "Key",
       "errorCode": "Error code",
       "requestBytes": "Request bytes",

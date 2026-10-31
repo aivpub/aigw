@@ -39,7 +39,7 @@
 - `034_mcp_call_log_user_index.sql` × 三方言：`(user_id, created_at)` 索引 —— 用户侧查询恒带 `user_id` 等值 + `created_at` 范围/排序，现有 `idx_mcp_call_log_created_at` / `idx_mcp_call_log_alias_created`（`migrations/sqlite/031_mcp_call_log.sql`）都覆盖不了。
 - 前端 `/dash/mcp` 新增第三个 tab「调用日志」（**两个角色都可见**）：筛选行 = Alias（`Input` + `<datalist>`，精确匹配）+ 工具名（`Input`，后端 `LIKE '%x%'` 子串）+ 时间范围（预设下拉 + 两个 `datetime-local`）+ 状态（`Select`：全部/成功/失败）；表格列 = 时间 / Alias / 工具 / 方法 / 状态 / 耗时 / 身份（server/user/anonymous）/ 大小；`PaginationBar` 带页大小；行点击开 `Sheet` 抽屉展示全部字段（`call_id` / `key_id` / `user_id` / `error_code` / 请求响应字节）。
 - 时间预设与 `datetime-local` 互转的三个帮助函数目前**内联在** `crates/aigw-frontend/src/pages/spend-logs/index.tsx`（`presetRange` :158、`toDatetimeLocalValue` :190、`fromDatetimeLocalValue`）—— 抽到 `crates/aigw-frontend/src/lib/datetime.ts`，两页共用，spend-logs 改为 import（纯搬移，行为不变）。
-- 管理员多一列「用户」（`user_id`，空值显示匿名）；普通用户不显示该列（全是自己）。
+- 管理员多一列「用户」（`user_id`，**空值显示「未绑定」**）；普通用户不显示该列（全是自己）。
 - 删除 `CallLogDialog`，行内「调用日志」按钮改为切到「调用日志」tab 并预填 `server_alias`（单一渲染路径）。同步改写 stage-145 §4.1 #7 的 BDD 场景（`调用日志对话框`）为「行内按钮切到调用日志 tab 且带 alias 过滤」。
 
 **不做**（明确排除）：
@@ -157,7 +157,7 @@ ALTER TABLE mcp_call_log ADD INDEX idx_mcp_call_log_user_created (user_id, creat
 **mock（≥6 场景 × 3 viewport）**，`crates/aigw-frontend/tests/features/mcp.feature` + 新 `mcp-call-log.feature`：
 
 1. 非 admin 进 `/dash/mcp` 能看到「调用日志」tab，切过去只看到自己的行，且**没有「用户」列**。
-2. admin 的表格有「用户」列，空 `user_id` 显示「匿名」。
+2. admin 的表格有「用户」列，空 `user_id` 显示「未绑定」（**不是「匿名」** —— 用户列说的是「这把 key 有没有绑定 `user_id`」，而「匿名」徽章说的是「出站有没有带凭据」，两件事不能共用一个词）。
 3. 时间预设切到 1h / 7d → 断言请求 URL 的 `from` 变化（读 `/v1/mcp/calls` 的 `searchParams`）。
 4. Alias 输入框聚焦后 `<datalist>` 给出注册表中的 alias；选中后请求带 `server_alias=<alias>`。
 5. 工具名输入 `sea` → 请求带 `tool_name=sea`（子串语义由后端负责，前端不做展开）。
@@ -221,7 +221,7 @@ ALTER TABLE mcp_call_log ADD INDEX idx_mcp_call_log_user_created (user_id, creat
 - [x] `en.json` / `zh-CN.json` key 集合一致（`task fe-lint` 内 `check-i18n-keys.sh` 输出 `✅`）
 - [x] 320px 视口无横向滚动 —— 三个 tab 的 `TabsList` 与筛选行实测 `scrollWidth <= clientWidth`
 - [x] 三方言 real BDD 全绿，含 `034` 索引存在且 `user_id` 查询命中断言 —— `bdd-real-{sqlite,postgres,mysql}` 各 **87 scenarios (87 passed) / 490 steps (490 passed)**（`/tmp/p56-evidence/s147-real-{sqlite,postgres,mysql}-r2.log`，EXIT=0）。`mcp_calls_real.feature` 的索引场景读的是 `pg_indexes` / `information_schema.statistics` / `pragma_index_info` 的**列序**（`user_id` 必须前于 `created_at`），MySQL 另加 `FORCE INDEX` 的 `EXPLAIN` 断言
-- [x] `task test` / `task bdd` / `task fmt` / `task lint` / `task doctor` 全绿，证据落盘到 `/tmp` —— 最终树（Stage 148 Gate 4 修正之后）复跑：`task test` **1620 passed / 0 failed**（22 个 test result 块全部 `ok`，`/tmp/p56-evidence/s148-test-final.log`，`FAILED` 行数 0）；其中内嵌的 BDD 半程 **378 scenarios（365 passed / 13 skipped）· 2238 steps（2225 passed / 13 skipped）**；独立 `task bdd` 复跑同数字（`/tmp/p56-evidence/s148-bdd-r2.log`）—— 13 个 skip 全部来自 `body_archive_read.feature`（7 步）与 `body_archive_write.feature`（6 步）的既有缺陷（TD-028，step expr 与 feature 文本不匹配导致 cucumber-rs 静默跳过，非本 Stage 引入）；`task fmt` / `task lint` EXIT=0（`/tmp/p56-evidence/s148-{fmt,lint}-final.log`）、`task doctor` EXIT=0（`/tmp/p56-evidence/s148-doctor-r4.log`）
+- [x] `task test` / `task bdd` / `task fmt` / `task lint` / `task doctor` 全绿，证据落盘到 `/tmp` —— 最终树（Stage 148 Gate 4 修正之后）复跑：`task test` **1620 passed / 0 failed**（22 个 test result 块全部 `ok`，`/tmp/p56-evidence/s148-test-final.log`，`FAILED` 行数 0）；其中内嵌的 BDD 半程 **378 scenarios（365 passed / 13 skipped）· 2238 steps（2225 passed / 13 skipped）**；独立 `task bdd` 复跑同数字（`/tmp/p56-evidence/s148-bdd-r2.log`）—— 13 个 skip 全部来自 `body_archive_read.feature`（7 步）与 `body_archive_write.feature`（6 步）的既有缺陷（TD-028，step expr 与 feature 文本不匹配导致 cucumber-rs 静默跳过，非本 Stage 引入）；`task fmt` / `task lint` EXIT=0（`/tmp/p56-evidence/s148-{fmt,lint}-final.log`）、`task doctor` EXIT=0（`/tmp/p56-evidence/s148-doctor-r4.log`）。**门禁之后又按用户反馈改了用户列的空值措辞**（「匿名」→「未绑定」，key 从 `anonymousUser` 改名 `unboundUser`，见 §8 末条），改动只涉及前端文案与一条 BDD 断言：`task fe-lint` EXIT=0、`task fe-bdd` 复跑 **639 passed / 3 skipped / 0 failed**（`/tmp/s148-anon-accept/febdd-full.log`），后端无改动故 `task test` / `task bdd` 数字不变
 
 ---
 
@@ -229,6 +229,7 @@ ALTER TABLE mcp_call_log ADD INDEX idx_mcp_call_log_user_created (user_id, creat
 
 - **`mcp_call_log` 无界增长** —— 本 Stage 不做保留期/分区/清理。日志越积越多，本 Stage 的索引只是让「按 user + 时间」这一条查询保持可用；数据量到千万级后仍需要归档策略，登记为已知，不在本 Stage 解决。
 - **`user_id` 为 NULL 的行用户侧永远看不到** —— master key 直连、以及未绑定用户的 key 产生的调用，`/v1/mcp/calls` 一律不计入（`user_id = ?` 等值匹配天然排除 NULL），只有 admin 能看到。这是正确的（无主的调用不该归属给某个用户），但意味着「用户说没记录、admin 说有一条」的对话会重复出现，UI 上无法自我解释，因此 §3.2 的 400 语义必须明确。
+- **用户列的空值措辞（stage 收尾后按用户反馈修正）** —— 初版渲染成「匿名」/「Anonymous」，与同表左侧的凭据徽章（`owner.anonymous`，语义是「出站没有带凭据」）撞词。用户列回答的是「**这把 key 有没有绑定 `user_id`**」（master key 直连、或未绑定用户的 key），与「出站凭据来源」是两个正交的维度；同一张表里两个「匿名」会让运维把「key 没绑用户」误读成「有人在未授权访问」。已改为「未绑定」/「Not bound」，key 也从 `anonymousUser` 改名为 `unboundUser`（避免下一个人照着 key 名把它改回去）。
 - **Alias 的 `<datalist>` 建议值来自注册表** —— 已删除的 alias 建议不到但手输仍可查。日志表刻意不建外键到 `mcp_servers`（`031` 头注释已说明：审计日志要活过它描述的注册项），这是有意的取舍而非缺陷。
 - **tab 数量增长后的 320px 挤压** —— 从两个长标签变三/两个，`TabsList` 在 320px 下会溢出（Stage 145 已踩过一次 328px > 320px）。必须复测 `overflow-x-auto` / `flex-wrap`，且筛选行（4 个控件）在窄屏下要换行而非横向滚动。
 - **删 `CallLogDialog` 会让 stage-145 的一条 BDD 场景文本失效** —— 改写断言（仍然验证「行内按钮能到达日志且带 alias 过滤」），不是删除断言；stage-145 §4.1 #7 与 §7 门禁里对应的描述需在本 Stage 收尾时注记。

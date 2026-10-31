@@ -169,7 +169,7 @@ Feature: MCP Servers
     When I open the MCP call log tab
     Then the MCP call log shows 4 calls
     And the MCP call log shows the user column
-    And the anonymous call row shows "Anonymous" in the user column
+    And the unbound-user call row shows "Not bound" in the user column
     And the MCP page has no horizontal page scroll
 
   Scenario: The call log's three tabs fit a phone

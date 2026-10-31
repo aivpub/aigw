@@ -1594,7 +1594,7 @@
       "latency": "耗时",
       "time": "时间",
       "user": "用户",
-      "anonymousUser": "匿名",
+      "unboundUser": "未绑定",
       "keyId": "Key",
       "errorCode": "错误码",
       "requestBytes": "请求字节",

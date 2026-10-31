@@ -1610,7 +1610,7 @@ declare module "i18next" {
       latency: string;
       time: string;
       user: string;
-      anonymousUser: string;
+      unboundUser: string;
       keyId: string;
       errorCode: string;
       requestBytes: string;

@@ -315,7 +315,7 @@ export function CallLogTab({ isAdmin, alias, onAliasChange }: CallLogTabProps) {
                               className="font-mono text-xs text-muted-foreground"
                               data-testid="mcp-call-user"
                             >
-                              {row.user_id ?? t("mcp.calls.anonymousUser")}
+                              {row.user_id ?? t("mcp.calls.unboundUser")}
                             </TableCell>
                           )}
                           <TableCell className="text-xs">{row.latency_ms} ms</TableCell>
@@ -351,7 +351,7 @@ export function CallLogTab({ isAdmin, alias, onAliasChange }: CallLogTabProps) {
                       <Badge variant="outline">{t(ownerKey[row.token_owner])}</Badge>
                       {isAdmin && (
                         <span className="font-mono" data-testid="mcp-call-user">
-                          {row.user_id ?? t("mcp.calls.anonymousUser")}
+                          {row.user_id ?? t("mcp.calls.unboundUser")}
                         </span>
                       )}
                       <span>{row.latency_ms} ms</span>
@@ -408,7 +408,7 @@ export function CallLogTab({ isAdmin, alias, onAliasChange }: CallLogTabProps) {
                   ["mcp.calls.errorCode", selected.error_code ?? "—"],
                   ["mcp.calls.ownerLabel", t(ownerKey[selected.token_owner])],
                   ["mcp.calls.keyId", selected.key_id ?? "—"],
-                  ["mcp.calls.user", selected.user_id ?? t("mcp.calls.anonymousUser")],
+                  ["mcp.calls.user", selected.user_id ?? t("mcp.calls.unboundUser")],
                   ["mcp.calls.latency", `${selected.latency_ms} ms`],
                   ["mcp.calls.requestBytes", String(selected.request_bytes ?? "—")],
                   ["mcp.calls.responseBytes", String(selected.response_bytes ?? "—")],

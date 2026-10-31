@@ -236,9 +236,13 @@ Then("the MCP call log shows the user column", async ({ page }) => {
   await expect(userCells(page).first()).toBeVisible({ timeout: 8000 });
 });
 
-Then("the anonymous call row shows {string} in the user column", async ({ page }, text: string) => {
-  const anonymous = callRows(page).filter({ hasText: "get_issue" }).first();
-  await expect(anonymous.locator('[data-testid="mcp-call-user"]')).toHaveText(text);
+/** The user column names a *key binding*, not an identity choice: a call whose
+ *  key carries no user_id is "Not bound", never "Anonymous". Anonymous would
+ *  collide with the credential badge, which already means "no credential left
+ *  the gateway" — two different facts rendered with one word. */
+Then("the unbound-user call row shows {string} in the user column", async ({ page }, text: string) => {
+  const unbound = callRows(page).filter({ hasText: "get_issue" }).first();
+  await expect(unbound.locator('[data-testid="mcp-call-user"]')).toHaveText(text);
 });
 
 Then("the MCP call log has no user column", async ({ page }) => {
