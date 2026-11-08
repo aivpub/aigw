@@ -16,6 +16,7 @@
 //! deliberately absent — the `Mcp-Session-Id` belongs to the upstream, and the
 //! gateway's replicas rotate (ADR-040), so a cached id would go stale.
 
+use std::borrow::Cow;
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -320,6 +321,50 @@ async fn initialize_upstream(target: &UpstreamTarget<'_>) -> Result<String, Upst
     Ok(session)
 }
 
+/// SEP-2575's per-request `_meta.protocolVersion` is a claim about the hop, and
+/// a server that honours it rejects any request whose `_meta` disagrees with the
+/// `MCP-Protocol-Version` header it received. The gateway writes that header
+/// from `mcp_servers.protocol_version`, so a modern client against a legacy
+/// upstream arrived as "2026-07-28 in the body, 2025-06-18 on the wire" and was
+/// refused before the tool ran.
+///
+/// The gateway owns the header on this hop, so it owns the claim too: a modern
+/// upstream gets the version actually being sent, a legacy one gets none at all
+/// (it has no such concept, and leaving the client's value in place is exactly
+/// the mismatch that fails).
+const META_PROTOCOL_VERSION: &str = "io.modelcontextprotocol/protocolVersion";
+
+fn align_per_request_version<'a>(body: &'a Value, stack: UpstreamStack) -> Cow<'a, Value> {
+    let Some(Value::Object(meta)) = body.pointer("/params/_meta") else {
+        return Cow::Borrowed(body);
+    };
+    let Some(claimed) = meta.get(META_PROTOCOL_VERSION) else {
+        return Cow::Borrowed(body);
+    };
+    match stack {
+        UpstreamStack::Modern if claimed.as_str() == Some(MODERN_PROTOCOL_VERSION) => {
+            Cow::Borrowed(body)
+        }
+        UpstreamStack::Modern => reversioned(body, Some(MODERN_PROTOCOL_VERSION)),
+        UpstreamStack::Legacy => reversioned(body, None),
+    }
+}
+
+fn reversioned<'a>(body: &'a Value, version: Option<&str>) -> Cow<'a, Value> {
+    let mut aligned = body.clone();
+    if let Some(Value::Object(meta)) = aligned.pointer_mut("/params/_meta") {
+        match version {
+            Some(version) => {
+                meta.insert(META_PROTOCOL_VERSION.to_string(), json!(version));
+            }
+            None => {
+                meta.remove(META_PROTOCOL_VERSION);
+            }
+        }
+    }
+    Cow::Owned(aligned)
+}
+
 /// Send the client's request upstream. Legacy upstreams open a fresh session
 /// first; a client session id is *not* forwarded because it names a session the
 /// upstream never created.
@@ -327,12 +372,13 @@ pub async fn forward(
     target: &UpstreamTarget<'_>,
     body: &Value,
 ) -> Result<reqwest::Response, UpstreamError> {
+    let body = align_per_request_version(body, target.stack);
     match target.stack {
-        UpstreamStack::Modern => post_jsonrpc(target, body, MODERN_PROTOCOL_VERSION, None).await,
+        UpstreamStack::Modern => post_jsonrpc(target, &body, MODERN_PROTOCOL_VERSION, None).await,
         UpstreamStack::Legacy => {
             let session = initialize_upstream(target).await?;
             let session = (!session.is_empty()).then_some(session);
-            post_jsonrpc(target, body, LEGACY_PROTOCOL_VERSION, session.as_deref()).await
+            post_jsonrpc(target, &body, LEGACY_PROTOCOL_VERSION, session.as_deref()).await
         }
     }
 }
@@ -369,6 +415,83 @@ mod tests {
             UpstreamStack::Legacy
         );
         assert_eq!(upstream_stack(None), UpstreamStack::Legacy);
+    }
+
+    fn client_request_with_per_request_version() -> Value {
+        json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "search",
+                "arguments": {},
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": MODERN_PROTOCOL_VERSION,
+                    "io.modelcontextprotocol/clientInfo": {"name": "claude-code"},
+                    "progressToken": 3
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn a_legacy_upstream_is_not_told_the_client_version() {
+        let body = client_request_with_per_request_version();
+        let forwarded = align_per_request_version(&body, UpstreamStack::Legacy);
+        assert!(
+            forwarded["params"]["_meta"]
+                .get(META_PROTOCOL_VERSION)
+                .is_none(),
+            "a legacy upstream reading 2026-07-28 next to its own 2025-06-18 header refuses the call"
+        );
+        assert_eq!(
+            forwarded["params"]["_meta"]["io.modelcontextprotocol/clientInfo"]["name"],
+            json!("claude-code"),
+            "only the version claim is the gateway's to rewrite"
+        );
+        assert_eq!(forwarded["params"]["_meta"]["progressToken"], json!(3));
+        assert_eq!(forwarded["params"]["name"], json!("search"));
+        assert_eq!(
+            body["params"]["_meta"][META_PROTOCOL_VERSION],
+            json!(MODERN_PROTOCOL_VERSION),
+            "the caller's body must not be mutated"
+        );
+    }
+
+    #[test]
+    fn a_modern_upstream_hears_the_version_the_gateway_sends() {
+        let body = client_request_with_per_request_version();
+        let forwarded = align_per_request_version(&body, UpstreamStack::Modern);
+        assert_eq!(
+            forwarded["params"]["_meta"][META_PROTOCOL_VERSION],
+            json!(MODERN_PROTOCOL_VERSION)
+        );
+
+        let mut stale = body.clone();
+        stale["params"]["_meta"][META_PROTOCOL_VERSION] = json!(LEGACY_PROTOCOL_VERSION);
+        let forwarded = align_per_request_version(&stale, UpstreamStack::Modern);
+        assert_eq!(
+            forwarded["params"]["_meta"][META_PROTOCOL_VERSION],
+            json!(MODERN_PROTOCOL_VERSION)
+        );
+    }
+
+    #[test]
+    fn a_body_without_metadata_is_forwarded_untouched() {
+        let body = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/list",
+            "params": {"cursor": "abc"}
+        });
+        assert!(matches!(
+            align_per_request_version(&body, UpstreamStack::Modern),
+            Cow::Borrowed(_)
+        ));
+        assert!(matches!(
+            align_per_request_version(&body, UpstreamStack::Legacy),
+            Cow::Borrowed(_)
+        ));
     }
 
     #[test]

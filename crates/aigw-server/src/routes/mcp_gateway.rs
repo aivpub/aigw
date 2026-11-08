@@ -1826,6 +1826,7 @@ mod tests {
     struct Recorder {
         methods: Vec<String>,
         authorizations: Vec<Option<String>>,
+        per_request_versions: Vec<Option<String>>,
     }
 
     type SharedRecorder = Arc<std::sync::Mutex<Recorder>>;
@@ -1833,6 +1834,10 @@ mod tests {
     fn recorded(recorder: &SharedRecorder) -> (Vec<String>, Vec<Option<String>>) {
         let guard = recorder.lock().unwrap();
         (guard.methods.clone(), guard.authorizations.clone())
+    }
+
+    fn recorded_versions(recorder: &SharedRecorder) -> Vec<Option<String>> {
+        recorder.lock().unwrap().per_request_versions.clone()
     }
 
     /// A JSON-RPC stub that records every method and `Authorization` it sees.
@@ -1855,10 +1860,19 @@ mod tests {
                         .get("authorization")
                         .and_then(|v| v.to_str().ok())
                         .map(str::to_string);
+                    let per_request_version = body
+                        .get("params")
+                        .and_then(|p| p.get("_meta"))
+                        .and_then(|m| {
+                            m.get("io.modelcontextprotocol/protocolVersion")
+                                .and_then(Value::as_str)
+                        })
+                        .map(str::to_string);
                     {
                         let mut guard = sink.lock().unwrap();
                         guard.methods.push(method.clone());
                         guard.authorizations.push(auth);
+                        guard.per_request_versions.push(per_request_version);
                     }
                     let id = body.get("id").cloned().unwrap_or(Value::Null);
                     if legacy && method == "server/discover" {
@@ -1921,6 +1935,26 @@ mod tests {
 
     fn tools_call_body() -> Value {
         json!({"jsonrpc": "2.0", "id": 9, "method": "tools/call", "params": {"name": "ping"}})
+    }
+
+    /// The shape Claude Code 2.1.x actually sends: the client's own protocol
+    /// version rides in `params._meta`, next to everything else it declares.
+    fn modern_client_tools_call_body() -> Value {
+        json!({
+            "jsonrpc": "2.0",
+            "id": 9,
+            "method": "tools/call",
+            "params": {
+                "name": "ping",
+                "arguments": {},
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion":
+                        aigw_core::mcp::probe::MODERN_PROTOCOL_VERSION,
+                    "io.modelcontextprotocol/clientInfo": {"name": "claude-code"},
+                    "progressToken": 3
+                }
+            }
+        })
     }
 
     #[tokio::test]
@@ -2008,6 +2042,73 @@ mod tests {
                 "tools/call".to_string()
             ],
             "the upstream sees no client handshake, only its own: {methods:?}"
+        );
+    }
+
+    /// A modern client's `params._meta` claims `2026-07-28`; the gateway sends
+    /// the legacy upstream `2025-06-18`. A go-sdk upstream compares the two and
+    /// answers `-32022 Unsupported protocol version`, so the client's claim has
+    /// to stop at the gateway — it describes the hop the client actually spoke.
+    #[tokio::test]
+    async fn a_legacy_upstream_never_sees_the_modern_client_version() {
+        let state = test_state().await;
+        let (url, recorder) = spawn_recording_stub(true).await;
+        insert_server(
+            &state,
+            server_row("demo", &url, "shared", None),
+            Some("sk-upstream"),
+        )
+        .await;
+        let app = build_router(state);
+        let (status, body, _) = send(
+            &app,
+            Method::POST,
+            "/mcp/demo",
+            Some(MK),
+            &[],
+            modern_client_tools_call_body(),
+        )
+        .await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(
+            recorded_versions(&recorder),
+            vec![None, None, None],
+            "neither the handshake nor the call may advertise a version the upstream was not sent"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_modern_upstream_is_told_the_version_the_gateway_sends() {
+        let state = test_state().await;
+        let (url, recorder) = spawn_recording_stub(false).await;
+        insert_server(
+            &state,
+            server_row(
+                "demo",
+                &url,
+                "shared",
+                Some(aigw_core::mcp::probe::MODERN_PROTOCOL_VERSION),
+            ),
+            Some("sk-upstream"),
+        )
+        .await;
+        let app = build_router(state);
+        let (status, body, _) = send(
+            &app,
+            Method::POST,
+            "/mcp/demo",
+            Some(MK),
+            &[],
+            modern_client_tools_call_body(),
+        )
+        .await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(
+            recorded_versions(&recorder),
+            vec![Some(
+                aigw_core::mcp::probe::MODERN_PROTOCOL_VERSION.to_string()
+            )],
+            "the modern hop's claim matches the header it arrives with"
         );
     }
 
