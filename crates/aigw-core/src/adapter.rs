@@ -1324,6 +1324,22 @@ fn openai_message_to_claude(msg: &ChatMessage) -> ClaudeMessage {
     }
 }
 
+/// Anthropic lets `tool_result.content` be a string or an array of content
+/// blocks (a tool answer carrying text plus images). Only the string form used
+/// to be read, so a block-array answer became an empty `tool` message and the
+/// model saw the tool as having returned nothing.
+fn tool_result_text(block: &ClaudeContentBlock) -> String {
+    match block.content.as_ref() {
+        Some(Value::String(text)) => text.clone(),
+        Some(Value::Array(parts)) => parts
+            .iter()
+            .filter_map(|p| p.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => block.text.clone().unwrap_or_default(),
+    }
+}
+
 fn claude_content_to_text(blocks: &[ClaudeContentBlock]) -> String {
     blocks
         .iter()
@@ -1363,16 +1379,7 @@ fn claude_message_to_openai(msg: &ClaudeMessage) -> Vec<ChatMessage> {
             let tool_results: Vec<(String, String)> = blocks
                 .iter()
                 .filter(|b| b.content_type == "tool_result")
-                .filter_map(|b| {
-                    let tui = b.tool_use_id.clone()?;
-                    let c = b
-                        .content
-                        .as_ref()
-                        .and_then(|v| v.as_str().map(String::from))
-                        .or_else(|| b.text.clone())
-                        .unwrap_or_default();
-                    Some((tui, c))
-                })
+                .filter_map(|b| Some((b.tool_use_id.clone()?, tool_result_text(b))))
                 .collect();
 
             if !tool_results.is_empty() && msg.role == "user" {
@@ -3545,6 +3552,31 @@ mod tests {
         let msgs = adapted["messages"].as_array().unwrap();
         assert_eq!(msgs[0]["role"].as_str(), Some("tool"));
         assert_eq!(msgs[0]["tool_call_id"].as_str(), Some("toolu_01"));
+    }
+
+    #[test]
+    fn test_anthropic_to_openai_tool_result_content_blocks_are_not_dropped() {
+        let body = json!({
+            "model": "claude-sonnet", "max_tokens": 1024,
+            "messages": [{
+                "role": "assistant",
+                "content": [{"type": "tool_use", "id": "toolu_01", "name": "get_weather", "input": {}}]
+            }, {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "toolu_01",
+                    "content": [{"type": "text", "text": "72F, sunny"}, {"type": "text", "text": "wind 3mph"}]}]
+            }]
+        });
+        let adapted = AnthropicToOpenAI
+            .adapt_request(body, &test_deployment())
+            .unwrap();
+        let msgs = adapted["messages"].as_array().unwrap();
+        let tool = msgs
+            .iter()
+            .find(|m| m["role"] == json!("tool"))
+            .expect("tool message");
+        assert_eq!(tool["tool_call_id"].as_str(), Some("toolu_01"));
+        assert_eq!(tool["content"].as_str(), Some("72F, sunny\nwind 3mph"));
     }
 
     #[test]
