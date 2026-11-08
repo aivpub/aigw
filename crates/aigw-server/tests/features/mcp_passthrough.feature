@@ -77,6 +77,34 @@ Feature: MCP 透传端点 — /mcp/{alias} 与 /mcp-rest/*（Stage 143）
     When 对 "modern-get" 发送 MCP GET 请求
     Then 响应状态码为 405
 
+  # ── 现代结果信封 ─────────────────────────────────────────
+  # 2026-07-28 取消了「缺 resultType 即 complete」的桥，且客户端是严格解码：
+  # 旧版上游的 tools/list 若原样透传，客户端的解码会直接报错。网关是这一跳的
+  # 应答方，所以按客户端协商的版本补齐信封；旧版客户端看到的仍应是上游原样。
+
+  Scenario: 旧版上游的 tools/list 到了现代客户端手里补上 resultType 与缓存指令
+    Given 已启动旧版协议的 MCP 透传 stub 并注册为未探测的 server "modern-list"
+    When 用现代客户端对 "modern-list" 发送 MCP 透传请求 "tools/list"
+    Then 响应状态码为 200
+    And 响应结果的 resultType 为 "complete"
+    And 响应 JSON 路径 "result.ttlMs" 为数字 0
+    And 响应 JSON 路径 "result.cacheScope" 为字符串 "private"
+    And 响应 JSON 路径 "result.tools.0.name" 为字符串 "ping"
+
+  Scenario: 旧版客户端拿到上游原样的 tools/list
+    Given 已启动旧版协议的 MCP 透传 stub 并注册为未探测的 server "legacy-list"
+    When 用 master key 对 "legacy-list" 发送 MCP 透传请求 "tools/list"
+    Then 响应状态码为 200
+    And 响应结果没有 resultType
+    And 响应 JSON 路径 "result.tools.0.name" 为字符串 "ping"
+
+  Scenario: 现代客户端调用 tools/call 时上游缺 resultType 也会被补上
+    Given 已启动旧版协议的 MCP 透传 stub 并注册为未探测的 server "modern-call"
+    When 用现代客户端对 "modern-call" 发送 MCP 透传请求 "tools/call"
+    Then 响应状态码为 200
+    And 响应结果的 resultType 为 "complete"
+    And 响应 JSON 路径 "result.content.0.text" 为字符串 "pong"
+
   Scenario: Mcp-Name 与 body 工具名不一致是 400
     Given 已启动现代协议的 MCP 透传 stub 并注册为 server "mismatch"
     When 对 "mismatch" 发送 MCP 请求且 Mcp-Name 头为 "read" 而 body 工具名为 "ping"

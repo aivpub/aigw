@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use aigw_core::db::Database;
 use aigw_core::mcp::body::cut;
-use aigw_core::mcp::session::METHOD_TOOLS_LIST;
+use aigw_core::mcp::session::{self, METHOD_TOOLS_LIST};
 use aigw_core::models::{McpCallBodyRow, McpCallLogRow, MCP_CALL_STATUS_FAILED};
 use aigw_core::retention::McpLogRetentionConfig;
 use axum::body::Body;
@@ -104,18 +104,26 @@ pub(crate) fn stamp_call_id(mut response: Response, call_id: &str) -> Response {
 /// `request` is the JSON-RPC envelope the client sent and `limit` the body
 /// ceiling (`None` when recording is off). Both are carried rather than looked
 /// up so this module never has to know where the config lives.
+///
+/// `complete` is the method name when the client negotiated `2026-07-28`: that
+/// revision dropped the "absent `resultType` means complete" bridge, so an
+/// upstream that answers in the older shape would otherwise be rejected by the
+/// client even though the bytes came from a perfectly valid legacy server. The
+/// gateway is the respondent on this hop, so it finishes the envelope the
+/// client's revision requires. `None` leaves the bytes untouched.
 pub(crate) async fn relay(
     upstream: reqwest::Response,
     db: Database,
     row: McpCallLogRow,
     request: Vec<u8>,
     limit: Option<usize>,
+    complete: Option<&str>,
 ) -> Response {
     let call_id = row.call_id.clone();
     let response = if is_event_stream(&upstream) {
-        relay_event_stream(upstream, db, row, request, limit)
+        relay_event_stream(upstream, db, row, request, limit, complete)
     } else {
-        relay_buffered(upstream, db, row, &request, limit).await
+        relay_buffered(upstream, db, row, &request, limit, complete).await
     };
     stamp_call_id(response, &call_id)
 }
@@ -145,10 +153,11 @@ async fn relay_buffered(
     mut row: McpCallLogRow,
     request: &[u8],
     limit: Option<usize>,
+    complete: Option<&str>,
 ) -> Response {
     let status = upstream_status(&upstream);
     let content_type = upstream_content_type(&upstream);
-    let body = match upstream.bytes().await {
+    let raw = match upstream.bytes().await {
         Ok(bytes) => bytes.to_vec(),
         Err(e) => {
             warn!(alias = %row.server_alias, error = %e, "upstream body read failed");
@@ -156,6 +165,10 @@ async fn relay_buffered(
             row.error_code = Some("transport_error".to_string());
             Vec::new()
         }
+    };
+    let body = match complete {
+        Some(method) => completed_json(method, &raw).unwrap_or(raw),
+        None => raw,
     };
     row.response_bytes = body.len() as i64;
     if !status.is_success() {
@@ -180,6 +193,21 @@ async fn relay_buffered(
     response
 }
 
+/// The relayed answer with the modern result envelope finished, or `None` when
+/// nothing had to change — bytes that are not a JSON-RPC envelope, an error
+/// envelope, and an upstream that already speaks the modern shape all travel
+/// exactly as they arrived.
+fn completed_json(method: &str, body: &[u8]) -> Option<Vec<u8>> {
+    let mut envelope: Value = serde_json::from_slice(body).ok()?;
+    session::complete_envelope(method, RELAY_TTL_MS, &mut envelope)
+        .then(|| serde_json::to_vec(&envelope).ok())
+        .flatten()
+}
+
+/// A relayed listing is a pass-through, so the gateway cannot promise the
+/// client a cache hit: the upstream may answer differently on the next call.
+const RELAY_TTL_MS: i64 = 0;
+
 /// An upstream may report a JSON-RPC failure inside an HTTP 200. The body is
 /// still the client's answer, but the row must not read `success` with no code:
 /// the locally-answered paths already call that a failure
@@ -202,9 +230,16 @@ fn relay_event_stream(
     mut row: McpCallLogRow,
     request: Vec<u8>,
     limit: Option<usize>,
+    complete: Option<&str>,
 ) -> Response {
     let status = upstream_status(&upstream);
     let (tx, rx) = mpsc::unbounded_channel::<Result<Vec<u8>, std::io::Error>>();
+    // An SSE answer is one `data:` payload, so finishing the envelope means
+    // rewriting the event rather than the stream: the bytes are held until the
+    // first data line ends, and everything else — comments, other event types,
+    // later events — still goes out as it arrives. Built here because the
+    // rewriter owns the method name and so can outlive this borrow.
+    let mut rewriter = complete.map(EventRewriter::new);
     tokio::spawn(async move {
         let mut chunks = std::pin::pin!(upstream.bytes_stream());
         let mut heartbeat = tokio::time::interval(HEARTBEAT_INTERVAL);
@@ -216,9 +251,16 @@ fn relay_event_stream(
             tokio::select! {
                 chunk = chunks.next() => match chunk {
                     Some(Ok(bytes)) => {
-                        forwarded += bytes.len() as i64;
-                        keep_prefix(&mut answer, &bytes, limit);
-                        if tx.send(Ok(bytes.to_vec())).is_err() {
+                        let out = match rewriter.as_mut() {
+                            Some(rewriter) => rewriter.feed(&bytes),
+                            None => bytes.to_vec(),
+                        };
+                        if out.is_empty() {
+                            continue;
+                        }
+                        forwarded += out.len() as i64;
+                        keep_prefix(&mut answer, &out, limit);
+                        if tx.send(Ok(out)).is_err() {
                             break;
                         }
                     }
@@ -237,10 +279,159 @@ fn relay_event_stream(
                 }
             }
         }
+        if let Some(held) = rewriter.as_mut().map(EventRewriter::flush) {
+            forwarded += held.len() as i64;
+            keep_prefix(&mut answer, &held, limit);
+            let _ = tx.send(Ok(held));
+        }
         row.response_bytes = forwarded;
         record_with_bodies(&db, limit, &row, &request, &answer).await;
     });
     sse_response(rx, status)
+}
+
+/// Incremental SSE rewriter for the modern result envelope.
+///
+/// An upstream answers a `tools/list` in one `data:` event, and the client
+/// rejects that event if `2026-07-28`'s `resultType` fields are missing. The
+/// payload is only complete at the end of the event, so this holds the stream
+/// until it can read one that carries the answer. Progress notifications and
+/// keepalive comments may come first; they are forwarded as they are, and the
+/// answer event ends the rewriting — everything after it is the upstream's own.
+///
+/// Escapes are tracked so a `\n` inside a JSON string never counts as the end of
+/// a `data:` line.
+#[derive(Default)]
+struct EventRewriter {
+    method: String,
+    buffer: Vec<u8>,
+    finished: bool,
+}
+
+impl EventRewriter {
+    fn new(method: &str) -> Self {
+        Self {
+            method: method.to_string(),
+            ..Self::default()
+        }
+    }
+
+    fn feed(&mut self, chunk: &[u8]) -> Vec<u8> {
+        if self.finished {
+            return chunk.to_vec();
+        }
+        self.buffer.extend_from_slice(chunk);
+        let mut out = Vec::new();
+        while let Some(end) = self.complete_event_len() {
+            let event: Vec<u8> = self.buffer.drain(..end).collect();
+            match completed_event(&self.method, &event) {
+                Some(answer) => {
+                    out.extend_from_slice(&answer);
+                    self.finished = true;
+                    out.extend_from_slice(&self.buffer);
+                    self.buffer.clear();
+                    break;
+                }
+                None => out.extend_from_slice(&event),
+            }
+        }
+        out
+    }
+
+    /// Whatever is still held when the stream ends goes out as it came: an
+    /// incomplete event cannot be parsed, and dropping it would be worse than
+    /// forwarding a body the client can report.
+    fn flush(&mut self) -> Vec<u8> {
+        self.finished = true;
+        std::mem::take(&mut self.buffer)
+    }
+
+    /// The length of the first event that carries a `data:` line, terminator
+    /// included. A comment-only event is a keepalive, not the answer: ending the
+    /// search there would leave the real payload unread.
+    fn complete_event_len(&self) -> Option<usize> {
+        let bytes = &self.buffer;
+        let mut line_start = 0;
+        let mut index = 0;
+        let mut in_string = false;
+        let mut escaped = false;
+        let mut has_data = false;
+        while index < bytes.len() {
+            if bytes[index] != b'\n' || in_string {
+                index += 1;
+                continue;
+            }
+            let line = &bytes[line_start..index];
+            let line = line.strip_suffix(b"\r").unwrap_or(line);
+            index += 1;
+            if line.is_empty() {
+                if has_data {
+                    return Some(index);
+                }
+                has_data = false;
+            } else if let Some(rest) = line.strip_prefix(b"data:") {
+                has_data = true;
+                let rest = rest.strip_prefix(b" ").unwrap_or(rest);
+                for &payload in rest {
+                    if escaped {
+                        escaped = false;
+                    } else if payload == b'\\' {
+                        escaped = true;
+                    } else if payload == b'"' {
+                        in_string = !in_string;
+                    }
+                }
+            }
+            line_start = index;
+        }
+        None
+    }
+}
+
+/// Finish the envelope carried by one event, or `None` when this event is not
+/// the answer — a payload that does not parse, or one with no `result` and no
+/// `error`, leaves the rewriter waiting for the event that is.
+fn completed_event(method: &str, event: &[u8]) -> Option<Vec<u8>> {
+    let text = String::from_utf8_lossy(event);
+    let mut rewritten = String::with_capacity(text.len());
+    let mut answered = false;
+    let mut changed = false;
+    for line in text.split_inclusive('\n') {
+        let body = line.strip_suffix('\n').unwrap_or(line);
+        let ending = if body.len() == line.len() { "" } else { "\n" };
+        let Some(payload) = body
+            .strip_suffix('\r')
+            .unwrap_or(body)
+            .strip_prefix("data:")
+            .map(|rest| rest.strip_prefix(' ').unwrap_or(rest))
+        else {
+            rewritten.push_str(line);
+            continue;
+        };
+        match serde_json::from_str::<Value>(payload) {
+            Ok(mut envelope)
+                if envelope.get("result").is_some() || envelope.get("error").is_some() =>
+            {
+                answered = true;
+                if session::complete_envelope(method, RELAY_TTL_MS, &mut envelope) {
+                    rewritten.push_str("data: ");
+                    rewritten.push_str(&envelope.to_string());
+                    changed = true;
+                } else {
+                    rewritten.push_str(line);
+                }
+            }
+            _ => rewritten.push_str(line),
+        }
+        rewritten.push_str(ending);
+    }
+    answered.then(|| {
+        if changed {
+            rewritten.into_bytes()
+        } else {
+            event.to_vec()
+        }
+    })
 }
 
 /// Accumulate at most `limit` bytes; past that the answer is already a prefix and
@@ -311,6 +502,110 @@ mod tests {
             "no-cache"
         );
         assert_eq!(response.headers().get("x-accel-buffering").unwrap(), "no");
+    }
+
+    #[test]
+    fn a_legacy_json_answer_gains_the_modern_fields() {
+        let raw = br#"{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"a"}]}}"#;
+        let body = completed_json(session::METHOD_TOOLS_LIST, raw).expect("rewritten");
+        let value: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(value["result"]["resultType"], "complete");
+        assert_eq!(value["result"]["ttlMs"], 0);
+        assert_eq!(value["result"]["cacheScope"], "private");
+        assert_eq!(value["result"]["tools"][0]["name"], "a");
+        assert_eq!(value["id"], 2);
+    }
+
+    #[test]
+    fn an_error_json_answer_is_left_alone() {
+        let raw = br#"{"jsonrpc":"2.0","id":2,"error":{"code":-32601,"message":"no"}}"#;
+        assert!(completed_json(session::METHOD_TOOLS_LIST, raw).is_none());
+    }
+
+    #[test]
+    fn a_body_that_is_not_json_is_not_rewritten() {
+        assert!(completed_json(session::METHOD_TOOLS_LIST, b"not json").is_none());
+    }
+
+    #[test]
+    fn an_already_modern_json_answer_keeps_its_bytes() {
+        let raw = br#"{"jsonrpc":"2.0","id":2,"result":{"tools":[],"resultType":"complete","ttlMs":9000,"cacheScope":"public"}}"#;
+        assert!(completed_json(session::METHOD_TOOLS_LIST, raw).is_none());
+    }
+
+    #[test]
+    fn an_sse_event_gains_the_modern_fields() {
+        let event = b"event: message\r\ndata: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"content\":[]}}\r\n\r\n";
+        let out = completed_event(session::METHOD_TOOLS_CALL, event).expect("rewritten");
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.starts_with("event: message\r\ndata: "), "{text}");
+        let payload = text
+            .split("data: ")
+            .nth(1)
+            .unwrap()
+            .trim_end_matches("\r\n\r\n");
+        let value: Value = serde_json::from_str(payload).unwrap();
+        assert_eq!(value["result"]["resultType"], "complete");
+    }
+
+    #[test]
+    fn an_sse_error_event_is_forwarded_byte_for_byte() {
+        let event = b"data: {\"jsonrpc\":\"2.0\",\"id\":2,\"error\":{\"code\":-1}}\r\n\r\n";
+        let out = completed_event(session::METHOD_TOOLS_CALL, event).expect("an answer");
+        assert_eq!(out, event);
+    }
+
+    #[test]
+    fn a_notification_event_is_not_the_answer() {
+        let event = b"data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\"}\r\n\r\n";
+        assert!(completed_event(session::METHOD_TOOLS_CALL, event).is_none());
+    }
+
+    #[test]
+    fn a_comment_only_chunk_does_not_end_the_wait() {
+        let mut rewriter = EventRewriter::new(session::METHOD_TOOLS_LIST);
+        assert!(rewriter.feed(b":\r\n\r\n").is_empty());
+        let out = rewriter.feed(b"data: {\"result\":{\"tools\":[]}}\r\n\r\n");
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.starts_with(":\r\n\r\n"), "{text}");
+        let payload = text
+            .split("data: ")
+            .nth(1)
+            .unwrap()
+            .trim_end_matches("\r\n\r\n");
+        let value: Value = serde_json::from_str(payload).unwrap();
+        assert_eq!(value["result"]["ttlMs"], 0);
+    }
+
+    #[test]
+    fn an_event_split_across_chunks_is_rewritten_once_complete() {
+        let mut rewriter = EventRewriter::new(session::METHOD_TOOLS_LIST);
+        assert!(rewriter.feed(b"data: {\"result\":{\"to").is_empty());
+        assert!(rewriter.feed(b"ols\":[]}}\r\n").is_empty());
+        let out = rewriter.feed(b"\r\n");
+        assert!(!out.is_empty());
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("\"ttlMs\":0"), "{text}");
+    }
+
+    #[test]
+    fn a_newline_inside_a_json_string_is_not_an_event_boundary() {
+        let mut rewriter = EventRewriter::new(session::METHOD_TOOLS_LIST);
+        assert!(rewriter
+            .feed(b"data: {\"result\":{\"tools\":[{\"description\":\"a")
+            .is_empty());
+        let out = rewriter.feed("\\nb\"}]}}\r\n\r\n".as_bytes());
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("resultType"), "{text}");
+        assert!(text.contains("a\\nb"), "the description survives: {text}");
+    }
+
+    #[test]
+    fn whatever_is_held_when_the_stream_ends_is_forwarded() {
+        let mut rewriter = EventRewriter::new(session::METHOD_TOOLS_LIST);
+        assert!(rewriter.feed(b"data: {\"result\":{\"to").is_empty());
+        assert_eq!(rewriter.flush(), b"data: {\"result\":{\"to");
+        assert_eq!(rewriter.feed(b"later"), b"later");
     }
 
     #[tokio::test]

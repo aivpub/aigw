@@ -74,6 +74,7 @@ POST /mcp/{alias}
 | `server/discover` | 回 `{resultType:"complete", supportedVersions:["2026-07-28"], capabilities:{tools:{}}, _meta:{serverInfo}}`。**不回 `initialize`** 相关任何东西 |
 | `initialize` | 回 `{protocolVersion:"2025-06-18", capabilities:{tools:{}}, serverInfo}` + 响应头 `Mcp-Session-Id: <uuid>` |
 | 其它方法带 `Mcp-Session-Id` | 旧版会话：网关**不自己维护会话状态**，直接把该头透传给上游（若上游是现代版则丢弃该头） |
+| 现代客户端（`MCP-Protocol-Version` 头或 `params._meta` 声称 `2026-07-28`）的其它方法 | 中继回来的 `result` 补齐现代信封：`resultType`，以及列表类方法的 `ttlMs` / `cacheScope`（见 §3.5） |
 
 **对上游（出站）**：复用 141 探测时的判定结果（`mcp_servers.protocol_version`）：
 
@@ -104,9 +105,11 @@ POST /mcp/{alias}
 
 | 上游形态 | 网关行为 |
 |---|---|
-| `Content-Type: application/json` | 原样透传 body 与状态码 |
-| `Content-Type: text/event-stream` | 逐事件转发：`data: ...\n\n` 立即 flush；每 15s 发注释行 `:\r\n` 心跳；响应头带 `X-Accel-Buffering: no` 与 `Cache-Control: no-cache` |
+| `Content-Type: application/json` | 原样透传 body 与状态码；**现代客户端**收到的 `result` 若缺 `resultType`（列表类方法另缺 `ttlMs` / `cacheScope`）则补齐，其它字节不动 |
+| `Content-Type: text/event-stream` | 逐事件转发：`data: ...\n\n` 立即 flush；每 15s 发注释行 `:\r\n` 心跳；响应头带 `X-Accel-Buffering: no` 与 `Cache-Control: no-cache`。现代客户端下，等待首个**带 `result` 或 `error` 的**事件并补齐信封后再转发（注释/进度通知照发），之后的事件原样直通 |
 | 其它 | 原样透传 |
+
+**补齐信封的 TTL 取 0**：中继是纯透传，上游下次可能给出不同目录，网关不能代表上游许诺缓存命中；聚合端点自己拼目录、背后有 `catalog_cache`，所以那里报 `DEFAULT_TTL_MS`（60s）。`cacheScope` 恒为 `private` —— 两条链路的目录都随调用者身份与凭据变化。错误信封不补（`resultType` 描述的是 `result`）。
 
 **心跳是唯一护栏**：`2026-07-28` 删除了 `Last-Event-ID` 续传，流断了就是丢了，只能靠心跳压住中间设备的 idle 超时。
 
@@ -157,7 +160,7 @@ POST /mcp/{alias}
 | 1 | 上游现代版，客户端走 `server/discover` | 全程无 `initialize` 发往上游 |
 | 2 | 上游旧版，客户端走 `server/discover` | 网关对客户端回现代响应，对上游走 `initialize`（**两侧独立协商**） |
 | 3 | 上游 SSE | 首个事件到达 < 500ms，3 个事件顺序正确 |
-| 4 | 上游 JSON | 原样透传，字节级相等 |
+| 4 | 上游 JSON | 原样透传，字节级相等（旧版客户端；现代客户端的 `result` 缺信封字段时补齐，见 §3.5） |
 | 5 | 上游超时 | 504 + 日志 `error_code=timeout` |
 | 6 | `/mcp-rest/tools/list` | 不触发任何协商请求 |
 

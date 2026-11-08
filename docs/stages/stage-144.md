@@ -68,6 +68,8 @@ POST /mcp  (method=tools/list)
 
 **分页由网关自己生成** —— 若直接透出上游游标，CC 跟到第二页时拿到的只是某一个上游的剩余工具。网关的做法是：把合并后的完整列表算出来，按固定页大小（建议 100）切片，游标就是起始下标。
 
+**结果信封按客户端协商的版本补齐**：`2026-07-28` 取消了「缺 `resultType` 即 `complete`」的桥，且 `tools/list` 的结果还必须带 `ttlMs`（≥0 整数）与 `cacheScope`（`public`/`private`）。聚合目录由网关自己拼，所以它直接声明：`resultType=complete`、`ttlMs=catalog_cache::DEFAULT_TTL_MS`（即内存目录的寿命 60s）、`cacheScope=private`（目录随调用者凭据变化）。旧版客户端拿到的仍是原样。`ttlMs` 只对列表类方法有意义，`tools/call` 只补 `resultType`。
+
 **冲突不静默覆盖**：两个 server 提供同名工具时，合并后的名字 `a__search` 与 `b__search` 本来就不同，不会冲突。真正的冲突发生在 **alias 相同**（不可能，alias 唯一）或**合并后名字仍相同**（比如 `a__b` + `c` 与 `a` + `b__c` 都得到 `a__b__c`）——后者被 Stage 140 的 alias 规则（禁含 `__`）堵死。因此 `has_conflict` 更多是给「探测时发现两个 server 有同名工具」用的**提示性标记**，而非合并时的阻断条件。
 
 ### 3.2 `tools/call` 路由

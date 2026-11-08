@@ -154,7 +154,6 @@ async fn spawn_stub(legacy: bool) -> (String, SharedLog) {
                         }]}),
                         "tools/call" => json!({
                             "content": [{"type": "text", "text": "pong"}],
-                            "resultType": "complete",
                         }),
                         _ => json!({}),
                     };
@@ -507,6 +506,7 @@ async fn given_acl_denial(world: &mut TestWorld, alias: String, tool: String) {
 fn request_body(method: &str) -> Value {
     match method {
         "server/discover" => discover(),
+        "tools/list" => json!({"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}}),
         "tools/call" => tools_call(),
         other => panic!("scenario asked for unsupported MCP method: {other}"),
     }
@@ -522,6 +522,26 @@ async fn when_send(world: &mut TestWorld, alias: String, method: String) {
         Some(&mk),
         &[],
         Some(request_body(&method)),
+    )
+    .await;
+}
+
+/// The shape Claude Code sends once it has negotiated `2026-07-28`: the claim
+/// rides in `params._meta` and the transport repeats it as a header.
+#[when(expr = "用现代客户端对 {string} 发送 MCP 透传请求 {string}")]
+async fn when_send_as_modern_client(world: &mut TestWorld, alias: String, method: String) {
+    let mk = world.master_key.clone();
+    let mut body = request_body(&method);
+    body["params"]["_meta"] = json!({
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+    });
+    send(
+        world,
+        Method::POST,
+        &format!("/mcp/{alias}"),
+        Some(&mk),
+        &[("MCP-Protocol-Version", "2026-07-28")],
+        Some(body),
     )
     .await;
 }
@@ -702,6 +722,25 @@ async fn then_json_path_signed_int(world: &mut TestWorld, path: String, expected
 async fn then_json_path_versions(world: &mut TestWorld, path: String) {
     let actual = resolve_path(body(world), &path);
     assert_eq!(actual, &json!(["2026-07-28"]), "path {path}");
+}
+
+#[then(expr = "响应结果的 resultType 为 {string}")]
+async fn then_result_type(world: &mut TestWorld, expected: String) {
+    assert_eq!(
+        body(world).pointer("/result/resultType"),
+        Some(&json!(expected)),
+        "resultType missing from {}",
+        body(world)
+    );
+}
+
+#[then(expr = "响应结果没有 resultType")]
+async fn then_no_result_type(world: &mut TestWorld) {
+    assert!(
+        body(world).pointer("/result/resultType").is_none(),
+        "a legacy client must see the upstream's own shape: {}",
+        body(world)
+    );
 }
 
 #[then(expr = "MCP 响应头包含 Mcp-Session-Id")]

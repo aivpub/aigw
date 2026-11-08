@@ -97,6 +97,25 @@ Feature: MCP 聚合端点 — /mcp（Stage 144）
     And 响应 JSON 路径 "error.code" 的 JSON 数字为 -32003
     And 上游 "alpha" 没有收到工具调用
 
+  # ── 现代结果信封 ──────────────────────────────────────────
+  # 2026-07-28 的 tools/list 结果必须有 resultType / ttlMs / cacheScope，否则
+  # 客户端严格解码会拒绝整个目录。网关自己拼这份目录，所以它自己声明信封；
+  # 旧版客户端不应看到新增字段。
+
+  Scenario: 现代客户端拿到的聚合目录带完整结果信封
+    Given 已启动聚合上游 "alpha" 提供工具 "search,read"
+    When 用现代客户端向聚合端点发送 tools/list
+    Then 响应状态码为 200
+    And 聚合目录工具数为 2
+    And 聚合目录带现代缓存指令
+
+  Scenario: 旧版客户端的聚合目录保持原样
+    Given 已启动聚合上游 "alpha" 提供工具 "search,read"
+    When 用 master key 向聚合端点发送 tools/list
+    Then 响应状态码为 200
+    And 聚合目录工具数为 2
+    And 聚合目录没有现代缓存指令
+
   # ── 调用日志 ──────────────────────────────────────────────
 
   Scenario: 聚合调用写下的日志能按 alias 查回来

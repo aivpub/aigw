@@ -104,13 +104,28 @@ fn build_router(state: aigw_server::routes::keys::SharedState) -> Router {
 }
 
 async fn send(world: &mut TestWorld, method: Method, uri: &str, token: &str, body: Option<Value>) {
+    send_with_headers(world, method, uri, token, &[], body).await;
+}
+
+async fn send_with_headers(
+    world: &mut TestWorld,
+    method: Method,
+    uri: &str,
+    token: &str,
+    headers: &[(&str, &str)],
+    body: Option<Value>,
+) {
     let state = world.ensure_state().await;
     let app = build_router(state);
-    let request = axum::http::Request::builder()
+    let mut builder = axum::http::Request::builder()
         .method(method)
         .uri(uri)
         .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {token}"))
+        .header("Authorization", format!("Bearer {token}"));
+    for (name, value) in headers {
+        builder = builder.header(*name, *value);
+    }
+    let request = builder
         .body(axum::body::Body::from(
             body.map(|v| v.to_string()).unwrap_or_default(),
         ))
@@ -384,6 +399,26 @@ async fn when_list_with_plain_key(world: &mut TestWorld) {
     send(world, Method::POST, "/mcp", &raw, Some(rpc("tools/list"))).await;
 }
 
+/// The shape Claude Code sends after `server/discover`: the revision claim in
+/// `params._meta`, repeated as the transport header.
+#[when(expr = "用现代客户端向聚合端点发送 tools\\/list")]
+async fn when_modern_client_lists(world: &mut TestWorld) {
+    let mk = world.master_key.clone();
+    let mut body = rpc("tools/list");
+    body["params"]["_meta"] = json!({
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+    });
+    send_with_headers(
+        world,
+        Method::POST,
+        "/mcp",
+        &mk,
+        &[("MCP-Protocol-Version", "2026-07-28")],
+        Some(body),
+    )
+    .await;
+}
+
 fn tools_call(name: &str) -> Value {
     json!({
         "jsonrpc": "2.0",
@@ -472,6 +507,38 @@ async fn then_catalogue_lacks(world: &mut TestWorld, name: String) {
         !names.contains(&name),
         "\"{name}\" must not be listed: {names:?}"
     );
+}
+
+#[then(expr = "聚合目录带现代缓存指令")]
+async fn then_catalogue_has_cache_directive(world: &mut TestWorld) {
+    let result = body(world);
+    assert_eq!(
+        result["result"]["resultType"],
+        json!("complete"),
+        "{result}"
+    );
+    assert!(
+        result["result"]["ttlMs"].as_i64().is_some(),
+        "ttlMs must be an integer: {result}"
+    );
+    assert!(
+        matches!(
+            result["result"]["cacheScope"].as_str(),
+            Some("public" | "private")
+        ),
+        "cacheScope must name a scope: {result}"
+    );
+}
+
+#[then(expr = "聚合目录没有现代缓存指令")]
+async fn then_catalogue_lacks_cache_directive(world: &mut TestWorld) {
+    let result = body(world);
+    for field in ["resultType", "ttlMs", "cacheScope"] {
+        assert!(
+            result["result"].get(field).is_none(),
+            "a legacy client must see the plain listing, found {field}: {result}"
+        );
+    }
 }
 
 #[then(expr = "上游 {string} 依次收到 MCP 方法 {string}")]

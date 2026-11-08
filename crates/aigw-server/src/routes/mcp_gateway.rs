@@ -157,6 +157,23 @@ fn tool_name_header(headers: &HeaderMap) -> Option<&str> {
         .filter(|v| !v.is_empty())
 }
 
+fn protocol_version_header(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get("mcp-protocol-version")
+        .and_then(|v| v.to_str().ok())
+        .filter(|v| !v.is_empty())
+}
+
+/// The method whose result must be finished in the modern envelope, or `None`
+/// when this client speaks an older revision. A relayed answer is the gateway's
+/// on this hop (see `mcp_relay::relay`).
+fn relay_completion(headers: &HeaderMap, body: &Value) -> Option<String> {
+    if !session::client_negotiated_modern(protocol_version_header(headers), body) {
+        return None;
+    }
+    session::request_method(body).map(str::to_string)
+}
+
 pub(crate) fn request_id_of(extensions: &http::Extensions) -> String {
     extensions
         .get::<RequestId>()
@@ -600,6 +617,7 @@ pub async fn post_mcp(
             ..Outcome::ok(session::initialize_response(id.as_ref()))
         },
         Some(_) => {
+            let complete = relay_completion(&headers, &parsed);
             return relay_forwarded(
                 &state,
                 ctx,
@@ -612,8 +630,9 @@ pub async fn post_mcp(
                     request_bytes: body.len(),
                     started,
                 },
+                complete.as_deref(),
             )
-            .await
+            .await;
         }
         None => Outcome::rpc(
             StatusCode::BAD_REQUEST,
@@ -654,6 +673,10 @@ impl CallTail<'_> {
 /// Exactly one `mcp_call_log` row per call: the relay writes it, once, after the
 /// body is done — buffered after the bytes are read, streamed after the stream
 /// closes. Nothing above this point writes one.
+///
+/// `complete` names the method when the client negotiated `2026-07-28`, so the
+/// relay can finish the envelope for an upstream that answers in the older
+/// shape; see `mcp_relay::relay`.
 async fn relay_forwarded(
     state: &SharedState,
     ctx: CallContext,
@@ -661,6 +684,7 @@ async fn relay_forwarded(
     request: Vec<u8>,
     row: McpCallLogRow,
     tail: CallTail<'_>,
+    complete: Option<&str>,
 ) -> Response {
     let upstream = match session::forward(&target(&ctx), &body).await {
         Ok(upstream) => upstream,
@@ -671,7 +695,7 @@ async fn relay_forwarded(
     };
     let row = tail.stamp(row);
     let limit = mcp_relay::body_limit(&state.mcp_log_retention);
-    mcp_relay::relay(upstream, state.db.clone(), row, request, limit).await
+    mcp_relay::relay(upstream, state.db.clone(), row, request, limit, complete).await
 }
 
 async fn open_stream(
@@ -837,10 +861,25 @@ pub async fn post_mcp_aggregate(
             finish(&state, row, outcome, &body).await
         }
         Some(session::METHOD_TOOLS_LIST) => {
-            list_aggregate_tools(&state, &auth, &parsed, &body, row, id.as_ref(), started).await
+            let modern =
+                session::client_negotiated_modern(protocol_version_header(&headers), &parsed);
+            let call = AggregateCall {
+                parsed: &parsed,
+                request: &body,
+                id: id.as_ref(),
+                started,
+            };
+            list_aggregate_tools(&state, &auth, &call, row, modern).await
         }
         Some(session::METHOD_TOOLS_CALL) => {
-            call_aggregate_tool(&state, &auth, &parsed, &body, row, id.as_ref(), started).await
+            let complete = relay_completion(&headers, &parsed);
+            let call = AggregateCall {
+                parsed: &parsed,
+                request: &body,
+                id: id.as_ref(),
+                started,
+            };
+            call_aggregate_tool(&state, &auth, &call, row, complete.as_deref()).await
         }
         Some(other) => {
             let outcome = Outcome::method_not_allowed(
@@ -944,7 +983,12 @@ fn tools_page_cursor(parsed: &Value) -> Option<String> {
     }
 }
 
-fn tools_response(id: Option<&Value>, page: &catalog::Page, warnings: &[Value]) -> Value {
+fn tools_response(
+    id: Option<&Value>,
+    page: &catalog::Page,
+    warnings: &[Value],
+    modern: bool,
+) -> Value {
     let mut result = json!({
         "tools": page.entries.iter().map(|entry| entry.to_wire()).collect::<Vec<_>>(),
     });
@@ -954,11 +998,39 @@ fn tools_response(id: Option<&Value>, page: &catalog::Page, warnings: &[Value]) 
     if !warnings.is_empty() {
         result["warnings"] = json!(warnings);
     }
+    // The gateway authored this listing, so it can state the envelope outright —
+    // but only on the hop that requires it. `DEFAULT_TTL_MS` is exactly how long
+    // the catalogue cache behind the listing lives.
+    if modern {
+        session::complete_result(session::METHOD_TOOLS_LIST, DEFAULT_TTL_MS, &mut result);
+    }
     json!({
         "jsonrpc": "2.0",
         "id": id.cloned().unwrap_or(Value::Null),
         "result": result,
     })
+}
+
+/// What an aggregate call knows about its request: the envelope it must answer,
+/// the bytes to record, and when it started. They only ever travel together —
+/// they are exactly `mark`'s remaining arguments — so bundling them keeps the
+/// two route functions under clippy's argument ceiling.
+struct AggregateCall<'a> {
+    parsed: &'a Value,
+    request: &'a [u8],
+    id: Option<&'a Value>,
+    started: std::time::Instant,
+}
+
+impl AggregateCall<'_> {
+    fn stamp(
+        &self,
+        row: McpCallLogRow,
+        method: Option<&str>,
+        tool: Option<String>,
+    ) -> McpCallLogRow {
+        mark(row, method, tool, self.request.len(), self.started)
+    }
 }
 
 /// Merge every visible server's catalogue into one prefixed, deterministically
@@ -971,23 +1043,21 @@ fn tools_response(id: Option<&Value>, page: &catalog::Page, warnings: &[Value]) 
 async fn list_aggregate_tools(
     state: &SharedState,
     auth: &KeyIdentity,
-    parsed: &Value,
-    request: &[u8],
+    call: &AggregateCall<'_>,
     mut row: McpCallLogRow,
-    id: Option<&Value>,
-    started: std::time::Instant,
+    modern: bool,
 ) -> Response {
     let method = Some(session::METHOD_TOOLS_LIST);
     let servers = match state.db.list_mcp_servers().await {
         Ok(servers) => servers,
         Err(e) => {
             warn!(error = %e, "MCP registry read failed");
-            let row = mark(row, method, None, request.len(), started);
+            let row = call.stamp(row, method, None);
             return finish(
                 state,
                 row,
-                internal(id, "could not read the MCP registry"),
-                request,
+                internal(call.id, "could not read the MCP registry"),
+                call.request,
             )
             .await;
         }
@@ -1044,12 +1114,12 @@ async fn list_aggregate_tools(
     let entries = catalog::merge(sources);
     let page = catalog::page(
         &entries,
-        tools_page_cursor(parsed).as_deref(),
+        tools_page_cursor(call.parsed).as_deref(),
         catalog::DEFAULT_PAGE_SIZE,
     );
-    let outcome = Outcome::ok(tools_response(id, &page, &warnings));
-    let row = mark(row, method, None, request.len(), started);
-    finish(state, row, outcome, request).await
+    let outcome = Outcome::ok(tools_response(call.id, &page, &warnings, modern));
+    let row = call.stamp(row, method, None);
+    finish(state, row, outcome, call.request).await
 }
 
 /// Route one `tools/call` by its prefix.
@@ -1060,16 +1130,17 @@ async fn list_aggregate_tools(
 async fn call_aggregate_tool(
     state: &SharedState,
     auth: &KeyIdentity,
-    parsed: &Value,
-    request: &[u8],
+    call: &AggregateCall<'_>,
     mut row: McpCallLogRow,
-    id: Option<&Value>,
-    started: std::time::Instant,
+    complete: Option<&str>,
 ) -> Response {
     let method = Some(session::METHOD_TOOLS_CALL);
+    let parsed = call.parsed;
+    let request = call.request;
+    let id = call.id;
 
     let Some(name) = session::tool_name_of(parsed) else {
-        let row = mark(row, method, None, request.len(), started);
+        let row = call.stamp(row, method, None);
         let outcome = Outcome::rpc(
             StatusCode::BAD_REQUEST,
             id,
@@ -1080,7 +1151,7 @@ async fn call_aggregate_tool(
     };
 
     let Some((alias, tool)) = catalog::split_prefixed(&name) else {
-        let row = mark(row, method, Some(name.clone()), request.len(), started);
+        let row = call.stamp(row, method, Some(name.clone()));
         let outcome = Outcome::rpc(
             StatusCode::NOT_FOUND,
             id,
@@ -1096,20 +1167,20 @@ async fn call_aggregate_tool(
     let server = match lookup_enabled_server(state, &alias, id).await {
         Ok(server) => server,
         Err(outcome) => {
-            let row = mark(row, method, Some(tool), request.len(), started);
+            let row = call.stamp(row, method, Some(tool));
             return finish(state, row, outcome, request).await;
         }
     };
 
     if let Err(outcome) = check_tool_allowed(state, auth, &server, &tool, id).await {
-        let row = mark(row, method, Some(tool), request.len(), started);
+        let row = call.stamp(row, method, Some(tool));
         return finish(state, row, outcome, request).await;
     }
 
     let ctx = match prepare_for(state, auth, server, &alias, id).await {
         Ok(ctx) => ctx,
         Err(outcome) => {
-            let row = mark(row, method, Some(tool), request.len(), started);
+            let row = call.stamp(row, method, Some(tool));
             return finish(state, row, outcome, request).await;
         }
     };
@@ -1134,8 +1205,9 @@ async fn call_aggregate_tool(
             method,
             tool: Some(tool),
             request_bytes: request.len(),
-            started,
+            started: call.started,
         },
+        complete,
     )
     .await
 }
@@ -2677,6 +2749,121 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].method, "tools/list");
         assert_eq!(rows[0].status, MCP_CALL_STATUS_SUCCESS);
+    }
+
+    fn modern_tools_list_body() -> Value {
+        json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/list",
+            "params": {
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion":
+                        aigw_core::mcp::probe::MODERN_PROTOCOL_VERSION,
+                }
+            }
+        })
+    }
+
+    #[tokio::test]
+    async fn a_modern_client_listing_carries_the_cache_directive() {
+        let _guard = aggregate_guard().await;
+        let state = test_state().await;
+        let (up, _) = spawn_tools_stub(stub_tools(&["read"])).await;
+        insert_server(&state, server_row("demo", &up, "shared", None), None).await;
+        let app = build_router(state.clone());
+
+        let (status, body, _) = send(
+            &app,
+            Method::POST,
+            "/mcp",
+            Some(MK),
+            &[],
+            modern_tools_list_body(),
+        )
+        .await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(body["result"]["resultType"], json!("complete"));
+        assert_eq!(
+            body["result"]["ttlMs"],
+            json!(catalog_cache::DEFAULT_TTL_MS)
+        );
+        assert_eq!(body["result"]["cacheScope"], json!("private"));
+        assert_eq!(tool_names(&body), vec!["demo__read".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn a_legacy_client_listing_keeps_the_old_shape() {
+        let _guard = aggregate_guard().await;
+        let state = test_state().await;
+        let (up, _) = spawn_tools_stub(stub_tools(&["read"])).await;
+        insert_server(&state, server_row("demo", &up, "shared", None), None).await;
+        let app = build_router(state.clone());
+
+        let (status, body, _) = send(
+            &app,
+            Method::POST,
+            "/mcp",
+            Some(MK),
+            &[],
+            tools_list_body(None),
+        )
+        .await;
+        assert_eq!(status, 200, "{body}");
+        assert!(body["result"].get("resultType").is_none(), "{body}");
+        assert!(body["result"].get("ttlMs").is_none(), "{body}");
+        assert!(body["result"].get("cacheScope").is_none(), "{body}");
+    }
+
+    #[tokio::test]
+    async fn a_modern_client_relayed_call_gains_the_result_type() {
+        let state = test_state().await;
+        let (url, _) = spawn_recording_stub(true).await;
+        insert_server(
+            &state,
+            server_row("demo", &url, "shared", None),
+            Some("sk-upstream"),
+        )
+        .await;
+        let app = build_router(state);
+
+        let (status, body, _) = send(
+            &app,
+            Method::POST,
+            "/mcp/demo",
+            Some(MK),
+            &[],
+            modern_client_tools_call_body(),
+        )
+        .await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(body["result"]["resultType"], json!("complete"));
+        assert_eq!(body["result"]["content"][0]["text"], json!("pong"));
+    }
+
+    #[tokio::test]
+    async fn a_legacy_client_relayed_call_keeps_the_upstream_answer() {
+        let state = test_state().await;
+        let (url, _) = spawn_recording_stub(true).await;
+        insert_server(
+            &state,
+            server_row("demo", &url, "shared", None),
+            Some("sk-upstream"),
+        )
+        .await;
+        let app = build_router(state);
+
+        let (status, body, _) = send(
+            &app,
+            Method::POST,
+            "/mcp/demo",
+            Some(MK),
+            &[],
+            tools_call_body(),
+        )
+        .await;
+        assert_eq!(status, 200, "{body}");
+        assert!(body["result"].get("resultType").is_none(), "{body}");
     }
 
     #[tokio::test]

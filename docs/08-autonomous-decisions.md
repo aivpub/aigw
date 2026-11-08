@@ -1177,3 +1177,28 @@
   - body 里可能含敏感业务数据（内网文档 id、代码片段、日志查询语句）。与 `spend_logs.messages` 同级，访问控制一致（admin 看全部、用户看自己的），**不做内容级脱敏**——这是明确取舍。
   - SSE 拼接的 body 是截断的，末尾错误信息可能被切掉；`error_code` 不依赖 body 留存（来自 HTTP 状态与 JSON-RPC error 对象）。
   - **Playground 的 chat state 留在 `ChatPanel`，不上提到 layout**（Stage 151 §9）：`messages` 落 `sessionStorage`、`settings` 落 `localStorage`，切换 tab 卸载后重挂载会重新读到，会话不丢。代价是 `input` 草稿（本就不持久化）与进行中的请求，已由 BDD 钉死「切回 chat 后 messages 条数不变」。
+
+---
+
+## ADR-055: 现代结果信封由网关补齐（`resultType` + 列表类 `ttlMs`/`cacheScope`），只补不覆盖
+
+- **Date**: 2026-11-09
+- **Status**: Accepted
+- **Related Stage**: Stage 143 §3.2 / §3.5；Stage 144 §3.1（本次为修复，无新 Stage 文档）
+- **Background**: Claude Code 2.1.319 重连生产网关（`9.135.87.221:4001`）时，`tools/list` 直接被客户端拒绝：`Invalid result for tools/list: missing required resultType — servers implementing protocol revision 2026-07-28 MUST include it (the absent-means-complete bridge applies only to earlier-revision servers)`。实测确认：`server/discover` 有 `resultType`，但聚合 `tools/list`、聚合 `tools/call`、以及五个单 server 透传（gongfeng / iwiki / rainbow_mcp / zhiyan-cicd / zhiyan）的结果都没有；`ga4mcp` 只缺 `resultType` 而带 `ttlMs`/`cacheScope`。客户端 schema 里 `tools/list` 的 `ttlMs: int ≥ 0` 与 `cacheScope: public|private` 都是**必填**（`ke({ttlMs, cacheScope, tools, nextCursor?})`），不是可选。
+- **Decision**:
+  1. **谁协商谁负责**：只有当**客户端与网关**这一跳是 `2026-07-28`（`MCP-Protocol-Version` 头或 `params._meta["io.modelcontextprotocol/protocolVersion"]` 任一说 `2026-07-28`）才补信封；上游说哪套与客户端无关——网关是这一跳的应答方。旧版客户端看到的字节与今天完全一致。
+  2. **只补不覆盖**：`resultType` / `ttlMs` / `cacheScope` 用 `or_insert` 语义，现代上游自己声明的缓存策略原样保留。
+  3. **只补 `result`**：错误信封（`{"error":...}`）、非 JSON body、不完整事件不补也不改；`resultType` 描述的是 `result`。
+  4. **TTL 说实话**：透传链路报 `0`（上游下次可能给出不同目录，网关不能替它许诺缓存命中）；聚合端点报 `catalog_cache::DEFAULT_TTL_MS`（60s，正是内存目录的寿命）。`cacheScope` 恒 `private`（目录随调用者身份与凭据变化）。
+  5. **SSE 也一样**：等首个**带 `result` 或 `error` 的**事件，补齐后再转发；注释心跳与进度通知照常即时下发；之后的事件原样直通。
+- **Why not the alternatives**:
+  - **只修 `tools/list`** —— 客户端对 `tools/call` 同样严格（`$e({content, ...})` 的 `resultType` 默认值只在个别宽松路径成立，生产实测报错就在 `tools/list`），且 `prompts/list` / `resources/*` 属同一类结果；补一个方法等于让下一个方法再挂一次。
+  - **对所有客户端一律补** —— 旧版客户端没有这些字段的概念；多出来的字段虽被宽容解码器忽略，但「透传就是透传」的承诺会被无谓打破，也让 Stage 143 的字节级相等测试失去意义。
+  - **在探针/目录缓存层补**（`probe.rs` / `catalog.rs`）—— 那只能修走目录的路径，`tools/call` 与单 server 透传仍然原样出门；信封是**中继**的属性，不是探测的属性。
+  - **覆盖上游自报的 `ttlMs`/`cacheScope`** —— 现代上游有权自己声明缓存策略；网关没有比上游更准的信息。
+  - **在 `ttlMs` 上报一个非零的「安全值」** —— 中继没有任何缓存，报非零就是让客户端跳过它本该做的刷新。
+- **Consequences**:
+  - 中继路径在「客户端现代 + 上游结果缺字段」时会重新序列化 JSON（`serde_json::to_vec`），字段顺序按 map 排序而非上游原序；**已经完整的答案仍走原始字节**（`complete_result` 返回是否改动），所以常规路径零改动。
+  - SSE 路径在首个应答事件前有一个事件级的延迟（等 `\r\n\r\n`）；上游若永远不发完整事件，`flush` 会把已收到的字节原样送出，客户端报的是它自己该报的解析错误。
+  - 复用同一套补齐函数的三处（聚合 `tools/list`、聚合 `tools/call`、单 server 中继）任何一处漏接都会被单 server 的 BDD 场景抓住（`mcp_passthrough.feature` 三条 + `mcp_aggregate.feature` 两条）。

@@ -162,12 +162,67 @@ pub fn rpc_error(id: Option<&Value>, code: i64, message: impl Into<String>) -> V
     })
 }
 
-pub fn empty_tools_response(id: Option<&Value>) -> Value {
-    json!({
-        "jsonrpc": "2.0",
-        "id": id.cloned().unwrap_or(Value::Null),
-        "result": {"tools": []},
-    })
+/// Whether the client negotiated the modern revision *with the gateway*.
+///
+/// SEP-2575 puts the claim in `params._meta`; the transport's
+/// `MCP-Protocol-Version` header repeats it. Either one naming `2026-07-28`
+/// means this hop is modern, whichever stack the upstream speaks.
+pub fn client_negotiated_modern(header_version: Option<&str>, body: &Value) -> bool {
+    let claimed = body
+        .pointer("/params/_meta")
+        .and_then(|meta| meta.get(META_PROTOCOL_VERSION))
+        .and_then(Value::as_str);
+    header_version == Some(MODERN_PROTOCOL_VERSION) || claimed == Some(MODERN_PROTOCOL_VERSION)
+}
+
+/// `2026-07-28` dropped the "absent `resultType` means complete" bridge, and
+/// its listing methods also require a cache directive. A result the client
+/// receives on that hop is the gateway's answer whether the gateway authored it
+/// or relayed it from a legacy upstream, so both are completed the same way.
+/// Fields already present are left alone — a modern upstream states its own
+/// policy, and a second opinion would override it.
+///
+/// `ttl_ms` is the honest cache lifetime of *this* answer: the relay promises
+/// nothing (0), the aggregate serves from a cache that outlives one request.
+/// `cacheScope` is always `private` because both listings are shaped by the
+/// caller's identity and credentials.
+///
+/// Returns whether anything was added: an answer that already carries the whole
+/// envelope travels byte for byte, which is what the relay promises.
+pub fn complete_result(method: &str, ttl_ms: i64, result: &mut Value) -> bool {
+    let Some(fields) = result.as_object_mut() else {
+        return false;
+    };
+    let before = fields.len();
+    if needs_cache_directive(method) {
+        fields.entry("ttlMs").or_insert(json!(ttl_ms));
+        fields.entry("cacheScope").or_insert(json!("private"));
+    }
+    fields.entry("resultType").or_insert(json!("complete"));
+    fields.len() > before
+}
+
+/// The methods whose `2026-07-28` result schema requires a cache directive
+/// alongside the result. `server/discover` is not one of them — the gateway
+/// answers it itself, without the pair, and the handshake succeeds.
+fn needs_cache_directive(method: &str) -> bool {
+    matches!(
+        method,
+        METHOD_TOOLS_LIST
+            | "prompts/list"
+            | "resources/list"
+            | "resources/templates/list"
+            | "resources/read"
+    )
+}
+
+/// [`complete_result`] for a whole JSON-RPC envelope. An error envelope carries
+/// no `result` and needs nothing: `resultType` describes results only.
+pub fn complete_envelope(method: &str, ttl_ms: i64, envelope: &mut Value) -> bool {
+    match envelope.get_mut("result") {
+        Some(result) => complete_result(method, ttl_ms, result),
+        None => false,
+    }
 }
 
 pub fn request_id(body: &Value) -> Option<Value> {
@@ -516,6 +571,82 @@ mod tests {
             json!(LEGACY_PROTOCOL_VERSION)
         );
         assert!(value["result"].get("supportedVersions").is_none());
+    }
+
+    #[test]
+    fn a_client_is_modern_when_either_the_header_or_the_meta_says_so() {
+        let plain = json!({"method": "tools/list"});
+        assert!(client_negotiated_modern(
+            Some(MODERN_PROTOCOL_VERSION),
+            &plain
+        ));
+        assert!(!client_negotiated_modern(
+            Some(LEGACY_PROTOCOL_VERSION),
+            &plain
+        ));
+        assert!(!client_negotiated_modern(None, &plain));
+        assert!(client_negotiated_modern(
+            None,
+            &client_request_with_per_request_version()
+        ));
+        assert!(!client_negotiated_modern(
+            Some(LEGACY_PROTOCOL_VERSION),
+            &json!({"method": "tools/list", "params": {"_meta": {}}})
+        ));
+    }
+
+    #[test]
+    fn a_listing_result_gains_the_cache_directive() {
+        let mut result = json!({"tools": []});
+        complete_result(METHOD_TOOLS_LIST, 0, &mut result);
+        assert_eq!(result["resultType"], json!("complete"));
+        assert_eq!(result["ttlMs"], json!(0));
+        assert_eq!(result["cacheScope"], json!("private"));
+    }
+
+    #[test]
+    fn another_method_gains_only_the_result_type() {
+        let mut result = json!({"content": []});
+        complete_result(METHOD_TOOLS_CALL, 60000, &mut result);
+        assert_eq!(result["resultType"], json!("complete"));
+        assert!(result.get("ttlMs").is_none());
+        assert!(result.get("cacheScope").is_none());
+    }
+
+    #[test]
+    fn an_upstream_cache_policy_is_not_overridden() {
+        let mut result = json!({
+            "tools": [],
+            "resultType": "input_required",
+            "ttlMs": 5,
+            "cacheScope": "public",
+        });
+        complete_result(METHOD_TOOLS_LIST, 60000, &mut result);
+        assert_eq!(result["resultType"], json!("input_required"));
+        assert_eq!(result["ttlMs"], json!(5));
+        assert_eq!(result["cacheScope"], json!("public"));
+    }
+
+    #[test]
+    fn an_error_envelope_keeps_its_shape() {
+        let mut envelope = rpc_error(Some(&json!(1)), METHOD_NOT_FOUND, "nope");
+        let before = envelope.clone();
+        complete_envelope(METHOD_TOOLS_LIST, 0, &mut envelope);
+        assert_eq!(envelope, before);
+    }
+
+    #[test]
+    fn complete_envelope_reaches_the_result_not_the_envelope() {
+        let mut envelope = json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "result": {"tools": [], "nextCursor": "100"},
+        });
+        complete_envelope(METHOD_TOOLS_LIST, 60000, &mut envelope);
+        assert!(envelope.get("resultType").is_none());
+        assert_eq!(envelope["result"]["resultType"], json!("complete"));
+        assert_eq!(envelope["result"]["ttlMs"], json!(60000));
+        assert_eq!(envelope["result"]["nextCursor"], json!("100"));
     }
 
     #[test]
