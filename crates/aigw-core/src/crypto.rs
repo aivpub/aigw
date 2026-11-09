@@ -103,7 +103,7 @@ fn decrypt_gcm(data: &[u8], master_key: &str) -> Result<String, String> {
     let ciphertext_with_tag = &data[28..];
 
     // Derive key using PBKDF2 with SHA-256
-    let key = derive_gcm_key(master_key, salt);
+    let key = cached_gcm_key(master_key, salt);
 
     let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| format!("invalid AES key: {}", e))?;
 
@@ -157,10 +157,93 @@ fn derive_gcm_key(master_key: &str, salt: &[u8]) -> [u8; 32] {
     use hmac::Hmac;
     use pbkdf2::pbkdf2;
 
+    #[cfg(test)]
+    {
+        DERIVATIONS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        DERIVATION_IDS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(derivation_id(master_key, salt));
+    }
+
     let mut key = [0u8; 32];
     pbkdf2::<Hmac<Sha256>>(master_key.as_bytes(), salt, 600_000, &mut key)
         .expect("PBKDF2 derivation should not fail with valid inputs");
     key
+}
+
+/// PBKDF2 with 600 000 iterations is the dominant cost of every `v2:gcm:`
+/// decryption, and the derivation is a pure function of the master key and the
+/// value's own random salt. Caching it needs no invalidation: a re-sealed value
+/// carries a fresh salt and a rotated master key changes the fingerprint, so
+/// neither can address a stale entry. Even if a fingerprint collided, AES-GCM's
+/// authentication tag makes decryption fail rather than return wrong plaintext.
+/// Only the 32-byte key is cached, never the plaintext, so dumping this map
+/// exposes no credential; the idle TTL lets an unused key fall out of memory.
+const KEY_CACHE_CAPACITY: u64 = 4096;
+const KEY_CACHE_IDLE: std::time::Duration = std::time::Duration::from_secs(600);
+
+fn key_cache() -> &'static moka::sync::Cache<[u8; 32], [u8; 32]> {
+    use std::sync::OnceLock;
+
+    static CACHE: OnceLock<moka::sync::Cache<[u8; 32], [u8; 32]>> = OnceLock::new();
+    CACHE.get_or_init(|| {
+        moka::sync::Cache::builder()
+            .max_capacity(KEY_CACHE_CAPACITY)
+            .time_to_idle(KEY_CACHE_IDLE)
+            .build()
+    })
+}
+
+fn derivation_id(master_key: &str, salt: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(master_key.as_bytes());
+    hasher.update([0u8]);
+    hasher.update(salt);
+    let mut id = [0u8; 32];
+    id.copy_from_slice(&hasher.finalize());
+    id
+}
+
+fn cached_gcm_key(master_key: &str, salt: &[u8]) -> [u8; 32] {
+    // `get_with` coalesces: concurrent decrypts of the same value wait on one
+    // derivation instead of each running 600 000 rounds of their own.
+    key_cache().get_with(derivation_id(master_key, salt), || {
+        derive_gcm_key(master_key, salt)
+    })
+}
+
+#[cfg(test)]
+static DERIVATIONS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(test)]
+static DERIVATION_IDS: std::sync::Mutex<Vec<[u8; 32]>> = std::sync::Mutex::new(Vec::new());
+
+#[cfg(test)]
+fn derivation_count() -> usize {
+    DERIVATIONS.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Derivations performed for one specific (master key, salt) pair. Exact and
+/// race-free across parallel tests, unlike the global [`derivation_count`].
+#[cfg(test)]
+fn derivation_count_for(master_key: &str, salt: &[u8]) -> usize {
+    let id = derivation_id(master_key, salt);
+    DERIVATION_IDS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .filter(|entry| **entry == id)
+        .count()
+}
+
+#[cfg(test)]
+fn reset_derivation_count() {
+    DERIVATIONS.store(0, std::sync::atomic::Ordering::SeqCst);
+    DERIVATION_IDS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clear();
 }
 
 /// Encrypt a plaintext into the litellm AES-256-GCM envelope (`v2:gcm:` prefix).
@@ -180,6 +263,8 @@ pub fn encrypt_litellm_value_gcm(plaintext: &str, master_key: &str) -> Result<St
 
     let mut salt = [0u8; 16];
     getrandom::fill(&mut salt).map_err(|e| format!("RNG failed: {}", e))?;
+    // Salt is fresh per call, so a cached key would never be hit and would only
+    // evict useful entries — encrypt with the raw derivation.
     let key = derive_gcm_key(master_key, &salt);
     let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| format!("invalid key: {}", e))?;
     let mut nonce = [0u8; 12];
@@ -603,6 +688,87 @@ mod tests {
         assert_eq!(decrypt_litellm_value(&enc, "sk-master").unwrap(), plain);
         // Wrong key fails.
         assert!(decrypt_litellm_value(&enc, "wrong-key").is_err());
+    }
+
+    // ━━━━━━━━━━━ GCM key cache tests ━━━━━━━━━━━
+
+    /// Serializes the cache tests so their counter resets do not interleave.
+    static CACHE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn gcm_salt(ciphertext: &str) -> [u8; 16] {
+        let raw = BASE64_STD
+            .decode(ciphertext.strip_prefix("v2:gcm:").unwrap())
+            .unwrap();
+        let mut salt = [0u8; 16];
+        salt.copy_from_slice(&raw[..16]);
+        salt
+    }
+
+    #[test]
+    fn a_second_decrypt_of_the_same_value_skips_the_derivation() {
+        let _guard = CACHE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let master_key = "sk-cache-test-second-decrypt";
+        let plain = "sk-ant-sid-secret-123";
+
+        let ciphertext = encrypt_litellm_value_gcm(plain, master_key).unwrap();
+        let salt = gcm_salt(&ciphertext);
+        // The seal itself derives one key; count only the decryptions below.
+        reset_derivation_count();
+
+        let first = decrypt_litellm_value(&ciphertext, master_key).unwrap();
+        assert_eq!(derivation_count_for(master_key, &salt), 1);
+        // The global counter is only comparable under this test's lock: other
+        // tests decrypt GCM values concurrently and may bump it.
+        assert!(
+            derivation_count() >= 1,
+            "cold decrypt must derive at least once"
+        );
+
+        let second = decrypt_litellm_value(&ciphertext, master_key).unwrap();
+        assert_eq!(first, plain);
+        assert_eq!(second, plain);
+        assert_eq!(derivation_count_for(master_key, &salt), 1);
+    }
+
+    #[test]
+    fn a_resealed_value_derives_its_key_again() {
+        let _guard = CACHE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let master_key = "sk-cache-test-reseal";
+        let plain = "sk-ant-sid-secret-456";
+
+        let first = encrypt_litellm_value_gcm(plain, master_key).unwrap();
+        let second = encrypt_litellm_value_gcm(plain, master_key).unwrap();
+        let first_salt = gcm_salt(&first);
+        let second_salt = gcm_salt(&second);
+        assert_ne!(first_salt, second_salt, "fresh salt expected per seal");
+        // The two seals each derive one key; count only the decryptions below.
+        reset_derivation_count();
+
+        assert_eq!(decrypt_litellm_value(&first, master_key).unwrap(), plain);
+        assert_eq!(decrypt_litellm_value(&second, master_key).unwrap(), plain);
+        assert_eq!(derivation_count_for(master_key, &first_salt), 1);
+        assert_eq!(derivation_count_for(master_key, &second_salt), 1);
+    }
+
+    #[test]
+    fn a_different_master_key_never_reuses_a_cached_key() {
+        let _guard = CACHE_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let key_a = "sk-cache-test-key-a";
+        let key_b = "sk-cache-test-key-b";
+        let plain = "sk-ant-sid-secret-789";
+
+        let ciphertext = encrypt_litellm_value_gcm(plain, key_a).unwrap();
+        let salt = gcm_salt(&ciphertext);
+        // The seal derives one key; count only the decryptions below.
+        reset_derivation_count();
+
+        assert_eq!(decrypt_litellm_value(&ciphertext, key_a).unwrap(), plain);
+        assert_eq!(derivation_count_for(key_a, &salt), 1);
+
+        // Same salt, different master key: must derive its own key and then fail
+        // the GCM tag check rather than reuse A's cached key.
+        assert!(decrypt_litellm_value(&ciphertext, key_b).is_err());
+        assert_eq!(derivation_count_for(key_b, &salt), 1);
     }
 
     // ━━━━━━━━━━━ edge case tests ━━━━━━━━━━━

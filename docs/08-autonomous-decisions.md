@@ -1222,10 +1222,36 @@
 - **Why not the alternatives**:
   - **只做并发** —— 3 页仍要付 3 次解析；并发把 15.32s 压到约 6~7s，但客户端看到的仍是三连等。
   - **只放大页** —— 页 1 仍是 6s（8 个 server 串行 unseal），"慢"的主因没动。
-  - **给 PBKDF2 加 key 派生缓存**（按 salt 记忆派生结果）—— 每条密文自带随机 salt，缓存命中率取决于「同一值被反复 unseal」；同一请求内每个 token 只解一次，跨请求才可能命中，而跨请求的命中窗口正是安全上最该避免的「派生长驻」。要做也应是「解出的明文按 token_id 缓存到 token 改删为止」，那是另一套失效语义，不在本次修复的面内（见 TD-035）。
+  - **给 PBKDF2 加 key 派生缓存**（按 salt 记忆派生结果）—— 留到 ADR-057 单独立项：本次只做「不动语义」的两个改动，派生缓存的失效论证需要单独写清楚。
   - **提到网关侧合并缓存**（把合并后的页集合按身份缓存 TTL）—— 需要按 `(identity, servers, ttl)` 建第二层缓存并处理失效；两个简单动作已把主要成本拿掉，这层留到真有必要时（TD-035）。
   - **把 `DEFAULT_PAGE_SIZE` 设成无限** —— 客户端拿到的 `tools/list` 会随部署规模无界增长；500 是个具体、可回归的数字。
 - **Consequences**:
   - 最坏情况从 `O(页数 × server 数 × unseal)` 降到 `O(server 数 × unseal)`，且只发生一次。实测同一台生产（旧代码）用 8 个并发请求打 8 个 `/mcp/{alias}`：**串行 6.51s / 并发 2.29s**——服务端本身是多线程 tokio，并发化能拿到这个收益；页大小 500 再把 3 页变 1 页，所以连接期从 15.32s 降到约 2.3s + 一次合并。`/mcp-rest/tools/list`（8 server）旧代码 3.1s，其收益较小（该路径没有分页，也没有每页重付）。
   - `TOOLS_LIST_TTL`（`ttlMs=60000`）不变：目录缓存仍是 60s，只是「一次连接只读一次目录」。
-  - `TD-035` 登记剩余项：PBKDF2-600k 的每次调用成本、60s TTL 造成的重连冷探测、`mcp_user::list_my_servers` 的串行循环。
+  - `TD-035` 登记剩余项：60s 目录缓存 TTL 造成的重连冷探测、`mcp_user::list_my_servers` 的串行循环（PBKDF2 那一项由 ADR-057 收掉）。
+
+---
+
+## ADR-057: PBKDF2 派生 key 的进程内缓存（按 master key 指纹 + 密文自带 salt），不缓存明文
+
+- **Date**: 2026-11-09
+- **Status**: Accepted
+- **Related Stage**: Stage 144 §3.1、Stage 146 §8；ADR-056（同一问题的第一批改动）、TD-035（本条把其中主因收掉）
+- **Background**: ADR-056 并发化 + 页大小 500 之后，生产仍在跑旧代码，复测（2026-11-09，同一客户端 key 直打 `/mcp`）显示剩余的账很清楚：3 页共 **13.64s / 234 工具**；目录仍在缓存内时重连仍要 **4.35s**；空闲 75s 让 60s TTL 过期后重连 5.49s —— **冷/热只差 1.1s，剩下的 4.3s 与目录无关**。同一时刻 8 个 `/mcp/{alias}` 串行求和 6.32s，而 8 个并发打同一 alias 是 2.0s（1→2.39s、2→1.37s、4→1.83s、8→2.01s），**并发只拿到约 3 倍而不是 8 倍**：unseal 是纯 CPU，容器核数就是上限。所以「再加一层目录/合并缓存」没有可拿的东西，成本全在 `unseal_token` 的 PBKDF2 600k 上。
+  - 单次成本（同机 Python/OpenSSL，与 Rust 侧同一份 C 实现）：PBKDF2-HMAC-SHA256 600k = **78.6ms**；key 已在手时 AES-GCM 解密 = **1.41µs**；`v2:gcm:` 信封 base64 解码 0.16µs；`extra_headers` 的 JSON 解析 0.80µs；identity 上的一次 SHA-256 0.28µs。
+  - 一次聚合列表对每个 server 最多 3 次 unseal（token 密文、`auth_header_value`、`extra_headers`）：8 个 server ≈ 24 × 78.6ms ≈ 1.9s（生产 6.5s 是容器更慢），缓存后在 ~50µs 量级。
+- **Decision**: 在 `crates/aigw-core/src/crypto.rs` 缓存 **PBKDF2 派生出的 32 字节 key**，`decrypt_gcm` 经它取 key；`encrypt_litellm_value_gcm` 仍走裸 `derive_gcm_key`。
+  1. **缓存键 = `SHA-256(master_key ‖ 0x00 ‖ 该密文自带的 16 字节 salt)`**。失效不需要任何代码：token/header 轮换 → 重新 seal → 新随机 salt → 天然 miss；`AIGW_MASTER_KEY` 轮换 → 指纹变 → 天然 miss。没有任何「忘记失效」的路径可走。
+  2. **指纹碰撞也不会给出错明文**：AES-GCM 的认证 tag 会直接解密失败，而不是返回别人的内容。这条是「不加显式失效」的正当性来源，写进了函数注释。
+  3. **只缓存 key，不缓存明文**。key 脱离密文不可用，dump 这个 map 拿不到任何凭据；`time_to_idle(600s)` + `max_capacity(4096)`（约 256KB）让长期不用的值把 key 从内存里落出。
+  4. **`get_with` 而非 get-then-insert**：moka 的 `get_with` 对同一键合并并发初始化，8 个 server 同时解同一个值时不会各自跑一遍 600k 轮。
+  5. **只改 `decrypt_gcm` 一个调用点**。NaCl 分支用 `derive_key`（一次 SHA-256），本来就没有 PBKDF2；`encrypt` 每次都是新 salt，插进去的条目永不命中还会挤掉有用的。
+- **Why not the alternatives**:
+  - **缓存解出来的明文/header 集**（按 server id + `updated_at` + token 密文做键）—— 收益只有 GCM + base64 + JSON 那几微秒，却要引入第二个失效域（`updated_at` 从此成为凭据选择的正确性依赖），并把明文凭据放进进程级静态。这正是 ADR-056 当时拒绝的形态，本条否定它的理由更强：派生缓存已经把它们全部覆盖。
+  - **缓存合并后的页集合**（按 `(identity, server 集合, fetched_at)`）—— 页大小 500 之后一页装完，收益已被摊平；还要处理改名/增删 server 的失效。
+  - **把 PBKDF2 轮数调低或在进程启动时预派生** —— 600k 是与 litellm 的线格式兼容性的一部分（密文由对方写入时轮数是固定的），预派生需要预先知道所有 salt，等于扫全表解密。
+- **Consequences**:
+  - 稳态下一次聚合连接的成本回到「8 次 DB 查询 × 2 + 一次合并」量级；ADR-056 的 2.3s 里 95% 是 PBKDF2，缓存后预期降到百毫秒级（部署后实测）。
+  - 空闲超过 10 分钟后每个 `(master key, salt)` 会重新派生一次：8 server × 最多 3 个密文 × 78.6ms ≈ 1.9s 的**冷启动一次**，不是每请求。这是刻意的取舍：key 不从内存长期驻留。
+  - **附带收益（未验证）**：`ModelResolver::resolve_one` 与 `chat.rs` 的 `litellm_params` / `credential_values` 解密也走同一条 `decrypt_litellm_value`。若生产上模型参数是加密形态，则**每个 chat 请求**都在付一次 600k 轮，本条把这条路径的成本一并拿掉。是否如此需部署后按模型行形态确认。
+  - TD-035 的主因（PBKDF2-600k 每请求重付）就此关闭，剩下 60s 目录 TTL 的冷探测与 `mcp_user::list_my_servers` 的串行循环，`Priority` 从 P2 降到 P3。

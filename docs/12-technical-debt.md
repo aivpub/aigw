@@ -462,16 +462,16 @@
 - **Target Phase**: 首个出现「聚合调用排查需要逐上游凭据状态」的真实需求时。
 - **Related**: ADR-051、`stage-149.md` §3.1
 
-### TD-035: MCP 凭据解密的固定成本（PBKDF2-600k）与 60s 目录 TTL 仍会让重连变成冷启动
+### TD-035: MCP 目录的 60s TTL 与 `list_my_servers` 的串行循环仍会让重连变成冷启动
 
-- **Date**: 2026-11-09
-- **Priority**: **P2**（不影响正确性，但直接把「连接要等多久」变成运维可感知的体验问题）
-- **Source**: ADR-056 的实测（Claude Code 连生产 `/mcp` 聚合端点 15.32s / 3 页 / 8 上游）
-- **Description**: ADR-056 把串行解析改成并发、把页大小放到 500，剩下的固定成本有两项。(1) `unseal_token` 对每个 `v2:gcm:` 值都要跑 **PBKDF2-HMAC-SHA256 600,000 轮**（本机 C 实现 75 ms，容器内更慢），每个 server 每次请求至少一次，`OutboundHeaders::resolve` 还会再解 `auth_header_value` / `extra_headers`；没有跨请求的派生/明文缓存。(2) `catalog_cache` 的 TTL 默认 60s（`DEFAULT_TTL_MS`），空闲一分钟后重连必定走冷探测（实测 6.04s）。
-- **Impact**: 并发之后单次连接 ≈ 最慢那个 server 的解析 + 冷探测，8 上游约 2.3s（实测并发 8 个 `/mcp/{alias}` 的墙钟时间）——已经不再是「慢到要点 reconnect」的级别；冷缓存时再加一次探测（实测 6.04s 是旧代码串行时的数字，并发后应显著更低）。剩余成本随上游数量线性增长，但不是复利。
-- **Why not fix now**: 两个方向都要先定语义。派生缓存要回答「缓存多久、key 轮换怎么失效、内存里放不放明文」；合并页缓存要按 `(identity, server 集合, fetched_at)` 建第二层并处理改名/增删 server 的失效——两者都比 ADR-056 的两个改动贵一个数量级，而现在的主因已经拿掉。
+- **Date**: 2026-11-09（2026-11-09 按 ADR-057 降级重写）
+- **Priority**: **P3**（原本的 P2 主因 PBKDF2-600k 已由 ADR-057 的派生 key 缓存收掉）
+- **Source**: ADR-056 / ADR-057 的实测（Claude Code 连生产 `/mcp` 聚合端点 13.64s / 3 页 / 8 上游）
+- **Description**: 三笔成本里两笔已经收掉：凭据解析并发化（ADR-056）、PBKDF2 派生 key 缓存（ADR-057）。剩下两项。(1) `catalog_cache` 的 TTL 默认 60s（`DEFAULT_TTL_MS`），空闲一分钟后重连必定走冷探测——实测冷/热差 **1.1s**（5.49s vs 4.35s，旧代码、未部署 ADR-056/057），量级已远小于当初判断的 6.04s。(2) `mcp_user::list_my_servers` 是串行循环，但只用于低频 UI 列表，且其 `usable_default` 只查不 unseal。
+- **Impact**: 部署 ADR-056 + ADR-057 后剩余成本主要是「一次冷探测 ≈ 最慢上游的一次 `tools/list`」，8 上游并发下应显著低于 1.1s；不再是「慢到要点 reconnect」的级别。
+- **Why not fix now**: 冷探测是目录正确性的代价，缓存它需要定「多久、按什么失效」；60s 是上游 `ttlMs` 的语义，调大等于对外承诺更久的陈旧目录。
 - **Target Phase**: 下次「MCP 连接慢」再次被用户提出时；或上游数量超过 15 个时。
-- **Related**: ADR-056、ADR-041（`catalog_cache` 的进程级静态语义）、`crates/aigw-core/src/crypto.rs`（`derive_gcm_key`）、`stage-146.md` §8
+- **Related**: ADR-056、ADR-057、ADR-041（`catalog_cache` 的进程级静态语义）、`crates/aigw-core/src/crypto.rs`（`derive_gcm_key` / `cached_gcm_key`）、`stage-146.md` §8
 
 ## Resolved Items
 ### TD-017g: Anthropic 服务端工具触发 HTTP 500（Resolved 2026-10-07, Stage 135）
