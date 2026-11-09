@@ -1202,3 +1202,30 @@
   - 中继路径在「客户端现代 + 上游结果缺字段」时会重新序列化 JSON（`serde_json::to_vec`），字段顺序按 map 排序而非上游原序；**已经完整的答案仍走原始字节**（`complete_result` 返回是否改动），所以常规路径零改动。
   - SSE 路径在首个应答事件前有一个事件级的延迟（等 `\r\n\r\n`）；上游若永远不发完整事件，`flush` 会把已收到的字节原样送出，客户端报的是它自己该报的解析错误。
   - 复用同一套补齐函数的三处（聚合 `tools/list`、聚合 `tools/call`、单 server 中继）任何一处漏接都会被单 server 的 BDD 场景抓住（`mcp_passthrough.feature` 三条 + `mcp_aggregate.feature` 两条）。
+
+---
+
+## ADR-056: 聚合 `tools/list` 的凭据解析并发化 + 页大小放到 500，连接期不再随「页数 × server 数」放大
+
+- **Date**: 2026-11-09
+- **Status**: Accepted
+- **Related Stage**: Stage 144 §3.1（分页与聚合流水线）、Stage 143 §8；修复无新 Stage 文档
+- **Background**: Claude Code 连生产网关（`9.135.87.221:4001`，`/mcp` 聚合端点）时「工具加载慢」，偶尔要手动点 reconnect。实测（2026-11-09，主 Agent 用 `python3` + 客户端同一 `Authorization` 直接打生产）：230 个工具 / 8 个上游 / 3 页，**整段连接 15.32s**（`page1 6.05s / page2 4.76s / page3 4.51s`；复测 16.00s，331 KB）。同一时刻：`server/discover`（网关本地作答，不解析凭据）0.07s，聚合 `server/discover` 0.068s，同一路径的错误方法 0.07s。也就是说 **15 秒里几乎没有上游网络时间**——它全花在每页都要重做的「逐 server 解析凭据 + 全目录合并」上：
+  - `resolve_bearer` 每个 server 两次 `default_mcp_token` 查询 + 一次 `unseal_token`；`v2:gcm:` 的 unseal 是 **PBKDF2-HMAC-SHA256 600,000 轮**（本机 OpenSSL C 实现即 75 ms，容器里更慢），单次解析实测 ~0.8s；
+  - 8 个 server **串行**解析 ≈ 6.5s（`/mcp/{alias}` 单次 0.5~1.4s × 8 求和），`/mcp-rest/tools/list`（8 个 server，23 次查询）实测 3.1s；
+  - 每页都完整重付一遍：这 3 页是同一个客户端的连续请求，页 2 的 `page2 4.66s` 与页 1 的 4.38s 同量级；
+  - 目录缓存 TTL 60s，空闲 62s 后的第一次连接又是冷探测（实测 6.04s）。
+- **Decision**:
+  1. **凭据解析并发化**（`futures::future::join_all`，两处：聚合 `list_aggregate_tools` 与 `/mcp-rest/tools_list`）。每个 future 自带 `McpServerRow`，不跨 `await` 借用；`join_all` 保序，所以 `owners`（喂 `catalog::merge_owners`）与 `warnings` 的产出顺序与串行时一致。`outbound_headers` 仍在解析成功后**立即**调用一次（第二次调用会再解一次密，且可能与实际出站的那份不一致）。
+  2. **页大小 100 → 500**（`catalog::DEFAULT_PAGE_SIZE`）。分页不是免费的：游标是合并列表的下标，页 2..N 必须把整份目录重建一遍才能切片，所以每页的成本≈第一页。500 覆盖当前在役目录（230 个 / 8 上游），把连接期从 3 次往返压到 1 次；游标格式不变（仍是下标字符串），超过 500 个工具时继续分页。
+  3. **不动**：`/mcp/{alias}` 单 server 路径（无聚合、无可省）、`/mcp-rest/health`（解析与每 server 的网络探测耦合，拆开要重构 handler）、`mcp_user::list_my_servers`（低频 UI 调用；其 `usable_default` 只查不 unseal，无 PBKDF2）。
+- **Why not the alternatives**:
+  - **只做并发** —— 3 页仍要付 3 次解析；并发把 15.32s 压到约 6~7s，但客户端看到的仍是三连等。
+  - **只放大页** —— 页 1 仍是 6s（8 个 server 串行 unseal），"慢"的主因没动。
+  - **给 PBKDF2 加 key 派生缓存**（按 salt 记忆派生结果）—— 每条密文自带随机 salt，缓存命中率取决于「同一值被反复 unseal」；同一请求内每个 token 只解一次，跨请求才可能命中，而跨请求的命中窗口正是安全上最该避免的「派生长驻」。要做也应是「解出的明文按 token_id 缓存到 token 改删为止」，那是另一套失效语义，不在本次修复的面内（见 TD-035）。
+  - **提到网关侧合并缓存**（把合并后的页集合按身份缓存 TTL）—— 需要按 `(identity, servers, ttl)` 建第二层缓存并处理失效；两个简单动作已把主要成本拿掉，这层留到真有必要时（TD-035）。
+  - **把 `DEFAULT_PAGE_SIZE` 设成无限** —— 客户端拿到的 `tools/list` 会随部署规模无界增长；500 是个具体、可回归的数字。
+- **Consequences**:
+  - 最坏情况从 `O(页数 × server 数 × unseal)` 降到 `O(server 数 × unseal)`，且只发生一次。实测同一台生产（旧代码）用 8 个并发请求打 8 个 `/mcp/{alias}`：**串行 6.51s / 并发 2.29s**——服务端本身是多线程 tokio，并发化能拿到这个收益；页大小 500 再把 3 页变 1 页，所以连接期从 15.32s 降到约 2.3s + 一次合并。`/mcp-rest/tools/list`（8 server）旧代码 3.1s，其收益较小（该路径没有分页，也没有每页重付）。
+  - `TOOLS_LIST_TTL`（`ttlMs=60000`）不变：目录缓存仍是 60s，只是「一次连接只读一次目录」。
+  - `TD-035` 登记剩余项：PBKDF2-600k 的每次调用成本、60s TTL 造成的重连冷探测、`mcp_user::list_my_servers` 的串行循环。

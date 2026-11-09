@@ -332,7 +332,7 @@
 - **Source**: Phase 55 Stage 143 对 Stage 144 `catalog::page` 的只读复查（`crates/aigw-core/src/mcp/catalog.rs`）
 - **Description**: `next_cursor` 是 `end` 这个**网关内下标**（`page()` 里 `Some(end)`），下一页从 `entries[end..]` 开始。而 `entries` 每次请求都重新派生：`list_mcp_servers()` → `filter(enabled)` → `resolve_bearer` → `catalog_tools`（命中缓存，或现场探测，10s 超时）。于是两页之间任何一项变化都会让后续所有下标错位：某 server 被启用/禁用、某 `user_required` 用户的个人 token 被加上或删掉（该 alias 整块出现/消失）、冷缓存探测在第一页失败第二页成功（快照回退的工具数不同）、两页之间新注册了 server。
 - **Impact**: 客户端拿到 200、无任何 warning（`warnings` 数组只在凭据/探测失败时触发，不覆盖集合漂移），但会漏掉或重复工具。漂移范围受 `merge` 按 `(alias, tool_name)` 排序约束，是有界的，不是全表乱序。
-- **Why not fix now**: 改成 `(alias, tool_name)` 复合游标（`skip_while(|e| (e.alias, e.tool.tool_name) <= key)`）只需一次比较，但对插入稳定；代价是改 `catalog::page` 的签名与出线格式（cursor 从数字串变成带分隔符的键），并连带改 Stage 144 的分页测试与 BDD 断言。当前工具数（个位数 server × 几十工具）远未到需要多页的规模，`DEFAULT_PAGE_SIZE = 100`，实际只有 >100 工具才翻页。
+- **Why not fix now**: 改成 `(alias, tool_name)` 复合游标（`skip_while(|e| (e.alias, e.tool.tool_name) <= key)`）只需一次比较，但对插入稳定；代价是改 `catalog::page` 的签名与出线格式（cursor 从数字串变成带分隔符的键），并连带改 Stage 144 的分页测试与 BDD 断言。当前工具数（个位数 server × 几十工具）远未到需要多页的规模；`DEFAULT_PAGE_SIZE` 已于 ADR-056 提到 500（在役 230 个工具一页装完），翻页只在目录超过 500 时发生。
 - **Target Phase**: Phase 57 或首个 MCP server 数上两位数的阶段。届时一并决定 cursor 是否要带签名的 opaque token。
 - **Related**: 同批复查确认 `merge` 的 `has_conflict` **不上线**（`ToolEntry::to_wire()` 不发该字段、`conflicted()` 无生产消费者），它是「调用方 bug 的防御网」而非线上契约 —— `/mcp` 的 `tools/list` 不带冲突信息，按现状接受，不登记为缺陷。
 
@@ -461,6 +461,17 @@
 - **Why not fix now**: 要有明细就得把一次请求拆成多行，或新增一张「每请求每上游」的子表 —— 前者破坏 `call_id` 是 PK 的结构前提（所有消费方都要改），后者是本 Phase 之外的建模工作。
 - **Target Phase**: 首个出现「聚合调用排查需要逐上游凭据状态」的真实需求时。
 - **Related**: ADR-051、`stage-149.md` §3.1
+
+### TD-035: MCP 凭据解密的固定成本（PBKDF2-600k）与 60s 目录 TTL 仍会让重连变成冷启动
+
+- **Date**: 2026-11-09
+- **Priority**: **P2**（不影响正确性，但直接把「连接要等多久」变成运维可感知的体验问题）
+- **Source**: ADR-056 的实测（Claude Code 连生产 `/mcp` 聚合端点 15.32s / 3 页 / 8 上游）
+- **Description**: ADR-056 把串行解析改成并发、把页大小放到 500，剩下的固定成本有两项。(1) `unseal_token` 对每个 `v2:gcm:` 值都要跑 **PBKDF2-HMAC-SHA256 600,000 轮**（本机 C 实现 75 ms，容器内更慢），每个 server 每次请求至少一次，`OutboundHeaders::resolve` 还会再解 `auth_header_value` / `extra_headers`；没有跨请求的派生/明文缓存。(2) `catalog_cache` 的 TTL 默认 60s（`DEFAULT_TTL_MS`），空闲一分钟后重连必定走冷探测（实测 6.04s）。
+- **Impact**: 并发之后单次连接 ≈ 最慢那个 server 的解析 + 冷探测，8 上游约 2.3s（实测并发 8 个 `/mcp/{alias}` 的墙钟时间）——已经不再是「慢到要点 reconnect」的级别；冷缓存时再加一次探测（实测 6.04s 是旧代码串行时的数字，并发后应显著更低）。剩余成本随上游数量线性增长，但不是复利。
+- **Why not fix now**: 两个方向都要先定语义。派生缓存要回答「缓存多久、key 轮换怎么失效、内存里放不放明文」；合并页缓存要按 `(identity, server 集合, fetched_at)` 建第二层并处理改名/增删 server 的失效——两者都比 ADR-056 的两个改动贵一个数量级，而现在的主因已经拿掉。
+- **Target Phase**: 下次「MCP 连接慢」再次被用户提出时；或上游数量超过 15 个时。
+- **Related**: ADR-056、ADR-041（`catalog_cache` 的进程级静态语义）、`crates/aigw-core/src/crypto.rs`（`derive_gcm_key`）、`stage-146.md` §8
 
 ## Resolved Items
 ### TD-017g: Anthropic 服务端工具触发 HTTP 500（Resolved 2026-10-07, Stage 135）

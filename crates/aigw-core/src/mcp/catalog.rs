@@ -23,7 +23,12 @@ use serde_json::{json, Value};
 use crate::models::UpstreamTool;
 
 pub const SEPARATOR: &str = "__";
-pub const DEFAULT_PAGE_SIZE: usize = 100;
+/// A page is not free: pages 2..N re-pay the whole credential resolution and
+/// re-merge the entire catalogue (the cursor names an index into a list that has
+/// to be rebuilt), so each extra page costs about as much as the first. A
+/// typical deployment aggregates a few hundred tools, and one page is what keeps
+/// a client's connect from turning into N sequential round trips.
+pub const DEFAULT_PAGE_SIZE: usize = 500;
 
 /// One merged tool: the prefix it is served under and the upstream tool behind it.
 #[derive(Debug, Clone, PartialEq)]
@@ -272,6 +277,23 @@ mod tests {
         let empty = page(&none, None, DEFAULT_PAGE_SIZE);
         assert!(empty.entries.is_empty());
         assert_eq!(empty.next_cursor, None);
+    }
+
+    /// A page costs a full resolution and merge, so the page size is chosen to
+    /// keep a realistic deployment to one round trip. 500 tools is well past
+    /// what the aggregate serves today (230 across 8 servers at the time of
+    /// writing); this test pins the property, not the exact figure.
+    #[test]
+    fn a_realistic_catalogue_fits_one_page() {
+        let names: Vec<String> = (0..500).map(|i| format!("t{i}")).collect();
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        let merged = merge([source("big", &refs)]);
+        let only = page(&merged, None, DEFAULT_PAGE_SIZE);
+        assert_eq!(only.entries.len(), 500);
+        assert_eq!(
+            only.next_cursor, None,
+            "one page is what keeps a client's connect from paying N times"
+        );
     }
 
     #[test]

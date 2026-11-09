@@ -145,16 +145,16 @@ pub async fn tools_list(
         None => enabled_servers(&state).await,
     };
 
-    let mut tools: Vec<UpstreamTool> = Vec::new();
-    let mut server_views = Vec::new();
-    let mut visible: Vec<String> = Vec::new();
-    for server in &servers {
+    // Each server costs a token read plus an unseal, so they resolve together;
+    // `join_all` keeps input order, which `server_views` and the
+    // single-visible-server rule both read.
+    let collected = futures::future::join_all(servers.iter().map(|server| async {
         match resolve_bearer(&state, &auth, server).await {
             Ok(_) => {}
-            Err(reason) if reason == "user_required" => continue,
+            Err(reason) if reason == "user_required" => return None,
             Err(reason) => {
                 warn!(alias = %server.alias, reason, "MCP credential resolution failed");
-                continue;
+                return None;
             }
         }
         let stored = state
@@ -162,7 +162,15 @@ pub async fn tools_list(
             .list_mcp_tool_catalog(server.id)
             .await
             .unwrap_or_default();
-        let rows = snapshot(server, stored);
+        Some(snapshot(server, stored))
+    }))
+    .await;
+
+    let mut tools: Vec<UpstreamTool> = Vec::new();
+    let mut server_views = Vec::new();
+    let mut visible: Vec<String> = Vec::new();
+    for (server, rows) in servers.iter().zip(collected) {
+        let Some(rows) = rows else { continue };
         server_views.push(json!({
             "alias": server.alias,
             "tool_count": rows.len(),
@@ -406,4 +414,194 @@ pub async fn health(
     }
 
     (StatusCode::OK, Json(json!({"servers": servers}))).into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::routes::keys::{AppState, DEFAULT_KEY_TOKEN_LEN};
+    use axum::body::Body;
+    use axum::http::Method;
+    use axum::Router;
+    use std::sync::Arc;
+    use tower::ServiceExt;
+
+    const MK: &str = "sk-master-test";
+
+    async fn test_state() -> SharedState {
+        let db = aigw_core::db::Database::init("sqlite::memory:")
+            .await
+            .unwrap();
+        Arc::new(AppState {
+            resolver: aigw_core::resolver::ModelResolver::new(db.clone(), None, "onprem"),
+            router: aigw_core::router::Router::default(),
+            db,
+            master_key: Some(MK.to_string()),
+            aigw_master_key: Some(MK.to_string()),
+            key_generate_length: DEFAULT_KEY_TOKEN_LEN,
+            disable_custom_api_keys: false,
+            provider_registry: aigw_core::provider::ProviderRegistry::new(),
+            router_state: aigw_core::router::RouterState::default(),
+            rate_limiter: Arc::new(aigw_core::rate_limiter::RateLimiter::new()),
+            deployment_mode: "test".to_string(),
+            started_at: std::time::Instant::now(),
+            daily_spend_queue: None,
+            otel_active: false,
+            body_archiver: None,
+            token_provider: Arc::new(aigw_core::claude_token::TokenProvider::new()),
+            web_search: aigw_core::websearch::WebSearchHandle::disabled(),
+            mcp_disable_rest: false,
+            mcp_log_retention: Default::default(),
+            metrics: None,
+        })
+    }
+
+    fn build_router(state: SharedState) -> Router {
+        use axum::routing::{get, post};
+        Router::new()
+            .route("/mcp-rest/tools/list", post(tools_list))
+            .route("/mcp-rest/health", get(health))
+            .with_state(state)
+    }
+
+    /// The catalog cache is a process static keyed by server id (ADR-041) and
+    /// every in-memory DB numbers its servers from 1, so a test running beside
+    /// this one can leave a cached entry under the id this one is about to use.
+    /// Starting this DB's ids far ahead keeps `snapshot` reading its own rows —
+    /// and `clear()` is not an option: it would drop entries another test's
+    /// cache-hit assertion depends on.
+    async fn reserve_server_ids(state: &SharedState) {
+        let aigw_core::db::Database::Sqlite(pool) = &state.db else {
+            return;
+        };
+        sqlx::query("DELETE FROM sqlite_sequence WHERE name = 'mcp_servers'")
+            .execute(pool)
+            .await
+            .expect("reset the server id sequence");
+        sqlx::query("INSERT INTO sqlite_sequence (name, seq) VALUES ('mcp_servers', 100000)")
+            .execute(pool)
+            .await
+            .expect("reserve server ids");
+    }
+
+    async fn insert_server(state: &SharedState, alias: &str, scope: &str, tools: &[&str]) -> i64 {
+        let id = state
+            .db
+            .create_mcp_server(&McpServerRow {
+                id: 0,
+                alias: alias.to_string(),
+                display_name: alias.to_string(),
+                url: "http://127.0.0.1:1/mcp".to_string(),
+                transport: "streamable_http".to_string(),
+                credential_scope: scope.to_string(),
+                enabled: true,
+                protocol_version: None,
+                auth_header_name: None,
+                auth_header_value: None,
+                extra_headers: None,
+                tool_count: 0,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                updated_at: "2026-01-01T00:00:00Z".to_string(),
+            })
+            .await
+            .expect("server");
+        let rows: Vec<McpToolRow> = tools
+            .iter()
+            .map(|name| McpToolRow {
+                id: 0,
+                server_id: id,
+                tool_name: name.to_string(),
+                description: format!("{name} tool"),
+                input_schema: json!({"type": "object"}),
+                annotations: None,
+                has_conflict: false,
+                fetched_at: "2026-01-01T00:00:00Z".to_string(),
+            })
+            .collect();
+        state
+            .db
+            .replace_mcp_tool_catalog(id, &rows)
+            .await
+            .expect("catalog");
+        id
+    }
+
+    async fn send(app: &Router, token: &str, body: Value) -> (u16, Value) {
+        let request = axum::http::Request::builder()
+            .method(Method::POST)
+            .uri("/mcp-rest/tools/list")
+            .header("Content-Type", "application/json")
+            .header("Authorization", format!("Bearer {token}"))
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        let status = response.status().as_u16();
+        let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+            .await
+            .unwrap_or_default();
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
+    fn aliases(body: &Value) -> Vec<String> {
+        body["servers"]
+            .as_array()
+            .map(|servers| {
+                servers
+                    .iter()
+                    .filter_map(|s| s["alias"].as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn tool_names(body: &Value) -> Vec<String> {
+        body["tools"]
+            .as_array()
+            .map(|tools| {
+                tools
+                    .iter()
+                    .filter_map(|t| t["tool_name"].as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[tokio::test]
+    async fn every_enabled_server_is_listed_with_its_own_tool_count() {
+        let state = test_state().await;
+        reserve_server_ids(&state).await;
+        insert_server(&state, "alpha", "shared", &["search"]).await;
+        insert_server(&state, "beta", "shared", &["read", "write"]).await;
+        insert_server(&state, "gamma", "shared", &["ping"]).await;
+        let app = build_router(state);
+
+        let (status, body) = send(&app, MK, json!({})).await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(aliases(&body), vec!["alpha", "beta", "gamma"]);
+        assert_eq!(body["servers"][0]["tool_count"], json!(1));
+        assert_eq!(body["servers"][1]["tool_count"], json!(2));
+        assert_eq!(body["servers"][2]["tool_count"], json!(1));
+        assert_eq!(
+            tool_names(&body),
+            vec!["search", "read", "write", "ping"],
+            "the concurrent phase must collect every server's tools"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_user_required_server_is_skipped_and_the_others_survive() {
+        let state = test_state().await;
+        reserve_server_ids(&state).await;
+        insert_server(&state, "locked", "user_required", &["secret"]).await;
+        insert_server(&state, "open", "shared", &["read"]).await;
+        let app = build_router(state);
+
+        let (status, body) = send(&app, MK, json!({})).await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(aliases(&body), vec!["open"]);
+        assert_eq!(tool_names(&body), vec!["read"]);
+    }
 }

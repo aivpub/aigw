@@ -1063,18 +1063,32 @@ async fn list_aggregate_tools(
         }
     };
 
+    // Each server costs a token read plus one unseal, so they resolve together;
+    // `join_all` keeps input order, which keeps `owners` and `warnings` stable.
+    let resolved = futures::future::join_all(servers.into_iter().filter(|s| s.enabled).map(
+        |server| async move {
+            let outcome = resolve_bearer(state, auth, &server)
+                .await
+                .map(|(credential, owner)| {
+                    // The caller cannot retry a `tools/list`, so the header set has
+                    // to be computed here — and computed once: a second
+                    // `outbound_headers` call would unseal the credential twice and,
+                    // worse, could disagree with the one actually used upstream.
+                    let headers = outbound_headers(state, &server, credential.as_deref());
+                    (effective_owner(&headers, owner), headers)
+                });
+            (server, outcome)
+        },
+    ))
+    .await;
+
     let mut visible: Vec<(McpServerRow, OutboundHeaders)> = Vec::new();
     let mut owners: Vec<&'static str> = Vec::new();
     let mut warnings: Vec<Value> = Vec::new();
-    for server in servers.into_iter().filter(|s| s.enabled) {
-        match resolve_bearer(state, auth, &server).await {
-            Ok((credential, owner)) => {
-                // The caller cannot retry a `tools/list`, so the header set has
-                // to be computed here — and computed once: a second
-                // `outbound_headers` call would unseal the credential twice and,
-                // worse, could disagree with the one actually used upstream.
-                let headers = outbound_headers(state, &server, credential.as_deref());
-                owners.push(effective_owner(&headers, owner));
+    for (server, outcome) in resolved {
+        match outcome {
+            Ok((owner, headers)) => {
+                owners.push(owner);
                 visible.push((server, headers));
             }
             Err(reason) if reason == "user_required" => continue,
@@ -2751,6 +2765,39 @@ mod tests {
         assert_eq!(rows[0].status, MCP_CALL_STATUS_SUCCESS);
     }
 
+    #[tokio::test]
+    async fn aggregate_list_collects_every_server_when_resolution_runs_concurrently() {
+        let _guard = aggregate_guard().await;
+        let state = test_state().await;
+        let (alpha, _) = spawn_tools_stub(stub_tools(&["search"])).await;
+        let (beta, _) = spawn_tools_stub(stub_tools(&["read"])).await;
+        let (gamma, _) = spawn_tools_stub(stub_tools(&["write"])).await;
+        insert_server(&state, server_row("alpha", &alpha, "shared", None), None).await;
+        insert_server(&state, server_row("beta", &beta, "shared", None), None).await;
+        insert_server(&state, server_row("gamma", &gamma, "shared", None), None).await;
+        let app = build_router(state.clone());
+
+        let (status, body, _) = send(
+            &app,
+            Method::POST,
+            "/mcp",
+            Some(MK),
+            &[],
+            tools_list_body(None),
+        )
+        .await;
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(
+            tool_names(&body),
+            vec![
+                "alpha__search".to_string(),
+                "beta__read".to_string(),
+                "gamma__write".to_string()
+            ],
+            "the concurrent resolve phase must keep every server, not just the first"
+        );
+    }
+
     fn modern_tools_list_body() -> Value {
         json!({
             "jsonrpc": "2.0",
@@ -2978,6 +3025,43 @@ mod tests {
             "one missing personal token must not fail the listing"
         );
         assert_eq!(tool_names(&body), vec!["open__read".to_string()]);
+        assert!(body["result"].get("warnings").is_none(), "{body}");
+    }
+
+    #[tokio::test]
+    async fn a_user_required_server_is_skipped_even_beside_two_open_servers() {
+        let _guard = aggregate_guard().await;
+        let state = test_state().await;
+        insert_server(
+            &state,
+            server_row("locked", "http://127.0.0.1:1/mcp", "user_required", None),
+            Some("sk-unused"),
+        )
+        .await;
+        let (alpha, _) = spawn_tools_stub(stub_tools(&["read"])).await;
+        let (beta, _) = spawn_tools_stub(stub_tools(&["write"])).await;
+        insert_server(&state, server_row("alpha", &alpha, "shared", None), None).await;
+        insert_server(&state, server_row("beta", &beta, "shared", None), None).await;
+        let raw = insert_plain_key(&state).await;
+        let app = build_router(state.clone());
+
+        let (status, body, _) = send(
+            &app,
+            Method::POST,
+            "/mcp",
+            Some(&raw),
+            &[],
+            tools_list_body(None),
+        )
+        .await;
+        assert_eq!(
+            status, 200,
+            "one missing personal token must not fail the listing"
+        );
+        assert_eq!(
+            tool_names(&body),
+            vec!["alpha__read".to_string(), "beta__write".to_string()]
+        );
         assert!(body["result"].get("warnings").is_none(), "{body}");
     }
 
